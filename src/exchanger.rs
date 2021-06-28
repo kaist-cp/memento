@@ -1,13 +1,17 @@
+// TODO(pmem 사용(#31, #32)):
+// - persist를 위해 flush/fence 추가
+// - persistent location 위에서 동작
+
+// TODO(SMR 적용):
+// - SMR 만든 후 crossbeam 걷어내기
+// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
+
 // TODO(로직 변경):
 // - 기존: switch_pair를 한 뒤에야 slot을 비움
 // - 변경: switch_pair 하지 않아도 slot 비울 수 있음
 // - 아이디어:
 //   + partner들끼리 상호 참조만 잘 된다면 switch_pair를 하지 않아도 slot을 비울 수 있음
 //   + switch_pair가 됐는지 안 됐는지 제대로 확인하는 방법이 필요 (response가 한 쪽만 true될 경우를 주의)
-
-// TODO(SMR 적용):
-// - SMR 만든 후 crossbeam 걷어내기
-// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -37,7 +41,7 @@ struct Node<'p, T> {
     response: AtomicBool,
 
     /// exchange 할 상대의 포인터 (단방향)
-    // Shared인 이유: SMR을 위함. 상대가 자기 info를 free해도 참조할 수 있어야 함.
+    // Shared인 이유: SMR을 위함. 상대가 자기 client를 free해도 참조할 수 있어야 함.
     partner: Shared<'p, Node<'p, T>>,
 
     /// partner 참조를 위한 persistent guard
@@ -59,9 +63,9 @@ impl<T> Node<'_, T> {
     }
 }
 
-/// exchange op을 호출할 때 쓰일 info
+/// `Exchanger`의 `exchange()`을 호출할 때 쓰일 client
 #[derive(Debug)]
-pub struct ExchangeInfo<'p, T> {
+pub struct ExchangeClient<'p, T> {
     /// 해당 op를 위해 할당된 node
     node: Shared<'p, Node<'p, T>>,
 
@@ -69,7 +73,7 @@ pub struct ExchangeInfo<'p, T> {
     guard: Guard,
 }
 
-impl<T> Default for ExchangeInfo<'_, T> {
+impl<T> Default for ExchangeClient<'_, T> {
     fn default() -> Self {
         Self {
             node: Shared::null(),
@@ -78,14 +82,14 @@ impl<T> Default for ExchangeInfo<'_, T> {
     }
 }
 
-impl<T> PersistentInfo for ExchangeInfo<'_, T> {
+impl<T> PersistentClient for ExchangeClient<'_, T> {
     fn reset(&mut self) {
         self.node = Shared::null();
         self.guard = pin();
     }
 }
 
-unsafe impl<T: Send> Send for ExchangeInfo<'_, T> {}
+unsafe impl<T: Send> Send for ExchangeClient<'_, T> {}
 
 /// 스레드 간의 exchanger
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
@@ -110,9 +114,9 @@ unsafe impl<T: Send> Send for Exchanger<'_, T> {}
 impl<'p, T> Exchanger<'p, T> {
     /// 나의 값을 주고 상대의 값을 반환함
     /// node에 주요 정보를 넣고 다른 스레드에게 보여주어 helping 할 수 있음
-    // TODO: info.mine != val인 경우에 대한 정책
-    pub fn exchange(&self, info: &'p mut ExchangeInfo<'p, T>, val: T) -> T {
-        if info.node.is_null() {
+    // TODO: client.mine != val인 경우에 대한 정책
+    pub fn exchange(&self, client: &'p mut ExchangeClient<'p, T>, val: T) -> T {
+        if client.node.is_null() {
             // Install a helping struct for the first execution
             let n = Owned::new(Node {
                 state: State::Waiting,
@@ -123,10 +127,10 @@ impl<'p, T> Exchanger<'p, T> {
                 guard: pin(),
             });
 
-            info.node = n.into_shared(&info.guard);
+            client.node = n.into_shared(&client.guard);
         }
 
-        self._exchange(info.node)
+        self._exchange(client.node)
         // TODO: free node
     }
 
@@ -217,24 +221,22 @@ mod test {
         let xchg: Exchanger<'_, usize> = Exchanger::default();
 
         // array를 못 쓰는 이유: guard가 clone이 안 됨
-        let mut exinfo0 = ExchangeInfo::<usize>::default();
-        let mut exinfo1 = ExchangeInfo::<usize>::default();
+        let mut exclient0 = ExchangeClient::<usize>::default(); // persistent
+        let mut exclient1 = ExchangeClient::<usize>::default(); // persistent
 
-        // ↑ 위 변수들이 persistent 하다면
-        // ↓ 아래 로직은 idempotent 함
-
+        // 아래 로직은 idempotent 함
         #[allow(box_pointers)]
         thread::scope(|scope| {
             let xchg_ref = &xchg;
-            let exinfo_ref0 = &mut exinfo0;
-            let exinfo_ref1 = &mut exinfo1;
+            let exclient_ref0 = &mut exclient0;
+            let exclient_ref1 = &mut exclient1;
 
             let _ = scope.spawn(move |_| {
-                let ret = xchg_ref.exchange(exinfo_ref0, 0);
+                let ret = xchg_ref.exchange(exclient_ref0, 0);
                 assert_eq!(ret, 1);
             });
 
-            let ret = xchg_ref.exchange(exinfo_ref1, 1);
+            let ret = xchg_ref.exchange(exclient_ref1, 1);
             assert_eq!(ret, 0);
         })
         .unwrap();
@@ -244,41 +246,39 @@ mod test {
     // After rotation  : [1]  [2]  [0]
     #[test]
     fn rotate_left() {
-        let (mut item0, mut item1, mut item2) = (0, 1, 2);
+        let (mut item0, mut item1, mut item2) = (0, 1, 2); // persistent
 
-        let lxhg = Exchanger::<i32>::default();
-        let rxhg = Exchanger::<i32>::default();
+        let lxhg = Exchanger::<i32>::default(); // persistent
+        let rxhg = Exchanger::<i32>::default(); // persistent
 
-        let mut exinfo0 = ExchangeInfo::<i32>::default();
-        let mut exinfo2 = ExchangeInfo::<i32>::default();
+        let mut exclient0 = ExchangeClient::<i32>::default(); // persistent
+        let mut exclient2 = ExchangeClient::<i32>::default(); // persistent
 
-        let mut exinfo1_0 = ExchangeInfo::<i32>::default();
-        let mut exinfo1_2 = ExchangeInfo::<i32>::default();
+        let mut exclient1_0 = ExchangeClient::<i32>::default(); // persistent
+        let mut exclient1_2 = ExchangeClient::<i32>::default(); // persistent
 
-        // ↑ 위 변수들이 persistent 하다면
-        // ↓ 아래 로직은 idempotent 함
-
+        // 아래 로직은 idempotent 함
         #[allow(box_pointers)]
         thread::scope(|scope| {
             let _ = scope.spawn(|_| {
                 // [0] -> [1]    [2]
-                item0 = lxhg.exchange(&mut exinfo0, item0);
+                item0 = lxhg.exchange(&mut exclient0, item0);
                 assert_eq!(item0, 1);
             });
 
             let _ = scope.spawn(|_| {
                 // [0]    [1] <- [2]
-                item2 = rxhg.exchange(&mut exinfo2, item2);
+                item2 = rxhg.exchange(&mut exclient2, item2);
                 assert_eq!(item2, 0);
             });
 
             // Composition in the middle
             // Step1: [0] <- [1]    [2]
-            item1 = lxhg.exchange(&mut exinfo1_0, item1);
+            item1 = lxhg.exchange(&mut exclient1_0, item1);
             assert_eq!(item1, 0);
 
             // Step2: [1]    [0] -> [2]
-            item1 = rxhg.exchange(&mut exinfo1_2, item1);
+            item1 = rxhg.exchange(&mut exclient1_2, item1);
             assert_eq!(item1, 2);
         })
         .unwrap();
