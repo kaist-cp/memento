@@ -115,6 +115,8 @@ impl<'p, T> Exchanger<'p, T> {
     /// 나의 값을 주고 상대의 값을 반환함
     /// node에 주요 정보를 넣고 다른 스레드에게 보여주어 helping 할 수 있음
     // TODO: client.mine != val인 경우에 대한 정책
+    //       => 논의 결과: 상관 없음 (safe하기만 하면 됨. functional correctness는 보장 안 함)
+    //       => 추후 persistent_op trait으로 주석 이동
     pub fn exchange(&self, client: &'p mut ExchangeClient<'p, T>, val: T) -> T {
         if client.node.is_null() {
             // Install a helping struct for the first execution
