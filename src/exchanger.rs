@@ -1,3 +1,5 @@
+//! Concurrent exchanger
+
 // TODO(pmem 사용(#31, #32)):
 // - persist를 위해 flush/fence 추가
 // - persistent location 위에서 동작
@@ -132,12 +134,12 @@ impl<'p, T> Exchanger<'p, T> {
             client.node = n.into_shared(&client.guard);
         }
 
-        self._exchange(client.node)
+        self.exchange_inner(client.node)
         // TODO: free node
     }
 
     /// 나의 값을 주고 상대의 값을 반환하는 코어 로직
-    fn _exchange(&self, myop: Shared<'p, Node<'p, T>>) -> T {
+    fn exchange_inner(&self, myop: Shared<'p, Node<'p, T>>) -> T {
         let myop_ref = unsafe { myop.deref() };
         let guard = &myop_ref.guard;
 
@@ -286,7 +288,8 @@ mod test {
         .unwrap();
     }
 
-    // 스레드 여러 개의 exchange (array를 쓰지 못해 우선 코멘팅)
+    // 스레드 여러 개의 exchange
+    // TODO: array 지원 후 테스트 활성화
     // #[test]
     // fn exchange_many() {
     //     let xchg: Exchanger<'_, usize> = Exchanger::new();

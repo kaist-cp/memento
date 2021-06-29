@@ -30,16 +30,9 @@
 
 //! Persistent objects collection
 
-/// Common constants or utils
 // mod common;
-
-/// Single-threaded counter
 pub mod counter;
-
-/// Concurrent exchanger
 pub mod exchanger;
-
-/// Trait collection for persistent objects
 pub mod persistent;
 
 use crossbeam_epoch as _;

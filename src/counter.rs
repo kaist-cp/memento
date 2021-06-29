@@ -1,3 +1,5 @@
+//! Single-threaded counter
+
 // TODO(pmem 사용(#31, #32)):
 // - persist를 위해 flush/fence 추가
 // - persistent location 위에서 동작
