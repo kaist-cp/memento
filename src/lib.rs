@@ -34,6 +34,7 @@
 pub mod counter;
 pub mod exchanger;
 pub mod persistent;
+pub mod treiber_stack;
 
 use crossbeam_epoch as _;
 use crossbeam_utils as _;
