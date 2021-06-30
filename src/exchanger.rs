@@ -225,8 +225,8 @@ mod test {
         let xchg: Exchanger<'_, usize> = Exchanger::default();
 
         // array를 못 쓰는 이유: guard가 clone이 안 됨
-        let mut exclient0 = ExchangeClient::<usize>::default(); // persistent
-        let mut exclient1 = ExchangeClient::<usize>::default(); // persistent
+        let mut exclient0 = ExchangeClient::<usize>::default(); // TODO(persistent location)
+        let mut exclient1 = ExchangeClient::<usize>::default(); // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
         #[allow(box_pointers)]
@@ -250,16 +250,16 @@ mod test {
     // After rotation  : [1]  [2]  [0]
     #[test]
     fn rotate_left() {
-        let (mut item0, mut item1, mut item2) = (0, 1, 2); // persistent
+        let (mut item0, mut item1, mut item2) = (0, 1, 2); // TODO(persistent location)
 
-        let lxhg = Exchanger::<i32>::default(); // persistent
-        let rxhg = Exchanger::<i32>::default(); // persistent
+        let lxhg = Exchanger::<i32>::default(); // TODO(persistent location)
+        let rxhg = Exchanger::<i32>::default(); // TODO(persistent location)
 
-        let mut exclient0 = ExchangeClient::<i32>::default(); // persistent
-        let mut exclient2 = ExchangeClient::<i32>::default(); // persistent
+        let mut exclient0 = ExchangeClient::<i32>::default(); // TODO(persistent location)
+        let mut exclient2 = ExchangeClient::<i32>::default(); // TODO(persistent location)
 
-        let mut exclient1_0 = ExchangeClient::<i32>::default(); // persistent
-        let mut exclient1_2 = ExchangeClient::<i32>::default(); // persistent
+        let mut exclient1_0 = ExchangeClient::<i32>::default(); // TODO(persistent location)
+        let mut exclient1_2 = ExchangeClient::<i32>::default(); // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
         #[allow(box_pointers)]

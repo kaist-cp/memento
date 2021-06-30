@@ -38,3 +38,6 @@ pub mod treiber_stack;
 
 use crossbeam_epoch as _;
 use crossbeam_utils as _;
+
+// Meta TODO:
+// - TODO(persistent location): store variables in persistent location

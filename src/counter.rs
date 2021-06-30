@@ -6,11 +6,12 @@
 
 use crate::persistent::*;
 
+/// `Counter`의 `fetch_add()` 도중의 상태들
 #[derive(Debug)]
 enum State {
-    Start,
-    Modifying,
-    End,
+    Fetching,
+    Adding,
+    Finished,
 }
 
 /// `Counter`의 `fetch_add()`를 호출할 때 쓰일 client
@@ -24,14 +25,14 @@ impl Default for FetchAddClient {
     fn default() -> Self {
         Self {
             output: 0,
-            state: State::Start,
+            state: State::Fetching,
         }
     }
 }
 
 impl PersistentClient for FetchAddClient {
     fn reset(&mut self) {
-        self.state = State::Start;
+        self.state = State::Fetching;
     }
 }
 
@@ -39,21 +40,21 @@ impl PersistentClient for FetchAddClient {
 #[derive(Debug)]
 pub struct FetchClient {
     output: usize,
-    state: State,
+    response: bool,
 }
 
 impl Default for FetchClient {
     fn default() -> Self {
         Self {
             output: 0,
-            state: State::Start,
+            response: false,
         }
     }
 }
 
 impl PersistentClient for FetchClient {
     fn reset(&mut self) {
-        self.state = State::Start;
+        self.response = false;
     }
 }
 
@@ -75,15 +76,15 @@ impl Counter {
     pub fn fetch_add(&mut self, client: &mut FetchAddClient, val: usize) -> usize {
         loop {
             match client.state {
-                State::Start => {
+                State::Fetching => {
                     client.output = self.n;
-                    client.state = State::Modifying; // TODO: 컴파일러 최적화에 의해 생략되지 않는지 확인
+                    client.state = State::Adding; // TODO: 컴파일러 최적화에 의해 생략되지 않는지 확인
                 }
-                State::Modifying => {
+                State::Adding => {
                     self.n = client.output + val;
-                    client.state = State::End;
+                    client.state = State::Finished;
                 }
-                State::End => break,
+                State::Finished => break,
             }
         }
 
@@ -92,15 +93,9 @@ impl Counter {
 
     /// 현재 정수를 반환함
     pub fn fetch(&self, client: &mut FetchClient) -> usize {
-        loop {
-            match client.state {
-                State::Start => {
-                    client.output = self.n;
-                    client.state = State::End;
-                }
-                State::End => break,
-                _ => unreachable!(),
-            }
+        if !client.response {
+            client.output = self.n;
+            client.response = true;
         }
 
         client.output
@@ -117,8 +112,8 @@ mod test {
     /// 같은 client로 여러 번 `fetch_add()`해도 최종적으로 딱 1만 더해짐
     #[test]
     fn add_1_once() {
-        let mut cnt = Counter::new(0); // persistent
-        let mut faa_client = FetchAddClient::default(); // persistent
+        let mut cnt = Counter::new(0); // TODO(persistent location)
+        let mut faa_client = FetchAddClient::default(); // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
         for _ in 0..COUNT {
@@ -131,9 +126,9 @@ mod test {
     /// Counter에 1을 여러 번 더하는 테스트
     #[test]
     fn add_1_n_times() {
-        let mut cnt = Counter::new(0); // persistent
-        let mut faa_client = FetchAddClient::default(); // persistent
-        let mut f_client = FetchClient::default(); // persistent
+        let mut cnt = Counter::new(0); // TODO(persistent location)
+        let mut faa_client = FetchAddClient::default(); // TODO(persistent location)
+        let mut f_client = FetchClient::default(); // TODO(persistent location)
         let mut i = 0; // persistent
 
         // 아래 로직은 idempotent 함

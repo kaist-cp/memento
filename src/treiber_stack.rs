@@ -85,7 +85,11 @@ impl<'p, T> TreiberStack<T> {
     pub fn push(&self, client: &'p mut PushClient<'p, T>, val: T) {
         let vguard = &pin();
 
-        if client.node.is_null() {
+        if !client.node.is_null() {
+            if self.is_finished(client.node, vguard) {
+                return;
+            }
+        } else {
             // Install a node for the first execution
             let null: *const PopClient<'_, T> = ptr::null();
             let n = Owned::new(Node {
@@ -95,8 +99,6 @@ impl<'p, T> TreiberStack<T> {
             });
 
             client.node = n.into_shared(&client.guard);
-        } else if self.check_pushed(client.node, vguard) {
-            return;
         }
 
         while !self.try_push_inner(client.node, vguard) {}
@@ -105,13 +107,13 @@ impl<'p, T> TreiberStack<T> {
     // TODO: pub try_push() 혹은 push에 count 파라미터 달기
 
     /// `node`의 push 작업이 이미 끝났는지 체크
-    fn check_pushed(&self, node: Shared<'_, Node<T>>, vguard: &Guard) -> bool {
-        // (1) stack 안에 있는가? (Direct tracking)
+    fn is_finished(&self, node: Shared<'_, Node<T>>, vguard: &Guard) -> bool {
+        // (1) stack 안에 있으면 push된 것이다 (Direct tracking)
         if self.search(node, vguard) {
             return true;
         }
 
-        // (2) 이미 pop 되었는가?
+        // (2) 이미 pop 되었다면 push된 것이다
         let node_ref = unsafe { node.deref() };
         let null: *const PopClient<'_, T> = ptr::null();
         if node_ref.popper.load(Ordering::SeqCst) != null as usize {
@@ -203,9 +205,9 @@ mod test {
 
     #[test]
     fn push_single() {
-        let stack = TreiberStack::<usize>::default(); // persistent
-                                                      // let mut push_client = PushClient::<usize>::default(); // persistent
-        let mut pop_client = PopClient::<usize>::default(); // persistent
+        let stack = TreiberStack::<usize>::default(); // TODO(persistent location)
+                                                      // let mut push_client = PushClient::<usize>::default(); // TODO(persistent location)
+        let mut pop_client = PopClient::<usize>::default(); // TODO(persistent location)
 
         // TODO: Fix "mut ref more than once" error
         // client 내의 shared pointer lifetime 때문에 error 발생
