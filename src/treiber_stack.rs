@@ -95,7 +95,7 @@ impl<'p, T> TreiberStack<T> {
             });
 
             client.node = n.into_shared(&client.guard);
-        } else if self.push_recover(client.node, vguard) {
+        } else if self.check_pushed(client.node, vguard) {
             return;
         }
 
@@ -105,7 +105,7 @@ impl<'p, T> TreiberStack<T> {
     // TODO: pub try_push() 혹은 push에 count 파라미터 달기
 
     /// `node`의 push 작업이 이미 끝났는지 체크
-    fn push_recover(&self, node: Shared<'_, Node<T>>, vguard: &Guard) -> bool {
+    fn check_pushed(&self, node: Shared<'_, Node<T>>, vguard: &Guard) -> bool {
         // (1) stack 안에 있는가? (Direct tracking)
         if self.search(node, vguard) {
             return true;
