@@ -19,7 +19,6 @@ enum State {
 pub struct FetchAddClient {
     output: usize,
     state: State,
-
     // state와 output을 합치는 디자인도 고려해볼 수 있지만
     // persistency atomicity 때문에 state가 output 저장 완료 flag를 담당해야 함
 }

@@ -105,10 +105,7 @@ unsafe impl<T: Send> Send for Exchanger<T> {}
 impl<T> Exchanger<T> {
     /// 나의 값을 주고 상대의 값을 반환함
     /// node에 주요 정보를 넣고 다른 스레드에게 보여주어 helping 할 수 있음
-    // TODO: client.mine != val인 경우에 대한 정책
-    //       => 논의 결과: 상관 없음 (safe하기만 하면 됨. functional correctness는 보장 안 함)
-    //       => 추후 persistent_op trait으로 주석 이동
-    pub fn exchange(&self, client: &mut ExchangeClient<T>, val: T) -> T {
+    fn exchange(&self, client: &mut ExchangeClient<T>, val: T) -> T {
         let guard = &pin();
         let mut myop = client.node.load(Ordering::SeqCst, guard);
 
@@ -207,6 +204,15 @@ impl<T> Exchanger<T> {
     }
 }
 
+impl<T> PersistentOp<ExchangeClient<T>> for Exchanger<T> {
+    type Input = T;
+    type Output = T;
+
+    fn persistent_op(&self, client: &mut ExchangeClient<T>, input: T) -> T {
+        self.exchange(client, input)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::{process::exit, sync::atomic::AtomicUsize, time::Duration};
@@ -231,7 +237,7 @@ mod test {
                 };
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
-                    let ret = xchg_ref.exchange(client, tid);
+                    let ret = xchg_ref.persistent_op(client, tid);
                     assert_eq!(ret, 1 - tid);
                 });
             }
@@ -259,23 +265,23 @@ mod test {
         thread::scope(|scope| {
             let _ = scope.spawn(|_| {
                 // [0] -> [1]    [2]
-                item0 = lxhg.exchange(&mut exclient0, item0);
+                item0 = lxhg.persistent_op(&mut exclient0, item0);
                 assert_eq!(item0, 1);
             });
 
             let _ = scope.spawn(|_| {
                 // [0]    [1] <- [2]
-                item2 = rxhg.exchange(&mut exclient2, item2);
+                item2 = rxhg.persistent_op(&mut exclient2, item2);
                 assert_eq!(item2, 0);
             });
 
             // Composition in the middle
             // Step1: [0] <- [1]    [2]
-            item1 = lxhg.exchange(&mut exclient1_0, item1);
+            item1 = lxhg.persistent_op(&mut exclient1_0, item1);
             assert_eq!(item1, 0);
 
             // Step2: [1]    [0] -> [2]
-            item1 = rxhg.exchange(&mut exclient1_2, item1);
+            item1 = rxhg.persistent_op(&mut exclient1_2, item1);
             assert_eq!(item1, 2);
         })
         .unwrap();
@@ -314,7 +320,7 @@ mod test {
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
                     for i in 0..COUNT {
-                        let ret = xchg_ref.exchange(&mut client_vec[i], tid);
+                        let ret = xchg_ref.persistent_op(&mut client_vec[i], tid);
 
                         let _ = results_ref[ret].fetch_add(1, Ordering::SeqCst);
                         let _ = cnts_ref[tid].fetch_add(1, Ordering::SeqCst);
