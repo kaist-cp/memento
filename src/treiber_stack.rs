@@ -18,7 +18,7 @@ struct Node<T> {
 #[derive(Debug)]
 pub struct PushClient<'p, T> {
     /// push를 위해 할당된 node
-    node: Shared<'p, Node<T>>,
+    node: Shared<'p, Node<T>>, // TODO: exchanger 해보고 감대로
 
     /// node 참조를 위한 persistent guard
     guard: Guard,

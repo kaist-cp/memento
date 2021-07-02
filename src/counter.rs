@@ -19,6 +19,9 @@ enum State {
 pub struct FetchAddClient {
     output: usize,
     state: State,
+
+    // state와 output을 합치는 디자인도 고려해볼 수 있지만
+    // persistency atomicity 때문에 state가 output 저장 완료 flag를 담당해야 함
 }
 
 impl Default for FetchAddClient {
@@ -129,7 +132,7 @@ mod test {
         let mut cnt = Counter::new(0); // TODO(persistent location)
         let mut faa_client = FetchAddClient::default(); // TODO(persistent location)
         let mut f_client = FetchClient::default(); // TODO(persistent location)
-        let mut i = 0; // persistent
+        let mut i = 0; // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
         // same faa client w/ reset() -> different faa result

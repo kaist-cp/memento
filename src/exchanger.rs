@@ -4,16 +4,23 @@
 // - persist를 위해 flush/fence 추가
 // - persistent location 위에서 동작
 
+// TODO(Ordering):
+// - Ordering 최적화
+
 // TODO(SMR 적용):
 // - SMR 만든 후 crossbeam 걷어내기
 // - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
 
 // TODO(로직 변경):
-// - 기존: switch_pair를 한 뒤에야 slot을 비움
-// - 변경: switch_pair 하지 않아도 slot 비울 수 있음
-// - 아이디어:
-//   + partner들끼리 상호 참조만 잘 된다면 switch_pair를 하지 않아도 slot을 비울 수 있음
-//   + switch_pair가 됐는지 안 됐는지 제대로 확인하는 방법이 필요 (response가 한 쪽만 true될 경우를 주의)
+// - 기존 로직 단점
+//   + slot이 빔: 굳이 slot을 비우는 상태를 거침
+//   + 짝짓기 의존성: 누군가의 짝짓기(복사 과정)가 끝난 뒤에야 global progress
+//   + post-crash 스레드를 염두한 불필요한 atomic load가 많음
+// - 변경 로직 아이디어
+//   + slot에 있는 노드에게 partner가
+//     * 있다면 상호 참조 시켜주고, slot을 자기꺼로 cas (짝짓기 생략 + slot이 비워지지 않음)
+//     * 없다면 자기를 partner로 가리키도록 cas
+//   + 호출할 때마다 partner node에서 value 복사함 (partner가 준 값 저장소 불필요 + atomic response 불필요)
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -22,17 +29,8 @@ use std::mem::MaybeUninit;
 
 use crate::persistent::*;
 
-#[derive(Debug, PartialEq, Eq)]
-enum State {
-    Waiting,
-    Busy,
-}
-
 #[derive(Debug)]
-struct Node<'p, T> {
-    /// slot에서의 상태
-    state: State,
-
+struct Node<T> {
     /// 내가 줄 item
     mine: T,
 
@@ -43,14 +41,10 @@ struct Node<'p, T> {
     response: AtomicBool,
 
     /// exchange 할 상대의 포인터 (단방향)
-    // Shared인 이유: SMR을 위함. 상대가 자기 client를 free해도 참조할 수 있어야 함.
-    partner: Shared<'p, Node<'p, T>>,
-
-    /// partner 참조를 위한 persistent guard
-    guard: Guard,
+    partner: Atomic<Node<T>>,
 }
 
-impl<T> Node<'_, T> {
+impl<T> Node<T> {
     /// 두 node가 교환할 값을 서로에게 복사
     fn switch_pair(left: &Self, right: &Self) {
         unsafe {
@@ -66,41 +60,36 @@ impl<T> Node<'_, T> {
 }
 
 /// `Exchanger`의 `exchange()`을 호출할 때 쓰일 client
-#[derive(Debug)]
-pub struct ExchangeClient<'p, T> {
+#[derive(Debug, Clone)]
+pub struct ExchangeClient<T> {
     /// 해당 op를 위해 할당된 node
-    node: Shared<'p, Node<'p, T>>,
-
-    /// node 참조를 위한 persistent guard
-    guard: Guard,
+    node: Atomic<Node<T>>,
 }
 
-impl<T> Default for ExchangeClient<'_, T> {
+impl<T> Default for ExchangeClient<T> {
     fn default() -> Self {
         Self {
-            node: Shared::null(),
-            guard: pin(),
+            node: Atomic::null(),
         }
     }
 }
 
-impl<T> PersistentClient for ExchangeClient<'_, T> {
+impl<T> PersistentClient for ExchangeClient<T> {
     fn reset(&mut self) {
-        self.node = Shared::null();
-        self.guard = pin();
+        self.node = Atomic::null();
     }
 }
 
-unsafe impl<T: Send> Send for ExchangeClient<'_, T> {}
+unsafe impl<T: Send> Send for ExchangeClient<T> {}
 
 /// 스레드 간의 exchanger
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
-pub struct Exchanger<'p, T> {
-    slot: Atomic<Node<'p, T>>,
+pub struct Exchanger<T> {
+    slot: Atomic<Node<T>>,
 }
 
-impl<T> Default for Exchanger<'_, T> {
+impl<T> Default for Exchanger<T> {
     fn default() -> Self {
         Self {
             // 기존 논문에선 시작 slot이 Default Node임
@@ -110,52 +99,47 @@ impl<T> Default for Exchanger<'_, T> {
     }
 }
 
-unsafe impl<T: Send> Sync for Exchanger<'_, T> {}
-unsafe impl<T: Send> Send for Exchanger<'_, T> {}
+unsafe impl<T: Send> Sync for Exchanger<T> {}
+unsafe impl<T: Send> Send for Exchanger<T> {}
 
-impl<'p, T> Exchanger<'p, T> {
+impl<T> Exchanger<T> {
     /// 나의 값을 주고 상대의 값을 반환함
     /// node에 주요 정보를 넣고 다른 스레드에게 보여주어 helping 할 수 있음
     // TODO: client.mine != val인 경우에 대한 정책
     //       => 논의 결과: 상관 없음 (safe하기만 하면 됨. functional correctness는 보장 안 함)
     //       => 추후 persistent_op trait으로 주석 이동
-    pub fn exchange(&self, client: &'p mut ExchangeClient<'p, T>, val: T) -> T {
-        if client.node.is_null() {
-            // Install a helping struct for the first execution
+    pub fn exchange(&self, client: &mut ExchangeClient<T>, val: T) -> T {
+        let guard = &pin();
+        let mut myop = client.node.load(Ordering::SeqCst, guard);
+
+        if myop.is_null() {
+            // First execution
             let n = Owned::new(Node {
-                state: State::Waiting,
                 mine: val,
                 yours: MaybeUninit::uninit(),
                 response: AtomicBool::new(false),
-                partner: Shared::null(),
-                guard: pin(),
+                partner: Atomic::null(),
             });
 
-            client.node = n.into_shared(&client.guard);
+            myop = n.into_shared(guard);
+            client.node.store(myop, Ordering::SeqCst);
         }
 
-        self.exchange_inner(client.node)
-        // TODO: free node
-    }
-
-    /// 나의 값을 주고 상대의 값을 반환하는 코어 로직
-    fn exchange_inner(&self, myop: Shared<'p, Node<'p, T>>) -> T {
         let myop_ref = unsafe { myop.deref() };
-        let guard = &myop_ref.guard;
 
         loop {
+            // slot은 네 가지 상태 중 하나임
             let yourop = self.slot.load(Ordering::SeqCst, guard);
-            if yourop.is_null() {
-                // slot에 아무도 없음
-                if myop_ref.response.load(Ordering::SeqCst) {
-                    // 내 목표는 달성함 -> 졸업
-                    return unsafe { ptr::read(myop_ref.yours.as_ptr()) };
-                }
 
-                // 내가 slot에 들어가서 누군가를 기다려야 함
-                if myop_ref.state == State::Busy {
-                    unsafe { ptr::write(&myop_ref.state as *const _ as *mut _, State::Waiting) };
-                }
+            // 그 전에 내 교환은 이미 끝났 건지 확인
+            if myop_ref.response.load(Ordering::SeqCst) {
+                return unsafe { Self::finish(myop_ref) };
+            }
+
+            if yourop.is_null() {
+                // (1) slot에 아무도 없음
+
+                // 내 node를 slot에 넣기 시도
                 let _ = self.slot.compare_exchange(
                     yourop,
                     myop,
@@ -166,82 +150,91 @@ impl<'p, T> Exchanger<'p, T> {
                 continue;
             }
 
-            let yourop_ref = unsafe { yourop.deref() };
-            match yourop_ref.state {
-                State::Waiting if myop != yourop => {
-                    // slot에서 누가 기다리고 있음
-                    if myop_ref.response.load(Ordering::SeqCst) {
-                        // 내 목표는 달성함 -> 졸업
-                        return unsafe { ptr::read(myop_ref.yours.as_ptr()) };
-                    }
+            match yourop.tag() {
+                0 if myop != yourop => {
+                    // (2) slot에서 다른 node가 기다림
 
-                    // 짝짓기 시도
-                    unsafe {
-                        ptr::drop_in_place(
-                            &myop_ref.partner as *const _ as *mut Shared<'_, Node<'_, T>>,
-                        );
-                        ptr::write(&myop_ref.partner as *const _ as *mut _, yourop);
-                        ptr::write(&myop_ref.state as *const _ as *mut _, State::Busy);
-                    }
-                    let _ = self.slot.compare_exchange(
-                        yourop,
-                        myop,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    );
-                }
-                State::Busy => {
-                    // 이미 짝짓기가 시작됨 -> helping
-                    let yourop_part_ref = unsafe { yourop_ref.partner.as_ref().unwrap() };
-                    Node::switch_pair(yourop_ref, yourop_part_ref);
-
-                    let _ = self.slot.compare_exchange(
-                        yourop,
-                        Shared::null(),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    );
-
-                    if myop_ref.response.load(Ordering::SeqCst) {
-                        // 내 목표는 달성함 -> 졸업
-                        return unsafe { ptr::read(myop_ref.yours.as_ptr()) };
+                    // slot에 있는 node를 짝꿍 삼기 시도
+                    myop_ref.partner.store(yourop, Ordering::SeqCst);
+                    if self
+                        .slot
+                        .compare_exchange(
+                            yourop,
+                            myop.with_tag(1), // "짝짓기 중"으로 표시
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        )
+                        .is_ok()
+                    {
+                        self.help(myop, guard);
+                        return unsafe { Self::finish(myop_ref) };
                     }
                 }
-                _ => {}
+                0 => {
+                    // (3) slot에서 내 node가 기다림
+                }
+                1 => {
+                    // (4) 짝짓기 중
+                    self.help(yourop, guard);
+                }
+                _ => {
+                    unreachable!("Tag is at most 1");
+                }
             }
         }
+    }
+
+    fn help(&self, yourop: Shared<'_, Node<T>>, guard: &Guard) {
+        let yourop_ref = unsafe { yourop.deref() };
+        let partner = yourop_ref.partner.load(Ordering::SeqCst, guard);
+        let partner_ref = unsafe { partner.deref() };
+        Node::switch_pair(yourop_ref, partner_ref);
+
+        // slot 비우기
+        let _ = self.slot.compare_exchange(
+            yourop,
+            Shared::null(),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            guard,
+        );
+    }
+
+    unsafe fn finish(myop_ref: &Node<T>) -> T {
+        ptr::read(myop_ref.yours.as_ptr())
+        // TODO: free node
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::{process::exit, sync::atomic::AtomicUsize, time::Duration};
+
     use super::*;
     use crossbeam_utils::thread;
 
     #[test]
     fn exchange_once() {
-        let xchg: Exchanger<'_, usize> = Exchanger::default();
-
-        // array를 못 쓰는 이유: guard가 clone이 안 됨
-        let mut exclient0 = ExchangeClient::<usize>::default(); // TODO(persistent location)
-        let mut exclient1 = ExchangeClient::<usize>::default(); // TODO(persistent location)
+        let xchg: Exchanger<usize> = Exchanger::default(); // TODO(persistent location)
+        let mut clients = vec![ExchangeClient::<usize>::default(); 2]; // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
         #[allow(box_pointers)]
         thread::scope(|scope| {
             let xchg_ref = &xchg;
-            let exclient_ref0 = &mut exclient0;
-            let exclient_ref1 = &mut exclient1;
-
-            let _ = scope.spawn(move |_| {
-                let ret = xchg_ref.exchange(exclient_ref0, 0);
-                assert_eq!(ret, 1);
-            });
-
-            let ret = xchg_ref.exchange(exclient_ref1, 1);
-            assert_eq!(ret, 0);
+            for tid in 0..2 {
+                let client = unsafe {
+                    (clients.get_unchecked_mut(tid) as *mut ExchangeClient<usize>)
+                        .as_mut()
+                        .unwrap()
+                };
+                let _ = scope.spawn(move |_| {
+                    // `move` for `tid`
+                    let ret = xchg_ref.exchange(client, tid);
+                    assert_eq!(ret, 1 - tid);
+                });
+            }
         })
         .unwrap();
     }
@@ -289,36 +282,79 @@ mod test {
     }
 
     // 스레드 여러 개의 exchange
-    // TODO: array 지원 후 테스트 활성화
-    // #[test]
-    // fn exchange_many() {
-    //     let xchg: Exchanger<'_, usize> = Exchanger::new();
-    //     let tcnt = AtomicUsize::new(0);
+    #[test]
+    fn exchange_many() {
+        const NR_THREAD: usize = 4;
+        const COUNT: usize = 1_000_000;
 
-    //     #[allow(box_pointers)]
-    //     thread::scope(|scope| {
-    //         for tid in 0..NR_THREAD {
-    //             let xchg_ref = &xchg;
-    //             let tcnt_ref = &tcnt;
+        let xchg: Exchanger<usize> = Exchanger::default(); // TODO(persistent location)
+        let mut clients = vec![vec!(ExchangeClient::<usize>::default(); COUNT); NR_THREAD]; // TODO(persistent location)
 
-    //             let _ = scope.spawn(move |_| {
-    //                 for _ in 1..=COUNT {
-    //                     let mut exinfo = ExchangeInfo::<usize>::new();
-    //                     let _ = xchg_ref.exchange(&mut exinfo, tid);
-    //                 }
-    //                 let _ = tcnt_ref.fetch_add(1, Ordering::SeqCst);
-    //             });
-    //         }
-    //         loop {
-    //             std::thread::sleep(Duration::from_millis(500));
-    //             let finish_cnt = tcnt.load(Ordering::SeqCst);
-    //             if finish_cnt == NR_THREAD - 1 || finish_cnt == NR_THREAD {
-    //                 // case NR_THREAD - 1: Unable to progress
-    //                 // case NR_THREAD: All done
-    //                 exit(0);
-    //             }
-    //         }
-    //     })
-    //     .unwrap();
-    // }
+        // 아래 로직은 idempotent 함
+
+        let mut cnts = vec![];
+        let mut results = vec![];
+        for _ in 0..NR_THREAD {
+            cnts.push(AtomicUsize::new(0));
+            results.push(AtomicUsize::new(0));
+        }
+
+        #[allow(box_pointers)]
+        thread::scope(|scope| {
+            for tid in 0..NR_THREAD {
+                let xchg_ref = &xchg;
+                let cnts_ref = &cnts;
+                let results_ref = &results;
+                let client_vec = unsafe {
+                    (clients.get_unchecked_mut(tid) as *mut Vec<ExchangeClient<usize>>)
+                        .as_mut()
+                        .unwrap()
+                };
+
+                let _ = scope.spawn(move |_| {
+                    // `move` for `tid`
+                    for i in 0..COUNT {
+                        let ret = xchg_ref.exchange(&mut client_vec[i], tid);
+
+                        let _ = results_ref[ret].fetch_add(1, Ordering::SeqCst);
+                        let _ = cnts_ref[tid].fetch_add(1, Ordering::SeqCst);
+                    }
+                });
+            }
+
+            // Wait for all works to be done
+            // TODO: exchanger에 time limit 기능 추가한 뒤 혼자 남은 스레드는 알아서 포기하게끔
+            let mut remained_tid = 0;
+            let mut remained_cnt = 0;
+            'wait: loop {
+                std::thread::sleep(Duration::from_millis(500));
+
+                for (tid, cnt) in cnts.iter().enumerate() {
+                    let c = cnt.load(Ordering::SeqCst);
+                    if c != COUNT {
+                        if remained_cnt == 0 {
+                            remained_cnt = COUNT - c;
+                            remained_tid = tid;
+                        } else {
+                            remained_cnt = 0;
+                            continue 'wait;
+                        }
+                    }
+                }
+
+                let _ = results[remained_tid].fetch_add(remained_cnt, Ordering::SeqCst);
+                break;
+            }
+
+            // Check results
+            for result in results.iter() {
+                let r = result.load(Ordering::SeqCst);
+                assert_eq!(r, COUNT);
+            }
+
+            // TODO: exchanger에 time limit 기능 추가한 뒤 제거
+            exit(0);
+        })
+        .unwrap();
+    }
 }

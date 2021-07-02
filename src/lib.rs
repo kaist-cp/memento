@@ -30,12 +30,12 @@
 
 //! Persistent objects collection
 
-// mod common;
 pub mod counter;
 pub mod exchanger;
 pub mod persistent;
 pub mod treiber_stack;
 
+// TODO: 지웠을 때 `absolute_paths_not_starting_with_crate` lint 에러나는 것 해결
 use crossbeam_epoch as _;
 use crossbeam_utils as _;
 
