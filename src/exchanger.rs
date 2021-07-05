@@ -289,11 +289,10 @@ mod test {
 
         // 아래 로직은 idempotent 함
 
+        // tid별 cnt initialization
         let mut cnts = vec![];
-        let mut results = vec![];
         for _ in 0..NR_THREAD {
             cnts.push(AtomicUsize::new(0));
-            results.push(AtomicUsize::new(0));
         }
 
         #[allow(box_pointers)]
@@ -301,7 +300,6 @@ mod test {
             for tid in 0..NR_THREAD {
                 let xchg_ref = &xchg;
                 let cnts_ref = &cnts;
-                let results_ref = &results;
                 let client_vec = unsafe {
                     (clients.get_unchecked_mut(tid) as *mut Vec<ExchangeClient<usize>>)
                         .as_mut()
@@ -310,16 +308,14 @@ mod test {
 
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
-                    for i in 0..COUNT {
-                        let ret = xchg_ref.persistent_op(&mut client_vec[i], tid);
-
-                        let _ = results_ref[ret].fetch_add(1, Ordering::SeqCst);
+                    for client in client_vec.iter_mut() {
+                        let _ = xchg_ref.persistent_op(client, tid);
                         let _ = cnts_ref[tid].fetch_add(1, Ordering::SeqCst);
                     }
                 });
             }
 
-            // Wait for all works to be done
+            // Wait for all works to be done & Check remained thread
             // TODO: exchanger에 time limit 기능 추가한 뒤 혼자 남은 스레드는 알아서 포기하게끔
             let mut remained_tid = 0;
             let mut remained_cnt = 0;
@@ -339,14 +335,30 @@ mod test {
                     }
                 }
 
-                let _ = results[remained_tid].fetch_add(remained_cnt, Ordering::SeqCst);
                 break;
             }
 
             // Check results
-            for result in results.iter() {
-                let r = result.load(Ordering::SeqCst);
-                assert_eq!(r, COUNT);
+            let mut results = vec![0_usize; NR_THREAD];
+            for tid in 0..NR_THREAD {
+                let cnt = if tid != remained_tid {
+                    COUNT
+                } else {
+                    COUNT - remained_cnt
+                };
+
+                for i in 0..cnt {
+                    let ret = xchg.persistent_op(&mut clients[tid][i], 0);
+                    results[ret] += 1;
+                }
+            }
+
+            for (tid, &r) in results.iter().enumerate() {
+                if tid != remained_tid {
+                    assert_eq!(r, COUNT);
+                } else {
+                    assert_eq!(r + remained_cnt, COUNT);
+                }
             }
 
             // TODO: exchanger에 time limit 기능 추가한 뒤 제거

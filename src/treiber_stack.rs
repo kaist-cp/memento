@@ -274,7 +274,7 @@ mod test {
             .persistent_op(&mut PopClient::<usize>::default(), ())
             .is_none());
 
-        // Account pop results
+        // Check results
         let mut results = vec![0_usize; NR_THREAD];
         for client_vec in pop_clients.iter_mut() {
             for client in client_vec.iter_mut() {
