@@ -67,7 +67,7 @@ impl<T> Default for ExchangeClient<T> {
 
 impl<T> PersistentClient for ExchangeClient<T> {
     fn reset(&mut self) {
-        self.node = Atomic::null();
+        self.node.store(Shared::null(), Ordering::SeqCst);
     }
 }
 

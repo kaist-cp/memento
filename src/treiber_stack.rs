@@ -16,53 +16,43 @@ struct Node<T> {
 
 /// `Stack`의 `push()`를 호출할 때 쓰일 client
 #[derive(Debug)]
-pub struct PushClient<'p, T> {
+pub struct PushClient<T> {
     /// push를 위해 할당된 node
-    node: Shared<'p, Node<T>>, // TODO: exchanger 해보고 감대로
-
-    /// node 참조를 위한 persistent guard
-    guard: Guard,
+    node: Atomic<Node<T>>,
 }
 
-impl<T> Default for PushClient<'_, T> {
+impl<T> Default for PushClient<T> {
     fn default() -> Self {
         Self {
-            node: Shared::null(),
-            guard: pin(),
+            node: Atomic::null(),
         }
     }
 }
 
-impl<T> PersistentClient for PushClient<'_, T> {
+impl<T> PersistentClient for PushClient<T> {
     fn reset(&mut self) {
-        self.node = Shared::null();
-        self.guard = pin();
+        self.node.store(Shared::null(), Ordering::SeqCst);
     }
 }
 
 /// `Stack`의 `pop()`를 호출할 때 쓰일 client
 #[derive(Debug)]
-pub struct PopClient<'p, T> {
+pub struct PopClient<T> {
     /// pup를 위해 할당된 node
-    node: Shared<'p, Node<T>>,
-
-    /// node 참조를 위한 persistent guard
-    guard: Guard,
+    node: Atomic<Node<T>>,
 }
 
-impl<T> Default for PopClient<'_, T> {
+impl<T> Default for PopClient<T> {
     fn default() -> Self {
         Self {
-            node: Shared::null(),
-            guard: pin(),
+            node: Atomic::null(),
         }
     }
 }
 
-impl<T> PersistentClient for PopClient<'_, T> {
+impl<T> PersistentClient for PopClient<T> {
     fn reset(&mut self) {
-        self.node = Shared::null();
-        self.guard = pin();
+        self.node.store(Shared::null(), Ordering::SeqCst);
     }
 }
 
@@ -80,28 +70,29 @@ impl<T> Default for TreiberStack<T> {
     }
 }
 
-impl<'p, T> TreiberStack<T> {
+impl<T> TreiberStack<T> {
     /// Treiber stack에 `val`을 삽입함
-    pub fn push(&self, client: &'p mut PushClient<'p, T>, val: T) {
-        let vguard = &pin();
+    pub fn push(&self, client: &mut PushClient<T>, val: T) {
+        let guard = &pin();
 
-        if !client.node.is_null() {
-            if self.is_finished(client.node, vguard) {
+        let mut node = client.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            if self.is_finished(node, guard) {
                 return;
             }
         } else {
             // Install a node for the first execution
-            let null: *const PopClient<'_, T> = ptr::null();
-            let n = Owned::new(Node {
+            let null: *const PopClient<T> = ptr::null();
+            node = Owned::new(Node {
                 data: val,
                 next: Atomic::null(),
-                popper: AtomicUsize::new(null as usize), // CHECK: Is this safe?
-            });
-
-            client.node = n.into_shared(&client.guard);
+                popper: AtomicUsize::new(null as usize), // CHECK: Does this guarantee uniqueness?
+            })
+            .into_shared(guard);
+            client.node.store(node, Ordering::SeqCst);
         }
 
-        while !self.try_push_inner(client.node, vguard) {}
+        while !self.try_push_inner(node, guard) {}
     }
 
     // TODO: pub try_push() 혹은 push에 count 파라미터 달기
@@ -115,7 +106,7 @@ impl<'p, T> TreiberStack<T> {
 
         // (2) 이미 pop 되었다면 push된 것이다
         let node_ref = unsafe { node.deref() };
-        let null: *const PopClient<'_, T> = ptr::null();
+        let null: *const PopClient<T> = ptr::null();
         if node_ref.popper.load(Ordering::SeqCst) != null as usize {
             return true;
         }
@@ -152,10 +143,13 @@ impl<'p, T> TreiberStack<T> {
 
     /// Treiber stack에서 top node의 아이템을 반환함
     /// 비어 있을 경우 `None`을 반환
-    pub fn pop(&self, client: &'p mut PopClient<'p, T>) -> Option<T> {
-        if !client.node.is_null() {
-            let node_ref = unsafe { client.node.deref() };
-            let my_id = client as *const PopClient<'_, T> as usize;
+    pub fn pop(&self, client: &mut PopClient<T>) -> Option<T> {
+        let guard = &pin();
+
+        let node = client.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref() };
+            let my_id = client as *const PopClient<T> as usize;
 
             // node가 정말 내가 pop한 게 맞는지 확인
             if node_ref.popper.load(Ordering::SeqCst) == my_id {
@@ -164,15 +158,14 @@ impl<'p, T> TreiberStack<T> {
             };
         }
 
-        let vguard = &pin();
-        let null: *const PopClient<'_, T> = ptr::null();
+        let null: *const PopClient<T> = ptr::null();
 
         loop {
-            let top = self.top.load(Ordering::SeqCst, &client.guard);
+            let top = self.top.load(Ordering::SeqCst, guard);
             let top_ref = unsafe { top.as_ref()? };
 
             // 우선 내가 top node를 가리키고
-            client.node = top;
+            client.node.store(top, Ordering::SeqCst);
 
             // top node에 내 이름 새겨넣음
             if top_ref
@@ -189,10 +182,10 @@ impl<'p, T> TreiberStack<T> {
                 // TODO: free node
             }
 
-            let next = top_ref.next.load(Ordering::SeqCst, vguard);
-            let _ =
-                self.top
-                    .compare_exchange(top, next, Ordering::SeqCst, Ordering::SeqCst, vguard);
+            let next = top_ref.next.load(Ordering::SeqCst, guard);
+            let _ = self
+                .top
+                .compare_exchange(top, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         }
     }
 
