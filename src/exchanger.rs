@@ -1,26 +1,17 @@
 //! Concurrent exchanger
 
+// TODO(SMR 적용):
+// - SMR 만든 후 crossbeam 걷어내기
+// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
+
+// TODO(로직 변경: https://cp-git.kaist.ac.kr/persistent-mem/compositional-persistent-object/-/issues/3#note_6979)
+
 // TODO(pmem 사용(#31, #32)):
 // - persist를 위해 flush/fence 추가
 // - persistent location 위에서 동작
 
 // TODO(Ordering):
 // - Ordering 최적화
-
-// TODO(SMR 적용):
-// - SMR 만든 후 crossbeam 걷어내기
-// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
-
-// TODO(로직 변경):
-// - 기존 로직 단점
-//   + slot이 빔: 굳이 slot을 비우는 상태를 거침
-//   + 짝짓기 의존성: 누군가의 짝짓기(복사 과정)가 끝난 뒤에야 global progress
-//   + post-crash 스레드를 염두한 불필요한 atomic load가 많음
-// - 변경 로직 아이디어
-//   + slot에 있는 노드에게 partner가
-//     * 있다면 상호 참조 시켜주고, slot을 자기꺼로 cas (짝짓기 생략 + slot이 비워지지 않음)
-//     * 없다면 자기를 partner로 가리키도록 cas
-//   + 호출할 때마다 partner node에서 value 복사함 (partner가 준 값 저장소 불필요 + atomic response 불필요)
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
