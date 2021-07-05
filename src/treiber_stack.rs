@@ -72,7 +72,7 @@ impl<T> Default for TreiberStack<T> {
 
 impl<T> TreiberStack<T> {
     /// Treiber stack에 `val`을 삽입함
-    pub fn push(&self, client: &mut PushClient<T>, val: T) {
+    fn push(&self, client: &mut PushClient<T>, val: T) {
         let guard = &pin();
 
         let mut node = client.node.load(Ordering::SeqCst, guard);
@@ -143,7 +143,7 @@ impl<T> TreiberStack<T> {
 
     /// Treiber stack에서 top node의 아이템을 반환함
     /// 비어 있을 경우 `None`을 반환
-    pub fn pop(&self, client: &mut PopClient<T>) -> Option<T> {
+    fn pop(&self, client: &mut PopClient<T>) -> Option<T> {
         let guard = &pin();
 
         let node = client.node.load(Ordering::SeqCst, guard);
@@ -210,6 +210,24 @@ impl<T> TreiberStack<T> {
     }
 }
 
+impl<T> PersistentOp<PushClient<T>> for TreiberStack<T> {
+    type Input = T;
+    type Output = ();
+
+    fn persistent_op(&self, client: &mut PushClient<T>, input: T) {
+        self.push(client, input)
+    }
+}
+
+impl<T> PersistentOp<PopClient<T>> for TreiberStack<T> {
+    type Input = ();
+    type Output = Option<T>;
+
+    fn persistent_op(&self, client: &mut PopClient<T>, _: ()) -> Option<T> {
+        self.pop(client)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -243,8 +261,8 @@ mod test {
 
                 let _ = scope.spawn(move |_| {
                     for i in 0..COUNT {
-                        stack_ref.push(&mut push_vec[i], tid);
-                        let _ = stack_ref.pop(&mut pop_vec[i]);
+                        stack_ref.persistent_op(&mut push_vec[i], tid);
+                        let _ = stack_ref.persistent_op(&mut pop_vec[i], ());
                     }
                 });
             }
@@ -252,13 +270,15 @@ mod test {
         .unwrap();
 
         // Check empty
-        assert!(stack.pop(&mut PopClient::<usize>::default()).is_none());
+        assert!(stack
+            .persistent_op(&mut PopClient::<usize>::default(), ())
+            .is_none());
 
         // Account pop results
         let mut results = vec![0_usize; NR_THREAD];
         for client_vec in pop_clients.iter_mut() {
             for client in client_vec.iter_mut() {
-                let ret = stack.pop(client).unwrap();
+                let ret = stack.persistent_op(client, ()).unwrap();
                 results[ret] += 1;
             }
         }
