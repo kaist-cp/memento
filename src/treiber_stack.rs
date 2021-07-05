@@ -15,7 +15,7 @@ struct Node<T> {
 }
 
 /// `Stack`의 `push()`를 호출할 때 쓰일 client
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PushClient<T> {
     /// push를 위해 할당된 node
     node: Atomic<Node<T>>,
@@ -36,7 +36,7 @@ impl<T> PersistentClient for PushClient<T> {
 }
 
 /// `Stack`의 `pop()`를 호출할 때 쓰일 client
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PopClient<T> {
     /// pup를 위해 할당된 node
     node: Atomic<Node<T>>,
@@ -115,19 +115,19 @@ impl<T> TreiberStack<T> {
     }
 
     /// top에 새 `node` 연결을 시도
-    fn try_push_inner(&self, node: Shared<'_, Node<T>>, vguard: &Guard) -> bool {
+    fn try_push_inner(&self, node: Shared<'_, Node<T>>, guard: &Guard) -> bool {
         let node_ref = unsafe { node.deref() };
-        let top = self.top.load(Ordering::SeqCst, vguard);
+        let top = self.top.load(Ordering::SeqCst, guard);
 
         node_ref.next.store(top, Ordering::SeqCst);
         self.top
-            .compare_exchange(top, node, Ordering::SeqCst, Ordering::SeqCst, vguard)
+            .compare_exchange(top, node, Ordering::SeqCst, Ordering::SeqCst, guard)
             .is_ok()
     }
 
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(&self, node: Shared<'_, Node<T>>, vguard: &Guard) -> bool {
-        let mut curr = self.top.load(Ordering::SeqCst, vguard);
+    fn search(&self, node: Shared<'_, Node<T>>, guard: &Guard) -> bool {
+        let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
             if curr.as_raw() == node.as_raw() {
@@ -135,7 +135,7 @@ impl<T> TreiberStack<T> {
             }
 
             let curr_ref = unsafe { curr.deref() };
-            curr = curr_ref.next.load(Ordering::SeqCst, vguard);
+            curr = curr_ref.next.load(Ordering::SeqCst, guard);
         }
 
         false
@@ -148,6 +148,7 @@ impl<T> TreiberStack<T> {
 
         let node = client.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
+            // post-crash execution
             let node_ref = unsafe { node.deref() };
             let my_id = client as *const PopClient<T> as usize;
 
@@ -158,61 +159,112 @@ impl<T> TreiberStack<T> {
             };
         }
 
-        let null: *const PopClient<T> = ptr::null();
-
+        let mut top = self.top.load(Ordering::SeqCst, guard);
         loop {
-            let top = self.top.load(Ordering::SeqCst, guard);
-            let top_ref = unsafe { top.as_ref()? };
-
-            // 우선 내가 top node를 가리키고
-            client.node.store(top, Ordering::SeqCst);
-
-            // top node에 내 이름 새겨넣음
-            if top_ref
-                .popper
-                .compare_exchange(
-                    null as usize,
-                    &client as *const _ as usize,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                )
-                .is_ok()
-            {
-                return unsafe { Some(ptr::read(&top_ref.data as *const _)) };
-                // TODO: free node
+            match self.try_pop_inner(client as *const _ as usize, &client.node, top, guard) {
+                Ok(Some(v)) => return Some(v),
+                Ok(None) => return None,
+                Err(Some(new_top)) => top = new_top,
+                Err(None) => top = self.top.load(Ordering::SeqCst, guard),
             }
-
-            let next = top_ref.next.load(Ordering::SeqCst, guard);
-            let _ = self
-                .top
-                .compare_exchange(top, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         }
     }
 
     // TODO: pub try_pop() 혹은 pop에 count 파라미터 달기
+
+    /// top node를 pop 시도
+    fn try_pop_inner<'g>(
+        &self,
+        client_id: usize,
+        client_node: &Atomic<Node<T>>,
+        top: Shared<'g, Node<T>>,
+        guard: &'g Guard,
+    ) -> Result<Option<T>, Option<Shared<'g, Node<T>>>> {
+        let top_ref = some_or!(unsafe { top.as_ref() }, return Ok(None)); // empty
+
+        // 우선 내가 top node를 가리키고
+        client_node.store(top, Ordering::SeqCst);
+
+        // top node에 내 이름 새겨넣음
+        let null: *const PopClient<T> = ptr::null();
+        let pop_succ = top_ref
+            .popper
+            .compare_exchange(null as usize, client_id, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+
+        // top node를 next로 바꿈
+        let next = top_ref.next.load(Ordering::SeqCst, guard);
+        let top_set_succ = self
+            .top
+            .compare_exchange(top, next, Ordering::SeqCst, Ordering::SeqCst, guard)
+            .is_ok();
+
+        match (pop_succ, top_set_succ) {
+            (true, _) => {
+                // TODO: free node
+                Ok(Some(unsafe { ptr::read(&top_ref.data as *const _) })) // popped
+            }
+            (false, true) => Err(Some(next)), // I changed top -> return the next top
+            (false, false) => Err(None),      // Someone changed top
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crossbeam_utils::thread;
 
     #[test]
-    fn push_single() {
+    fn push_pop() {
+        const NR_THREAD: usize = 4;
+        const COUNT: usize = 1_000_000;
+
         let stack = TreiberStack::<usize>::default(); // TODO(persistent location)
-                                                      // let mut push_client = PushClient::<usize>::default(); // TODO(persistent location)
-        let mut pop_client = PopClient::<usize>::default(); // TODO(persistent location)
+        let mut push_clients = vec![vec!(PushClient::<usize>::default(); COUNT); NR_THREAD]; // TODO(persistent location)
+        let mut pop_clients = vec![vec!(PopClient::<usize>::default(); COUNT); NR_THREAD]; // TODO(persistent location)
 
-        // TODO: Fix "mut ref more than once" error
-        // client 내의 shared pointer lifetime 때문에 error 발생
-        // const COUNT: usize = 1_000_000;
-        // for i in 0..COUNT {
-        //     stack.push(&mut push_client, i);
-        //     assert_eq!(stack.pop(&mut pop_client), Some(i));
+        // 아래 로직은 idempotent 함
 
-        //     push_client.reset();
-        //     pop_client.reset();
-        // }
+        #[allow(box_pointers)]
+        thread::scope(|scope| {
+            for tid in 0..NR_THREAD {
+                let stack_ref = &stack;
+                let push_vec = unsafe {
+                    (push_clients.get_unchecked_mut(tid) as *mut Vec<PushClient<usize>>)
+                        .as_mut()
+                        .unwrap()
+                };
+                let pop_vec = unsafe {
+                    (pop_clients.get_unchecked_mut(tid) as *mut Vec<PopClient<usize>>)
+                        .as_mut()
+                        .unwrap()
+                };
 
-        assert!(stack.pop(&mut pop_client).is_none());
+                let _ = scope.spawn(move |_| {
+                    for i in 0..COUNT {
+                        stack_ref.push(&mut push_vec[i], tid);
+                        let _ = stack_ref.pop(&mut pop_vec[i]);
+                    }
+                });
+            }
+        })
+        .unwrap();
+
+        // Check empty
+        assert!(stack.pop(&mut PopClient::<usize>::default()).is_none());
+
+        // Account pop results
+        let mut results = vec![0_usize; NR_THREAD];
+        for client_vec in pop_clients.iter_mut() {
+            for client in client_vec.iter_mut() {
+                let ret = stack.pop(client).unwrap();
+                results[ret] += 1;
+            }
+        }
+
+        for &r in results.iter() {
+            assert_eq!(r, COUNT);
+        }
     }
 }

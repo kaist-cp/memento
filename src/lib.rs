@@ -30,6 +30,8 @@
 
 //! Persistent objects collection
 
+#[macro_use]
+mod utils;
 pub mod counter;
 pub mod exchanger;
 pub mod persistent;
