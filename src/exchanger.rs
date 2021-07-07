@@ -199,7 +199,7 @@ impl<T> PersistentOp<ExchangeClient<T>> for Exchanger<T> {
     type Input = T;
     type Output = T;
 
-    fn persistent_op(&self, client: &mut ExchangeClient<T>, input: T) -> T {
+    fn persistent_op(&self, client: &mut ExchangeClient<T>, input: Self::Input) -> Self::Output {
         self.exchange(client, input)
     }
 }

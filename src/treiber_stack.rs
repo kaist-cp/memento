@@ -1,5 +1,16 @@
 //! Persistent stack based on Treiber stack
 
+// TODO(SMR 적용):
+// - SMR 만든 후 crossbeam 걷어내기
+// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
+
+// TODO(pmem 사용(#31, #32)):
+// - persist를 위해 flush/fence 추가
+// - persistent location 위에서 동작
+
+// TODO(Ordering):
+// - Ordering 최적화
+
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use std::ptr;
@@ -31,6 +42,7 @@ impl<T> Default for PushClient<T> {
 
 impl<T> PersistentClient for PushClient<T> {
     fn reset(&mut self) {
+        // TODO: if not finished -> free node
         self.node.store(Shared::null(), Ordering::SeqCst);
     }
 }
@@ -72,57 +84,77 @@ impl<T> Default for TreiberStack<T> {
 
 impl<T> TreiberStack<T> {
     /// Treiber stack에 `val`을 삽입함
-    fn push(&self, client: &mut PushClient<T>, val: T) {
+    /// is_try가 true라면 1회만 시도
+    fn push(&self, client: &mut PushClient<T>, val: T, is_try: bool) -> Result<(), ()> {
         let guard = &pin();
+        let node = some_or!(self.incomplete_node(client, val, guard), return Ok(()));
 
-        let mut node = client.node.load(Ordering::SeqCst, guard);
-        if !node.is_null() {
-            if self.is_finished(node, guard) {
-                return;
+        if is_try {
+            if self.try_push_inner(node, guard).is_err() {
+                // 재시도시 불필요한 search를 피하기 위한 태깅
+                client.node.store(node.with_tag(1), Ordering::SeqCst);
+                return Err(());
             }
         } else {
-            // Install a node for the first execution
+            while self.try_push_inner(node, guard).is_err() {}
+        }
+
+        Ok(())
+    }
+
+    /// `node`의 push 작업이 이미 끝났는지 체크
+    fn incomplete_node<'g>(
+        &self,
+        client: &PushClient<T>,
+        val: T,
+        guard: &'g Guard,
+    ) -> Option<Shared<'g, Node<T>>> {
+        let node = client.node.load(Ordering::SeqCst, guard);
+
+        // (1) first execution
+        if node.is_null() {
             let null: *const PopClient<T> = ptr::null();
-            node = Owned::new(Node {
+            let n = Owned::new(Node {
                 data: val,
                 next: Atomic::null(),
                 popper: AtomicUsize::new(null as usize), // CHECK: Does this guarantee uniqueness?
             })
             .into_shared(guard);
-            client.node.store(node, Ordering::SeqCst);
+            client.node.store(n, Ordering::SeqCst);
+            return Some(n);
         }
 
-        while !self.try_push_inner(node, guard) {}
-    }
-
-    // TODO: pub try_push() 혹은 push에 count 파라미터 달기
-
-    /// `node`의 push 작업이 이미 끝났는지 체크
-    fn is_finished(&self, node: Shared<'_, Node<T>>, vguard: &Guard) -> bool {
-        // (1) stack 안에 있으면 push된 것이다 (Direct tracking)
-        if self.search(node, vguard) {
-            return true;
+        // (2) tag가 1이면 `try_push()` 실패했던 것이다
+        if node.tag() == 1 {
+            client.node.store(node.with_tag(0), Ordering::SeqCst);
+            return Some(node.with_tag(0));
         }
 
-        // (2) 이미 pop 되었다면 push된 것이다
+        // (3) stack 안에 있으면 push된 것이다 (Direct tracking)
+        if self.search(node, guard) {
+            return None;
+        }
+
+        // (4) 이미 pop 되었다면 push된 것이다
         let node_ref = unsafe { node.deref() };
         let null: *const PopClient<T> = ptr::null();
         if node_ref.popper.load(Ordering::SeqCst) != null as usize {
-            return true;
+            return None;
         }
 
-        false
+        Some(node)
     }
 
     /// top에 새 `node` 연결을 시도
-    fn try_push_inner(&self, node: Shared<'_, Node<T>>, guard: &Guard) -> bool {
+    fn try_push_inner(&self, node: Shared<'_, Node<T>>, guard: &Guard) -> Result<(), ()> {
         let node_ref = unsafe { node.deref() };
         let top = self.top.load(Ordering::SeqCst, guard);
 
         node_ref.next.store(top, Ordering::SeqCst);
         self.top
             .compare_exchange(top, node, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .is_ok()
+            .map(|_| ())
+            .map_err(|_| ())
     }
 
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
@@ -142,8 +174,9 @@ impl<T> TreiberStack<T> {
     }
 
     /// Treiber stack에서 top node의 아이템을 반환함
-    /// 비어 있을 경우 `None`을 반환
-    fn pop(&self, client: &mut PopClient<T>) -> Option<T> {
+    /// 비어 있을 경우 `Ok(None)`을 반환
+    /// is_try가 true라면 1회만 시도 -> 실패시 `Err(())` 반환
+    fn pop(&self, client: &mut PopClient<T>, is_try: bool) -> Result<Option<T>, ()> {
         let guard = &pin();
 
         let node = client.node.load(Ordering::SeqCst, guard);
@@ -154,7 +187,7 @@ impl<T> TreiberStack<T> {
 
             // node가 정말 내가 pop한 게 맞는지 확인
             if node_ref.popper.load(Ordering::SeqCst) == my_id {
-                return unsafe { Some(ptr::read(&node_ref.data as *const _)) };
+                return Ok(Some(unsafe { ptr::read(&node_ref.data as *const _) }));
                 // TODO: free node
             };
         }
@@ -162,22 +195,21 @@ impl<T> TreiberStack<T> {
         let mut top = self.top.load(Ordering::SeqCst, guard);
         loop {
             match self.try_pop_inner(client as *const _ as usize, &client.node, top, guard) {
-                Ok(Some(v)) => return Some(v),
-                Ok(None) => return None,
+                Ok(Some(v)) => return Ok(Some(v)),
+                Ok(None) => return Ok(None),
+                Err(_) if is_try => return Err(()),
                 Err(Some(new_top)) => top = new_top,
                 Err(None) => top = self.top.load(Ordering::SeqCst, guard),
             }
         }
     }
 
-    // TODO: pub try_pop() 혹은 pop에 count 파라미터 달기
-
     /// top node를 pop 시도
     fn try_pop_inner<'g>(
         &self,
         client_id: usize,
         client_node: &Atomic<Node<T>>,
-        top: Shared<'g, Node<T>>,
+        top: Shared<'_, Node<T>>,
         guard: &'g Guard,
     ) -> Result<Option<T>, Option<Shared<'g, Node<T>>>> {
         let top_ref = some_or!(unsafe { top.as_ref() }, return Ok(None)); // empty
@@ -211,20 +243,20 @@ impl<T> TreiberStack<T> {
 }
 
 impl<T> PersistentOp<PushClient<T>> for TreiberStack<T> {
-    type Input = T;
-    type Output = ();
+    type Input = (T, bool); // value, try mode
+    type Output = Result<(), ()>;
 
-    fn persistent_op(&self, client: &mut PushClient<T>, input: T) {
-        self.push(client, input)
+    fn persistent_op(&self, client: &mut PushClient<T>, input: Self::Input) -> Self::Output {
+        self.push(client, input.0, input.1)
     }
 }
 
 impl<T> PersistentOp<PopClient<T>> for TreiberStack<T> {
-    type Input = ();
-    type Output = Option<T>;
+    type Input = bool; // try mode
+    type Output = Result<Option<T>, ()>;
 
-    fn persistent_op(&self, client: &mut PopClient<T>, _: ()) -> Option<T> {
-        self.pop(client)
+    fn persistent_op(&self, client: &mut PopClient<T>, input: Self::Input) -> Self::Output {
+        self.pop(client, input)
     }
 }
 
@@ -261,8 +293,11 @@ mod test {
 
                 let _ = scope.spawn(move |_| {
                     for i in 0..COUNT {
-                        stack_ref.persistent_op(&mut push_vec[i], tid);
-                        let _ = stack_ref.persistent_op(&mut pop_vec[i], ());
+                        let _ = stack_ref.persistent_op(&mut push_vec[i], (tid, false));
+                        assert!(stack_ref
+                            .persistent_op(&mut pop_vec[i], false)
+                            .unwrap()
+                            .is_some());
                     }
                 });
             }
@@ -271,14 +306,15 @@ mod test {
 
         // Check empty
         assert!(stack
-            .persistent_op(&mut PopClient::<usize>::default(), ())
+            .persistent_op(&mut PopClient::<usize>::default(), false)
+            .unwrap()
             .is_none());
 
         // Check results
         let mut results = vec![0_usize; NR_THREAD];
         for client_vec in pop_clients.iter_mut() {
             for client in client_vec.iter_mut() {
-                let ret = stack.persistent_op(client, ()).unwrap();
+                let ret = stack.persistent_op(client, false).unwrap().unwrap();
                 results[ret] += 1;
             }
         }
