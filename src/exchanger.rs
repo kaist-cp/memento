@@ -17,6 +17,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use std::mem::MaybeUninit;
+use std::time::{Duration, SystemTime};
 
 use crate::persistent::*;
 
@@ -73,6 +74,16 @@ impl<T> PersistentClient for ExchangeClient<T> {
 
 unsafe impl<T: Send> Send for ExchangeClient<T> {}
 
+/// `Exchanger::exchange()`의 시간 제한
+#[derive(Debug)]
+pub enum Timeout {
+    /// `Duration` 만큼 시간 제한
+    Limited(Duration),
+
+    /// 시간 제한 없음
+    Unlimited,
+}
+
 /// 스레드 간의 exchanger
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
@@ -96,7 +107,7 @@ unsafe impl<T: Send> Send for Exchanger<T> {}
 impl<T> Exchanger<T> {
     /// 나의 값을 주고 상대의 값을 반환함
     /// node에 주요 정보를 넣고 다른 스레드에게 보여주어 helping 할 수 있음
-    fn exchange(&self, client: &mut ExchangeClient<T>, val: T) -> T {
+    fn exchange(&self, client: &mut ExchangeClient<T>, val: T, timeout: Timeout) -> Result<T, ()> {
         let guard = &pin();
         let mut myop = client.node.load(Ordering::SeqCst, guard);
 
@@ -113,6 +124,7 @@ impl<T> Exchanger<T> {
             client.node.store(myop, Ordering::SeqCst);
         }
 
+        let start_time = SystemTime::now();
         let myop_ref = unsafe { myop.deref() };
 
         loop {
@@ -120,8 +132,30 @@ impl<T> Exchanger<T> {
             let yourop = self.slot.load(Ordering::SeqCst, guard);
 
             // 그 전에 내 교환은 이미 끝났 건지 확인
+            // 아니라면 timeout check
             if myop_ref.response.load(Ordering::SeqCst) {
-                return unsafe { Self::finish(myop_ref) };
+                return Ok(unsafe { Self::finish(myop_ref) });
+            } else if let Timeout::Limited(t) = timeout {
+                if start_time.elapsed().unwrap() > t {
+                    if myop != yourop {
+                        return Err(());
+                    }
+
+                    // slot 비우기 -> 실패한다면 그새 짝이 생겼다는 뜻
+                    if self
+                        .slot
+                        .compare_exchange(
+                            myop,
+                            Shared::null(),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        )
+                        .is_ok()
+                    {
+                        return Err(());
+                    }
+                }
             }
 
             if yourop.is_null() {
@@ -142,8 +176,11 @@ impl<T> Exchanger<T> {
             const BUSY: usize = 1;
 
             match yourop.tag() {
-                WAITING if myop != yourop => {
-                    // (2) slot에서 다른 node가 기다림
+                WAITING if myop == yourop => {
+                    // (2) slot에서 내 node가 기다림
+                }
+                WAITING => {
+                    // (3) slot에서 다른 node가 기다림
 
                     // slot에 있는 node를 짝꿍 삼기 시도
                     myop_ref.partner.store(yourop, Ordering::SeqCst);
@@ -159,11 +196,8 @@ impl<T> Exchanger<T> {
                         .is_ok()
                     {
                         self.help(myop, guard);
-                        return unsafe { Self::finish(myop_ref) };
+                        return Ok(unsafe { Self::finish(myop_ref) });
                     }
-                }
-                WAITING => {
-                    // (3) slot에서 내 node가 기다림
                 }
                 BUSY => {
                     // (4) 짝짓기 중
@@ -199,11 +233,11 @@ impl<T> Exchanger<T> {
 }
 
 impl<T> PersistentOp<ExchangeClient<T>> for Exchanger<T> {
-    type Input = T;
-    type Output = T;
+    type Input = (T, Timeout);
+    type Output = Result<T, ()>;
 
     fn persistent_op(&self, client: &mut ExchangeClient<T>, input: Self::Input) -> Self::Output {
-        self.exchange(client, input)
+        self.exchange(client, input.0, input.1)
     }
 }
 
@@ -231,8 +265,8 @@ mod test {
                 };
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
-                    let ret = xchg_ref.persistent_op(client, tid);
-                    assert_eq!(ret, 1 - tid);
+                    let ret = xchg_ref.persistent_op(client, (tid, Timeout::Unlimited));
+                    assert_eq!(ret, Ok(1 - tid));
                 });
             }
         })
@@ -259,23 +293,31 @@ mod test {
         thread::scope(|scope| {
             let _ = scope.spawn(|_| {
                 // [0] -> [1]    [2]
-                item0 = lxhg.persistent_op(&mut exclient0, item0);
+                item0 = lxhg
+                    .persistent_op(&mut exclient0, (item0, Timeout::Unlimited))
+                    .unwrap();
                 assert_eq!(item0, 1);
             });
 
             let _ = scope.spawn(|_| {
                 // [0]    [1] <- [2]
-                item2 = rxhg.persistent_op(&mut exclient2, item2);
+                item2 = rxhg
+                    .persistent_op(&mut exclient2, (item2, Timeout::Unlimited))
+                    .unwrap();
                 assert_eq!(item2, 0);
             });
 
             // Composition in the middle
             // Step1: [0] <- [1]    [2]
-            item1 = lxhg.persistent_op(&mut exclient1_0, item1);
+            item1 = lxhg
+                .persistent_op(&mut exclient1_0, (item1, Timeout::Unlimited))
+                .unwrap();
             assert_eq!(item1, 0);
 
             // Step2: [1]    [0] -> [2]
-            item1 = rxhg.persistent_op(&mut exclient1_2, item1);
+            item1 = rxhg
+                .persistent_op(&mut exclient1_2, (item1, Timeout::Unlimited))
+                .unwrap();
             assert_eq!(item1, 2);
         })
         .unwrap();
@@ -312,7 +354,7 @@ mod test {
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
                     for client in client_vec.iter_mut() {
-                        let _ = xchg_ref.persistent_op(client, tid);
+                        let _ = xchg_ref.persistent_op(client, (tid, Timeout::Unlimited));
                         let _ = cnts_ref[tid].fetch_add(1, Ordering::SeqCst);
                     }
                 });
@@ -351,7 +393,9 @@ mod test {
                 };
 
                 for i in 0..cnt {
-                    let ret = xchg.persistent_op(&mut clients[tid][i], 0);
+                    let ret = xchg
+                        .persistent_op(&mut clients[tid][i], (0, Timeout::Unlimited))
+                        .unwrap();
                     results[ret] += 1;
                 }
             }
