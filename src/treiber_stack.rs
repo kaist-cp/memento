@@ -83,6 +83,10 @@ impl<T> Default for TreiberStack<T> {
 }
 
 impl<T> TreiberStack<T> {
+    /// `push()` 결과 중 trying/failure를 표시하기 위한 태그
+    const TRYING: usize = 0; // default
+    const FAIL: usize = 1;
+
     /// Treiber stack에 `val`을 삽입함
     /// is_try가 true라면 1회만 시도
     fn push(&self, client: &mut PushClient<T>, val: T, is_try: bool) -> Result<(), ()> {
@@ -91,8 +95,10 @@ impl<T> TreiberStack<T> {
 
         if is_try {
             if self.try_push_inner(node, guard).is_err() {
-                // 재시도시 불필요한 search를 피하기 위한 태깅
-                client.node.store(node.with_tag(1), Ordering::SeqCst);
+                // 재시도시 불필요한 search를 피하기 위한 FAIL 결과 태깅
+                client
+                    .node
+                    .store(node.with_tag(Self::FAIL), Ordering::SeqCst);
                 return Err(());
             }
         } else {
@@ -124,10 +130,12 @@ impl<T> TreiberStack<T> {
             return Some(n);
         }
 
-        // (2) tag가 1이면 `try_push()` 실패했던 것이다
+        // (2) tag가 FAIL이면 `try_push()` 실패했던 것이다
         if node.tag() == 1 {
-            client.node.store(node.with_tag(0), Ordering::SeqCst);
-            return Some(node.with_tag(0));
+            client
+                .node
+                .store(node.with_tag(Self::TRYING), Ordering::SeqCst);
+            return Some(node.with_tag(Self::TRYING));
         }
 
         // (3) stack 안에 있으면 push된 것이다 (Direct tracking)
@@ -173,6 +181,9 @@ impl<T> TreiberStack<T> {
         false
     }
 
+    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
+    const EMPTY: usize = 1;
+
     /// Treiber stack에서 top node의 아이템을 반환함
     /// 비어 있을 경우 `Ok(None)`을 반환
     /// is_try가 true라면 1회만 시도 -> 실패시 `Err(())` 반환
@@ -180,8 +191,14 @@ impl<T> TreiberStack<T> {
         let guard = &pin();
 
         let node = client.node.load(Ordering::SeqCst, guard);
+
+        if node.tag() == Self::EMPTY {
+            // post-crash execution (empty)
+            return Ok(None);
+        }
+
         if !node.is_null() {
-            // post-crash execution
+            // post-crash execution (trying)
             let node_ref = unsafe { node.deref() };
             let my_id = client as *const PopClient<T> as usize;
 
@@ -212,7 +229,11 @@ impl<T> TreiberStack<T> {
         top: Shared<'_, Node<T>>,
         guard: &'g Guard,
     ) -> Result<Option<T>, Option<Shared<'g, Node<T>>>> {
-        let top_ref = some_or!(unsafe { top.as_ref() }, return Ok(None)); // empty
+        let top_ref = some_or!(unsafe { top.as_ref() }, {
+            // empty
+            client_node.store(Shared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
+            return Ok(None);
+        });
 
         // 우선 내가 top node를 가리키고
         client_node.store(top, Ordering::SeqCst);
