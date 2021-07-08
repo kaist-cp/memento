@@ -138,8 +138,11 @@ impl<T> Exchanger<T> {
                 continue;
             }
 
+            const WAITING: usize = 0; // default
+            const BUSY: usize = 1;
+
             match yourop.tag() {
-                0 if myop != yourop => {
+                WAITING if myop != yourop => {
                     // (2) slot에서 다른 node가 기다림
 
                     // slot에 있는 node를 짝꿍 삼기 시도
@@ -148,7 +151,7 @@ impl<T> Exchanger<T> {
                         .slot
                         .compare_exchange(
                             yourop,
-                            myop.with_tag(1), // "짝짓기 중"으로 표시
+                            myop.with_tag(BUSY), // "짝짓기 중"으로 표시
                             Ordering::SeqCst,
                             Ordering::SeqCst,
                             guard,
@@ -159,15 +162,15 @@ impl<T> Exchanger<T> {
                         return unsafe { Self::finish(myop_ref) };
                     }
                 }
-                0 => {
+                WAITING => {
                     // (3) slot에서 내 node가 기다림
                 }
-                1 => {
+                BUSY => {
                     // (4) 짝짓기 중
                     self.help(yourop, guard);
                 }
                 _ => {
-                    unreachable!("Tag is at most 1");
+                    unreachable!("Tag is either WAITING or BUSY");
                 }
             }
         }
