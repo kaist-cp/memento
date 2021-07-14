@@ -108,7 +108,6 @@ unsafe impl<T: Send> Sync for Exchanger<T> {}
 unsafe impl<T: Send> Send for Exchanger<T> {}
 
 impl<T> Exchanger<T> {
-    // TODO: 계속 copy가 일어나는 것에 대해 ownership 관련 이슈 만들기 (문제상황정리, 답도 찾기)
     fn exchange(&self, client: &mut ExchangeClient<T>, val: T, timeout: Timeout) -> Result<T, ()> {
         let guard = &pin();
         let mut myop = client.node.load(Ordering::SeqCst, guard);
