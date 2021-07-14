@@ -51,7 +51,10 @@ impl<T> Node<T> {
     }
 }
 
-/// `Exchanger`의 `exchange()`을 호출할 때 쓰일 client
+/// `Exchanger::exchange()`을 호출할 때 쓰일 client
+/// `Exchanger::exchange(val, timeout)`:
+/// - 나의 `val`을 주고 상대의 값을 반환함
+/// - `timeout`이 `Timeout::Limited(d)`일 경우 `d` 시간 내에 교환이 이루어지지 않으면 실패
 #[derive(Debug, Clone)]
 pub struct ExchangeClient<T> {
     /// 해당 op를 위해 할당된 node
@@ -105,8 +108,7 @@ unsafe impl<T: Send> Sync for Exchanger<T> {}
 unsafe impl<T: Send> Send for Exchanger<T> {}
 
 impl<T> Exchanger<T> {
-    /// 나의 값을 주고 상대의 값을 반환함
-    /// node에 주요 정보를 넣고 다른 스레드에게 보여주어 helping 할 수 있음
+    // TODO: 계속 copy가 일어나는 것에 대해 ownership 관련 이슈 만들기 (문제상황정리, 답도 찾기)
     fn exchange(&self, client: &mut ExchangeClient<T>, val: T, timeout: Timeout) -> Result<T, ()> {
         let guard = &pin();
         let mut myop = client.node.load(Ordering::SeqCst, guard);
@@ -124,18 +126,20 @@ impl<T> Exchanger<T> {
             client.node.store(myop, Ordering::SeqCst);
         }
 
-        let start_time = SystemTime::now();
+        let start_time = SystemTime::now(); // TODO: use chrono crate?
         let myop_ref = unsafe { myop.deref() };
 
         loop {
             // slot은 네 가지 상태 중 하나임
             let yourop = self.slot.load(Ordering::SeqCst, guard);
 
-            // 그 전에 내 교환은 이미 끝났 건지 확인
-            // 아니라면 timeout check
+            // 내 교환은 이미 끝났 건지 확인
             if myop_ref.response.load(Ordering::SeqCst) {
                 return Ok(unsafe { Self::finish(myop_ref) });
-            } else if let Timeout::Limited(t) = timeout {
+            }
+
+            // timeout check
+            if let Timeout::Limited(t) = timeout {
                 if start_time.elapsed().unwrap() > t {
                     if myop != yourop {
                         return Err(());
@@ -210,6 +214,7 @@ impl<T> Exchanger<T> {
         }
     }
 
+    /// 짝짓기 된 pair를 교환시켜 줌
     fn help(&self, yourop: Shared<'_, Node<T>>, guard: &Guard) {
         let yourop_ref = unsafe { yourop.deref() };
         let partner = yourop_ref.partner.load(Ordering::SeqCst, guard);
@@ -226,6 +231,7 @@ impl<T> Exchanger<T> {
         );
     }
 
+    /// 상대에게서 받아온 item을 반환
     unsafe fn finish(myop_ref: &Node<T>) -> T {
         ptr::read(myop_ref.yours.as_ptr())
         // TODO: free node
@@ -243,7 +249,7 @@ impl<T> PersistentOp<ExchangeClient<T>> for Exchanger<T> {
 
 #[cfg(test)]
 mod test {
-    use std::{process::exit, sync::atomic::AtomicUsize, time::Duration};
+    use std::{sync::atomic::AtomicUsize, time::Duration};
 
     use super::*;
     use crossbeam_utils::thread;
@@ -334,83 +340,67 @@ mod test {
 
         // 아래 로직은 idempotent 함
 
-        // tid별 cnt initialization
-        let mut cnts = vec![];
+        // tid별 실행횟수 vec 및
+        // return 값별 리턴개수 vec initialization
+        let mut exec_cnts = vec![];
+        let mut ret_cnts = vec![];
         for _ in 0..NR_THREAD {
-            cnts.push(AtomicUsize::new(0));
+            exec_cnts.push(AtomicUsize::new(0));
+            ret_cnts.push(AtomicUsize::new(0));
         }
+
+        // 혼자만 남은 tid와 남은 횟수
+        let remained_tid = AtomicUsize::new(0);
+        let remained_cnt = AtomicUsize::new(0);
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
             for tid in 0..NR_THREAD {
                 let xchg_ref = &xchg;
-                let cnts_ref = &cnts;
                 let client_vec = unsafe {
                     (clients.get_unchecked_mut(tid) as *mut Vec<ExchangeClient<usize>>)
                         .as_mut()
                         .unwrap()
                 };
 
+                let exec_cnts_ref = &exec_cnts;
+                let ret_cnts_ref = &ret_cnts;
+
+                let remained_tid_ref = &remained_tid;
+                let remained_cnt_ref = &remained_cnt;
+
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
-                    for client in client_vec.iter_mut() {
-                        let _ = xchg_ref.persistent_op(client, (tid, Timeout::Unlimited));
-                        let _ = cnts_ref[tid].fetch_add(1, Ordering::SeqCst);
+                    for (i, client) in client_vec.iter_mut().enumerate() {
+                        let ret = xchg_ref.persistent_op(
+                            client,
+                            (tid, Timeout::Limited(Duration::from_millis(5000))), // 충분히 긴 시간
+                        );
+                        let ret = ok_or!(ret, {
+                            // 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
+                            remained_tid_ref.store(tid, Ordering::SeqCst);
+                            remained_cnt_ref.store(COUNT - i, Ordering::SeqCst);
+                            break;
+                        });
+                        let _ = exec_cnts_ref[tid].fetch_add(1, Ordering::SeqCst);
+                        let _ = ret_cnts_ref[ret].fetch_add(1, Ordering::SeqCst);
                     }
                 });
             }
-
-            // Wait for all works to be done & Check remained thread
-            // TODO: exchanger에 time limit 기능 추가한 뒤 혼자 남은 스레드는 알아서 포기하게끔
-            let mut remained_tid = 0;
-            let mut remained_cnt = 0;
-            'wait: loop {
-                std::thread::sleep(Duration::from_millis(500));
-
-                for (tid, cnt) in cnts.iter().enumerate() {
-                    let c = cnt.load(Ordering::SeqCst);
-                    if c != COUNT {
-                        if remained_cnt == 0 {
-                            remained_cnt = COUNT - c;
-                            remained_tid = tid;
-                        } else {
-                            remained_cnt = 0;
-                            continue 'wait;
-                        }
-                    }
-                }
-
-                break;
-            }
-
-            // Check results
-            let mut results = vec![0_usize; NR_THREAD];
-            for tid in 0..NR_THREAD {
-                let cnt = if tid != remained_tid {
-                    COUNT
-                } else {
-                    COUNT - remained_cnt
-                };
-
-                for i in 0..cnt {
-                    let ret = xchg
-                        .persistent_op(&mut clients[tid][i], (0, Timeout::Unlimited))
-                        .unwrap();
-                    results[ret] += 1;
-                }
-            }
-
-            for (tid, &r) in results.iter().enumerate() {
-                if tid != remained_tid {
-                    assert_eq!(r, COUNT);
-                } else {
-                    assert_eq!(r + remained_cnt, COUNT);
-                }
-            }
-
-            // TODO: exchanger에 time limit 기능 추가한 뒤 제거
-            exit(0);
         })
         .unwrap();
+
+        // Check results
+        for (tid, r) in ret_cnts.iter().enumerate() {
+            let rm_tid = remained_tid.load(Ordering::SeqCst);
+            let rm_cnt = remained_cnt.load(Ordering::SeqCst);
+            let ret_cnt = r.load(Ordering::SeqCst);
+
+            if tid != rm_tid {
+                assert_eq!(ret_cnt, COUNT);
+            } else {
+                assert_eq!(ret_cnt + rm_cnt, COUNT);
+            }
+        }
     }
 }

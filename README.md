@@ -1,4 +1,4 @@
-# Compositional Abstraction for Persistent Objects
+# Compositional Construction of Failure-Safe Persistent Objects
 
 ## Resource
 

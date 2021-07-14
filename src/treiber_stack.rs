@@ -21,11 +21,15 @@ struct Node<T> {
     data: T,
     next: Atomic<Node<T>>,
 
-    /// 누가 pop 했는지 식별 (popper를 통해 참조는 하지 않음)
+    /// 누가 pop 했는지 식별
+    // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
     popper: AtomicUsize,
 }
 
-/// `Stack`의 `push()`를 호출할 때 쓰일 client
+/// `TreiberStack::push()`를 호출할 때 쓰일 client
+/// `TreiberStack::push(client, (val, is_try))`:
+/// - Treiber stack에 `val`을 삽입함
+/// - `is_try`가 `true`라면 1회만 시도
 #[derive(Debug, Clone)]
 pub struct PushClient<T> {
     /// push를 위해 할당된 node
@@ -47,7 +51,11 @@ impl<T> PersistentClient for PushClient<T> {
     }
 }
 
-/// `Stack`의 `pop()`를 호출할 때 쓰일 client
+/// `TreiberStack::pop()`를 호출할 때 쓰일 client
+/// `TreiberStack::pop(client, is_try)`:
+/// - Treiber stack에서 top node의 아이템을 반환함
+/// - 비어 있을 경우 `Ok(None)`을 반환
+/// - `is_try`가 `true`라면 1회만 시도 -> 실패시 `Err(())` 반환
 #[derive(Debug, Clone)]
 pub struct PopClient<T> {
     /// pup를 위해 할당된 node
@@ -87,11 +95,9 @@ impl<T> TreiberStack<T> {
     const TRYING: usize = 0; // default
     const FAIL: usize = 1;
 
-    /// Treiber stack에 `val`을 삽입함
-    /// is_try가 true라면 1회만 시도
     fn push(&self, client: &mut PushClient<T>, val: T, is_try: bool) -> Result<(), ()> {
         let guard = &pin();
-        let node = some_or!(self.incomplete_node(client, val, guard), return Ok(()));
+        let node = some_or!(self.is_incomplete(client, val, guard), return Ok(()));
 
         if is_try {
             if self.try_push_inner(node, guard).is_err() {
@@ -109,7 +115,7 @@ impl<T> TreiberStack<T> {
     }
 
     /// `node`의 push 작업이 이미 끝났는지 체크
-    fn incomplete_node<'g>(
+    fn is_incomplete<'g>(
         &self,
         client: &PushClient<T>,
         val: T,
@@ -123,7 +129,7 @@ impl<T> TreiberStack<T> {
             let n = Owned::new(Node {
                 data: val,
                 next: Atomic::null(),
-                popper: AtomicUsize::new(null as usize), // CHECK: Does this guarantee uniqueness?
+                popper: AtomicUsize::new(null as usize),
             })
             .into_shared(guard);
             client.node.store(n, Ordering::SeqCst);
@@ -184,9 +190,6 @@ impl<T> TreiberStack<T> {
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 1;
 
-    /// Treiber stack에서 top node의 아이템을 반환함
-    /// 비어 있을 경우 `Ok(None)`을 반환
-    /// is_try가 true라면 1회만 시도 -> 실패시 `Err(())` 반환
     fn pop(&self, client: &mut PopClient<T>, is_try: bool) -> Result<Option<T>, ()> {
         let guard = &pin();
 
