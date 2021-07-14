@@ -12,7 +12,8 @@
 // - Ordering 최적화
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
+use etrace::some_or;
 use std::ptr;
 
 use crate::persistent::*;
@@ -96,21 +97,23 @@ impl<T> TreiberStack<T> {
     const FAIL: usize = 1;
 
     fn push(&self, client: &mut PushClient<T>, val: T, is_try: bool) -> Result<(), ()> {
-        let guard = &pin();
-        let node = some_or!(self.is_incomplete(client, val, guard), return Ok(()));
+        let guard = crossbeam_epoch::pin();
+        let node = some_or!(self.is_incomplete(client, val, &guard), return Ok(()));
 
-        if is_try {
-            if self.try_push_inner(node, guard).is_err() {
-                // 재시도시 불필요한 search를 피하기 위한 FAIL 결과 태깅
-                client
-                    .node
-                    .store(node.with_tag(Self::FAIL), Ordering::SeqCst);
-                return Err(());
-            }
-        } else {
-            while self.try_push_inner(node, guard).is_err() {}
+        // first try
+        if self.try_push_inner(node, &guard).is_ok() {
+            return Ok(());
         }
 
+        if is_try {
+            // 재시도시 불필요한 search를 피하기 위한 FAIL 결과 태깅
+            client
+                .node
+                .store(node.with_tag(Self::FAIL), Ordering::SeqCst);
+            return Err(());
+        }
+
+        while self.try_push_inner(node, &guard).is_err() {}
         Ok(())
     }
 
@@ -191,9 +194,9 @@ impl<T> TreiberStack<T> {
     const EMPTY: usize = 1;
 
     fn pop(&self, client: &mut PopClient<T>, is_try: bool) -> Result<Option<T>, ()> {
-        let guard = &pin();
+        let guard = crossbeam_epoch::pin();
 
-        let node = client.node.load(Ordering::SeqCst, guard);
+        let node = client.node.load(Ordering::SeqCst, &guard);
 
         if node.tag() == Self::EMPTY {
             // post-crash execution (empty)
@@ -212,14 +215,14 @@ impl<T> TreiberStack<T> {
             };
         }
 
-        let mut top = self.top.load(Ordering::SeqCst, guard);
+        let mut top = self.top.load(Ordering::SeqCst, &guard);
         loop {
-            match self.try_pop_inner(client as *const _ as usize, &client.node, top, guard) {
+            match self.try_pop_inner(client as *const _ as usize, &client.node, top, &guard) {
                 Ok(Some(v)) => return Ok(Some(v)),
                 Ok(None) => return Ok(None),
                 Err(_) if is_try => return Err(()),
                 Err(Some(new_top)) => top = new_top,
-                Err(None) => top = self.top.load(Ordering::SeqCst, guard),
+                Err(None) => top = self.top.load(Ordering::SeqCst, &guard),
             }
         }
     }

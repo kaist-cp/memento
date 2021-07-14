@@ -16,7 +16,7 @@
 use chrono::{Duration, Utc};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
-use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
 use std::mem::MaybeUninit;
 
 use crate::persistent::*;
@@ -34,21 +34,6 @@ struct Node<T> {
 
     /// exchange 할 상대의 포인터 (단방향)
     partner: Atomic<Node<T>>,
-}
-
-impl<T> Node<T> {
-    /// 두 node가 교환할 값을 서로에게 복사
-    fn switch_pair(left: &Self, right: &Self) {
-        unsafe {
-            let lval = ptr::read(&left.mine as *const _);
-            let rval = ptr::read(&right.mine as *const _);
-            (left.yours.as_ptr() as *mut T).write(rval);
-            (right.yours.as_ptr() as *mut T).write(lval);
-        }
-
-        left.response.store(true, Ordering::SeqCst);
-        right.response.store(true, Ordering::SeqCst);
-    }
 }
 
 /// `Exchanger::exchange()`을 호출할 때 쓰일 client
@@ -109,8 +94,8 @@ unsafe impl<T: Send> Send for Exchanger<T> {}
 
 impl<T> Exchanger<T> {
     fn exchange(&self, client: &mut ExchangeClient<T>, val: T, timeout: Timeout) -> Result<T, ()> {
-        let guard = &pin();
-        let mut myop = client.node.load(Ordering::SeqCst, guard);
+        let guard = crossbeam_epoch::pin();
+        let mut myop = client.node.load(Ordering::SeqCst, &guard);
 
         if myop.is_null() {
             // First execution
@@ -121,7 +106,7 @@ impl<T> Exchanger<T> {
                 partner: Atomic::null(),
             });
 
-            myop = n.into_shared(guard);
+            myop = n.into_shared(&guard);
             client.node.store(myop, Ordering::SeqCst);
         }
 
@@ -129,10 +114,14 @@ impl<T> Exchanger<T> {
         let myop_ref = unsafe { myop.deref() };
 
         loop {
-            // slot은 네 가지 상태 중 하나임
-            let yourop = self.slot.load(Ordering::SeqCst, guard);
+            // slot의 상태에 따른 case는 총 네 가지
+            // - Case 1: slot에 아무도 없음
+            // - Case 2: slot에서 내 node가 기다림
+            // - Case 3: slot에서 다른 node가 기다림
+            // - Case 4: slot에서 누군가가 짝짓기 중 (나일 수도 있음)
+            let yourop = self.slot.load(Ordering::SeqCst, &guard);
 
-            // 내 교환은 이미 끝났 건지 확인
+            // 내 교환이 이미 끝났다면, 상대에게 가져온 값을 반환함
             if myop_ref.response.load(Ordering::SeqCst) {
                 return Ok(unsafe { Self::finish(myop_ref) });
             }
@@ -153,7 +142,7 @@ impl<T> Exchanger<T> {
                             Shared::null(),
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            guard,
+                            &guard,
                         )
                         .is_ok()
                     {
@@ -163,7 +152,7 @@ impl<T> Exchanger<T> {
             }
 
             if yourop.is_null() {
-                // (1) slot에 아무도 없음
+                // Case 1: slot에 아무도 없음
 
                 // 내 node를 slot에 넣기 시도
                 let _ = self.slot.compare_exchange(
@@ -171,7 +160,7 @@ impl<T> Exchanger<T> {
                     myop,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
-                    guard,
+                    &guard,
                 );
                 continue;
             }
@@ -181,10 +170,10 @@ impl<T> Exchanger<T> {
 
             match yourop.tag() {
                 WAITING if myop == yourop => {
-                    // (2) slot에서 내 node가 기다림
+                    // Case 2: slot에서 내 node가 기다림
                 }
                 WAITING => {
-                    // (3) slot에서 다른 node가 기다림
+                    // Case 3: slot에서 다른 node가 기다림
 
                     // slot에 있는 node를 짝꿍 삼기 시도
                     myop_ref.partner.store(yourop, Ordering::SeqCst);
@@ -195,17 +184,17 @@ impl<T> Exchanger<T> {
                             myop.with_tag(BUSY), // "짝짓기 중"으로 표시
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            guard,
+                            &guard,
                         )
                         .is_ok()
                     {
-                        self.help(myop, guard);
+                        self.help(myop, &guard);
                         return Ok(unsafe { Self::finish(myop_ref) });
                     }
                 }
                 BUSY => {
-                    // (4) 짝짓기 중
-                    self.help(yourop, guard);
+                    // Case 4: slot에서 누군가가 짝짓기 중 (나일 수도 있음)
+                    self.help(yourop, &guard);
                 }
                 _ => {
                     unreachable!("Tag is either WAITING or BUSY");
@@ -219,7 +208,18 @@ impl<T> Exchanger<T> {
         let yourop_ref = unsafe { yourop.deref() };
         let partner = yourop_ref.partner.load(Ordering::SeqCst, guard);
         let partner_ref = unsafe { partner.deref() };
-        Node::switch_pair(yourop_ref, partner_ref);
+
+        // 두 node가 교환할 값을 서로에게 복사
+        // write-write race가 일어날 수 있음. 그러나 같은 값을 write하게 되므로 상관 없음.
+        unsafe {
+            let lval = ptr::read(&yourop_ref.mine as *const _);
+            let rval = ptr::read(&partner_ref.mine as *const _);
+            (yourop_ref.yours.as_ptr() as *mut T).write(rval);
+            (partner_ref.yours.as_ptr() as *mut T).write(lval);
+        }
+
+        yourop_ref.response.store(true, Ordering::SeqCst);
+        partner_ref.response.store(true, Ordering::SeqCst);
 
         // slot 비우기
         let _ = self.slot.compare_exchange(
@@ -251,6 +251,7 @@ impl<T> PersistentOp<ExchangeClient<T>> for Exchanger<T> {
 mod test {
     use chrono::Duration;
     use crossbeam_utils::thread;
+    use etrace::ok_or;
     use std::sync::atomic::AtomicUsize;
 
     use super::*;

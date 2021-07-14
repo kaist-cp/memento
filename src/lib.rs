@@ -30,8 +30,6 @@
 
 //! Persistent objects collection
 
-#[macro_use]
-mod utils;
 pub mod exchanger;
 pub mod persistent;
 pub mod treiber_stack;
