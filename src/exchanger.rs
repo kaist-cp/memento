@@ -13,11 +13,11 @@
 // TODO(Ordering):
 // - Ordering 최적화
 
+use chrono::{Duration, Utc};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use std::mem::MaybeUninit;
-use std::time::{Duration, SystemTime};
 
 use crate::persistent::*;
 
@@ -126,7 +126,7 @@ impl<T> Exchanger<T> {
             client.node.store(myop, Ordering::SeqCst);
         }
 
-        let start_time = SystemTime::now(); // TODO: use chrono crate?
+        let start_time = Utc::now();
         let myop_ref = unsafe { myop.deref() };
 
         loop {
@@ -140,7 +140,8 @@ impl<T> Exchanger<T> {
 
             // timeout check
             if let Timeout::Limited(t) = timeout {
-                if start_time.elapsed().unwrap() > t {
+                let now = Utc::now();
+                if now.signed_duration_since(start_time) > t {
                     if myop != yourop {
                         return Err(());
                     }
@@ -249,10 +250,11 @@ impl<T> PersistentOp<ExchangeClient<T>> for Exchanger<T> {
 
 #[cfg(test)]
 mod test {
-    use std::{sync::atomic::AtomicUsize, time::Duration};
+    use chrono::Duration;
+    use crossbeam_utils::thread;
+    use std::sync::atomic::AtomicUsize;
 
     use super::*;
-    use crossbeam_utils::thread;
 
     #[test]
     fn exchange_once() {
@@ -374,7 +376,7 @@ mod test {
                     for (i, client) in client_vec.iter_mut().enumerate() {
                         let ret = xchg_ref.persistent_op(
                             client,
-                            (tid, Timeout::Limited(Duration::from_millis(5000))), // 충분히 긴 시간
+                            (tid, Timeout::Limited(Duration::milliseconds(5000))), // 충분히 긴 시간
                         );
                         let ret = ok_or!(ret, {
                             // 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
