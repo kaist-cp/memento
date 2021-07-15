@@ -1,9 +1,17 @@
 [package]
 name = "compositional-persistent-object"
 version = "0.1.0"
-authors = ["Kyeongmin Cho <kyeongmin.cho@kaist.ac.kr>"]
+authors = [
+    "Kyeongmin Cho <kyeongmin.cho@kaist.ac.kr>",
+    "Seungmin Jeon <seungmin.jeon@kaist.ac.kr>",
+    "Jeehoon Kang <jeehoon.kang@kaist.ac.kr>"
+]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+crossbeam-epoch = "0.9.5"
+crossbeam-utils = "0.8.5"
+chrono = "0.4"
+etrace = "1.1.1"
