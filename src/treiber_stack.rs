@@ -100,24 +100,21 @@ impl<T> TreiberStack<T> {
         let guard = crossbeam_epoch::pin();
         let node = some_or!(self.is_incomplete(client, val, &guard), return Ok(()));
 
-        // first try
-        if self.try_push_inner(node, &guard).is_ok() {
-            return Ok(());
-        }
-
         if is_try {
-            // 재시도시 불필요한 search를 피하기 위한 FAIL 결과 태깅
-            client
-                .node
-                .store(node.with_tag(Self::FAIL), Ordering::SeqCst);
-            return Err(());
+            self.try_push_inner(node, &guard).map_err(|_| {
+                // 재시도시 불필요한 search를 피하기 위한 FAIL 결과 태깅
+                client
+                    .node
+                    .store(node.with_tag(Self::FAIL), Ordering::SeqCst);
+            })
+        } else {
+            while self.try_push_inner(node, &guard).is_err() {}
+            Ok(())
         }
-
-        while self.try_push_inner(node, &guard).is_err() {}
-        Ok(())
     }
 
-    /// `node`의 push 작업이 이미 끝났는지 체크
+    /// client의 push 작업이 이미 끝났는지 체크
+    /// 끝나지 않았다면 Some(`push 할 node_ptr`) 반환
     fn is_incomplete<'g>(
         &self,
         client: &PushClient<T>,
