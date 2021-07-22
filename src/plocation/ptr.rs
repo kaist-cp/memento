@@ -1,6 +1,6 @@
 //! Persistent Pointer
-use crate::plocation::pool::*;
-use crate::plocation::utils::*;
+use super::pool::*;
+use super::utils::*;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -15,7 +15,7 @@ pub struct PPtr<T> {
 }
 
 impl<T: Default> PPtr<T> {
-    /// TODO: doc
+    /// 풀에 오브젝트를 할당하고 이를 참조하는 포인터 반환
     pub fn new() -> Self {
         // T의 크기만큼 할당 후 포인터 얻음
         let mut slf = Self {
@@ -27,7 +27,7 @@ impl<T: Default> PPtr<T> {
         slf
     }
 
-    /// TODO: doc
+    /// 풀의 offset 주소를 오브젝트로 간주하고 이를 참조하는 포인터 반환
     pub fn from_off(off: usize) -> Self {
         Self {
             offset: off,
@@ -44,17 +44,17 @@ impl<T: Default> PPtr<T> {
         }
     }
 
-    /// TODO: doc
+    /// null 포인터인지 확인
     pub fn is_null(&self) -> bool {
         self.offset == usize::MAX
     }
 
-    /// TODO: doc
+    /// offset 반환
     pub fn get_off(&self) -> usize {
         self.offset
     }
 
-    /// TODO: doc
+    /// 절대주소 반환
     pub fn get_addr(&self) -> usize {
         unsafe { POOL_START + self.offset }
     }

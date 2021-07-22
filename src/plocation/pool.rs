@@ -4,14 +4,16 @@
 //!
 //! [ metadata | root object |            ...               ]
 //! ^ base     ^ base + root offset                         ^ end
-use crate::plocation::utils::*;
 use std::fs::OpenOptions;
 use std::mem;
 use std::path::Path;
 
 use super::ptr::PPtr;
+use super::utils::*;
 use memmap::*;
 
+/// 새로 만든 파일이라면 8MB로 세팅
+const DEFAULT_POOL_SIZE: u64 = 8 * 1024;
 /// 풀의 시작 주소 (Persistent Pointer가 참조할 때 사용하기 위해 전역변수로 사용)
 pub static mut POOL_START: usize = 0;
 /// 풀의 끝 주소
@@ -56,9 +58,9 @@ impl Pool {
             .create(true)
             .open(filepath)
             .unwrap();
-        // 새로 만든 파일이라면 8MB로 세팅
+        // 새로 만든 파일이라면 파일 크기 세팅
         if is_new_file {
-            file.set_len(8 * 1024).unwrap();
+            file.set_len(DEFAULT_POOL_SIZE).unwrap();
         }
 
         // 2. 파일을 가상주소에 매핑
