@@ -12,8 +12,11 @@ use std::path::Path;
 use super::ptr::PPtr;
 use memmap::*;
 
-pub static mut POOL_START: usize = 0; // 풀의 시작 주소
-static mut POOL_END: usize = 0; // 풀의 끝 주소
+/// 풀의 시작 주소 (Persistent Pointer가 참조할 때 사용하기 위해 전역변수로 사용)
+pub static mut POOL_START: usize = 0;
+/// 풀의 끝 주소
+static mut POOL_END: usize = 0;
+/// 메모리 매핑에 사용한 오브젝트를 담고 있을 저장소 (drop으로 인해 매핑 해제되지 않게끔 유지하는 역할)
 static mut MMAP: Option<MmapMut> = None;
 
 /// 풀의 메타데이터를 담을 구조체
@@ -33,12 +36,12 @@ impl PoolInner {
 pub struct Pool {}
 
 impl Pool {
-    /// 파일을 persistent heap으로 매핑 후 루트 오브젝트를 가리키는 포인터 반환
+    /// 풀 열기: 파일을 persistent heap으로 매핑 후 루트 오브젝트를 가리키는 포인터 반환
     ///
     /// # Examples
     ///
     /// ```
-    /// use smjeon_test::pheap::pool::Pool;
+    /// use crate::pheap::pool::Pool;
     ///
     /// let mut head = Pool::open::<i32>("foo.pool").unwrap();
     /// *head = 5;
@@ -79,11 +82,13 @@ impl Pool {
         let mut root: PPtr<T> = PPtr::from_off(inner.root_offset);
         if is_new_file {
             // 새로 만든 파일이라면 루트 오브젝트 초기화
-            *root = T::default(); // TODO: root.init() 형태로 바꾸기?
+            // TODO: root.init() 형태로 바꾸기?
+            *root = T::default();
         }
         Ok(root)
     }
 
+    /// 풀 닫기
     pub fn close() {
         unsafe {
             POOL_START = 0;
@@ -91,13 +96,14 @@ impl Pool {
         }
     }
 
-    /// 풀에 size를 담을 수 있는 메모리 블록 할당 후, 할당된 주소의 offset 반환
+    /// 풀에 size만큼 메모리 할당
+    /// 반환값은 할당된 주소의 offset
     pub fn alloc(_size: usize) -> usize {
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         1024
     }
 
-    /// persistent pointer가 가리키는 메모리 블록 할당해제
+    /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     pub fn free<T: Default>(_pptr: &mut PPtr<T>) {
         // TODO
     }
@@ -127,6 +133,7 @@ mod test {
         }
     }
 
+    /// persistent pool에 노드를 할당하고, 다시 열었을 때 매핑된 주소가 바뀌어도 잘 따라가는지 테스트
     #[test]
     fn append_one_node() {
         // 기존의 파일은 삭제
@@ -134,12 +141,9 @@ mod test {
 
         // 첫 번째 open: persistent pool로 사용할 파일을 새로 만들고 그 안에 1개의 노드를 넣음
         {
-            // default() 함수로 초기화됨
             let mut head = Pool::open::<Node>("append_one_node.pool").unwrap();
-            assert_eq!(head.value, 0);
-            assert!(head.next.is_null());
 
-            // 풀안에 새로운 노드 할당, 루트 오브젝트에 연결
+            // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
             // 결과: head node(root obj) -> node1 -> ㅗ
             let mut node1 = PPtr::<Node>::new();
             node1.value = 1;
