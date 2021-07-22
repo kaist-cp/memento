@@ -43,7 +43,7 @@ impl Pool {
     /// # Examples
     ///
     /// ```
-    /// use crate::pheap::pool::Pool;
+    /// use compositional_persistent_object::plocation::pool::Pool;
     ///
     /// let mut head = Pool::open::<i32>("foo.pool").unwrap();
     /// *head = 5;
