@@ -3,7 +3,7 @@
 //! # Pool Address Layout
 //!
 //! [ metadata | root object |            ...               ]
-//! ^ base     ^ base + root offset                         ^ endbase + size of file
+//! ^ base     ^ base + root offset                         ^ end
 use crate::plocation::utils::*;
 use std::fs::OpenOptions;
 use std::mem;
@@ -142,6 +142,8 @@ mod test {
         // 첫 번째 open: persistent pool로 사용할 파일을 새로 만들고 그 안에 1개의 노드를 넣음
         {
             let mut head = Pool::open::<Node>("append_one_node.pool").unwrap();
+            assert_eq!(head.value, 0);
+            assert!(head.next.is_null());
 
             // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
             // 결과: head node(root obj) -> node1 -> ㅗ
