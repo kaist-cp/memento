@@ -142,14 +142,15 @@ mod test {
         // 첫 번째 open: persistent pool로 사용할 파일을 새로 만들고 그 안에 1개의 노드를 넣음
         {
             let mut head = Pool::open::<Node>("append_one_node.pool").unwrap();
+            // 처음 열 때 root object는 초기화돼야함
             assert_eq!(head.value, 0);
             assert!(head.next.is_null());
 
             // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
-            // 결과: head node(root obj) -> node1 -> ㅗ
             let mut node1 = PPtr::<Node>::new();
             node1.value = 1;
             head.next = node1;
+            // 결과: head node(root obj) -> node1 -> ㅗ
             Pool::close();
         };
 
