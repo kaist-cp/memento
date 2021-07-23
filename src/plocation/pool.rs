@@ -12,30 +12,27 @@ use super::ptr::PersistentPtr;
 use super::utils::*;
 use memmap::*;
 
-/// 풀의 시작 주소 (Persistent Pointer가 참조할 때 사용하기 위해 전역변수로 사용)
-pub static mut POOL_START: usize = 0;
-/// 풀의 끝 주소
-static mut POOL_END: usize = 0;
+/// 풀의 메타데이터 저장소 (e.g. Persistent Pointer가 참조할 때 시작주소를 사용)
+static mut POOL: Option<&mut Pool> = None;
 /// 메모리 매핑에 사용한 오브젝트를 담고 있을 저장소 (drop으로 인해 매핑 해제되지 않게끔 유지하는 역할)
 static mut MMAP: Option<MmapMut> = None;
 
-/// 풀의 메타데이터를 담을 구조체
-struct PoolInner {
-    root_offset: usize,
-    // TODO: 필요한 메타데이터가 생기면 여기에 필드로 추가
-}
-
-impl PoolInner {
-    fn init(&mut self) {
-        self.root_offset = mem::size_of::<PoolInner>();
-    }
-}
-
-/// 풀 함수(e.g. Pool::open, Pool::alloc, ..) 호출을 위한 더미 역할
+/// 풀의 메타데이터 저장 및 풀 함수(e.g. Pool::open, Pool::alloc, ..) 호출을 위한 역할
 #[derive(Debug)]
-pub struct Pool {}
+pub struct Pool {
+    start: usize,
+    end: usize,
+    root_offset: usize,
+    // TODO: 풀을 위한 메타데이터는 여기에 필드로 추가
+}
 
 impl Pool {
+    fn init(&mut self, start: usize, end: usize) {
+        self.start = start;
+        self.end = end;
+        self.root_offset = mem::size_of::<Pool>();
+    }
+
     /// 풀 생성
     pub fn create<T: Default>(filepath: &str, size: u64) -> Result<(), Error> {
         // 1. 파일 생성 및 크기 세팅
@@ -54,21 +51,15 @@ impl Pool {
         // 2. 파일을 풀 레이아웃에 맞게 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
         // 메타데이터 초기화
-        let base = mmap.get_mut(0).unwrap() as *const _ as usize;
-        let inner = unsafe { read_addr::<PoolInner>(base) };
-        inner.init();
-        
+        let start = mmap.get_mut(0).unwrap() as *const _ as usize;
+        let end = start + size as usize + 1;
+        let pool = unsafe { read_addr::<Pool>(start) };
+        pool.init(start, end);
+
         // 루트 오브젝트 초기화
-        unsafe {
-            POOL_START = base;
-        }
-        let mut root: PersistentPtr<T> = PersistentPtr::from(inner.root_offset);
+        let addr_root = unsafe { read_addr::<T>(start + pool.root_offset) };
         // TODO: root.init() 형태로 바꾸기?
-        *root = T::default();
-        unsafe {
-            POOL_START = base;
-        }
-        
+        *addr_root = T::default();
         Ok(())
     }
 
@@ -94,30 +85,54 @@ impl Pool {
         // 2. 파일을 가상주소에 매핑
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
         // 풀의 시작, 끝 주소 세팅
-        let size = file.metadata().unwrap().len() as usize;
         let base = mmap.get_mut(0).unwrap() as *const _ as usize;
-        unsafe {
-            POOL_START = base;
-            POOL_END = POOL_START + size + 1;
-            MMAP = Some(mmap); // drop으로 인해 매핑 해제되지 않게끔 유지
-        }
         // 풀의 메타데이터를 담는 inner 읽기 (inner는 풀의 시작주소에 위치)
-        let inner = unsafe { read_addr::<PoolInner>(POOL_START) };
+        let pool = unsafe { read_addr::<Pool>(base) };
 
         // 3. 풀의 루트 오브젝트를 가리키는 포인터 반환
-        Ok(PersistentPtr::from(inner.root_offset))
+        let root_obj = PersistentPtr::from(pool.root_offset);
+        unsafe {
+            POOL = Some(pool);
+            MMAP = Some(mmap); // drop으로 인해 매핑 해제되지 않게끔 유지
+        }
+        Ok(root_obj)
     }
 
     /// 풀 닫기
     pub fn close() {
         unsafe {
-            POOL_START = 0;
+            POOL = None;
             MMAP = None; // 매핑된 것이 MMAP에 저장되어있었다면 이 때 매핑 해제됨
         }
     }
 
+    /// 풀 열려있는지 확인
+    pub fn is_open() -> bool {
+        unsafe { POOL.is_some() }
+    }
+
+    /// 풀의 시작주소 반환
+    pub fn start() -> usize {
+        if !Pool::is_open() {
+            panic!("No memory pool is open.");
+        }
+        unsafe { POOL.as_deref().unwrap().start }
+    }
+
+    /// 풀의 끝주소 반환
+    pub fn end() -> usize {
+        if !Pool::is_open() {
+            panic!("No memory pool is open.");
+        }
+        unsafe { POOL.as_deref().unwrap().end }
+    }
+
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     pub fn alloc<T: Default>() -> PersistentPtr<T> {
+        if !Pool::is_open() {
+            panic!("No memory pool is open.");
+        }
+
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = allocator.alloc(mem::size_of::<T>());
         let addr_allocated = 1024;
@@ -126,13 +141,17 @@ impl Pool {
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     pub fn free<T: Default>(_pptr: &mut PersistentPtr<T>) {
+        if !Pool::is_open() {
+            panic!("No memory pool is open.");
+        }
+
         // TODO
     }
 
     /// persistent pointer가 풀에 속하는지 확인
     fn _valid<T: Default>(pptr: PersistentPtr<T>) -> bool {
         let addr = pptr.get_addr();
-        unsafe { addr >= POOL_START && addr < POOL_END }
+        addr >= Pool::start() && addr < Pool::end()
     }
 }
 #[cfg(test)]
@@ -159,7 +178,7 @@ mod test {
     fn append_one_node() {
         // 기존의 파일은 삭제하고 루트 오브젝트로 Node를 가진 8MB 크기의 풀 파일 새로 생성
         let _ = remove_file("append_one_node.pool");
-        let _ = Pool::create::<Node>("append_one_node.pool", 8*1024).unwrap();
+        let _ = Pool::create::<Node>("append_one_node.pool", 8 * 1024).unwrap();
 
         // 첫 번째 open: persistent pool로 사용할 파일을 새로 만들고 그 안에 1개의 노드를 넣음
         {
@@ -169,7 +188,6 @@ mod test {
             assert!(head.next.is_null());
 
             // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
-            // let mut node1 = PersistentPtr::<Node>::new();
             let mut node1 = Pool::alloc::<Node>();
             *node1 = Node::default();
             node1.value = 1;

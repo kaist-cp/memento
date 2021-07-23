@@ -14,18 +14,6 @@ pub struct PersistentPtr<T> {
 }
 
 impl<T: Default> PersistentPtr<T> {
-    // /// 풀에 오브젝트를 할당하고 이를 참조하는 포인터 반환
-    // pub fn new(obj: T) -> Self {
-    //     // T의 크기만큼 할당 후 포인터 얻음
-    //     let mut slf = Self {
-    //         offset: Pool::alloc(mem::size_of::<T>()),
-    //         marker: PhantomData,
-    //     };
-    //     // T 내부 초기화
-    //     *slf = obj;
-    //     slf
-    // }
-
     /// null 포인터 반환
     pub fn null() -> Self {
         // TODO: 현재는 usize::MAX를 null 식별자로 사용중. 더 좋은 방법 찾기?
@@ -47,7 +35,7 @@ impl<T: Default> PersistentPtr<T> {
 
     /// 절대주소 반환
     pub fn get_addr(&self) -> usize {
-        unsafe { POOL_START + self.offset }
+        Pool::start() + self.offset
     }
 }
 
