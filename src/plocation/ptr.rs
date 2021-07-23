@@ -2,38 +2,29 @@
 use super::pool::*;
 use super::utils::*;
 use std::marker::PhantomData;
-use std::mem;
 use std::ops::{Deref, DerefMut};
 
 /// 풀에 속한 오브젝트를 가리킬 포인터
 /// - 풀의 시작주소로부터의 offset을 가지고 있음
 /// - 참조시 풀의 시작주소와 offset을 더한 주소를 참조  
 #[derive(Default, Debug)]
-pub struct PPtr<T> {
+pub struct PersistentPtr<T> {
     offset: usize,
     marker: PhantomData<T>,
 }
 
-impl<T: Default> PPtr<T> {
-    /// 풀에 오브젝트를 할당하고 이를 참조하는 포인터 반환
-    pub fn new() -> Self {
-        // T의 크기만큼 할당 후 포인터 얻음
-        let mut slf = Self {
-            offset: Pool::alloc(mem::size_of::<T>()),
-            marker: PhantomData,
-        };
-        // T 내부 초기화
-        *slf = T::default();
-        slf
-    }
-
-    /// 풀의 offset 주소를 오브젝트로 간주하고 이를 참조하는 포인터 반환
-    pub fn from_off(off: usize) -> Self {
-        Self {
-            offset: off,
-            marker: PhantomData,
-        }
-    }
+impl<T: Default> PersistentPtr<T> {
+    // /// 풀에 오브젝트를 할당하고 이를 참조하는 포인터 반환
+    // pub fn new(obj: T) -> Self {
+    //     // T의 크기만큼 할당 후 포인터 얻음
+    //     let mut slf = Self {
+    //         offset: Pool::alloc(mem::size_of::<T>()),
+    //         marker: PhantomData,
+    //     };
+    //     // T 내부 초기화
+    //     *slf = obj;
+    //     slf
+    // }
 
     /// null 포인터 반환
     pub fn null() -> Self {
@@ -60,14 +51,24 @@ impl<T: Default> PPtr<T> {
     }
 }
 
-impl<T: Default> Deref for PPtr<T> {
+impl<T> From<usize> for PersistentPtr<T> {
+    /// 풀의 offset 주소를 오브젝트로 간주하고 이를 참조하는 포인터 반환
+    fn from(off: usize) -> Self {
+        Self {
+            offset: off,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<T: Default> Deref for PersistentPtr<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
         unsafe { read_addr(self.get_addr()) }
     }
 }
-impl<T: Default> DerefMut for PPtr<T> {
+impl<T: Default> DerefMut for PersistentPtr<T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { read_addr(self.get_addr()) }
     }
