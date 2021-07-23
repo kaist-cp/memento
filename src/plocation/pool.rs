@@ -69,11 +69,11 @@ impl Pool {
     /// ```
     /// use std::fs::remove_file;
     /// use compositional_persistent_object::plocation::pool::Pool;
-    /// 
+    ///
     /// // 기존의 파일은 제거하고 새로 생성
     /// let _ = remove_file("foo.pool");
     /// let _ = Pool::create::<i32>("foo.pool", 8 * 1024);
-    /// 
+    ///
     /// // 풀 열기
     /// let mut head = Pool::open::<i32>("foo.pool").unwrap();
     /// *head = 5;
