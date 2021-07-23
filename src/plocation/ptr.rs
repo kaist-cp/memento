@@ -7,7 +7,7 @@ use std::ops::{Deref, DerefMut};
 /// 풀에 속한 오브젝트를 가리킬 포인터
 /// - 풀의 시작주소로부터의 offset을 가지고 있음
 /// - 참조시 풀의 시작주소와 offset을 더한 주소를 참조  
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct PersistentPtr<T> {
     offset: usize,
     marker: PhantomData<T>,
@@ -28,19 +28,14 @@ impl<T> PersistentPtr<T> {
         self.offset == usize::MAX
     }
 
-    /// offset 반환
-    pub fn get_off(&self) -> usize {
-        self.offset
-    }
-
     /// 절대주소 반환
-    pub fn get_addr(&self) -> usize {
+    pub fn get_transient_addr(&self) -> usize {
         Pool::start() + self.offset
     }
 }
 
 impl<T> From<usize> for PersistentPtr<T> {
-    /// 풀의 offset 주소를 오브젝트로 간주하고 이를 참조하는 포인터 반환
+    /// 주어진 offset을 T obj의 시작 주소로 간주하고 이를 참조하는 포인터 반환
     fn from(off: usize) -> Self {
         Self {
             offset: off,
@@ -53,11 +48,11 @@ impl<T> Deref for PersistentPtr<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { read_addr(self.get_addr()) }
+        unsafe { read_addr(self.get_transient_addr()) }
     }
 }
 impl<T> DerefMut for PersistentPtr<T> {
     fn deref_mut(&mut self) -> &mut T {
-        unsafe { read_addr(self.get_addr()) }
+        unsafe { read_addr(self.get_transient_addr()) }
     }
 }

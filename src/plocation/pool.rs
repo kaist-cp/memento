@@ -4,6 +4,15 @@
 //!
 //! [ metadata | root object |            ...               ]
 //! ^ base     ^ base + root offset                         ^ end
+
+// TODO(pool 여러 개 지원(#48))
+// - 현재는 하나의 pool만 열 수 있음
+// - 동시에 여러 개의 pool을 열 수 있도록 지원
+
+// TODO(allocator 구현(#50))
+// - 현재 pool은 임시로 고정주소를 allocation하게끔 되어 있음
+// - pool의 allocator 구현하기
+
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
@@ -56,7 +65,7 @@ impl Pool {
         let pool = unsafe { read_addr::<Pool>(start) };
         pool.init(start, end);
 
-        // TODO: 루트 오브젝트 초기화
+        // TODO: 루트 오브젝트 초기화를 유저가 하는 게 아니라 여기서 하기?
         // let addr_root = unsafe { read_addr::<T>(start + pool.root_offset) };
         // *addr_root = T::default();
         Ok(())
@@ -155,7 +164,7 @@ impl Pool {
 
     /// persistent pointer가 풀에 속하는지 확인
     fn _valid<T>(pptr: PersistentPtr<T>) -> bool {
-        let addr = pptr.get_addr();
+        let addr = pptr.get_transient_addr();
         addr >= Pool::start() && addr < Pool::end()
     }
 }
