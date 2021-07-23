@@ -5,9 +5,5 @@
 /// # Safety
 /// TODO: Safety doc 작성?
 pub unsafe fn read_addr<'a, T>(addr: usize) -> &'a mut T {
-    union U<T> {
-        addr: usize,
-        rf: *mut T,
-    }
-    &mut *U { addr }.rf
+    &mut *(addr as *mut T)
 }
