@@ -13,7 +13,7 @@ pub struct PersistentPtr<T> {
     marker: PhantomData<T>,
 }
 
-impl<T: Default> PersistentPtr<T> {
+impl<T> PersistentPtr<T> {
     /// null 포인터 반환
     pub fn null() -> Self {
         // TODO: 현재는 usize::MAX를 null 식별자로 사용중. 더 좋은 방법 찾기?
@@ -49,14 +49,14 @@ impl<T> From<usize> for PersistentPtr<T> {
     }
 }
 
-impl<T: Default> Deref for PersistentPtr<T> {
+impl<T> Deref for PersistentPtr<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
         unsafe { read_addr(self.get_addr()) }
     }
 }
-impl<T: Default> DerefMut for PersistentPtr<T> {
+impl<T> DerefMut for PersistentPtr<T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { read_addr(self.get_addr()) }
     }

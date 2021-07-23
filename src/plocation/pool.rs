@@ -34,7 +34,7 @@ impl Pool {
     }
 
     /// 풀 생성
-    pub fn create<T: Default>(filepath: &str, size: u64) -> Result<(), Error> {
+    pub fn create<T>(filepath: &str, size: u64) -> Result<(), Error> {
         // 1. 파일 생성 및 크기 세팅
         let file = match OpenOptions::new()
             .read(true)
@@ -56,10 +56,9 @@ impl Pool {
         let pool = unsafe { read_addr::<Pool>(start) };
         pool.init(start, end);
 
-        // 루트 오브젝트 초기화
-        let addr_root = unsafe { read_addr::<T>(start + pool.root_offset) };
-        // TODO: root.init() 형태로 바꾸기?
-        *addr_root = T::default();
+        // TODO: 루트 오브젝트 초기화
+        // let addr_root = unsafe { read_addr::<T>(start + pool.root_offset) };
+        // *addr_root = T::default();
         Ok(())
     }
 
@@ -74,7 +73,7 @@ impl Pool {
     /// *head = 5;
     /// assert_eq!(*head, 5);
     /// ```
-    pub fn open<T: Default>(filepath: &str) -> Result<PersistentPtr<T>, Error> {
+    pub fn open<T>(filepath: &str) -> Result<PersistentPtr<T>, Error> {
         // 1. 파일 열기
         let file = match OpenOptions::new().read(true).write(true).open(filepath) {
             Ok(file) => file,
@@ -128,7 +127,7 @@ impl Pool {
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
-    pub fn alloc<T: Default>() -> PersistentPtr<T> {
+    pub fn alloc<T>() -> PersistentPtr<T> {
         if !Pool::is_open() {
             panic!("No memory pool is open.");
         }
@@ -140,7 +139,7 @@ impl Pool {
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
-    pub fn free<T: Default>(_pptr: &mut PersistentPtr<T>) {
+    pub fn free<T>(_pptr: &mut PersistentPtr<T>) {
         if !Pool::is_open() {
             panic!("No memory pool is open.");
         }
@@ -149,7 +148,7 @@ impl Pool {
     }
 
     /// persistent pointer가 풀에 속하는지 확인
-    fn _valid<T: Default>(pptr: PersistentPtr<T>) -> bool {
+    fn _valid<T>(pptr: PersistentPtr<T>) -> bool {
         let addr = pptr.get_addr();
         addr >= Pool::start() && addr < Pool::end()
     }
@@ -164,10 +163,10 @@ mod test {
         next: PersistentPtr<Node>,
     }
 
-    impl Default for Node {
-        fn default() -> Self {
+    impl Node {
+        fn new(value: usize) -> Self {
             Self {
-                value: 0,
+                value,
                 next: PersistentPtr::null(),
             }
         }
@@ -183,16 +182,13 @@ mod test {
         // 첫 번째 open: persistent pool로 사용할 파일을 새로 만들고 그 안에 1개의 노드를 넣음
         {
             let mut head = Pool::open::<Node>("append_one_node.pool").unwrap();
-            // root object는 초기화되어 있어야함
-            assert_eq!(head.value, 0);
-            assert!(head.next.is_null());
+            *head = Node::new(0);
 
             // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
-            let mut node1 = Pool::alloc::<Node>();
-            *node1 = Node::default();
-            node1.value = 1;
-            head.next = node1;
             // 결과: head node(root obj) -> node1 -> ㅗ
+            let mut node1 = Pool::alloc::<Node>();
+            *node1 = Node::new(1);
+            head.next = node1;
             Pool::close();
         };
 
