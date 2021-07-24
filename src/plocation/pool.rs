@@ -11,7 +11,6 @@
 
 // TODO(allocator 구현(#50))
 // - 현재 pool은 임시로 고정주소를 allocation하게끔 되어 있음
-// - pool의 allocator 구현하기
 
 use std::fs::OpenOptions;
 use std::io::Error;
@@ -66,8 +65,6 @@ impl Pool {
         pool.init(start, end);
 
         // TODO: 루트 오브젝트 초기화를 유저가 하는 게 아니라 여기서 하기?
-        // let addr_root = unsafe { read_addr::<T>(start + pool.root_offset) };
-        // *addr_root = T::default();
         Ok(())
     }
 
@@ -96,12 +93,12 @@ impl Pool {
             Err(e) => return Err(e),
         };
 
-        // 2. 파일을 가상주소에 매핑
+        // 2. 파일을 가상주소에 매핑, 풀의 메타데이터를 담는 구조체 읽어와서 시작/끝 주소 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
-        // 풀의 시작, 끝 주소 세팅
-        let base = mmap.get_mut(0).unwrap() as *const _ as usize;
-        // 풀의 메타데이터를 담는 inner 읽기 (inner는 풀의 시작주소에 위치)
-        let pool = unsafe { read_addr::<Pool>(base) };
+        let start = mmap.get_mut(0).unwrap() as *const _ as usize;
+        let end = start + file.metadata().unwrap().len() as usize + 1;
+        let pool = unsafe { read_addr::<Pool>(start) };
+        pool.init(start, end);
 
         // 3. 풀의 루트 오브젝트를 가리키는 포인터 반환
         let root_obj = PersistentPtr::from(pool.root_offset);
@@ -195,8 +192,9 @@ mod test {
         let _ = Pool::create::<Node>("append_one_node.pool", 8 * 1024).unwrap();
 
         // 첫 번째 open: persistent pool로 사용할 파일을 새로 만들고 그 안에 1개의 노드를 넣음
-        {
+        let mapped_addr1 = {
             let mut head = Pool::open::<Node>("append_one_node.pool").unwrap();
+            let mapped_addr1 = Pool::start();
             *head = Node::new(0);
 
             // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
@@ -204,17 +202,27 @@ mod test {
             let mut node1 = Pool::alloc::<Node>();
             *node1 = Node::new(1);
             head.next = node1;
-            Pool::close();
+
+            // NOTE
+            // - 여기서 풀을 닫지 않아야 두 번째 open할 때 다른 주소에 매핑됨
+            // - 풀을 닫으면 같은 파일에 대해선 같은 주소로 매핑
+            mapped_addr1
         };
 
         // 두 번째 open: 첫 번째에서 구성한 풀이 다른 주소로 매핑되어도 노드를 잘 따라가는지 확인
-        {
+        let mapped_addr2 = {
             let head = Pool::open::<Node>("append_one_node.pool").unwrap();
+            let mapped_addr2 = Pool::start();
             assert_eq!(head.value, 0);
             assert_eq!(head.next.value, 1);
             assert!(head.next.next.is_null());
+
             Pool::close();
+            mapped_addr2
         };
+
+        // 다른 주소에 매핑되었어야 이 테스트의 의미가 있음
+        assert_ne!(mapped_addr1, mapped_addr2);
     }
 
     // TODO: allocator 구현 후 테스트
