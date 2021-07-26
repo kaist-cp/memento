@@ -112,7 +112,7 @@ impl Pool {
             Err(e) => return Err(e),
         };
 
-        // 2. 파일을 가상주소에 매핑, 풀의 메타데이터를 담는 구조체 읽어와서 시작/끝 주소 세팅
+        // 2. 파일을 메모리 매핑한 후 런타임 정보(e.g. 시작 주소) 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
         unsafe {
@@ -207,10 +207,11 @@ mod test {
         let _ = remove_file("append_one_node.pool");
         let _ = Pool::create::<Node>("append_one_node.pool", 8 * 1024).unwrap();
 
-        // 첫 번째 open: persistent pool로 사용할 파일을 새로 만들고 그 안에 1개의 노드를 넣음
+        // 첫 번째 open: 루트 오브젝트 초기화하고 노드 1개를 할당해서 연결함
         let mapped_addr1 = {
             let mut head = Pool::open::<Node>("append_one_node.pool").unwrap();
             let mapped_addr1 = Pool::start();
+            // 루트 오브젝트 초기화
             unsafe {
                 *head.deref_mut() = Node::new(0);
             }
