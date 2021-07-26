@@ -1,12 +1,10 @@
 //! Persistent Pointer
 use super::pool::*;
-use super::utils::*;
 use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
 
 /// 풀에 속한 오브젝트를 가리킬 포인터
 /// - 풀의 시작주소로부터의 offset을 가지고 있음
-/// - 참조시 풀의 시작주소와 offset을 더한 주소를 참조  
+/// - 참조시 풀의 시작주소와 offset을 더한 절대주소를 참조  
 #[derive(Debug)]
 pub struct PersistentPtr<T> {
     offset: usize,
@@ -28,9 +26,27 @@ impl<T> PersistentPtr<T> {
         self.offset == usize::MAX
     }
 
-    /// 절대주소 반환
-    pub fn get_transient_addr(&self) -> usize {
-        Pool::start() + self.offset
+    /// 절대주소를 참조하는 포인터 반환
+    pub fn as_transient_ptr(&self) -> *const T {
+        (Pool::start() + self.offset) as *const T
+    }
+
+    /// 절대주소 참조
+    ///
+    /// # Safety
+    ///
+    /// TODO
+    pub unsafe fn deref(&self) -> &T {
+        &*(self.as_transient_ptr())
+    }
+
+    /// 절대주소 mutable 참조
+    ///
+    /// # Safety
+    ///
+    /// TODO
+    pub unsafe fn deref_mut(&mut self) -> &mut T {
+        &mut *(self.as_transient_ptr() as *mut T)
     }
 }
 
@@ -41,18 +57,5 @@ impl<T> From<usize> for PersistentPtr<T> {
             offset: off,
             marker: PhantomData,
         }
-    }
-}
-
-impl<T> Deref for PersistentPtr<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { read_addr(self.get_transient_addr()) }
-    }
-}
-impl<T> DerefMut for PersistentPtr<T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { read_addr(self.get_transient_addr()) }
     }
 }

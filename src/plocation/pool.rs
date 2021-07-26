@@ -17,7 +17,6 @@ use std::io::Error;
 use std::mem;
 
 use super::ptr::PersistentPtr;
-use super::utils::*;
 use memmap::*;
 
 /// 풀의 메타데이터 저장소 (e.g. Persistent Pointer가 참조할 때 시작주소를 사용)
@@ -29,20 +28,20 @@ static mut MMAP: Option<MmapMut> = None;
 #[derive(Debug)]
 pub struct Pool {
     start: usize,
-    end: usize,
+    len: usize,
     root_offset: usize,
     // TODO: 풀을 위한 메타데이터는 여기에 필드로 추가
 }
 
 impl Pool {
-    fn init(&mut self, start: usize, end: usize) {
+    fn init(&mut self, start: usize, len: usize) {
         self.start = start;
-        self.end = end;
+        self.len = len;
         self.root_offset = mem::size_of::<Pool>();
     }
 
     /// 풀 생성
-    pub fn create<T>(filepath: &str, size: u64) -> Result<(), Error> {
+    pub fn create<T>(filepath: &str, size: usize) -> Result<(), Error> {
         // 1. 파일 생성 및 크기 세팅
         let file = match OpenOptions::new()
             .read(true)
@@ -54,15 +53,14 @@ impl Pool {
             // 파일이 이미 존재하면 실패
             Err(e) => return Err(e),
         };
-        file.set_len(size).unwrap();
+        file.set_len(size as u64).unwrap();
 
         // 2. 파일을 풀 레이아웃에 맞게 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
         // 메타데이터 초기화
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
-        let end = start + size as usize + 1;
-        let pool = unsafe { read_addr::<Pool>(start) };
-        pool.init(start, end);
+        let pool = unsafe { &mut *(start as *mut Pool) };
+        pool.init(start, size);
 
         // TODO: 루트 오브젝트 초기화를 유저가 하는 게 아니라 여기서 하기?
         Ok(())
@@ -82,8 +80,10 @@ impl Pool {
     ///
     /// // 풀 열기
     /// let mut head = Pool::open::<i32>("foo.pool").unwrap();
-    /// *head = 5;
-    /// assert_eq!(*head, 5);
+    /// unsafe {
+    ///     *head.deref_mut() = 5;
+    ///     assert_eq!(*head.deref(), 5);
+    /// }
     /// ```
     pub fn open<T>(filepath: &str) -> Result<PersistentPtr<T>, Error> {
         // 1. 파일 열기
@@ -96,9 +96,8 @@ impl Pool {
         // 2. 파일을 가상주소에 매핑, 풀의 메타데이터를 담는 구조체 읽어와서 시작/끝 주소 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
-        let end = start + file.metadata().unwrap().len() as usize + 1;
-        let pool = unsafe { read_addr::<Pool>(start) };
-        pool.init(start, end);
+        let pool = unsafe { &mut *(start as *mut Pool) };
+        pool.init(start, file.metadata().unwrap().len() as usize);
 
         // 3. 풀의 루트 오브젝트를 가리키는 포인터 반환
         let root_obj = PersistentPtr::from(pool.root_offset);
@@ -135,7 +134,10 @@ impl Pool {
         if !Pool::is_open() {
             panic!("No memory pool is open.");
         }
-        unsafe { POOL.as_deref().unwrap().end }
+        unsafe {
+            let pool = POOL.as_deref().unwrap();
+            pool.start + pool.len
+        }
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
@@ -161,7 +163,7 @@ impl Pool {
 
     /// persistent pointer가 풀에 속하는지 확인
     fn _valid<T>(pptr: PersistentPtr<T>) -> bool {
-        let addr = pptr.get_transient_addr();
+        let addr = pptr.as_transient_ptr() as usize;
         addr >= Pool::start() && addr < Pool::end()
     }
 }
@@ -195,13 +197,17 @@ mod test {
         let mapped_addr1 = {
             let mut head = Pool::open::<Node>("append_one_node.pool").unwrap();
             let mapped_addr1 = Pool::start();
-            *head = Node::new(0);
+            unsafe {
+                *head.deref_mut() = Node::new(0);
+            }
 
             // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
             // 결과: head node(root obj) -> node1 -> ㅗ
             let mut node1 = Pool::alloc::<Node>();
-            *node1 = Node::new(1);
-            head.next = node1;
+            unsafe {
+                *node1.deref_mut() = Node::new(1);
+                head.deref_mut().next = node1;
+            }
 
             // NOTE
             // - 여기서 풀을 닫지 않아야 두 번째 open할 때 다른 주소에 매핑됨
@@ -213,9 +219,12 @@ mod test {
         let mapped_addr2 = {
             let head = Pool::open::<Node>("append_one_node.pool").unwrap();
             let mapped_addr2 = Pool::start();
-            assert_eq!(head.value, 0);
-            assert_eq!(head.next.value, 1);
-            assert!(head.next.next.is_null());
+
+            unsafe {
+                assert_eq!(head.deref().value, 0);
+                assert_eq!(head.deref().next.deref().value, 1);
+                assert!(head.deref().next.deref().next.is_null());
+            }
 
             Pool::close();
             mapped_addr2
