@@ -21,11 +21,7 @@ use memmap::*;
 
 /// 풀의 런타임 정보 (DRAM에 저장)
 /// - e.g. Persistent Pointer가 참조할 때 풀의 시작주소를 사용
-static mut POOL_RUNTIME_INFO: PoolRuntimeInfo = PoolRuntimeInfo {
-    mmap: None,
-    start: 0,
-    len: 0,
-};
+static mut POOL_RUNTIME_INFO: Option<PoolRuntimeInfo> = None;
 
 // TODO: 풀의 메타데이터 (PM에 저장)
 // static mut POOL: Pool = Pool { root_offset: 0, ... };
@@ -35,18 +31,14 @@ static mut POOL_RUNTIME_INFO: PoolRuntimeInfo = PoolRuntimeInfo {
 /// 풀의 런타임 정보를 담는 역할
 #[derive(Debug)]
 pub struct PoolRuntimeInfo {
-    mmap: Option<MmapMut>, // 메모리 매핑에 사용한 오브젝트 저장 (drop으로 인해 매핑 해제되지 않게끔 유지하는 역할)
+    mmap: MmapMut, // 메모리 매핑에 사용한 오브젝트 (drop으로 인해 매핑 해제되지 않게끔 들고 있어야함)
     start: usize,
     len: usize,
 }
 
 impl PoolRuntimeInfo {
     fn new(mmap: MmapMut, start: usize, len: usize) -> Self {
-        Self {
-            mmap: Some(mmap),
-            start,
-            len,
-        }
+        Self { mmap, start, len }
     }
 }
 
@@ -119,8 +111,11 @@ impl Pool {
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
         unsafe {
-            POOL_RUNTIME_INFO =
-                PoolRuntimeInfo::new(mmap, start, file.metadata().unwrap().len() as usize);
+            POOL_RUNTIME_INFO = Some(PoolRuntimeInfo::new(
+                mmap,
+                start,
+                file.metadata().unwrap().len() as usize,
+            ));
         }
 
         // 3. 루트 오브젝트를 가리키는 포인터 반환
@@ -133,13 +128,13 @@ impl Pool {
     pub fn close() {
         unsafe {
             // 매핑된 것이 POOL.mmap에 저장되어있었다면 이 때 매핑 해제됨
-            POOL_RUNTIME_INFO.mmap = None;
+            POOL_RUNTIME_INFO = None;
         }
     }
 
     /// 풀 열려있는지 확인
     pub fn is_open() -> bool {
-        unsafe { POOL_RUNTIME_INFO.mmap.is_some() }
+        unsafe { POOL_RUNTIME_INFO.is_some() }
     }
 
     /// 풀의 시작주소 반환
@@ -147,7 +142,7 @@ impl Pool {
         if !Pool::is_open() {
             panic!("No memory pool is open.");
         }
-        unsafe { POOL_RUNTIME_INFO.start }
+        unsafe { POOL_RUNTIME_INFO.as_ref().unwrap().start }
     }
 
     /// 풀의 끝주소 반환
@@ -155,7 +150,10 @@ impl Pool {
         if !Pool::is_open() {
             panic!("No memory pool is open.");
         }
-        unsafe { POOL_RUNTIME_INFO.start + POOL_RUNTIME_INFO.len }
+        unsafe {
+            let pool = POOL_RUNTIME_INFO.as_ref().unwrap();
+            pool.start + pool.len
+        }
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
