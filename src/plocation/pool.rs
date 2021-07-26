@@ -5,12 +5,12 @@
 //! [ metadata | root object |            ...               ]
 //! ^ base     ^ base + root offset                         ^ end
 
+// TODO(allocator 구현(#50))
+// - 현재 pool은 임시로 고정주소를 allocation하게끔 되어 있음
+
 // TODO(pool 여러 개 지원(#48))
 // - 현재는 하나의 pool만 열 수 있음
 // - 동시에 여러 개의 pool을 열 수 있도록 지원
-
-// TODO(allocator 구현(#50))
-// - 현재 pool은 임시로 고정주소를 allocation하게끔 되어 있음
 
 use std::fs::OpenOptions;
 use std::io::Error;
@@ -41,10 +41,12 @@ pub struct PoolRuntimeInfo {
 }
 
 impl PoolRuntimeInfo {
-    fn init(&mut self, mmap: MmapMut, start: usize, len: usize) {
-        self.mmap = Some(mmap);
-        self.start = start;
-        self.len = len;
+    fn new(mmap: MmapMut, start: usize, len: usize) -> Self {
+        Self {
+            mmap: Some(mmap),
+            start,
+            len,
+        }
     }
 }
 
@@ -56,6 +58,7 @@ pub struct Pool {
 }
 
 impl Pool {
+    /// 메타데이터 초기화
     fn init(&mut self) {
         self.root_offset = mem::size_of::<Pool>();
     }
@@ -77,9 +80,9 @@ impl Pool {
 
         // 2. 파일을 풀 레이아웃에 맞게 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
-        // 메타데이터 초기화
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
         let pool = unsafe { &mut *(start as *mut Pool) };
+        // 메타데이터 초기화
         pool.init();
         // TODO: 루트 오브젝트 초기화를 유저가 하는 게 아니라 여기서 하기?
         Ok(())
@@ -112,14 +115,15 @@ impl Pool {
             Err(e) => return Err(e),
         };
 
-        // 2. 파일을 메모리 매핑한 후 런타임 정보(e.g. 시작 주소) 세팅
+        // 2. 메모리 매핑 후 런타임 정보(e.g. 시작 주소) 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
         unsafe {
-            POOL_RUNTIME_INFO.init(mmap, start, file.metadata().unwrap().len() as usize);
+            POOL_RUNTIME_INFO =
+                PoolRuntimeInfo::new(mmap, start, file.metadata().unwrap().len() as usize);
         }
 
-        // 3. 풀의 루트 오브젝트를 가리키는 포인터 반환
+        // 3. 루트 오브젝트를 가리키는 포인터 반환
         let pool = unsafe { &*(start as *const Pool) };
         let root_obj = PersistentPtr::from(pool.root_offset);
         Ok(root_obj)
