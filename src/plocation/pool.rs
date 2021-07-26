@@ -177,7 +177,7 @@ impl Pool {
 
     /// persistent pointer가 풀에 속하는지 확인
     fn _valid<T>(pptr: PersistentPtr<T>) -> bool {
-        let addr = pptr.as_transient_ptr() as usize;
+        let addr = pptr.to_transient_ptr() as usize;
         addr >= Pool::start() && addr < Pool::end()
     }
 }
