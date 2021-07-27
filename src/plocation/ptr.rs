@@ -26,18 +26,13 @@ impl<T> PersistentPtr<T> {
         self.offset == usize::MAX
     }
 
-    /// 절대주소를 참조하는 포인터 반환
-    pub fn to_transient_ptr(&self) -> *const T {
-        (Pool::start() + self.offset) as *const T
-    }
-
     /// 절대주소 참조
     ///
     /// # Safety
     ///
     /// TODO
     pub unsafe fn deref(&self) -> &T {
-        &*(self.to_transient_ptr())
+        &*((Pool::start() + self.offset) as *const T)
     }
 
     /// 절대주소 mutable 참조
@@ -46,7 +41,7 @@ impl<T> PersistentPtr<T> {
     ///
     /// TODO
     pub unsafe fn deref_mut(&mut self) -> &mut T {
-        &mut *(self.to_transient_ptr() as *mut T)
+        &mut *((Pool::start() + self.offset) as *mut T)
     }
 }
 

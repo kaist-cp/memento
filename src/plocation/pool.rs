@@ -50,21 +50,16 @@ impl Pool {
 
     /// 풀 생성
     pub fn create<T>(filepath: &str, size: usize) -> Result<(), Error> {
-        // 1. 파일 생성 및 크기 세팅
-        let file = match OpenOptions::new()
+        // 1. 파일 생성 및 크기 세팅 (파일이 이미 존재하면 실패)
+        let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
-            .open(filepath)
-        {
-            Ok(file) => file,
-            // 파일이 이미 존재하면 실패
-            Err(e) => return Err(e),
-        };
-        file.set_len(size as u64).unwrap();
+            .open(filepath)?;
+        file.set_len(size as u64)?;
 
         // 2. 파일을 풀 레이아웃에 맞게 세팅
-        let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
+        let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
         let pool = unsafe { &mut *(start as *mut Pool) };
         // 메타데이터 초기화
@@ -93,21 +88,17 @@ impl Pool {
     /// }
     /// ```
     pub fn open<T>(filepath: &str) -> Result<PersistentPtr<T>, Error> {
-        // 1. 파일 열기
-        let file = match OpenOptions::new().read(true).write(true).open(filepath) {
-            Ok(file) => file,
-            // 파일이 존재하지 않는다면 실패
-            Err(e) => return Err(e),
-        };
+        // 1. 파일 열기 (파일이 존재하지 않는다면 실패)
+        let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
         // 2. 메모리 매핑 후 런타임 정보(e.g. 시작 주소) 세팅
-        let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
+        let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
         unsafe {
             POOL_RUNTIME_INFO = Some(PoolRuntimeInfo::new(
                 mmap,
                 start,
-                file.metadata().unwrap().len() as usize,
+                file.metadata()?.len() as usize,
             ));
         }
 
@@ -167,13 +158,7 @@ impl Pool {
             panic!("No memory pool is open.");
         }
 
-        // TODO
-    }
-
-    /// persistent pointer가 풀에 속하는지 확인
-    fn _valid<T>(pptr: PersistentPtr<T>) -> bool {
-        let addr = pptr.to_transient_ptr() as usize;
-        addr >= Pool::start() && addr < Pool::end()
+        todo!("pptr이 가리키는 메모리 블록 할당해제")
     }
 }
 #[cfg(test)]
