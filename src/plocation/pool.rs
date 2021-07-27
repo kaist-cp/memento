@@ -5,13 +5,6 @@
 //! [ metadata | root object |            ...               ]
 //! ^ base     ^ base + root offset                         ^ end
 
-// TODO(allocator 구현(#50))
-// - 현재 pool은 임시로 고정주소를 allocation하게끔 되어 있음
-
-// TODO(pool 여러 개 지원(#48))
-// - 현재는 하나의 pool만 열 수 있음
-// - 동시에 여러 개의 pool을 열 수 있도록 지원
-
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
