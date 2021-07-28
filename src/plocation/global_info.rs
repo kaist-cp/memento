@@ -6,17 +6,17 @@
 
 use memmap::*;
 
-/// 풀의 런타임 정보
+/// 풀의 런타임 정보를 들고있는 오브젝트
 /// - 이 오브젝트에 접근하는 것은 DRAM 접근을 의미
 /// - 풀 열때/닫을 때: 열 때는 Some으로 만들며 풀의 시작주소 등을 세팅, 닫을 때는 None으로 만듦
 /// - Persistent Pointer가 참조할 때: 이 정보에 담긴 풀의 시작주소를 base로 사용
-pub static mut POOL_RUNTIME_INFO: Option<PoolRuntimeInfo> = None;
+static mut POOL_RUNTIME_INFO: Option<PoolRuntimeInfo> = None;
 
-// TODO: 풀의 메타데이터
+// TODO: 풀의 메타데이터를 들고있는 오브젝트
 // - 이 오브젝트에 접근하는 것은 PM 접근을 의미
 // - 현재는 필요없음: 간단한 버전이기 때문에 풀이 열려있는 동안 풀의 메타데이터 계속 접근할 필요없음
 // - 향후엔 필요할듯함: e.g. allocator를 위한 메타데이터를 계속 업데이트 해줘야할 수도
-// pub static mut POOL_METADATA: Pool = Pool { ... };
+// static mut POOL_METADATA: Pool = Pool { ... };
 
 /// 풀의 런타임 정보를 담는 역할
 #[derive(Debug)]

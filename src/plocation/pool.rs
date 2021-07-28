@@ -25,6 +25,7 @@ pub struct Pool {
 impl Pool {
     /// 메타데이터 초기화
     fn init(&mut self) {
+        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트 오브젝트는 풀의 시작주소+16에 위치
         self.root_offset = mem::size_of::<Pool>();
     }
 
@@ -44,7 +45,10 @@ impl Pool {
         let pool = unsafe { &mut *(start as *mut Pool) };
         // 메타데이터 초기화
         pool.init();
-        // TODO: 루트 오브젝트 초기화를 유저가 하는 게 아니라 여기서 하기?
+
+        // TODO: 루트 오브젝트의 필드 초기화를 여기서 할지 고민 필요
+        // - 현재는 유저가 해야함
+        // - 여기서 풀 생성시에 해준다면, T에 default trait를 강제해야함
         Ok(())
     }
 
@@ -102,6 +106,7 @@ impl Pool {
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     pub fn alloc<T>() -> PersistentPtr<T> {
         assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
+
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = allocator.alloc(mem::size_of::<T>());
         let addr_allocated = 1024;
