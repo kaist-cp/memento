@@ -151,7 +151,7 @@ impl Pool {
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     pub fn free<T>(_pptr: &mut PersistentPtr<T>) {
-        assert!(static_info::is_initialized(), "No memory pool is open.");
+        assert!(Pool::is_open(), "No memory pool is open.");
         todo!("pptr이 가리키는 메모리 블록 할당해제")
     }
 }
