@@ -8,6 +8,37 @@ use std::mem;
 
 use super::ptr::PersistentPtr;
 use super::static_info;
+use memmap::*;
+
+/// 풀의 런타임 정보를 담는 역할
+#[derive(Debug)]
+pub struct PoolRuntimeInfo {
+    /// 메모리 매핑에 사용한 오브젝트 (drop으로 인해 매핑 해제되지 않게끔 들고 있어야함)
+    mmap: MmapMut,
+
+    /// 풀의 시작 주소
+    start: usize,
+
+    /// 풀의 길이
+    len: usize,
+}
+
+impl PoolRuntimeInfo {
+    /// 풀의 런타임 정보를 담을 객체 생성
+    pub fn new(mmap: MmapMut, start: usize, len: usize) -> Self {
+        Self { mmap, start, len }
+    }
+
+    /// 풀의 시작주소 반환
+    pub fn get_start(&self) -> usize {
+        self.start
+    }
+
+    /// 풀의 길이 반환
+    pub fn get_len(&self) -> usize {
+        self.len
+    }
+}
 
 /// 풀의 메타데이터 정의 및 풀 함수(e.g. Pool::open, Pool::alloc, ..) 호출을 위한 역할
 ///

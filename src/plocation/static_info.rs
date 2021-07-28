@@ -1,9 +1,10 @@
-//! 풀이 열려있는 동안 `static`으로 global하게 유지할 정보들 (e.g. 풀의 시작주소, 풀의 메타데이터)
+//! 풀이 열려있는 동안 풀의 정보(e.g. 풀의 시작주소, 풀의 메타데이터)를 들고 있을 static object들 관리
 //!
 //! 데이터 접근성능을 위해 DRAM 혹은 PM에서 유지할 정보를 구분
 //! - DRAM에서 유지: `POOL_RUNTIME_INFO`
 //! - PM에서 유지: `POOL_METADATA`
 
+use super::pool::PoolRuntimeInfo;
 use memmap::*;
 
 /// 풀의 런타임 정보를 들고있는 오브젝트
@@ -15,27 +16,15 @@ static mut POOL_RUNTIME_INFO: Option<PoolRuntimeInfo> = None;
 
 // TODO: 풀의 메타데이터를 들고있는 오브젝트도 사용하기
 // - 이 오브젝트에 접근하는 것은 PM 접근을 의미
-// - 현재는 필요없음: 간단한 버전이기 때문에 풀이 열려있는 동안 풀의 메타데이터 계속 접근할 필요없음
-// - 향후엔 필요할듯함: e.g. allocator를 위한 메타데이터를 계속 업데이트 해줘야할 거라 추정
+//      - 현재는 필요없음: 간단한 버전이기 때문에 풀이 열려있는 동안 풀의 메타데이터 계속 접근할 필요없음
+//      - 향후엔 필요할듯함: e.g. allocator를 위한 메타데이터를 계속 업데이트 해줘야할 거라 추정
+// - 이것도 굳이 static이여야 하는지는 이 오브젝트가 필요할때 생각할 예정
 // static mut POOL_METADATA: Pool = Pool { ... };
-
-/// 풀의 런타임 정보를 담는 역할
-#[derive(Debug)]
-struct PoolRuntimeInfo {
-    /// 메모리 매핑에 사용한 오브젝트 (drop으로 인해 매핑 해제되지 않게끔 들고 있어야함)
-    mmap: MmapMut,
-
-    /// 풀의 시작 주소
-    start: usize,
-
-    /// 풀의 길이
-    len: usize,
-}
 
 /// 풀의 런타임 정보 세팅
 pub fn init(mmap: MmapMut, start: usize, len: usize) {
     unsafe {
-        POOL_RUNTIME_INFO = Some(PoolRuntimeInfo { mmap, start, len });
+        POOL_RUNTIME_INFO = Some(PoolRuntimeInfo::new(mmap, start, len));
     }
 }
 
@@ -58,7 +47,7 @@ pub fn is_initialized() -> bool {
 ///
 /// `POOL_RUNTIME_INFO`가 Some인지는 호출자가 확인해야함
 pub unsafe fn start() -> usize {
-    POOL_RUNTIME_INFO.as_ref().unwrap().start
+    POOL_RUNTIME_INFO.as_ref().unwrap().get_start()
 }
 
 /// 풀의 런타임 정보 중 풀의 길이 반환
@@ -67,5 +56,5 @@ pub unsafe fn start() -> usize {
 ///
 /// `POOL_RUNTIME_INFO`가 Some인지는 호출자가 확인해야함
 pub unsafe fn len() -> usize {
-    POOL_RUNTIME_INFO.as_ref().unwrap().len
+    POOL_RUNTIME_INFO.as_ref().unwrap().get_len()
 }
