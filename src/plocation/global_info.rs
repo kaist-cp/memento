@@ -15,7 +15,7 @@ static mut POOL_RUNTIME_INFO: Option<PoolRuntimeInfo> = None;
 // TODO: 풀의 메타데이터를 들고있는 오브젝트
 // - 이 오브젝트에 접근하는 것은 PM 접근을 의미
 // - 현재는 필요없음: 간단한 버전이기 때문에 풀이 열려있는 동안 풀의 메타데이터 계속 접근할 필요없음
-// - 향후엔 필요할듯함: e.g. allocator를 위한 메타데이터를 계속 업데이트 해줘야할 수도
+// - 향후엔 필요할듯함: e.g. allocator를 위한 메타데이터를 계속 업데이트 해줘야할 거라 추정
 // static mut POOL_METADATA: Pool = Pool { ... };
 
 /// 풀의 런타임 정보를 담는 역할
@@ -55,6 +55,7 @@ impl PoolRuntimeInfo {
     /// 풀의 런타임 정보 중 시작주소 반환
     ///
     /// # Safety
+    ///
     /// `POOL_RUNTIME_INFO`가 Some인지는 호출자가 확인해야함
     pub unsafe fn start() -> usize {
         POOL_RUNTIME_INFO.as_ref().unwrap().start
@@ -63,6 +64,7 @@ impl PoolRuntimeInfo {
     /// 풀의 런타임 정보 중 풀의 길이 반환
     ///
     /// # Safety
+    ///
     /// `POOL_RUNTIME_INFO`가 Some인지는 호출자가 확인해야함
     pub unsafe fn len() -> usize {
         POOL_RUNTIME_INFO.as_ref().unwrap().len
