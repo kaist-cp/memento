@@ -86,6 +86,11 @@ impl Pool {
         Ok(root_obj)
     }
 
+    /// 풀 열려있는지 확인
+    pub fn is_open() -> bool {
+        static_info::is_initialized()
+    }
+
     /// 풀 닫기
     pub fn close() {
         static_info::clear();
@@ -93,19 +98,19 @@ impl Pool {
 
     /// 풀의 시작주소 반환
     pub fn start() -> usize {
-        assert!(static_info::is_initialized(), "No memory pool is open.");
+        assert!(Pool::is_open(), "No memory pool is open.");
         unsafe { static_info::start() }
     }
 
     /// 풀의 끝주소 반환
     pub fn end() -> usize {
-        assert!(static_info::is_initialized(), "No memory pool is open.");
+        assert!(Pool::is_open(), "No memory pool is open.");
         unsafe { static_info::start() + static_info::len() }
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     pub fn alloc<T>() -> PersistentPtr<T> {
-        assert!(static_info::is_initialized(), "No memory pool is open.");
+        assert!(Pool::is_open(), "No memory pool is open.");
 
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = allocator.alloc(mem::size_of::<T>());
