@@ -29,7 +29,7 @@ impl Pool {
         self.root_offset = mem::size_of::<Pool>();
     }
 
-    /// 풀 생성
+    /// 풀 생성: 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화
     pub fn create<T>(filepath: &str, size: usize) -> Result<(), Error> {
         // 1. 파일 생성 및 크기 세팅 (파일이 이미 존재하면 실패)
         let file = OpenOptions::new()
@@ -39,7 +39,7 @@ impl Pool {
             .open(filepath)?;
         file.set_len(size as u64)?;
 
-        // 2. 파일을 풀 레이아웃에 맞게 세팅
+        // 2. 파일을 풀 레이아웃에 맞게 초기화
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
         let pool = unsafe { &mut *(start as *mut Pool) };
