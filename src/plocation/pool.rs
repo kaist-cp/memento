@@ -6,8 +6,8 @@ use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
 
-use super::global_info::*;
 use super::ptr::PersistentPtr;
+use super::static_info;
 
 /// 풀의 메타데이터 정의 및 풀 함수(e.g. Pool::open, Pool::alloc, ..) 호출을 위한 역할
 ///
@@ -78,7 +78,7 @@ impl Pool {
         // 2. 메모리 매핑 후 런타임 정보(e.g. 시작 주소) 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
-        PoolRuntimeInfo::init(mmap, start, file.metadata()?.len() as usize);
+        static_info::init(mmap, start, file.metadata()?.len() as usize);
 
         // 3. 루트 오브젝트를 가리키는 포인터 반환
         let pool = unsafe { &*(start as *const Pool) };
@@ -88,24 +88,24 @@ impl Pool {
 
     /// 풀 닫기
     pub fn close() {
-        PoolRuntimeInfo::clear();
+        static_info::clear();
     }
 
     /// 풀의 시작주소 반환
     pub fn start() -> usize {
-        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
-        unsafe { PoolRuntimeInfo::start() }
+        assert!(static_info::is_initialized(), "No memory pool is open.");
+        unsafe { static_info::start() }
     }
 
     /// 풀의 끝주소 반환
     pub fn end() -> usize {
-        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
-        unsafe { PoolRuntimeInfo::start() + PoolRuntimeInfo::len() }
+        assert!(static_info::is_initialized(), "No memory pool is open.");
+        unsafe { static_info::start() + static_info::len() }
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     pub fn alloc<T>() -> PersistentPtr<T> {
-        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
+        assert!(static_info::is_initialized(), "No memory pool is open.");
 
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = allocator.alloc(mem::size_of::<T>());
@@ -115,7 +115,7 @@ impl Pool {
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     pub fn free<T>(_pptr: &mut PersistentPtr<T>) {
-        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
+        assert!(static_info::is_initialized(), "No memory pool is open.");
         todo!("pptr이 가리키는 메모리 블록 할당해제")
     }
 }
