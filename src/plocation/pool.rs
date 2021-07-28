@@ -1,45 +1,25 @@
-//! Persistent Pool
+//! Persistent Memory Pool
 //!
-//! # Pool Address Layout
-//!
-//! [ metadata | root object |            ...               ]
-//! ^ base     ^ base + root offset                         ^ end
+//! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
 
+use super::global_info::*;
 use super::ptr::PersistentPtr;
-use memmap::*;
 
-/// 풀의 런타임 정보 (DRAM에 저장)
-/// - e.g. Persistent Pointer가 참조할 때 풀의 시작주소를 사용
-static mut POOL_RUNTIME_INFO: Option<PoolRuntimeInfo> = None;
-
-// TODO: 풀의 메타데이터 (PM에 저장)
-// static mut POOL: Pool = Pool { root_offset: 0, ... };
-// - 현재는 풀의 메타데이터가 root_offset 뿐이기 때문에 런타임 정보처럼 계속 유지할 필요없음
-// - 향후 client 구현시엔 계속 유지하며 이용해야함
-
-/// 풀의 런타임 정보를 담는 역할
-#[derive(Debug)]
-pub struct PoolRuntimeInfo {
-    mmap: MmapMut, // 메모리 매핑에 사용한 오브젝트 (drop으로 인해 매핑 해제되지 않게끔 들고 있어야함)
-    start: usize,
-    len: usize,
-}
-
-impl PoolRuntimeInfo {
-    fn new(mmap: MmapMut, start: usize, len: usize) -> Self {
-        Self { mmap, start, len }
-    }
-}
-
-/// 풀의 메타데이터 저장 및 풀 함수(e.g. Pool::open, Pool::alloc, ..) 호출을 위한 역할
+/// 풀의 메타데이터 정의 및 풀 함수(e.g. Pool::open, Pool::alloc, ..) 호출을 위한 역할
+///
+/// # Pool Address Layout
+///
+/// [ metadata | root object |            ...               ]
+/// ^ base     ^ base + root offset                         ^ end
 #[derive(Debug)]
 pub struct Pool {
+    /// 풀의 시작주소로부터 루트 오브젝트까지의 거리
     root_offset: usize,
-    // TODO: 풀을 위한 메타데이터는 여기에 필드로 추가
+    // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
 impl Pool {
@@ -94,13 +74,7 @@ impl Pool {
         // 2. 메모리 매핑 후 런타임 정보(e.g. 시작 주소) 세팅
         let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         let start = mmap.get_mut(0).unwrap() as *const _ as usize;
-        unsafe {
-            POOL_RUNTIME_INFO = Some(PoolRuntimeInfo::new(
-                mmap,
-                start,
-                file.metadata()?.len() as usize,
-            ));
-        }
+        PoolRuntimeInfo::init(mmap, start, file.metadata()?.len() as usize);
 
         // 3. 루트 오브젝트를 가리키는 포인터 반환
         let pool = unsafe { &*(start as *const Pool) };
@@ -110,42 +84,24 @@ impl Pool {
 
     /// 풀 닫기
     pub fn close() {
-        unsafe {
-            // 매핑된 것이 POOL.mmap에 저장되어있었다면 이 때 매핑 해제됨
-            POOL_RUNTIME_INFO = None;
-        }
-    }
-
-    /// 풀 열려있는지 확인
-    pub fn is_open() -> bool {
-        unsafe { POOL_RUNTIME_INFO.is_some() }
+        PoolRuntimeInfo::clear();
     }
 
     /// 풀의 시작주소 반환
     pub fn start() -> usize {
-        if !Pool::is_open() {
-            panic!("No memory pool is open.");
-        }
-        unsafe { POOL_RUNTIME_INFO.as_ref().unwrap().start }
+        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
+        unsafe { PoolRuntimeInfo::start() }
     }
 
     /// 풀의 끝주소 반환
     pub fn end() -> usize {
-        if !Pool::is_open() {
-            panic!("No memory pool is open.");
-        }
-        unsafe {
-            let pool = POOL_RUNTIME_INFO.as_ref().unwrap();
-            pool.start + pool.len
-        }
+        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
+        unsafe { PoolRuntimeInfo::start() + PoolRuntimeInfo::len() }
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     pub fn alloc<T>() -> PersistentPtr<T> {
-        if !Pool::is_open() {
-            panic!("No memory pool is open.");
-        }
-
+        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = allocator.alloc(mem::size_of::<T>());
         let addr_allocated = 1024;
@@ -154,10 +110,7 @@ impl Pool {
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     pub fn free<T>(_pptr: &mut PersistentPtr<T>) {
-        if !Pool::is_open() {
-            panic!("No memory pool is open.");
-        }
-
+        assert!(PoolRuntimeInfo::is_initialized(), "No memory pool is open.");
         todo!("pptr이 가리키는 메모리 블록 할당해제")
     }
 }

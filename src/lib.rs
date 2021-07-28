@@ -1,3 +1,5 @@
+//! Compositional Construction of Failure-Safe Persistent Objects
+
 // # Tries to deny all lints (`rustc -W help`).
 #![deny(absolute_paths_not_starting_with_crate)]
 #![deny(anonymous_parameters)]
@@ -28,8 +30,7 @@
 #![deny(unstable_features)]
 #![deny(unused_lifetimes)]
 
-//! Persistent objects collection
-
+// Persistent objects collection
 pub mod exchanger;
 pub mod persistent;
 pub mod treiber_stack;
@@ -38,4 +39,5 @@ pub mod treiber_stack;
 use crossbeam_epoch as _;
 use crossbeam_utils as _;
 
+// Persistent location
 pub mod plocation;
