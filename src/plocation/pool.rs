@@ -170,8 +170,6 @@ mod test_simple {
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
     #[test]
     fn check_inv() {
-        let _ = env_logger::try_init();
-
         match Pool::open(FILE_NAME) {
             // 파일이 있으면 열어서 invariant 검사
             Ok(pool_handle) => {
@@ -207,6 +205,7 @@ mod test_simple {
 #[cfg(test)]
 mod test_node {
     use crate::plocation::pool::*;
+    use env_logger as _;
     use log::debug;
     use std::fs::remove_file;
 
@@ -228,7 +227,6 @@ mod test_node {
     /// idempotency 테스트는 아님: persistent location이 잘 동작하는 지 확인하기 위한 테스트
     #[test]
     fn append_one_node() {
-        let _ = env_logger::try_init();
         const FILE_NAME: &str = "append_one_node.pool";
         const FILE_SIZE: usize = 8 * 1024;
 
