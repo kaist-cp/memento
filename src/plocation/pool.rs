@@ -159,8 +159,46 @@ impl Pool {
         todo!("pptr이 가리키는 메모리 블록 할당해제")
     }
 }
+
 #[cfg(test)]
-mod test {
+mod test_simple {
+    use crate::plocation::pool::*;
+    use std::fs::remove_file;
+
+    const FILE_NAME: &str = "root.pool";
+    const FILE_SIZE: usize = 8 * 1024;
+
+    #[test]
+    fn assign() {
+        // 풀 생성
+        let _ = remove_file(FILE_NAME);
+        let _ = Pool::create::<(usize, bool)>(FILE_NAME, FILE_SIZE).unwrap();
+
+        // 풀 열기
+        let pool_handle = Pool::open(FILE_NAME).unwrap();
+
+        // 풀의 데이터 접근
+        let mut head = pool_handle.get_root::<(usize, bool)>().unwrap();
+        unsafe {
+            // 루트 오브젝트 초기화
+            *head.deref_mut() = (0, false);
+
+            // 아래 로직은 idempotent함
+            let (value, flag) = head.deref_mut();
+            if *flag {
+                assert_eq!(*value, 42);
+            } else {
+                *value = 42;
+                *flag = true;
+            }
+            assert_eq!(*value, 42);
+            assert_eq!(*flag, true);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_node {
     use crate::plocation::pool::*;
     use log::debug;
     use std::fs::remove_file;
@@ -182,28 +220,35 @@ mod test {
     #[test]
     fn append_one_node() {
         env_logger::init();
+        const FILE_NAME: &str = "append_one_node.pool";
+        const FILE_SIZE: usize = 8 * 1024;
 
-        // 기존의 파일은 삭제하고 루트 오브젝트로 Node를 가진 8MB 크기의 풀 파일 새로 생성
-        let _ = remove_file("append_one_node.pool");
-        let _ = Pool::create::<Node>("append_one_node.pool", 8 * 1024).unwrap();
+        // 루트 오브젝트로 Node를 가진 8MB 크기의 풀 파일 새로 생성
+        let _ = remove_file(FILE_NAME);
+        let _ = Pool::create::<Node>(FILE_NAME, FILE_SIZE).unwrap();
 
-        // 첫 번째 open: 루트 오브젝트 초기화하고 노드 1개를 할당해서 연결함
+        // 루트 오브젝트 초기화
+        let pool_handle = Pool::open(FILE_NAME).unwrap();
+        let mut head = pool_handle.get_root::<Node>().unwrap();
+        unsafe {
+            *head.deref_mut() = Node::new(0);
+        }
+
+        // memory leak을 무시한다면 여기부터 아래의 로직은 전부 idempotent함
+        // - 첫 번째 open: 노드 할당 후 연결
         let mapped_addr1 = {
-            let pool_handle = Pool::open("append_one_node.pool").unwrap();
+            let pool_handle = Pool::open(FILE_NAME).unwrap();
             let mapped_addr1 = pool_handle.start;
 
-            // 루트 오브젝트 초기화
-            let mut head = pool_handle.get_root::<Node>().unwrap();
             unsafe {
-                *head.deref_mut() = Node::new(0);
-            }
-
-            // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
-            // 결과: head(val: 0) -> node1(val: 1) -> ㅗ
-            let mut node1 = pool_handle.alloc::<Node>();
-            unsafe {
-                *node1.deref_mut() = Node::new(1);
-                head.deref_mut().next = node1;
+                if head.deref().next.is_null() {
+                    // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
+                    // 결과: head(val: 0) -> node1(val: 1) -> ㅗ
+                    let mut node1 = pool_handle.alloc::<Node>();
+                    *node1.deref_mut() = Node::new(1);
+                    // TODO: 여기서 터지면 node1은 leak됨. allocator 구현 후 이러한 leak도 없게하기
+                    head.deref_mut().next = node1;
+                }
             }
 
             // NOTE
@@ -212,9 +257,9 @@ mod test {
             mapped_addr1
         };
 
-        // 두 번째 open: 첫 번째에서 구성한 풀이 다른 주소로 매핑되어도 노드를 잘 따라가는지 확인
+        // - 두 번째 open: 첫 번째에서 구성한 풀이 다른 주소로 매핑되어도 노드를 잘 따라가는지 확인
         let mapped_addr2 = {
-            let pool_handle = Pool::open("append_one_node.pool").unwrap();
+            let pool_handle = Pool::open(FILE_NAME).unwrap();
             let mapped_addr2 = pool_handle.start;
 
             let head = pool_handle.get_root::<Node>().unwrap();
