@@ -1,9 +1,9 @@
 //! Persistent Memory Pool
-//! 
+//!
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 //!
 //! # Pool Address Layout
-//! 
+//!
 //! [ metadata | root object |            ...               ]
 //! ^ base     ^ base + root offset                         ^ end
 
