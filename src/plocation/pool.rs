@@ -12,13 +12,13 @@ use memmap::*;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
-/// # 전체적인 사용예시: (1) 풀을 만들고 (2) 열고 (3) 내부를 접근
+/// # 풀을 열고 사용하는 예시
 ///
 /// ```
 /// use std::fs::remove_file;
 /// use compositional_persistent_object::plocation::pool::Pool;
 ///
-/// // (1) 기존의 파일은 제거하고 새로 생성
+/// // (1) 기존의 파일은 제거하고 풀 파일 새로 생성
 /// let _ = remove_file("foo.pool");
 /// let _ = Pool::create::<i32>("foo.pool", 8 * 1024);
 ///
@@ -61,7 +61,6 @@ impl PoolHandle<'_> {
     /// 풀의 루트 오브젝트를 가리키는 포인터 반환
     pub fn get_root<T>(&self) -> Result<PersistentPtr<T>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
-
         Ok(PersistentPtr::from(self.pool.root_offset))
     }
 
@@ -141,7 +140,7 @@ impl Pool {
     /// 풀 닫기
     // TODO: 디자인 고민
     //  - file open/close API와 유사하게 input으로 받은 PoolHandle을 close하는 게 좋을지?
-    //  - 그렇게 한다면, 어떻게? 
+    //  - 그렇게 한다면, 어떻게?
     pub fn close() {
         // 메모리 매핑에 사용한 `MmapMut` 오브젝트가 글로벌 풀 내부의 `mmap` 필드에 저장되어있었다면 이때 매핑 해제됨
         global::clear();
@@ -163,6 +162,7 @@ impl Pool {
 #[cfg(test)]
 mod test {
     use crate::plocation::pool::*;
+    use log::debug;
     use std::fs::remove_file;
 
     struct Node {
@@ -178,10 +178,11 @@ mod test {
             }
         }
     }
-
     /// persistent pool에 노드를 할당하고, 다시 열었을 때 매핑된 주소가 바뀌어도 잘 따라가는지 테스트
     #[test]
     fn append_one_node() {
+        env_logger::init();
+
         // 기존의 파일은 삭제하고 루트 오브젝트로 Node를 가진 8MB 크기의 풀 파일 새로 생성
         let _ = remove_file("append_one_node.pool");
         let _ = Pool::create::<Node>("append_one_node.pool", 8 * 1024).unwrap();
@@ -227,6 +228,11 @@ mod test {
             mapped_addr2
         };
 
+        // 커맨드에 RUST_LOG=debug 포함시 출력
+        debug!(
+            "mapped_addr1: {}, mapped_addr2: {}",
+            mapped_addr1, mapped_addr2
+        );
         // 다른 주소에 매핑되었어야 이 테스트의 의미가 있음
         assert_ne!(mapped_addr1, mapped_addr2);
     }
