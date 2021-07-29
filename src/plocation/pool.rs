@@ -200,7 +200,6 @@ mod test_simple {
 #[cfg(test)]
 mod test_node {
     use crate::plocation::pool::*;
-    use log::debug;
     use std::fs::remove_file;
 
     struct Node {
@@ -273,11 +272,6 @@ mod test_node {
             mapped_addr2
         };
 
-        // 커맨드에 RUST_LOG=debug 포함시 출력
-        debug!(
-            "mapped_addr1: {}, mapped_addr2: {}",
-            mapped_addr1, mapped_addr2
-        );
         // 다른 주소에 매핑되었어야 이 테스트의 의미가 있음
         assert_ne!(mapped_addr1, mapped_addr2);
     }
