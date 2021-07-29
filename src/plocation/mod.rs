@@ -1,5 +1,5 @@
 //! Persistent location
 
+pub mod global;
 pub mod pool;
 pub mod ptr;
-pub mod static_info;
