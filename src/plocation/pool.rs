@@ -224,9 +224,8 @@ mod test_node {
         }
     }
 
-    /// "persistent location"이 잘 동작하는 지 테스트
-    /// - persistent pool에 노드를 할당하고 다시 열었을 때 매핑된 주소가 바뀌어도 할당되었던 노드를 잘 따라가는지를 확인
-    /// - idempotency 테스트는 아님
+    /// persistent pool에 노드를 할당하고 다시 열었을 때 매핑된 주소가 바뀌어도 할당되었던 노드를 잘 따라가는지를 확인
+    /// idempotency 테스트는 아님: persistent location이 잘 동작하는 지 확인하기 위한 테스트
     #[test]
     fn append_one_node() {
         let _ = env_logger::try_init();
