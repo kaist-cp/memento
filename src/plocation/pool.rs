@@ -164,39 +164,35 @@ impl Pool {
 mod test_simple {
     use crate::plocation::pool::*;
 
-    const FILE_NAME: &str = "check_inv.pool";
+    const FILE_NAME: &str = "test/check_inv.pool";
     const FILE_SIZE: usize = 8 * 1024;
 
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
     #[test]
     fn check_inv() {
-        match Pool::open(FILE_NAME) {
-            // 파일이 있으면 열어서 invariant 검사
-            Ok(pool_handle) => {
-                let mut root = pool_handle.get_root::<(usize, bool)>().unwrap();
-                let (value, flag) = unsafe { root.deref_mut() };
+        // 풀 새로 만들기를 시도. 새로 만들기를 성공했다면 true
+        let is_new_file = Pool::create::<(usize, bool)>(FILE_NAME, FILE_SIZE).is_ok();
 
-                if *flag {
-                    assert_eq!(*value, 42);
-                } else {
-                    *value = 42;
-                    *flag = true;
-                }
-            }
-            // 파일이 없으면 새로 만들기
-            Err(_) => {
-                // 풀로 사용할 파일 생성
-                let _ = Pool::create::<(usize, bool)>(FILE_NAME, FILE_SIZE).unwrap();
-                let pool_handle = Pool::open(FILE_NAME).unwrap();
+        // 풀 열기
+        let pool_handle = Pool::open(FILE_NAME).unwrap();
+        let mut root = pool_handle.get_root::<(usize, bool)>().unwrap();
+        let (value, flag) = unsafe { root.deref_mut() };
 
-                // 새로 만든 풀의 루트 오브젝트 초기화
-                let mut root = pool_handle.get_root::<(usize, bool)>().unwrap();
-                let (value, flag) = unsafe { root.deref_mut() };
-                // TODO: 여기서 루트 오브젝트 초기화하기 전에 터지면 문제 발생. TopClient 도입시에 해결할 예정
-                // - 문제: 다시 열었을 때 루트 오브젝트를 (1) 다시 초기화해야하는지 (2) 초기화가 잘 됐는지 구분 힘듦
-                // - 방안: 풀의 메타데이터 초기화할때 같이 초기화하고, 초기화가 잘 되었는지 나타내는 플래그 사용
-                *value = 0;
-                *flag = false;
+        // 새로 만든 풀이라면 루트 오브젝트 초기화
+        if is_new_file {
+            // TODO: 여기서 루트 오브젝트 초기화하기 전에 터지면 문제 발생. 이는 TopClient 도입시에 해결할 예정
+            // - 문제: 다시 열었을 때 루트 오브젝트를 (1) 다시 초기화해야하는지 (2) 초기화가 잘 됐는지 구분 힘듦
+            // - 방안: 풀의 메타데이터 초기화할때 같이 초기화하고, 초기화가 잘 되었는지 나타내는 플래그 사용
+            *value = 0;
+            *flag = false;
+        }
+        // 원래 있던 풀이면 invariant 검사
+        else {
+            if *flag {
+                assert_eq!(*value, 42);
+            } else {
+                *value = 42;
+                *flag = true;
             }
         }
     }
@@ -206,7 +202,7 @@ mod test_simple {
 mod test_node {
     use crate::plocation::pool::*;
     use env_logger as _;
-    use log::debug;
+    use log as _;
     use std::fs::remove_file;
 
     struct Node {
@@ -227,7 +223,7 @@ mod test_node {
     /// idempotency 테스트는 아님: persistent location이 잘 동작하는 지 확인하기 위한 테스트
     #[test]
     fn append_one_node() {
-        const FILE_NAME: &str = "append_one_node.pool";
+        const FILE_NAME: &str = "test/append_one_node.pool";
         const FILE_SIZE: usize = 8 * 1024;
 
         // 루트 오브젝트로 Node를 가진 8MB 크기의 풀 파일 새로 생성
@@ -262,9 +258,11 @@ mod test_node {
         };
 
         // 두 번째 open: 첫 번째에서 구성한 풀이 다른 주소로 매핑되어도 노드를 잘 따라가는지 확인
-        let mapped_addr2 = {
+        {
             let pool_handle = Pool::open(FILE_NAME).unwrap();
             let mapped_addr2 = pool_handle.start;
+            // 첫 번째 open의 매핑 정보가 drop되기 전에 두 번째 open을 하므로, 다른 주소에 매핑됨을 보장
+            assert_ne!(mapped_addr1, mapped_addr2);
             let root = pool_handle.get_root::<Node>().unwrap();
 
             let head = unsafe { root.deref() };
@@ -274,17 +272,7 @@ mod test_node {
             assert!(next.next.is_null());
 
             Pool::close();
-            mapped_addr2
         };
-
-        // 커맨드에 RUST_LOG=debug 포함시 출력
-        debug!(
-            "mapped_addr1: {}, mapped_addr2: {}",
-            mapped_addr1, mapped_addr2
-        );
-
-        // 첫 번째 open의 매핑 정보가 drop되기 전에 두 번째 open을 하므로, 다른 주소에 매핑됨을 보장
-        assert_ne!(mapped_addr1, mapped_addr2);
     }
 
     // TODO: allocator 구현 후 테스트
