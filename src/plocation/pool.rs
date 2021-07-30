@@ -102,6 +102,10 @@ impl Pool {
     /// 풀 생성: 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화
     pub fn create<T>(filepath: &str, size: usize) -> Result<(), Error> {
         // 1. 파일 생성 및 크기 세팅 (파일이 이미 존재하면 실패)
+        if let Some(prefix) = std::path::Path::new(filepath).parent() {
+            // e.g. "a/b/c.txt"라면, a/b/ 폴더도 만들어줌
+            std::fs::create_dir_all(prefix).unwrap();
+        }
         let file = OpenOptions::new()
             .read(true)
             .write(true)
