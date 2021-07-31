@@ -27,10 +27,9 @@ use memmap::*;
 ///
 /// // (3) 루트 오브젝트를 가져와서 사용
 /// let mut head = pool_handle.get_root::<i32>().unwrap();
-/// unsafe {
-///     *head.deref_mut() = 5;
-///     assert_eq!(*head.deref(), 5);
-/// }
+/// let mut head = unsafe { head.deref_mut() };
+/// *head = 5;
+/// assert_eq!(*head, 5);
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle<'a> {
@@ -240,17 +239,17 @@ mod test_node {
             let mapped_addr1 = pool_handle.start;
 
             // 첫 번째 open이므로 루트 오브젝트부터 초기화
-            let mut root = pool_handle.get_root::<Node>().unwrap();
-            unsafe {
-                *root.deref_mut() = Node::new(0);
-            }
+            let mut head = pool_handle.get_root::<Node>().unwrap();
+            let head = unsafe { head.deref_mut() };
+            *head = Node::new(0);
 
             // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
             // 결과: head(val: 0) -> node1(val: 1) -> ㅗ
-            let mut head = unsafe { root.deref_mut() };
             if head.next.is_null() {
                 let mut node1 = pool_handle.alloc::<Node>();
-                unsafe { *node1.deref_mut() = Node::new(1) };
+                unsafe {
+                    *node1.deref_mut() = Node::new(1);
+                }
                 // TODO: 여기서 터지면 node1은 leak됨. allocator 구현 후 이러한 leak도 없게하기
                 head.next = node1;
             }
@@ -267,13 +266,15 @@ mod test_node {
             let mapped_addr2 = pool_handle.start;
             // 첫 번째 open의 매핑 정보가 drop되기 전에 두 번째 open을 하므로, 다른 주소에 매핑됨을 보장
             assert_ne!(mapped_addr1, mapped_addr2);
-            let root = pool_handle.get_root::<Node>().unwrap();
 
-            let head = unsafe { root.deref() };
-            let next = unsafe { head.next.deref() };
+            // 첫 번째 open에서 구성한 풀대로 노드를 잘 따라가는지 확인
+            let head = pool_handle.get_root::<Node>().unwrap();
+            let head = unsafe { head.deref() };
+            let node1 = unsafe { head.next.deref() };
+            // 확인하기: head(val: 0) -> node1(val: 1) -> ㅗ
             assert_eq!(head.value, 0);
-            assert_eq!(next.value, 1);
-            assert!(next.next.is_null());
+            assert_eq!(node1.value, 1);
+            assert!(node1.next.is_null());
 
             Pool::close();
         };
