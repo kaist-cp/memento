@@ -42,31 +42,37 @@ pub struct PoolHandle {
 
 impl PoolHandle {
     /// 풀의 시작주소 반환
+    #[inline]
     pub fn start(&self) -> usize {
         self.mmap.as_ptr() as usize
     }
 
     /// 풀의 끝주소 반환
+    #[inline]
     pub fn end(&self) -> usize {
         self.start() + self.len
     }
 
     /// 풀의 루트 오브젝트를 가리키는 포인터 반환
+    #[inline]
     pub fn get_root<T>(&self) -> Result<PersistentPtr<T>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
         Ok(PersistentPtr::from(self.pool().root_offset))
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
+    #[inline]
     pub fn alloc<T>(&self) -> PersistentPtr<T> {
         self.pool().alloc::<T>()
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
+    #[inline]
     pub fn free<T>(&self, pptr: &mut PersistentPtr<T>) {
         self.pool().free(pptr)
     }
 
+    #[inline]
     fn pool(&self) -> &Pool {
         unsafe { &*(self.start() as *const Pool) }
     }
