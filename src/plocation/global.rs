@@ -2,10 +2,10 @@
 
 use super::pool::PoolHandle;
 
-static mut GLOBAL_POOL: Option<PoolHandle<'_>> = None;
+static mut GLOBAL_POOL: Option<PoolHandle> = None;
 
 /// 글로벌 풀 세팅
-pub fn init(pool: PoolHandle<'static>) {
+pub fn init(pool: PoolHandle) {
     unsafe {
         GLOBAL_POOL = Some(pool);
     }
@@ -19,6 +19,6 @@ pub fn clear() {
 }
 
 /// 글로벌 풀 읽기
-pub fn global_pool<'a>() -> Option<&'a PoolHandle<'a>> {
+pub fn global_pool() -> Option<&'static PoolHandle> {
     unsafe { GLOBAL_POOL.as_ref() }
 }

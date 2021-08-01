@@ -32,45 +32,43 @@ use memmap::*;
 /// assert_eq!(*head, 5);
 /// ```
 #[derive(Debug)]
-pub struct PoolHandle<'a> {
+pub struct PoolHandle {
     /// 메모리 매핑에 사용한 오브젝트 (drop으로 인해 매핑 해제되지 않게끔 들고 있어야함)
     mmap: MmapMut,
 
-    /// 풀의 시작 주소
-    start: usize,
-
     /// 풀의 길이
     len: usize,
-
-    /// 풀 오브젝트를 가리키는 포인터
-    pool: &'a mut Pool,
 }
 
-impl PoolHandle<'_> {
+impl PoolHandle {
     /// 풀의 시작주소 반환
     pub fn start(&self) -> usize {
-        self.start
+        self.mmap.as_ptr() as usize
     }
 
     /// 풀의 끝주소 반환
     pub fn end(&self) -> usize {
-        self.start + self.len
+        self.start() + self.len
     }
 
     /// 풀의 루트 오브젝트를 가리키는 포인터 반환
     pub fn get_root<T>(&self) -> Result<PersistentPtr<T>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
-        Ok(PersistentPtr::from(self.pool.root_offset))
+        Ok(PersistentPtr::from(self.pool().root_offset))
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     pub fn alloc<T>(&self) -> PersistentPtr<T> {
-        self.pool.alloc::<T>()
+        self.pool().alloc::<T>()
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     pub fn free<T>(&self, pptr: &mut PersistentPtr<T>) {
-        self.pool.free(pptr)
+        self.pool().free(pptr)
+    }
+
+    fn pool(&self) -> &Pool {
+        unsafe { &*(self.start() as *const Pool) }
     }
 }
 
@@ -113,27 +111,22 @@ impl Pool {
         file.set_len(size as u64)?;
 
         // 2. 파일을 풀 레이아웃에 맞게 초기화
-        let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
-        let start = mmap.get_mut(0).unwrap() as *const _ as usize;
-        let pool = unsafe { &mut *(start as *mut Pool) };
-        // 메타데이터 초기화
+        let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
+        let pool = unsafe { &mut *(mmap.as_ptr() as *mut Pool) };
         pool.init();
         Ok(())
     }
 
     /// 풀 열기: 파일을 persistent heap으로 매핑 후 풀 핸들러 반환
-    pub fn open(filepath: &str) -> Result<&PoolHandle<'_>, Error> {
+    pub fn open(filepath: &str) -> Result<&PoolHandle, Error> {
         // 1. 파일 열기 (파일이 존재하지 않는다면 실패)
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
         // 2. 메모리 매핑 후 글로벌 풀 세팅
-        let mut mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
-        let start = mmap.get_mut(0).unwrap() as *const _ as usize;
+        let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         global::init(PoolHandle {
             mmap,
-            start,
             len: file.metadata()?.len() as usize,
-            pool: unsafe { &mut *(start as *mut Pool) },
         });
 
         // 3. 글로벌 풀의 핸들러 반환
@@ -236,7 +229,7 @@ mod test_node {
         // 첫 번째 open: 노드 할당 후 루트 오브젝트에 연결
         let mapped_addr1 = {
             let pool_handle = Pool::open(FILE_NAME).unwrap();
-            let mapped_addr1 = pool_handle.start;
+            let mapped_addr1 = pool_handle.start();
 
             // 첫 번째 open이므로 루트 오브젝트부터 초기화
             let mut head = pool_handle.get_root::<Node>().unwrap();
@@ -263,7 +256,7 @@ mod test_node {
         // 두 번째 open: 첫 번째에서 구성한 풀이 다른 주소로 매핑되어도 노드를 잘 따라가는지 확인
         {
             let pool_handle = Pool::open(FILE_NAME).unwrap();
-            let mapped_addr2 = pool_handle.start;
+            let mapped_addr2 = pool_handle.start();
             // 첫 번째 open의 매핑 정보가 drop되기 전에 두 번째 open을 하므로, 다른 주소에 매핑됨을 보장
             assert_ne!(mapped_addr1, mapped_addr2);
 
