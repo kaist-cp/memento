@@ -1,3 +1,5 @@
+//! Compositional Construction of Failure-Safe Persistent Objects
+
 // # Tries to deny all lints (`rustc -W help`).
 #![deny(absolute_paths_not_starting_with_crate)]
 #![deny(anonymous_parameters)]
@@ -28,15 +30,15 @@
 #![deny(unstable_features)]
 #![deny(unused_lifetimes)]
 
-//! Persistent objects collection
-
+// Persistent objects collection
 pub mod exchanger;
 pub mod persistent;
 pub mod treiber_stack;
+// TODO: persistent location에서 동작하며 idempotent한 싱글 스레드 리스트 만들기
 
 // TODO: 지웠을 때 `absolute_paths_not_starting_with_crate` lint 에러나는 것 해결
 use crossbeam_epoch as _;
 use crossbeam_utils as _;
 
-// Meta TODO:
-// - TODO(persistent location): store variables in persistent location
+// Persistent location
+pub mod plocation;
