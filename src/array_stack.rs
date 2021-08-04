@@ -34,13 +34,11 @@ impl ArrayStack {
 
         // (1) client의 output을 통해 Op 상태 확인. output이 나왔었으면 여기서 끝남
         match client.output {
-            // Output 없으면 끝난 Op 아님. 실행해야함
-            Output::None => {}
-
             // Output 있으면 끝난 Op임. output만 도로 뱉으면됨
             Output::Some(o) => return Ok(o),
-            // // Output이 나온데다가 다른 곳으로 소비된 상태이면 그저 pass함
-            // Output::Used => return Ok(()),
+
+            // Output 없으면 끝난 Op 아님. 실행해야함
+            Output::None => {}
         }
 
         // (2) output이 안나왔었으면 output을 만듦
@@ -51,23 +49,28 @@ impl ArrayStack {
             // - 함수 이름을 바꿀까? 아니면 다른방법 있나?
             client.set_input(self.top);
         }
-
         let client_input = client.get_input().unwrap();
-        // commit point까지 실행됐는지 확인
+
+        // 할거 다하고 output 등록하기 직전에 터졌는지(commit point까지 실행됐는지) 확인
         if client_input != self.top {
-            // commit point까지 실행됐으면 output만 등록해주고 끝냄
+            // 할거 다했었으면 output만 등록해주고 끝냄
             client.output = Output::Some(());
             return Ok(());
         }
         self.array[client_input] = val;
-        self.top += 1; // commit point
-
+        self.top += 1; // "할 거 다했음" commit point
         client.output = Output::Some(());
         Ok(())
     }
 
+    /// index의 값 반환
+    pub fn get(&self, index: usize) -> usize {
+        self.array[index]
+    }
+
     /// 상태 출력
-    pub fn print_state(&self) {
+    pub fn print_state(&self, msg: &str) {
+        println!("{}", msg);
         for (ix, val) in self.array.iter().enumerate() {
             println!("[{}]: {}", ix, val);
         }
@@ -83,15 +86,6 @@ impl PersistentOpMut<PushClient> for ArrayStack {
         self.push(client, input)
     }
 }
-
-// impl PersistentOpMut<PopClient> for ArrayStack {
-//     type Input = ();
-//     type Output = Result<usize, String>;
-
-//     fn persistent_op_mut(&mut self, client: &mut PopClient, _input: Self::Input) -> Self::Output {
-//         self.pop(client)
-//     }
-// }
 
 /// TODO doc
 #[derive(Debug, PartialEq)]
@@ -111,8 +105,6 @@ enum Output<T> {
 
     /// TODO doc
     Some(T),
-    // /// TODO doc
-    // Used,
 }
 
 /// dd
@@ -161,62 +153,30 @@ impl PersistentClient for PushClient {
 
 #[cfg(test)]
 mod test {
-    use crate::persistent::{PersistentClient, PersistentOpMut};
+    use super::*;
+    use crate::persistent::*;
     use crate::plocation::pool::*;
 
-    use super::ArrayStack;
-    use super::PushClient;
     struct RootObj {
         array: ArrayStack,
     }
 
     impl RootObj {
         // idempotent: 이 함수를 몇번 실행하든 첫 2개만 push됨
-        //
-        // # 풀 처음 만들고 처음 실행했을 때 출력
-        // ----- Before push -----
-        // [0]: 18446744073709551615
-        // [1]: 18446744073709551615
-        // [2]: 18446744073709551615
-        // [3]: 18446744073709551615
-        // [4]: 18446744073709551615
-        // top: 0
-        //
-        // ----- After push -----
-        // [0]: 1
-        // [1]: 2
-        // [2]: 18446744073709551615
-        // [3]: 18446744073709551615
-        // [4]: 18446744073709551615
-        // top: 2
-        //
-        // # 두 번째 실행부터는 전부 이렇게 출력
-        // ----- Before push -----
-        // [0]: 1
-        // [1]: 2
-        // [2]: 18446744073709551615
-        // [3]: 18446744073709551615
-        // [4]: 18446744073709551615
-        // top: 2
-        //
-        // ----- After push -----
-        // [0]: 1
-        // [1]: 2
-        // [2]: 18446744073709551615
-        // [3]: 18446744073709551615
-        // [4]: 18446744073709551615
-        // top: 2
         fn run(&mut self, root_client: &mut RootClient, _input: ()) -> Result<(), ()> {
-            println!("----- Before push -----");
-            self.array.print_state();
-
+            self.array.print_state("----- Before push -----");
             for _ in 1..10 {
+                self.array.push(&mut root_client.push_client0, 0).unwrap();
                 self.array.push(&mut root_client.push_client1, 1).unwrap();
-                self.array.push(&mut root_client.push_client2, 2).unwrap();
             }
+            self.array.print_state("\n----- After push -----");
 
-            println!("\n----- After push -----");
-            self.array.print_state();
+            // 첫 2개만 push 되고 나머지는 empty인지 확인 (usize::MAX가 empty를 의미)
+            assert_eq!(self.array.get(0), 0);
+            assert_eq!(self.array.get(1), 1);
+            for ix in 2..CAPACITY {
+                assert_eq!(self.array.get(ix), usize::MAX);
+            }
             Ok(())
         }
     }
@@ -235,15 +195,15 @@ mod test {
     }
 
     struct RootClient {
+        push_client0: PushClient,
         push_client1: PushClient,
-        push_client2: PushClient,
     }
 
     impl Default for RootClient {
         fn default() -> Self {
             Self {
+                push_client0: PushClient::default(),
                 push_client1: PushClient::default(),
-                push_client2: PushClient::default(),
             }
         }
     }
