@@ -57,7 +57,9 @@ impl PoolHandle {
 
     /// 풀의 루트 오브젝트를 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O: PersistentOpMut<C>, C: PersistentClient>(&self) -> Result<PersistentPtr<(O, C)>, Error> {
+    pub fn get_root<O: PersistentOpMut<C>, C: PersistentClient>(
+        &self,
+    ) -> Result<PersistentPtr<(O, C)>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
         Ok(PersistentPtr::from(self.pool().root_offset))
     }
@@ -105,7 +107,10 @@ impl Pool {
     }
 
     /// 풀 생성: 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화
-    pub fn create<O: PersistentOpMut<C>, C: PersistentClient>(filepath: &str, size: usize) -> Result<(), Error> {
+    pub fn create<O: PersistentOpMut<C>, C: PersistentClient>(
+        filepath: &str,
+        size: usize,
+    ) -> Result<(), Error> {
         // 1. 파일 생성 및 크기 세팅 (파일이 이미 존재하면 실패)
         if let Some(prefix) = std::path::Path::new(filepath).parent() {
             // e.g. "a/b/c.txt"라면, a/b/ 폴더도 만들어줌
@@ -168,16 +173,16 @@ impl Pool {
 mod test_simple {
     use crate::persistent::PersistentOpMut;
     use crate::plocation::pool::*;
-    use log::{self as _, debug};
     use env_logger as _;
+    use log::{self as _, debug};
 
     struct RootObj {
         value: usize,
         flag: bool,
     }
-    
+
     impl RootObj {
-        fn check_inv(&mut self, _client: &mut RootClient, _input: ()) -> Result<(), ()>{
+        fn check_inv(&mut self, _client: &mut RootClient, _input: ()) -> Result<(), ()> {
             // invariant 검사(flag=1 => value=42)
             if self.flag {
                 debug!("check invariant");
@@ -190,25 +195,28 @@ mod test_simple {
             Ok(())
         }
     }
-    
+
     impl PersistentOpMut<RootClient> for RootObj {
         type Input = ();
         type Output = Result<(), ()>;
-        
-        fn persistent_op_mut(&mut self, client: &mut RootClient, input: Self::Input) -> Self::Output {
+
+        fn persistent_op_mut(
+            &mut self,
+            client: &mut RootClient,
+            input: Self::Input,
+        ) -> Self::Output {
             self.check_inv(client, input)
         }
     }
-    
-    struct RootClient {
-    }
-    
+
+    struct RootClient {}
+
     impl Default for RootClient {
         fn default() -> Self {
             Self {}
         }
     }
-    
+
     impl PersistentClient for RootClient {
         fn reset(&mut self) {
             unimplemented!();
@@ -217,7 +225,7 @@ mod test_simple {
 
     const FILE_NAME: &str = "test/check_inv.pool";
     const FILE_SIZE: usize = 8 * 1024;
-    
+
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
     #[test]
     fn check_inv() {
@@ -230,7 +238,7 @@ mod test_simple {
         // 풀 열기
         let pool_handle = Pool::open(FILE_NAME).unwrap();
         let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
-        let (root_obj, root_client) = unsafe { root_ptr.deref_mut()};
+        let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
 
         // 새로 만든 풀이라면 루트 오브젝트 초기화
         if is_new_file {
@@ -238,7 +246,10 @@ mod test_simple {
             // - 문제: 다시 열었을 때 루트 오브젝트를 (1) 다시 초기화해야하는지 (2) 초기화가 잘 됐는지 구분 힘듦
             // - 방안: 풀의 메타데이터 초기화할때 같이 초기화하고, 초기화가 잘 되었는지 나타내는 플래그 사용
             debug!("init root");
-            *root_obj = RootObj { value: 0, flag: false };
+            *root_obj = RootObj {
+                value: 0,
+                flag: false,
+            };
         }
 
         // entry point of persistent op
