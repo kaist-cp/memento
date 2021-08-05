@@ -4,11 +4,11 @@ use crate::persistent::*;
 
 const CAPACITY: usize = 5;
 
-/// 배열로 동작하는 고정크기 스택 (TODO: allocator 구현 후 크기 유동적일 수 있도록)
+/// 배열로 동작하는 고정크기 스택
 #[derive(Debug)]
 pub struct ArrayStack {
     array: [usize; CAPACITY],
-    top: usize, // 원소 넣을 자리를 가리키는 인덱스
+    top: usize, // 원소 넣을 자리를 가리키는 top 인덱스
 }
 
 impl Default for ArrayStack {
@@ -32,33 +32,26 @@ impl ArrayStack {
             return Err("there is no more space".to_string());
         }
 
-        // (1) client의 output을 통해 Op 상태 확인. output이 나왔었으면 여기서 끝남
+        // # Phase "Output 확인"
         match client.output {
             // Output 있으면 끝난 Op임. output만 도로 뱉으면됨
             Output::Some(o) => return Ok(o),
-
-            // Output 없으면 끝난 Op 아님. 실행해야함
+            // Output 없으면 끝난 Op 아님. output 만들어야함
             Output::None => {}
         }
 
-        // (2) output이 안나왔었으면 output을 만듦
+        // # Phase "Output 생성"
         // input 등록도 안된 상태면 input부터 등록
         if !client.has_input() {
-            // TODO 생각
-            // - top이 input은 아닌데 idempotent하려면 top을 이용해야함
-            // - 함수 이름을 바꿀까? 아니면 다른방법 있나?
             client.set_input(self.top);
         }
+        // 할 거 다하기 전에(commit point 전에) 터졌으면 다시함
         let client_input = client.get_input().unwrap();
-
-        // 할거 다하고 output 등록하기 직전에 터졌는지(commit point까지 실행됐는지) 확인
-        if client_input != self.top {
-            // 할거 다했었으면 output만 등록해주고 끝냄
-            client.output = Output::Some(());
-            return Ok(());
+        if client_input == self.top {
+            self.array[client_input] = val;
+            self.top += 1; // "할 거 다했음" commit point
         }
-        self.array[client_input] = val;
-        self.top += 1; // "할 거 다했음" commit point
+        // output 등록 후 마무리
         client.output = Output::Some(());
         Ok(())
     }
@@ -118,7 +111,6 @@ pub struct PushClient {
 }
 
 impl PushClient {
-    // input 등록된 상태인지 확인
     fn has_input(&self) -> bool {
         self.index != Input::None
     }
@@ -154,28 +146,28 @@ impl PersistentClient for PushClient {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::persistent::*;
     use crate::plocation::pool::*;
 
     struct RootObj {
-        array: ArrayStack,
+        stack: ArrayStack,
     }
 
     impl RootObj {
         // idempotent: 이 함수를 몇번 실행하든 첫 2개만 push됨
+        #[allow(warnings)]
         fn run(&mut self, root_client: &mut RootClient, _input: ()) -> Result<(), ()> {
-            self.array.print_state("----- Before push -----");
+            self.stack.print_state("----- Before push -----");
             for _ in 1..10 {
-                self.array.push(&mut root_client.push_client0, 0).unwrap();
-                self.array.push(&mut root_client.push_client1, 1).unwrap();
+                self.stack.push(&mut root_client.push_client0, 0).unwrap();
+                self.stack.push(&mut root_client.push_client1, 1).unwrap();
             }
-            self.array.print_state("\n----- After push -----");
+            self.stack.print_state("\n----- After push -----");
 
-            // 첫 2개만 push 되고 나머지는 empty인지 확인 (usize::MAX가 empty를 의미)
-            assert_eq!(self.array.get(0), 0);
-            assert_eq!(self.array.get(1), 1);
+            // 첫 2개만 push 되고 나머지 자리는 empty인지 확인 (usize::MAX가 empty를 의미)
+            assert_eq!(self.stack.get(0), 0);
+            assert_eq!(self.stack.get(1), 1);
             for ix in 2..CAPACITY {
-                assert_eq!(self.array.get(ix), usize::MAX);
+                assert_eq!(self.stack.get(ix), usize::MAX);
             }
             Ok(())
         }
@@ -218,7 +210,7 @@ mod test {
     const FILE_SIZE: usize = 8 * 1024;
 
     #[test]
-    fn array_push() {
+    fn push_2_times() {
         // 풀 새로 만들기를 시도. 새로 만들기를 성공했다면 true
         let is_new_file = Pool::create::<RootObj, RootClient>(FILE_NAME, FILE_SIZE).is_ok();
 
@@ -229,15 +221,10 @@ mod test {
 
         // 새로 만든 풀이라면 루트 오브젝트 초기화
         if is_new_file {
-            // TODO: 여기서 루트 오브젝트 초기화하기 전에 터지면 문제 발생
-            // - 문제: 다시 열었을 때 루트 오브젝트를 (1) 다시 초기화해야하는지 (2) 초기화가 잘 됐는지 구분 힘듦
-            // - 방안: 풀의 메타데이터 초기화할때 같이 초기화하고, 초기화가 잘 되었는지 나타내는 플래그 사용
-            println!("init root");
             *root_obj = RootObj {
-                array: ArrayStack::default(),
+                stack: ArrayStack::default(),
             };
         }
-
         root_obj.persistent_op_mut(root_client, ()).unwrap();
     }
 }
