@@ -6,7 +6,7 @@ use std::fs::OpenOptions;
 use std::io::{Error, ErrorKind};
 use std::mem;
 
-use crate::persistent::{PersistentClient, PersistentOpMut};
+use crate::persistent::*;
 
 use super::global::{self, global_pool};
 use super::ptr::PersistentPtr;
@@ -57,7 +57,7 @@ impl PoolHandle {
 
     /// 풀의 루트 오브젝트를 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O: PersistentOpMut<C>, C: PersistentClient>(
+    pub fn get_root<O: PersistentOp<C>, C: PersistentClient>(
         &self,
     ) -> Result<PersistentPtr<(O, C)>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
@@ -94,14 +94,14 @@ pub struct Pool {
     root_offset: usize,
 
     /// 풀의 메타데이터 및 루트 오브젝트/클라이언트까지 잘 초기화되었는지 여부
-    // TODO: 초기값이 false임을 보장가능한지 알아보기 (파일 생성시 0으로 초기화됨을 보장가능한가?)
+    // TODO: 초기값=false 보장가능한지 알아보기 (파일 생성시 0으로 초기화됨을 보장가능한가?)
     is_initialized: bool,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
 impl Pool {
     /// 풀 내부 초기화 (메타데이터, 루트 오브젝트/클라이언트)
-    fn init<O: Default + PersistentOpMut<C>, C: PersistentClient>(&mut self, start: usize) {
+    fn init<O: Default + PersistentOp<C>, C: PersistentClient>(&mut self, start: usize) {
         // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
         self.root_offset = mem::size_of::<Pool>();
 
@@ -115,7 +115,7 @@ impl Pool {
     }
 
     /// 풀 생성: 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화
-    pub fn create<O: Default + PersistentOpMut<C>, C: PersistentClient>(
+    pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
         filepath: &str,
         size: usize,
     ) -> Result<(), Error> {
@@ -184,49 +184,47 @@ impl Pool {
 
 #[cfg(test)]
 mod test_simple {
-    use crate::persistent::PersistentOpMut;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+
+    use crate::persistent::PersistentOp;
     use crate::plocation::pool::*;
     use env_logger as _;
     use log::{self as _, debug};
 
     struct RootObj {
-        value: usize,
-        flag: bool,
+        value: AtomicUsize,
+        flag: AtomicBool,
     }
 
     impl Default for RootObj {
         fn default() -> Self {
             Self {
-                value: 0,
-                flag: false,
+                value: AtomicUsize::new(0),
+                flag: AtomicBool::new(false),
             }
         }
     }
 
     impl RootObj {
-        fn check_inv(&mut self, _client: &mut RootClient, _input: ()) -> Result<(), ()> {
+        fn check_inv(&self, _client: &mut RootClient, _input: ()) -> Result<(), ()> {
             // invariant 검사(flag=1 => value=42)
-            if self.flag {
-                debug!("check invariant");
-                assert_eq!(self.value, 42);
+            if self.flag.load(SeqCst) {
+                debug!("check inv");
+                assert_eq!(self.value.load(SeqCst), 42);
             } else {
                 debug!("update");
-                self.value = 42;
-                self.flag = true;
+                self.value.store(42, SeqCst);
+                self.flag.store(true, SeqCst);
             }
             Ok(())
         }
     }
 
-    impl PersistentOpMut<RootClient> for RootObj {
+    impl PersistentOp<RootClient> for RootObj {
         type Input = ();
         type Output = Result<(), ()>;
 
-        fn persistent_op_mut(
-            &mut self,
-            client: &mut RootClient,
-            input: Self::Input,
-        ) -> Self::Output {
+        fn persistent_op(&self, client: &mut RootClient, input: Self::Input) -> Self::Output {
             self.check_inv(client, input)
         }
     }
@@ -263,7 +261,7 @@ mod test_simple {
         let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
 
         // flag=1 => value=42를 보장하는 persistent op의 entry point
-        root_obj.persistent_op_mut(root_client, ()).unwrap();
+        root_obj.persistent_op(root_client, ()).unwrap();
     }
 }
 
