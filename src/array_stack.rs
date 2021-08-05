@@ -152,6 +152,14 @@ mod test {
         stack: ArrayStack,
     }
 
+    impl Default for RootObj {
+        fn default() -> Self {
+            Self {
+                stack: ArrayStack::default(),
+            }
+        }
+    }
+
     impl RootObj {
         // idempotent: 이 함수를 몇번 실행하든 첫 2개만 push됨
         fn run(&mut self, root_client: &mut RootClient, _input: ()) -> Result<(), ()> {
@@ -212,20 +220,13 @@ mod test {
     /// 결과는 idempotent함 (몇번 실행하든 첫 번째 push만 유효함)
     #[test]
     fn push_2_times() {
-        // 풀 새로 만들기를 시도. 새로 만들기를 성공했다면 true
-        let is_new_file = Pool::create::<RootObj, RootClient>(FILE_NAME, FILE_SIZE).is_ok();
+        // 풀 없으면 새로 만듦
+        let _ = Pool::create::<RootObj, RootClient>(FILE_NAME, FILE_SIZE).is_ok();
 
         // 풀 열기
         let pool_handle = Pool::open(FILE_NAME).unwrap();
         let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
         let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
-
-        // 새로 만든 풀이라면 루트 오브젝트 초기화
-        if is_new_file {
-            *root_obj = RootObj {
-                stack: ArrayStack::default(),
-            };
-        }
 
         // Persistent Op의 entry point
         root_obj.persistent_op_mut(root_client, ()).unwrap();

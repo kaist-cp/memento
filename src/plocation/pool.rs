@@ -3,7 +3,7 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use std::fs::OpenOptions;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::mem;
 
 use crate::persistent::{PersistentClient, PersistentOpMut};
@@ -86,28 +86,36 @@ impl PoolHandle {
 ///
 /// # Pool Address Layout
 ///
-/// [ metadata | root object |            ...               ]
+/// [ metadata | (root obj, root client) |            ...               ]
 /// ^ base     ^ base + root offset                         ^ end
 #[derive(Debug)]
 pub struct Pool {
-    /// 풀의 시작주소로부터 루트 오브젝트까지의 거리
+    /// 풀의 시작주소로부터 루트 오브젝트/클라이언트까지의 거리
     root_offset: usize,
+
+    /// 풀의 메타데이터 및 루트 오브젝트/클라이언트까지 잘 초기화되었는지 여부
+    // TODO: 초기값이 false임을 보장가능한지 알아보기 (파일 생성시 0으로 초기화됨을 보장가능한가?)
+    is_initialized: bool,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
 impl Pool {
-    /// 메타데이터 초기화
-    fn init(&mut self) {
-        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트 오브젝트는 풀의 시작주소+16에 위치
+    /// 풀 내부 초기화 (메타데이터, 루트 오브젝트/클라이언트)
+    fn init<O: Default + PersistentOpMut<C>, C: PersistentClient>(&mut self, start: usize) {
+        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
         self.root_offset = mem::size_of::<Pool>();
 
-        // TODO: 루트 오브젝트 초기화를 여기서하고, 메타데이터 초기화가 잘 완료됐는지는 나타내는 플래그 사용하기
-        // ... init root object
-        // self.is_initialized = true;
+        // 루트 오브젝트/클라이언트 초기화
+        let (root_obj, root_client) = unsafe { &mut *((start + self.root_offset) as *mut (O, C)) };
+        *root_obj = O::default();
+        *root_client = C::default();
+
+        // "초기화 완료" 표시
+        self.is_initialized = true;
     }
 
     /// 풀 생성: 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화
-    pub fn create<O: PersistentOpMut<C>, C: PersistentClient>(
+    pub fn create<O: Default + PersistentOpMut<C>, C: PersistentClient>(
         filepath: &str,
         size: usize,
     ) -> Result<(), Error> {
@@ -126,7 +134,7 @@ impl Pool {
         // 2. 파일을 풀 레이아웃에 맞게 초기화
         let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         let pool = unsafe { &mut *(mmap.as_ptr() as *mut Pool) };
-        pool.init();
+        pool.init::<O, C>(mmap.as_ptr() as usize);
         Ok(())
     }
 
@@ -141,6 +149,11 @@ impl Pool {
             mmap,
             len: file.metadata()?.len() as usize,
         });
+        // create시 초기화가 제대로 안된 풀이면 에러 반환
+        if !global_pool().unwrap().pool().is_initialized {
+            global::clear();
+            return Err(Error::new(ErrorKind::InvalidData, "Invalid pool"));
+        }
 
         // 3. 글로벌 풀의 핸들러 반환
         Ok(global_pool().unwrap())
@@ -179,6 +192,15 @@ mod test_simple {
     struct RootObj {
         value: usize,
         flag: bool,
+    }
+
+    impl Default for RootObj {
+        fn default() -> Self {
+            Self {
+                value: 0,
+                flag: false,
+            }
+        }
     }
 
     impl RootObj {
@@ -232,27 +254,15 @@ mod test_simple {
         // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
         env_logger::init();
 
-        // 풀 새로 만들기를 시도. 새로 만들기를 성공했다면 true
-        let is_new_file = Pool::create::<RootObj, RootClient>(FILE_NAME, FILE_SIZE).is_ok();
+        // 풀 없으면 새로 만듦
+        let _ = Pool::create::<RootObj, RootClient>(FILE_NAME, FILE_SIZE).is_ok();
 
         // 풀 열기
         let pool_handle = Pool::open(FILE_NAME).unwrap();
         let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
         let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
 
-        // 새로 만든 풀이라면 루트 오브젝트 초기화
-        if is_new_file {
-            // TODO: 여기서 루트 오브젝트 초기화하기 전에 터지면 문제 발생
-            // - 문제: 다시 열었을 때 루트 오브젝트를 (1) 다시 초기화해야하는지 (2) 초기화가 잘 됐는지 구분 힘듦
-            // - 방안: 풀의 메타데이터 초기화할때 같이 초기화하고, 초기화가 잘 되었는지 나타내는 플래그 사용
-            debug!("init root");
-            *root_obj = RootObj {
-                value: 0,
-                flag: false,
-            };
-        }
-
-        // entry point of persistent op
+        // flag=1 => value=42를 보장하는 persistent op의 entry point
         root_obj.persistent_op_mut(root_client, ()).unwrap();
     }
 }
