@@ -12,6 +12,7 @@ use super::global::{self, global_pool};
 use super::ptr::PersistentPtr;
 use memmap::*;
 
+// TODO: client 인터페이스에 맞게 doc test 수정
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
 /// # 풀을 열고 사용하는 예시
@@ -82,7 +83,7 @@ impl PoolHandle {
     }
 }
 
-/// 풀의 내부를 관리하고 풀을 열고/닫기 위한 역할
+/// 풀의 내부 관리 및 풀을 열고/닫기 위한 역할
 ///
 /// # Pool Address Layout
 ///
@@ -206,8 +207,8 @@ mod test_simple {
     }
 
     impl RootObj {
+        /// invariant 검사(flag=1 => value=42)
         fn check_inv(&self, _client: &mut RootClient, _input: ()) -> Result<(), ()> {
-            // invariant 검사(flag=1 => value=42)
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
@@ -229,7 +230,9 @@ mod test_simple {
         }
     }
 
-    struct RootClient {}
+    struct RootClient {
+        // e.g. 만약 RootObj에 Queue가 들어간다면 여기에 Queue를 위한 Push/PopClient가 필드로 추가될 것임
+    }
 
     impl Default for RootClient {
         fn default() -> Self {
@@ -239,7 +242,7 @@ mod test_simple {
 
     impl PersistentClient for RootClient {
         fn reset(&mut self) {
-            unimplemented!();
+            // no op
         }
     }
 
