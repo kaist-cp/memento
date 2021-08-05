@@ -154,7 +154,6 @@ mod test {
 
     impl RootObj {
         // idempotent: 이 함수를 몇번 실행하든 첫 2개만 push됨
-        #[allow(warnings)]
         fn run(&mut self, root_client: &mut RootClient, _input: ()) -> Result<(), ()> {
             self.stack.print_state("----- Before push -----");
             for _ in 1..10 {
@@ -209,6 +208,8 @@ mod test {
     const FILE_NAME: &str = "test/array_stack.pool";
     const FILE_SIZE: usize = 8 * 1024;
 
+    /// ArrayStack에 push하는 게 idempotent하게 되는지 테스트
+    /// 결과는 idempotent함 (몇번 실행하든 첫 번째 push만 유효함)
     #[test]
     fn push_2_times() {
         // 풀 새로 만들기를 시도. 새로 만들기를 성공했다면 true
@@ -225,6 +226,8 @@ mod test {
                 stack: ArrayStack::default(),
             };
         }
+
+        // Persistent Op의 entry point
         root_obj.persistent_op_mut(root_client, ()).unwrap();
     }
 }
