@@ -184,7 +184,7 @@ impl Pool {
 }
 
 #[cfg(test)]
-mod test_simple {
+mod test {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
     use crate::persistent::PersistentOp;
@@ -231,7 +231,7 @@ mod test_simple {
     }
 
     struct RootClient {
-        // e.g. 만약 RootObj에 Queue가 들어간다면 여기에 Queue를 위한 Push/PopClient가 필드로 추가될 것임
+        // e.g. 만약 RootObj에 Queue가 들어간다면 여기에 Queue를 위한 Push/PopClient를 필드로 추가
     }
 
     impl Default for RootClient {
