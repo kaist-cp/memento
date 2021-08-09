@@ -190,6 +190,7 @@ mod test {
     use crate::plocation::pool::*;
 
     struct RootObj {
+        // 단순 usize, bool이 아닌 Atomic을 사용하는 이유: `PersistentOp` trait이 &mut self를 받지 않기때문
         value: AtomicUsize,
         flag: AtomicBool,
     }
@@ -227,15 +228,10 @@ mod test {
         }
     }
 
+    #[derive(Default)]
     struct RootClient {
         // 이 테스트는 간단한 예제이기 때문에 `RootClient` 필드가 비어있음
-    // 그러나 만약 `RootObj`에 Queue가 들어간다면 Queue를 위한 Push/PopClient를 필드로 추가해야함
-    }
-
-    impl Default for RootClient {
-        fn default() -> Self {
-            Self {}
-        }
+        // 그러나 만약 `RootObj`에 Queue가 들어간다면 Queue를 위한 Push/PopClient를 필드로 추가해야함
     }
 
     impl PersistentClient for RootClient {
