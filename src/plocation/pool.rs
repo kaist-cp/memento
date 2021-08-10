@@ -3,6 +3,7 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use memmap::*;
+use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
@@ -110,13 +111,13 @@ impl Pool {
     /// 풀 생성
     ///
     /// 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조를 초기화함
-    /// 단 생성할 파일 경로(입력값 `filepath`)는 pmem이 mount된 경로여야함
+    /// 단, 생성할 파일 경로(`filepath`)는 pmem이 mount된 경로여야함
     ///
     /// # Errors
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
     pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
-        filepath: &str,
+        filepath: &OsStr,
         size: usize,
     ) -> Result<(), Error> {
         // 초기화 도중의 crash를 고려하여,
@@ -148,7 +149,7 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 존재하지 않는다면 실패
-    pub fn open(filepath: &str) -> Result<&PoolHandle, Error> {
+    pub fn open(filepath: &OsStr) -> Result<&PoolHandle, Error> {
         // 1. 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
@@ -194,6 +195,7 @@ mod test {
 
     use crate::persistent::PersistentOp;
     use crate::plocation::pool::*;
+    use crate::test_path;
 
     struct RootObj {
         // 단순 usize, bool이 아닌 Atomic을 사용하는 이유: `PersistentOp` trait이 &mut self를 받지 않기때문
@@ -246,7 +248,7 @@ mod test {
         }
     }
 
-    const FILE_NAME: &str = "test/check_inv.pool";
+    const FILE_NAME: &str = "check_inv.pool";
     const FILE_SIZE: usize = 8 * 1024;
 
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
@@ -254,12 +256,13 @@ mod test {
     fn check_inv() {
         // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
         env_logger::init();
+        let filepath = test_path!(FILE_NAME);
 
         // 풀 없으면 새로 만듦
-        let _ = Pool::create::<RootObj, RootClient>(FILE_NAME, FILE_SIZE).is_ok();
+        let _ = Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).is_ok();
 
         // 풀 열고 루트 오브젝트, 루트 클라이언트 가져오기
-        let pool_handle = Pool::open(FILE_NAME).unwrap();
+        let pool_handle = Pool::open(&filepath).unwrap();
         let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
         let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
 
