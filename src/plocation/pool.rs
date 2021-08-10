@@ -2,15 +2,15 @@
 //!
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
+use memmap::*;
 use std::fs::OpenOptions;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 use std::mem;
-
-use crate::persistent::*;
+use tempfile::*;
 
 use super::global::{self, global_pool};
 use super::ptr::PersistentPtr;
-use memmap::*;
+use crate::persistent::*;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
@@ -90,10 +90,6 @@ impl PoolHandle {
 pub struct Pool {
     /// 풀의 시작주소로부터 루트 오브젝트/클라이언트까지의 거리
     root_offset: usize,
-
-    /// 풀이 잘 초기화 되었는지 여부
-    // TODO: 파일 생성시 초기값=false 보장가능한지 알아보기
-    is_initialized: bool,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
@@ -107,38 +103,48 @@ impl Pool {
         let (root_obj, root_client) = unsafe { &mut *((start + self.root_offset) as *mut (O, C)) };
         *root_obj = O::default();
         *root_client = C::default();
-
-        // "초기화 완료" 표시
-        self.is_initialized = true;
     }
 
     /// 풀 생성 (풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화)
+    ///
+    /// 입력값 `filepath`는 pmem이 mount된 경로여야함
+    ///
+    /// # Errors
+    ///
+    /// * `filepath`에 파일이 이미 존재한다면 실패
     pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
         filepath: &str,
         size: usize,
     ) -> Result<(), Error> {
-        // 1. 파일 생성 및 크기 세팅 (파일이 이미 존재하면 실패)
-        if let Some(prefix) = std::path::Path::new(filepath).parent() {
-            // e.g. "a/b/c.txt"라면, a/b/ 폴더도 만들어줌
-            std::fs::create_dir_all(prefix).unwrap();
-        }
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(filepath)?;
-        file.set_len(size as u64)?;
+        // 초기화 도중의 crash를 고려하여,
+        //   1. 임시파일로서 풀을 초기화 한 후
+        //   2. 초기화가 완료되면 "filepath"로 옮김
 
-        // 2. 파일을 풀 레이아웃에 맞게 초기화
+        // 임시파일 생성
+        let pmem_path = std::path::Path::new(filepath).parent().unwrap(); // pmem mounted directory
+        std::fs::create_dir_all(pmem_path)?; // e.g. "a/b/c.pool"라면, a/b/ 폴더도 만들어줌
+        let temp_file = NamedTempFile::new_in(pmem_path.to_str().unwrap())?; // 임시파일 또한 pmem mount된 경로에서 생성돼야함
+        let file = temp_file.as_file();
+
+        // 임시파일을 풀 레이아웃에 맞게 초기화
+        file.set_len(size as u64)?;
         let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
         let pool = unsafe { &mut *(mmap.as_ptr() as *mut Pool) };
         pool.init::<O, C>(mmap.as_ptr() as usize);
+
+        // 초기화된 임시파일을 "filepath"로 옮기기
+        // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return하도록 할지 고민하기
+        let _ = temp_file.persist_noclobber(filepath)?;
         Ok(())
     }
 
     /// 풀 열기 (파일을 persistent heap으로 매핑 후 풀 핸들러 반환)
+    ///
+    /// # Errors
+    ///
+    /// * `filepath`에 파일이 존재하지 않는다면 실패
     pub fn open(filepath: &str) -> Result<&PoolHandle, Error> {
-        // 1. 파일 열기 (파일이 존재하지 않는다면 실패)
+        // 1. 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
         // 2. 메모리 매핑 후 글로벌 풀 세팅
@@ -147,11 +153,6 @@ impl Pool {
             mmap,
             len: file.metadata()?.len() as usize,
         });
-        // create시 초기화가 제대로 안된 풀이면 에러 반환
-        if !global_pool().unwrap().pool().is_initialized {
-            global::clear();
-            return Err(Error::new(ErrorKind::InvalidData, "Invalid pool"));
-        }
 
         // 3. 글로벌 풀의 핸들러 반환
         Ok(global_pool().unwrap())
