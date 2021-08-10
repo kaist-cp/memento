@@ -94,7 +94,9 @@ pub struct Pool {
 }
 
 impl Pool {
-    /// 풀 내부 초기화 (메타데이터, 루트 오브젝트/클라이언트 초기화)
+    /// 풀 내부 초기화
+    ///
+    /// 메타데이터, 루트 오브젝트/클라이언트를 초기화함
     fn init<O: Default + PersistentOp<C>, C: PersistentClient>(&mut self, start: usize) {
         // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
         self.root_offset = mem::size_of::<Pool>();
@@ -105,9 +107,10 @@ impl Pool {
         *root_client = C::default();
     }
 
-    /// 풀 생성 (풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화)
+    /// 풀 생성
     ///
-    /// 입력값 `filepath`는 pmem이 mount된 경로여야함
+    /// 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조를 초기화함
+    /// 단 생성할 파일 경로(입력값 `filepath`)는 pmem이 mount된 경로여야함
     ///
     /// # Errors
     ///
@@ -128,7 +131,7 @@ impl Pool {
 
         // 임시파일을 풀 레이아웃에 맞게 초기화
         file.set_len(size as u64)?;
-        let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
+        let mmap = unsafe { memmap::MmapOptions::new().map_mut(file)? };
         let pool = unsafe { &mut *(mmap.as_ptr() as *mut Pool) };
         pool.init::<O, C>(mmap.as_ptr() as usize);
 
@@ -138,7 +141,9 @@ impl Pool {
         Ok(())
     }
 
-    /// 풀 열기 (파일을 persistent heap으로 매핑 후 풀 핸들러 반환)
+    /// 풀 열기
+    ///
+    /// 파일을 persistent heap으로 매핑 후 풀을 다룰 수 있는 핸들러를 반환함
     ///
     /// # Errors
     ///
@@ -159,15 +164,15 @@ impl Pool {
     }
 
     /// 풀 닫기
-    // TODO: 디자인 고민
+    // TODO: API 고민
     //  - file open/close API와 유사하게 input으로 받은 PoolHandle을 close하는 게 좋을지?
-    //  - 그렇게 한다면, 어떻게?
+    //  - 그렇게 한다면 어떻게?
     pub fn close() {
         // 메모리 매핑에 사용한 `MmapMut` 오브젝트가 글로벌 풀 내부의 `mmap` 필드에 저장되어있었다면 이때 매핑 해제됨
         global::clear();
     }
 
-    /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
+    /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
     fn alloc<T>(&self) -> PersistentPtr<T> {
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = self.allocator.alloc(mem::size_of::<T>());
