@@ -105,7 +105,7 @@ impl Pool {
     pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
         filepath: &OsStr,
         size: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<&PoolHandle, Error> {
         // 초기화 도중의 crash를 고려하여,
         //   1. 임시파일로서 풀을 초기화 한 후
         //   2. 초기화가 완료되면 "filepath"로 옮김
@@ -132,7 +132,8 @@ impl Pool {
         // 초기화된 임시파일을 "filepath"로 옮기기
         // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return하도록 할지 고민하기
         let _ = temp_file.persist_noclobber(filepath)?;
-        Ok(())
+
+        Self::open(filepath)
     }
 
     /// 풀 열기
@@ -251,11 +252,13 @@ mod test {
         env_logger::init();
         let filepath = get_test_path(FILE_NAME);
 
-        // 풀 없으면 새로 만듦
-        let _ = Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).is_ok();
+        // 풀 열기 (없으면 새로 만듦)
+        let pool_handle = match Pool::open(&filepath) {
+            Ok(handle) => handle,
+            Err(_) => Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).unwrap(),
+        };
 
-        // 풀 열고 루트 오브젝트, 루트 클라이언트 가져오기
-        let pool_handle = Pool::open(&filepath).unwrap();
+        // 루트 오브젝트, 루트 클라이언트 가져오기
         let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
         let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
 
