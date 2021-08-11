@@ -276,10 +276,8 @@ mod test {
         let filepath = get_test_path(FILE_NAME);
 
         // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = match Pool::open(&filepath) {
-            Ok(handle) => handle,
-            Err(_) => Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).unwrap(),
-        };
+        let pool_handle = Pool::open(&filepath)
+            .unwrap_or_else(|_| Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).unwrap());
         // 포인터 참조시 base 주소를 알기위해 풀 정보를 global하게 세팅
         global::init(pool_handle);
         let pool_handle = global::global_pool().unwrap();
