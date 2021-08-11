@@ -52,7 +52,6 @@ use crate::plocation::ptr::PersistentPtr;
 /// # }
 ///
 /// // 풀 생성 후 풀의 핸들러 얻기
-/// # let _ = std::fs::remove_file("foo.pool"); // 테스트에 사용한 파일 제거
 /// let pool_handle = Pool::create::<MyRootObj, MyRootClient>("foo.pool", 8 * 1024).unwrap();
 /// # // 풀 정보를 global하게 세팅 (포인터 참조시 base 주소를 알기위해 필요)
 /// # global::init(pool_handle);
