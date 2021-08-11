@@ -95,19 +95,6 @@ pub struct Pool {
 }
 
 impl Pool {
-    /// 풀 내부 초기화
-    ///
-    /// 메타데이터, 루트 오브젝트/클라이언트를 초기화함
-    fn init<O: Default + PersistentOp<C>, C: PersistentClient>(&mut self, start: usize) {
-        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
-        self.root_offset = mem::size_of::<Pool>();
-
-        // 루트 오브젝트/클라이언트 초기화
-        let (root_obj, root_client) = unsafe { &mut *((start + self.root_offset) as *mut (O, C)) };
-        *root_obj = O::default();
-        *root_client = C::default();
-    }
-
     /// 풀 생성
     ///
     /// 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조를 초기화함
@@ -132,8 +119,15 @@ impl Pool {
         // 임시파일을 풀 레이아웃에 맞게 초기화
         file.set_len(size as u64)?;
         let mmap = unsafe { memmap::MmapOptions::new().map_mut(file)? };
-        let pool = unsafe { &mut *(mmap.as_ptr() as *mut Pool) };
-        pool.init::<O, C>(mmap.as_ptr() as usize);
+        let start = mmap.as_ptr() as usize;
+        let pool = unsafe { &mut *(start as *mut Pool) };
+        // 초기화 1. 루트까지의 거리
+        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치)
+        pool.root_offset = mem::size_of::<Pool>();
+        // 초기화 2. 루트 오브젝트/클라이언트
+        let (root_obj, root_client) = unsafe { &mut *((start + pool.root_offset) as *mut (O, C)) };
+        *root_obj = O::default();
+        *root_client = C::default();
 
         // 초기화된 임시파일을 "filepath"로 옮기기
         // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return하도록 할지 고민하기
