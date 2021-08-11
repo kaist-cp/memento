@@ -14,6 +14,7 @@ pub fn init(pool: PoolHandle) {
 /// 글로벌 풀 clear
 pub fn clear() {
     unsafe {
+        // 메모리 매핑에 사용한 오브젝트가 `PoolHandle`의 `mmap` 필드에 저장되어있었다면 이때 매핑 해제됨
         GLOBAL_POOL = None;
     }
 }

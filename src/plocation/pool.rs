@@ -10,7 +10,6 @@ use std::mem;
 use tempfile::*;
 
 use crate::persistent::*;
-use crate::plocation::global::{self, global_pool};
 use crate::plocation::ptr::PersistentPtr;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
@@ -97,7 +96,7 @@ pub struct Pool {
 impl Pool {
     /// 풀 생성
     ///
-    /// 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조를 초기화함
+    /// 풀로서 사용할 파일을 생성하고(풀 레이아웃에 맞게 파일의 내부구조를 초기화) 핸들러 반환
     ///
     /// # Errors
     ///
@@ -105,34 +104,35 @@ impl Pool {
     pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
         filepath: &OsStr,
         size: usize,
-    ) -> Result<&PoolHandle, Error> {
+    ) -> Result<PoolHandle, Error> {
         // 초기화 도중의 crash를 고려하여,
         //   1. 임시파일로서 풀을 초기화 한 후
         //   2. 초기화가 완료되면 "filepath"로 옮김
 
-        // 임시파일 생성
+        // # 임시파일 생성
         let pmem_path = std::path::Path::new(filepath).parent().unwrap(); // pmem mounted directory
         std::fs::create_dir_all(pmem_path)?; // e.g. "a/b/c.pool"라면, a/b/ 폴더도 만들어줌
-        let temp_file = NamedTempFile::new_in(pmem_path.to_str().unwrap())?; // 임시파일 또한 pmem mount된 경로에서 생성돼야함
+        let temp_file = NamedTempFile::new_in(pmem_path.as_os_str())?; // 임시파일 또한 pmem mount된 경로에서 생성돼야함
         let file = temp_file.as_file();
 
-        // 임시파일을 풀 레이아웃에 맞게 초기화
+        // # 임시파일을 풀 레이아웃에 맞게 초기화
         file.set_len(size as u64)?;
         let mmap = unsafe { memmap::MmapOptions::new().map_mut(file)? };
         let start = mmap.as_ptr() as usize;
         let pool = unsafe { &mut *(start as *mut Pool) };
-        // 초기화 1. 루트까지의 거리
-        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치)
+        // 메타데이터 초기화
+        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
         pool.root_offset = mem::size_of::<Pool>();
-        // 초기화 2. 루트 오브젝트/클라이언트
+        // 루트 오브젝트/클라이언트 초기화
         let (root_obj, root_client) = unsafe { &mut *((start + pool.root_offset) as *mut (O, C)) };
         *root_obj = O::default();
         *root_client = C::default();
 
-        // 초기화된 임시파일을 "filepath"로 옮기기
-        // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return하도록 할지 고민하기
+        // # 초기화된 임시파일을 "filepath"로 옮기기
+        // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return할지 고민하기
         let _ = temp_file.persist_noclobber(filepath)?;
 
+        // # 생성한 파일을 풀로서 open
         Self::open(filepath)
     }
 
@@ -143,28 +143,15 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 존재하지 않는다면 실패
-    pub fn open(filepath: &OsStr) -> Result<&PoolHandle, Error> {
-        // 1. 파일 열기
+    pub fn open(filepath: &OsStr) -> Result<PoolHandle, Error> {
+        // 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
-        // 2. 메모리 매핑 후 글로벌 풀 세팅
-        let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
-        global::init(PoolHandle {
-            mmap,
+        // 메모리 매핑 후 풀의 핸들러 반환
+        Ok(PoolHandle {
+            mmap: unsafe { memmap::MmapOptions::new().map_mut(&file)? },
             len: file.metadata()?.len() as usize,
-        });
-
-        // 3. 글로벌 풀의 핸들러 반환
-        Ok(global_pool().unwrap())
-    }
-
-    /// 풀 닫기
-    // TODO: API 고민
-    //  - file open/close API와 유사하게 input으로 받은 PoolHandle을 close하는 게 좋을지?
-    //  - 그렇게 한다면 어떻게?
-    pub fn close() {
-        // 메모리 매핑에 사용한 `MmapMut` 오브젝트가 글로벌 풀 내부의 `mmap` 필드에 저장되어있었다면 이때 매핑 해제됨
-        global::clear();
+        })
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
@@ -188,6 +175,7 @@ mod test {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
     use crate::persistent::PersistentOp;
+    use crate::plocation::global;
     use crate::plocation::pool::*;
     use crate::util::*;
 
@@ -257,6 +245,9 @@ mod test {
             Ok(handle) => handle,
             Err(_) => Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).unwrap(),
         };
+        // 포인터 참조시 base 주소를 알기위해 풀 정보를 global하게 세팅
+        global::init(pool_handle);
+        let pool_handle = global::global_pool().unwrap();
 
         // 루트 오브젝트, 루트 클라이언트 가져오기
         let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
@@ -265,5 +256,7 @@ mod test {
         // 루트 클라이언트로 루트 오브젝트의 op 실행
         // 이 경우 루트 오브젝트의 op은 invariant 검사하는 `check_inv()`
         root_obj.persistent_op(root_client, ()).unwrap();
+
+        global::clear();
     }
 }
