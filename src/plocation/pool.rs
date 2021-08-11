@@ -9,8 +9,8 @@ use std::io::Error;
 use std::mem;
 use tempfile::*;
 
-use super::global::{self, global_pool};
-use super::ptr::PersistentPtr;
+use crate::plocation::ptr::PersistentPtr;
+use crate::plocation::global::{self, global_pool};
 use crate::persistent::*;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
@@ -194,7 +194,7 @@ mod test {
 
     use crate::persistent::PersistentOp;
     use crate::plocation::pool::*;
-    use crate::test_path;
+    use crate::util::*;
 
     struct RootObj {
         // 단순 usize, bool이 아닌 Atomic을 사용하는 이유: `PersistentOp` trait이 &mut self를 받지 않기때문
@@ -255,7 +255,7 @@ mod test {
     fn check_inv() {
         // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
         env_logger::init();
-        let filepath = test_path!(FILE_NAME);
+        let filepath = get_test_path(FILE_NAME);
 
         // 풀 없으면 새로 만듦
         let _ = Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).is_ok();

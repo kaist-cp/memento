@@ -42,16 +42,5 @@ use crossbeam_utils as _;
 // Persistent location
 pub mod plocation;
 
-/// 테스트 파일이 위치할 경로 계산
-///
-/// e.g. "foo.pool" => ".../compositional-persistent-object/test/foo.pool"
-#[macro_export]
-macro_rules! test_path {
-    ( $file_name:expr ) => {{
-        let mut path = std::path::PathBuf::new();
-        path.push(env!("CARGO_MANIFEST_DIR")); // 프로젝트 경로
-        path.push("test");
-        path.push($file_name);
-        path.as_os_str().to_os_string()
-    }};
-}
+// Utility
+pub mod util;
