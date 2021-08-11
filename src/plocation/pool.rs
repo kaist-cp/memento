@@ -3,7 +3,6 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use memmap::*;
-use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
@@ -14,22 +13,57 @@ use crate::plocation::ptr::PersistentPtr;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
-/// # 핸들러 사용예시
+/// # Example
 ///
 /// ```
-/// // TODO: client 인터페이스에 맞게 doc test 수정
-/// //
-/// // use compositional_persistent_object::plocation::pool::Pool;
-/// //
-/// // // 풀 생성 후 열어서 풀 핸들러 얻기
-/// // let _ = Pool::create::<i32>("foo.pool", 8 * 1024);
-/// // let pool_handle = Pool::open("foo.pool").unwrap();
-/// //
-/// // // 핸들러로부터 루트 오브젝트를 가져와서 사용
-/// // let mut head = pool_handle.get_root::<i32>().unwrap();
-/// // let mut head = unsafe { head.deref_mut() };
-/// // *head = 5;
-/// // assert_eq!(*head, 5);
+/// # // "풀을 열면 핸들러를 얻을 수 있고, 그 핸들러로 풀을 접근할 수 있다"만 보이기 위해 불필요한 정보는 숨김
+/// #
+/// # use compositional_persistent_object::plocation::pool::Pool;
+/// # use compositional_persistent_object::plocation::global;
+/// # use compositional_persistent_object::persistent::*;
+/// # use std::sync::atomic::*;
+/// #
+/// # #[derive(Default)]
+/// # struct MyRootObj {
+/// # }
+/// #
+/// # impl MyRootObj {
+/// #     fn my_root_op(&self, client: &mut MyRootClient, input: ()) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
+/// # }
+/// #
+/// # impl PersistentOp<MyRootClient> for MyRootObj {
+/// #     type Input = ();
+/// #     type Output = Result<(), ()>;
+/// #
+/// #     fn persistent_op(&self, client: &mut MyRootClient, input: Self::Input) -> Self::Output {
+/// #         self.my_root_op(client, input)
+/// #     }
+/// # }
+/// #
+/// # #[derive(Default)]
+/// # struct MyRootClient {
+/// # }
+/// #
+/// # impl PersistentClient for MyRootClient {
+/// #     fn reset(&mut self) {
+/// #     }
+/// # }
+///
+/// // 풀 생성 후 풀의 핸들러 얻기
+/// let pool_handle = Pool::create::<MyRootObj, MyRootClient>("foo.pool", 8 * 1024).unwrap();
+/// # // 풀 정보를 global하게 세팅 (포인터 참조시 base 주소를 알기위해 필요)
+/// # global::init(pool_handle);
+/// # let pool_handle = global::global_pool().unwrap();
+///
+/// // 핸들러로 풀의 루트 오브젝트, 루트 클라이언트 가져오기
+/// let mut root_ptr = pool_handle.get_root::<MyRootObj, MyRootClient>().unwrap();
+/// let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
+///
+/// // 루트 클라이언트로 루트 오브젝트의 op 실행
+/// root_obj.persistent_op(root_client, ()).unwrap();
+/// # let _ = std::fs::remove_file("foo.pool"); // 테스트에 사용한 파일 제거
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -96,13 +130,13 @@ pub struct Pool {
 impl Pool {
     /// 풀 생성
     ///
-    /// 풀로서 사용할 파일을 생성하고(풀 레이아웃에 맞게 파일의 내부구조를 초기화) 핸들러 반환
+    /// 풀로서 사용할 파일을 생성, 초기화(풀 레이아웃에 맞게 내부구조 초기화)한 후 풀의 핸들러 반환
     ///
     /// # Errors
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
     pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
-        filepath: &OsStr,
+        filepath: &str,
         size: usize,
     ) -> Result<PoolHandle, Error> {
         // 초기화 도중의 crash를 고려하여,
@@ -120,9 +154,10 @@ impl Pool {
         let mmap = unsafe { memmap::MmapOptions::new().map_mut(file)? };
         let start = mmap.as_ptr() as usize;
         let pool = unsafe { &mut *(start as *mut Pool) };
+
         // 메타데이터 초기화
-        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
-        pool.root_offset = mem::size_of::<Pool>();
+        pool.root_offset = mem::size_of::<Pool>(); // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
+
         // 루트 오브젝트/클라이언트 초기화
         let (root_obj, root_client) = unsafe { &mut *((start + pool.root_offset) as *mut (O, C)) };
         *root_obj = O::default();
@@ -143,7 +178,7 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 존재하지 않는다면 실패
-    pub fn open(filepath: &OsStr) -> Result<PoolHandle, Error> {
+    pub fn open(filepath: &str) -> Result<PoolHandle, Error> {
         // 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
