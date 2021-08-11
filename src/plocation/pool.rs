@@ -9,9 +9,9 @@ use std::io::Error;
 use std::mem;
 use tempfile::*;
 
-use crate::plocation::ptr::PersistentPtr;
-use crate::plocation::global::{self, global_pool};
 use crate::persistent::*;
+use crate::plocation::global::{self, global_pool};
+use crate::plocation::ptr::PersistentPtr;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
