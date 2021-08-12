@@ -18,6 +18,7 @@ etrace = "1.1.1"
 
 # crate for persistent location
 memmap = "0.7.0"
+tempfile = "3.2.0"
 
 [dev-dependencies]
 log = "0.4.14"

@@ -22,4 +22,9 @@ pub trait PersistentOp<C: PersistentClient> {
     ///     * safe하기만 하면 되므로 상관 없음. functional correctness는 보장하지 않음.
     /// - 같은 client에 대해 언제나 같은 Output을 반환 (idempotent)
     fn persistent_op(&self, client: &mut C, input: Self::Input) -> Self::Output;
+
+    // TODO
+    // - 구현한 obj를 persistent location에서 동작하도록 바꿀 때 아래처럼 시그니처 바꾸기
+    // - 이유: (1) 포인터 참조시, (2) alloc시 어느 풀에서 해야할지 알아야함
+    // fn persistent_op(&self, client: &mut C, input: Self::Input, pool: &PoolHandle) -> Self::Output;
 }

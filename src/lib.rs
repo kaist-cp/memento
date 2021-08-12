@@ -34,7 +34,6 @@
 pub mod exchanger;
 pub mod persistent;
 pub mod treiber_stack;
-// TODO: persistent location에서 동작하며 idempotent한 싱글 스레드 리스트 만들기
 
 // TODO: 지웠을 때 `absolute_paths_not_starting_with_crate` lint 에러나는 것 해결
 use crossbeam_epoch as _;
@@ -42,3 +41,6 @@ use crossbeam_utils as _;
 
 // Persistent location
 pub mod plocation;
+
+// Utility
+pub mod util;

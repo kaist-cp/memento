@@ -2,34 +2,63 @@
 //!
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
+use memmap::*;
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
+use tempfile::*;
 
-use super::global::{self, global_pool};
-use super::ptr::PersistentPtr;
-use memmap::*;
+use crate::persistent::*;
+use crate::plocation::ptr::PersistentPtr;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
-/// # 풀을 열고 사용하는 예시
+/// # Example
 ///
 /// ```
-/// use std::fs::remove_file;
-/// use compositional_persistent_object::plocation::pool::Pool;
+/// # // "풀을 열면 핸들러를 얻을 수 있고, 그 핸들러로 풀을 접근할 수 있다"만 보이기 위해 불필요한 정보는 숨김
+/// #
+/// # use compositional_persistent_object::plocation::pool::Pool;
+/// # use compositional_persistent_object::persistent::*;
+/// #
+/// # #[derive(Default)]
+/// # struct MyRootObj {
+/// # }
+/// #
+/// # impl MyRootObj {
+/// #     fn my_root_op(&self, client: &mut MyRootClient, input: ()) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
+/// # }
+/// #
+/// # impl PersistentOp<MyRootClient> for MyRootObj {
+/// #     type Input = ();
+/// #     type Output = Result<(), ()>;
+/// #
+/// #     fn persistent_op(&self, client: &mut MyRootClient, input: Self::Input) -> Self::Output {
+/// #         self.my_root_op(client, input)
+/// #     }
+/// # }
+/// #
+/// # #[derive(Default)]
+/// # struct MyRootClient {
+/// # }
+/// #
+/// # impl PersistentClient for MyRootClient {
+/// #     fn reset(&mut self) {
+/// #     }
+/// # }
 ///
-/// // (1) 기존의 파일은 제거하고 풀 파일 새로 생성
-/// let _ = remove_file("foo.pool");
-/// let _ = Pool::create::<i32>("foo.pool", 8 * 1024);
+/// // 풀 생성 후 풀의 핸들러 얻기
+/// let pool_handle = Pool::create::<MyRootObj, MyRootClient>("foo.pool", 8 * 1024).unwrap();
 ///
-/// // (2) 풀 열기
-/// let pool_handle = Pool::open("foo.pool").unwrap();
+/// // 핸들러로 풀의 루트 오브젝트, 루트 클라이언트 가져오기
+/// let mut root_ptr = pool_handle.get_root::<MyRootObj, MyRootClient>().unwrap();
+/// let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
-/// // (3) 루트 오브젝트를 가져와서 사용
-/// let mut head = pool_handle.get_root::<i32>().unwrap();
-/// let mut head = unsafe { head.deref_mut() };
-/// *head = 5;
-/// assert_eq!(*head, 5);
+/// // 루트 클라이언트로 루트 오브젝트의 op 실행
+/// root_obj.persistent_op(root_client, ()).unwrap();
+/// # let _ = std::fs::remove_file("foo.pool"); // 테스트에 사용한 파일 제거
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -53,9 +82,11 @@ impl PoolHandle {
         self.start() + self.len
     }
 
-    /// 풀의 루트 오브젝트를 가리키는 포인터 반환
+    /// 풀의 루트(루트 오브젝트/루트 클라이언트 tuple)를 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<T>(&self) -> Result<PersistentPtr<T>, Error> {
+    pub fn get_root<O: PersistentOp<C>, C: PersistentClient>(
+        &self,
+    ) -> Result<PersistentPtr<(O, C)>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
         Ok(PersistentPtr::from(self.pool().root_offset))
     }
@@ -78,77 +109,82 @@ impl PoolHandle {
     }
 }
 
-/// 풀의 내부를 관리하고 풀을 열고/닫기 위한 역할
+/// 풀 열기/닫기 및 메타데이터를 관리하는 역할
 ///
 /// # Pool Address Layout
 ///
-/// [ metadata | root object |            ...               ]
+/// [ metadata | (root obj, root client) |            ...               ]
 /// ^ base     ^ base + root offset                         ^ end
 #[derive(Debug)]
 pub struct Pool {
-    /// 풀의 시작주소로부터 루트 오브젝트까지의 거리
+    /// 풀의 시작주소로부터 루트 오브젝트/클라이언트까지의 거리
     root_offset: usize,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
 impl Pool {
-    /// 메타데이터 초기화
-    fn init(&mut self) {
-        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트 오브젝트는 풀의 시작주소+16에 위치
-        self.root_offset = mem::size_of::<Pool>();
+    /// 풀 생성
+    ///
+    /// 풀로서 사용할 파일을 생성, 초기화(풀 레이아웃에 맞게 내부구조 초기화)한 후 풀의 핸들러 반환
+    ///
+    /// # Errors
+    ///
+    /// * `filepath`에 파일이 이미 존재한다면 실패
+    pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
+        filepath: &str,
+        size: usize,
+    ) -> Result<PoolHandle, Error> {
+        // 초기화 도중의 crash를 고려하여,
+        //   1. 임시파일로서 풀을 초기화 한 후
+        //   2. 초기화가 완료되면 "filepath"로 옮김
 
-        // TODO: 루트 오브젝트 초기화를 여기서하고, 메타데이터 초기화가 잘 완료됐는지는 나타내는 플래그 사용하기
-        // ... init root object
-        // self.is_initialized = true;
-    }
+        // # 임시파일 생성
+        let pmem_path = std::path::Path::new(filepath).parent().unwrap(); // pmem mounted directory
+        std::fs::create_dir_all(pmem_path)?; // e.g. "a/b/c.pool"라면, a/b/ 폴더도 만들어줌
+        let temp_file = NamedTempFile::new_in(pmem_path.as_os_str())?; // 임시파일 또한 pmem mount된 경로에서 생성돼야함
+        let file = temp_file.as_file();
 
-    /// 풀 생성: 풀로서 사용할 파일을 생성하고 풀 레이아웃에 맞게 파일의 내부구조 초기화
-    pub fn create<T>(filepath: &str, size: usize) -> Result<(), Error> {
-        // 1. 파일 생성 및 크기 세팅 (파일이 이미 존재하면 실패)
-        if let Some(prefix) = std::path::Path::new(filepath).parent() {
-            // e.g. "a/b/c.txt"라면, a/b/ 폴더도 만들어줌
-            std::fs::create_dir_all(prefix).unwrap();
-        }
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(filepath)?;
+        // # 임시파일을 풀 레이아웃에 맞게 초기화
         file.set_len(size as u64)?;
+        let mmap = unsafe { memmap::MmapOptions::new().map_mut(file)? };
+        let start = mmap.as_ptr() as usize;
+        let pool = unsafe { &mut *(start as *mut Pool) };
 
-        // 2. 파일을 풀 레이아웃에 맞게 초기화
-        let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
-        let pool = unsafe { &mut *(mmap.as_ptr() as *mut Pool) };
-        pool.init();
-        Ok(())
+        // 메타데이터 초기화
+        pool.root_offset = mem::size_of::<Pool>(); // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
+
+        // 루트 오브젝트/클라이언트 초기화
+        let (root_obj, root_client) = unsafe { &mut *((start + pool.root_offset) as *mut (O, C)) };
+        *root_obj = O::default();
+        *root_client = C::default();
+
+        // # 초기화된 임시파일을 "filepath"로 옮기기
+        // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return할지 고민하기
+        let _ = temp_file.persist_noclobber(filepath)?;
+
+        // # 생성한 파일을 풀로서 open
+        Self::open(filepath)
     }
 
-    /// 풀 열기: 파일을 persistent heap으로 매핑 후 풀 핸들러 반환
-    pub fn open(filepath: &str) -> Result<&PoolHandle, Error> {
-        // 1. 파일 열기 (파일이 존재하지 않는다면 실패)
+    /// 풀 열기
+    ///
+    /// 파일을 persistent heap으로 매핑 후 풀을 다룰 수 있는 핸들러를 반환함
+    ///
+    /// # Errors
+    ///
+    /// * `filepath`에 파일이 존재하지 않는다면 실패
+    pub fn open(filepath: &str) -> Result<PoolHandle, Error> {
+        // 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
-        // 2. 메모리 매핑 후 글로벌 풀 세팅
-        let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file)? };
-        global::init(PoolHandle {
-            mmap,
+        // 메모리 매핑 후 풀의 핸들러 반환
+        Ok(PoolHandle {
+            mmap: unsafe { memmap::MmapOptions::new().map_mut(&file)? },
             len: file.metadata()?.len() as usize,
-        });
-
-        // 3. 글로벌 풀의 핸들러 반환
-        Ok(global_pool().unwrap())
+        })
     }
 
-    /// 풀 닫기
-    // TODO: 디자인 고민
-    //  - file open/close API와 유사하게 input으로 받은 PoolHandle을 close하는 게 좋을지?
-    //  - 그렇게 한다면, 어떻게?
-    pub fn close() {
-        // 메모리 매핑에 사용한 `MmapMut` 오브젝트가 글로벌 풀 내부의 `mmap` 필드에 저장되어있었다면 이때 매핑 해제됨
-        global::clear();
-    }
-
-    /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
+    /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
     fn alloc<T>(&self) -> PersistentPtr<T> {
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = self.allocator.alloc(mem::size_of::<T>());
@@ -163,155 +199,86 @@ impl Pool {
 }
 
 #[cfg(test)]
-mod test_simple {
-    use crate::plocation::pool::*;
+mod test {
+    use env_logger as _;
+    use log::{self as _, debug};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
-    const FILE_NAME: &str = "test/check_inv.pool";
+    use crate::persistent::PersistentOp;
+    use crate::plocation::pool::*;
+    use crate::util::*;
+
+    struct RootObj {
+        // 단순 usize, bool이 아닌 Atomic을 사용하는 이유: `PersistentOp` trait이 &mut self를 받지 않기때문
+        value: AtomicUsize,
+        flag: AtomicBool,
+    }
+
+    impl Default for RootObj {
+        fn default() -> Self {
+            Self {
+                value: AtomicUsize::new(0),
+                flag: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl RootObj {
+        /// invariant 검사(flag=1 => value=42)
+        fn check_inv(&self, _client: &mut RootClient, _input: ()) -> Result<(), ()> {
+            if self.flag.load(SeqCst) {
+                debug!("check inv");
+                assert_eq!(self.value.load(SeqCst), 42);
+            } else {
+                debug!("update");
+                self.value.store(42, SeqCst);
+                self.flag.store(true, SeqCst);
+            }
+            Ok(())
+        }
+    }
+
+    impl PersistentOp<RootClient> for RootObj {
+        type Input = ();
+        type Output = Result<(), ()>;
+
+        fn persistent_op(&self, client: &mut RootClient, input: Self::Input) -> Self::Output {
+            self.check_inv(client, input)
+        }
+    }
+
+    #[derive(Default)]
+    struct RootClient {
+        // 이 테스트는 간단한 예제이기 때문에 `RootClient` 필드가 비어있음
+    // 그러나 만약 `RootObj`에 Queue가 들어간다면 Queue를 위한 Push/PopClient를 필드로 추가해야함
+    }
+
+    impl PersistentClient for RootClient {
+        fn reset(&mut self) {
+            // no op
+        }
+    }
+
+    const FILE_NAME: &str = "check_inv.pool";
     const FILE_SIZE: usize = 8 * 1024;
 
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
     #[test]
     fn check_inv() {
-        // 풀 새로 만들기를 시도. 새로 만들기를 성공했다면 true
-        let is_new_file = Pool::create::<(usize, bool)>(FILE_NAME, FILE_SIZE).is_ok();
+        // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
+        env_logger::init();
+        let filepath = get_test_path(FILE_NAME);
 
-        // 풀 열기
-        let pool_handle = Pool::open(FILE_NAME).unwrap();
-        let mut root = pool_handle.get_root::<(usize, bool)>().unwrap();
-        let (value, flag) = unsafe { root.deref_mut() };
+        // 풀 열기 (없으면 새로 만듦)
+        let pool_handle = Pool::open(&filepath)
+            .unwrap_or_else(|_| Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).unwrap());
 
-        // 새로 만든 풀이라면 루트 오브젝트 초기화
-        if is_new_file {
-            // TODO: 여기서 루트 오브젝트 초기화하기 전에 터지면 문제 발생. 이는 TopClient 도입시에 해결할 예정
-            // - 문제: 다시 열었을 때 루트 오브젝트를 (1) 다시 초기화해야하는지 (2) 초기화가 잘 됐는지 구분 힘듦
-            // - 방안: 풀의 메타데이터 초기화할때 같이 초기화하고, 초기화가 잘 되었는지 나타내는 플래그 사용
-            *value = 0;
-            *flag = false;
-        }
-        // 원래 있던 풀이면 invariant 검사
-        else {
-            if *flag {
-                assert_eq!(*value, 42);
-            } else {
-                *value = 42;
-                *flag = true;
-            }
-        }
+        // 루트 오브젝트, 루트 클라이언트 가져오기
+        let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
+        let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
+
+        // 루트 클라이언트로 루트 오브젝트의 op 실행
+        // 이 경우 루트 오브젝트의 op은 invariant 검사하는 `check_inv()`
+        root_obj.persistent_op(root_client, ()).unwrap();
     }
-}
-
-#[cfg(test)]
-mod test_node {
-    use crate::plocation::pool::*;
-    use env_logger as _;
-    use log as _;
-    use std::fs::remove_file;
-
-    struct Node {
-        value: usize,
-        next: PersistentPtr<Node>,
-    }
-
-    impl Node {
-        fn new(value: usize) -> Self {
-            Self {
-                value,
-                next: PersistentPtr::null(),
-            }
-        }
-    }
-
-    /// persistent pool에 노드를 할당하고 다시 열었을 때 매핑된 주소가 바뀌어도 할당되었던 노드를 잘 따라가는지를 확인
-    /// idempotency 테스트는 아님: persistent location이 잘 동작하는 지 확인하기 위한 테스트
-    #[test]
-    fn append_one_node() {
-        const FILE_NAME: &str = "test/append_one_node.pool";
-        const FILE_SIZE: usize = 8 * 1024;
-
-        // 루트 오브젝트로 Node를 가진 8MB 크기의 풀 파일 새로 생성
-        let _ = remove_file(FILE_NAME);
-        let _ = Pool::create::<Node>(FILE_NAME, FILE_SIZE).unwrap();
-
-        // 첫 번째 open: 노드 할당 후 루트 오브젝트에 연결
-        let mapped_addr1 = {
-            let pool_handle = Pool::open(FILE_NAME).unwrap();
-            let mapped_addr1 = pool_handle.start();
-
-            // 첫 번째 open이므로 루트 오브젝트부터 초기화
-            let mut head = pool_handle.get_root::<Node>().unwrap();
-            let head = unsafe { head.deref_mut() };
-            *head = Node::new(0);
-
-            // 풀에 새로운 노드 할당, 루트 오브젝트에 연결
-            // 결과: head(val: 0) -> node1(val: 1) -> ㅗ
-            if head.next.is_null() {
-                let mut node1 = pool_handle.alloc::<Node>();
-                unsafe {
-                    *node1.deref_mut() = Node::new(1);
-                }
-                // TODO: 여기서 터지면 node1은 leak됨. allocator 구현 후 이러한 leak도 없게하기
-                head.next = node1;
-            }
-
-            // NOTE
-            // - 여기서 풀을 닫지 않아야 두 번째 open할 때 다른 주소에 매핑됨
-            // - 풀을 닫으면 같은 파일에 대해선 같은 주소로 매핑
-            mapped_addr1
-        };
-
-        // 두 번째 open: 첫 번째에서 구성한 풀이 다른 주소로 매핑되어도 노드를 잘 따라가는지 확인
-        {
-            let pool_handle = Pool::open(FILE_NAME).unwrap();
-            let mapped_addr2 = pool_handle.start();
-            // 첫 번째 open의 매핑 정보가 drop되기 전에 두 번째 open을 하므로, 다른 주소에 매핑됨을 보장
-            assert_ne!(mapped_addr1, mapped_addr2);
-
-            // 첫 번째 open에서 구성한 풀대로 노드를 잘 따라가는지 확인
-            let head = pool_handle.get_root::<Node>().unwrap();
-            let head = unsafe { head.deref() };
-            let node1 = unsafe { head.next.deref() };
-            // 확인하기: head(val: 0) -> node1(val: 1) -> ㅗ
-            assert_eq!(head.value, 0);
-            assert_eq!(node1.value, 1);
-            assert!(node1.next.is_null());
-
-            Pool::close();
-        };
-    }
-
-    // TODO: allocator 구현 후 테스트
-    // #[test]
-    // fn append_n_node() {
-    //     const N: usize = 100;
-
-    //     // 첫 번째 open: pm pool로 사용할 파일을 새로 만들고 그 안에 N개의 노드를 넣음
-    //     let _ = remove_file("append_n_node.pool");
-    //     {
-    //         let mut head = Pool::open::<Node>("append_n_node.pool").unwrap();
-
-    //         // N개의 노드 넣기
-    //         let mut p = head.deref_mut();
-    //         for i in 0..N {
-    //             let mut node = PPtr::<Node>::new();
-    //             node.value = i + 1; // 각 노드의 값은 자신이 몇 번째 노드인지랑 같음
-    //             p.next = node;
-    //             p = p.next.deref_mut();
-    //         }
-    //     }
-
-    //     // 두 번째 open: 첫 번째에서 구성한 pool이 다른 주소로 매핑되어도 노드를 잘 따라가는지 확인
-    //     {
-    //         let head: PPtr<Node> = Pool::open::<Node>("append_n_node.pool").unwrap();
-
-    //         // N-1번째 노드까지 따라가면서 첫 번째 open에서 구성한 대로 되어있는지 확인
-    //         let mut p = head.deref();
-    //         for i in 0..N {
-    //             assert_eq!(p.value, i);
-    //             p = p.next.deref();
-    //         }
-    //         // N번째 노드 확인
-    //         assert_eq!(p.value, N);
-    //         assert!(p.next.is_null());
-    //     }
-    // }
 }
