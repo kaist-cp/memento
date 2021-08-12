@@ -1,5 +1,5 @@
 //! Persistent Pointer
-use super::global::global_pool;
+use super::pool::PoolHandle;
 use std::marker::PhantomData;
 
 /// 풀에 속한 오브젝트를 가리킬 포인터
@@ -31,9 +31,8 @@ impl<T> PersistentPtr<T> {
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref(&self) -> &T {
-        let global_pool = global_pool().expect("No memory pool is open.");
-        &*((global_pool.start() + self.offset) as *const T)
+    pub unsafe fn deref(&self, pool: &PoolHandle) -> &T {
+        &*((pool.start() + self.offset) as *const T)
     }
 
     /// 절대주소 mutable 참조
@@ -41,9 +40,8 @@ impl<T> PersistentPtr<T> {
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref_mut(&mut self) -> &mut T {
-        let global_pool = global_pool().expect("No memory pool is open.");
-        &mut *((global_pool.start() + self.offset) as *mut T)
+    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &mut T {
+        &mut *((pool.start() + self.offset) as *mut T)
     }
 }
 

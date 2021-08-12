@@ -19,9 +19,7 @@ use crate::plocation::ptr::PersistentPtr;
 /// # // "풀을 열면 핸들러를 얻을 수 있고, 그 핸들러로 풀을 접근할 수 있다"만 보이기 위해 불필요한 정보는 숨김
 /// #
 /// # use compositional_persistent_object::plocation::pool::Pool;
-/// # use compositional_persistent_object::plocation::global;
 /// # use compositional_persistent_object::persistent::*;
-/// # use std::sync::atomic::*;
 /// #
 /// # #[derive(Default)]
 /// # struct MyRootObj {
@@ -53,13 +51,10 @@ use crate::plocation::ptr::PersistentPtr;
 ///
 /// // 풀 생성 후 풀의 핸들러 얻기
 /// let pool_handle = Pool::create::<MyRootObj, MyRootClient>("foo.pool", 8 * 1024).unwrap();
-/// # // 풀 정보를 global하게 세팅 (포인터 참조시 base 주소를 알기위해 필요)
-/// # global::init(pool_handle);
-/// # let pool_handle = global::global_pool().unwrap();
 ///
 /// // 핸들러로 풀의 루트 오브젝트, 루트 클라이언트 가져오기
 /// let mut root_ptr = pool_handle.get_root::<MyRootObj, MyRootClient>().unwrap();
-/// let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
+/// let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
 /// // 루트 클라이언트로 루트 오브젝트의 op 실행
 /// root_obj.persistent_op(root_client, ()).unwrap();
@@ -210,7 +205,6 @@ mod test {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
     use crate::persistent::PersistentOp;
-    use crate::plocation::global;
     use crate::plocation::pool::*;
     use crate::util::*;
 
@@ -278,18 +272,13 @@ mod test {
         // 풀 열기 (없으면 새로 만듦)
         let pool_handle = Pool::open(&filepath)
             .unwrap_or_else(|_| Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).unwrap());
-        // 포인터 참조시 base 주소를 알기위해 풀 정보를 global하게 세팅
-        global::init(pool_handle);
-        let pool_handle = global::global_pool().unwrap();
 
         // 루트 오브젝트, 루트 클라이언트 가져오기
         let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
-        let (root_obj, root_client) = unsafe { root_ptr.deref_mut() };
+        let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
 
         // 루트 클라이언트로 루트 오브젝트의 op 실행
         // 이 경우 루트 오브젝트의 op은 invariant 검사하는 `check_inv()`
         root_obj.persistent_op(root_client, ()).unwrap();
-
-        global::clear();
     }
 }
