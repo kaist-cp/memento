@@ -33,6 +33,7 @@
 // Persistent objects collection
 pub mod exchanger;
 pub mod persistent;
+pub mod queue;
 pub mod stack;
 pub mod treiber_stack;
 
