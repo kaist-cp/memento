@@ -359,6 +359,8 @@ unsafe impl<T> Send for Exchanger<T> {}
 
 #[cfg(test)]
 mod test {
+    use std::sync::atomic::AtomicUsize;
+
     use chrono::Duration;
     use crossbeam_utils::thread;
     use serial_test::serial;
@@ -390,8 +392,8 @@ mod test {
         .unwrap();
     }
 
-    // Before rotation : [0]  [1]  [2]
-    // After rotation  : [1]  [2]  [0]
+    /// Before rotation : [0]  [1]  [2]
+    /// After rotation  : [1]  [2]  [0]
     #[test]
     fn rotate_left() {
         let (mut item0, mut item1, mut item2) = (0, 1, 2); // TODO(persistent location)
@@ -432,7 +434,15 @@ mod test {
         .unwrap();
     }
 
-    // 스레드 여러 개의 exchange
+    /// 여럿이서 exchange 하다가 혼자만 남은 tid와 exchange한 횟수
+    #[derive(Default)]
+    struct Unfinished {
+        flag: AtomicUsize,
+        tid: AtomicUsize,
+        cnt: AtomicUsize,
+    }
+
+    /// 스레드 여러 개의 exchange
     #[test]
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn exchange_many() {
@@ -446,14 +456,13 @@ mod test {
 
         // 아래 로직은 idempotent 함
 
-        // 혼자만 남은 tid와 남은 횟수
-        static mut UNFINISHED_TID: usize = 0;
-        static mut BREAK_CNT: usize = 0;
+        let unfinished = Unfinished::default();
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
             for tid in 0..NR_THREAD {
                 let xchg = &xchg;
+                let unfinished = &unfinished;
                 let exchanges = unsafe {
                     (exchanges.get_unchecked_mut(tid) as *mut Vec<TryExchange<usize>>)
                         .as_mut()
@@ -463,11 +472,12 @@ mod test {
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
                     for (i, exchange) in exchanges.iter_mut().enumerate() {
-                        if let Err(_) = exchange.run(xchg, (tid, Duration::milliseconds(5000))) {
-                            // 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
-                            unsafe {
-                                UNFINISHED_TID = tid;
-                                BREAK_CNT = i;
+                        if let Err(_) = exchange.run(xchg, (tid, Duration::milliseconds(500))) {
+                            // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
+                            // => 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
+                            if unfinished.flag.fetch_add(1, Ordering::SeqCst) == 0 {
+                                unfinished.tid.store(tid, Ordering::SeqCst);
+                                unfinished.cnt.store(i, Ordering::SeqCst);
                             }
                             break;
                         }
@@ -477,20 +487,32 @@ mod test {
         })
         .unwrap();
 
+        // Validate test
+        let u_flag = unfinished.flag.load(Ordering::SeqCst);
+        let u_tid_cnt = if u_flag == 1 {
+            Some((
+                unfinished.tid.load(Ordering::SeqCst),
+                unfinished.cnt.load(Ordering::SeqCst),
+            ))
+        } else if u_flag == 0 {
+            None
+        } else {
+            // 끝까지 하지 못한 스레드가 둘 이상일 경우 무효
+            return;
+        };
+
         // Gather results
         let mut results = vec![0_usize; NR_THREAD];
+        let expected: Vec<usize> = (0..NR_THREAD)
+            .map(|tid| match u_tid_cnt {
+                Some((u_tid, u_cnt)) if tid == u_tid => u_cnt,
+                Some(_) | None => COUNT,
+            })
+            .collect();
 
         for (tid, exchanges) in exchanges.iter_mut().enumerate() {
-            let expected_cnt = unsafe {
-                if tid != UNFINISHED_TID {
-                    COUNT
-                } else {
-                    BREAK_CNT
-                }
-            };
-
             for (i, exchange) in exchanges.iter_mut().enumerate() {
-                if i == expected_cnt {
+                if i == expected[tid] {
                     break;
                 }
                 let ret = exchange
@@ -501,12 +523,9 @@ mod test {
         }
 
         // Check results
-        assert!(results.iter().enumerate().all(|(tid, r)| unsafe {
-            *r == if tid != UNFINISHED_TID {
-                COUNT
-            } else {
-                BREAK_CNT
-            }
-        }));
+        assert!(results
+            .iter()
+            .enumerate()
+            .all(|(tid, r)| *r == expected[tid]));
     }
 }
