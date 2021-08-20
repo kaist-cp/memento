@@ -33,6 +33,7 @@
 // Persistent objects collection
 pub mod exchanger;
 pub mod persistent;
+pub mod stack;
 pub mod treiber_stack;
 
 // TODO: 지웠을 때 `absolute_paths_not_starting_with_crate` lint 에러나는 것 해결
