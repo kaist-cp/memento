@@ -16,7 +16,7 @@
 use chrono::{Duration, Utc};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
-use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{self as epoch, Atomic, Guard, Owned, Shared};
 use std::mem::MaybeUninit;
 
 use crate::persistent::*;
@@ -36,31 +36,20 @@ struct Node<T> {
     partner: Atomic<Node<T>>,
 }
 
-/// `Exchanger::exchange()`을 호출할 때 쓰일 client
-/// `Exchanger::exchange(val, timeout)`:
-/// - 나의 `val`을 주고 상대의 값을 반환함
-/// - `timeout`이 `Timeout::Limited(d)`일 경우 `d` 시간 내에 교환이 이루어지지 않으면 실패
-#[derive(Debug, Clone)]
-pub struct ExchangeClient<T> {
-    /// 해당 op를 위해 할당된 node
-    node: Atomic<Node<T>>,
-}
-
-impl<T> Default for ExchangeClient<T> {
-    fn default() -> Self {
+impl<T> From<T> for Node<T> {
+    fn from(value: T) -> Self {
         Self {
-            node: Atomic::null(),
+            mine: value,
+            yours: MaybeUninit::uninit(),
+            response: AtomicBool::new(false),
+            partner: Atomic::null(),
         }
     }
 }
 
-impl<T> PersistentClient for ExchangeClient<T> {
-    fn reset(&mut self) {
-        self.node.store(Shared::null(), Ordering::SeqCst);
-    }
-}
-
-unsafe impl<T: Send> Send for ExchangeClient<T> {}
+/// Exchanger의 try exchange 실패
+#[derive(Debug, Clone)]
+pub struct TryFail;
 
 /// `Exchanger::exchange()`의 시간 제한
 #[derive(Debug)]
@@ -70,6 +59,122 @@ pub enum Timeout {
 
     /// 시간 제한 없음
     Unlimited,
+}
+
+trait ExchangeType<T> {
+    fn node(&self) -> &Atomic<Node<T>>;
+}
+
+/// Exchanger의 try exchange operation
+///
+/// `timeout` 시간 내에 교환이 이루어지지 않으면 실패.
+/// Try exchange의 결과가 `TryFail`일 경우, 재시도 시 exchanger의 상황과 관계없이 언제나 `TryFail`이 됨.
+#[derive(Debug)]
+pub struct TryExchange<T> {
+    /// exchange item을 담고 다른 스레드 공유하기 위해 할당된 node
+    node: Atomic<Node<T>>,
+}
+
+impl<T> Default for TryExchange<T> {
+    fn default() -> Self {
+        Self {
+            node: Atomic::null(),
+        }
+    }
+}
+
+impl<T> ExchangeType<T> for TryExchange<T> {
+    #[inline]
+    fn node(&self) -> &Atomic<Node<T>> {
+        &self.node
+    }
+}
+
+unsafe impl<T> Send for TryExchange<T> {}
+
+impl<T: Clone> PersistentOp for TryExchange<T> {
+    type Object = Exchanger<T>;
+    type Input = (T, Duration);
+    type Output = Result<T, TryFail>;
+
+    fn run(&mut self, xchg: &Self::Object, (value, timeout): Self::Input) -> Self::Output {
+        xchg.exchange(self, value, Timeout::Limited(timeout))
+    }
+
+    fn reset(&mut self, _: bool) {
+        self.node.store(Shared::null(), Ordering::SeqCst);
+        // TODO: if not finished -> free node
+        // TODO: if node has not been freed, free node
+    }
+}
+
+impl<T> TryExchange<T> {
+    /// 기본값 태그
+    const DEFAULT: usize = 0;
+
+    /// Try exchange 결과 실패를 표시하기 위한 태그
+    const FAIL: usize = 1;
+
+    /// - 만약 input이 있다면 input은 남겨두고 try 실행을 안 한 것처럼 리셋함.
+    /// - 만약 exchange가 이미 성공했다면 내가 교환할 값은 남기고 상대에게 받은 값을 삭제.
+    pub fn reset_weak(&self) {
+        let guard = epoch::pin();
+        let node = self.node.load(Ordering::SeqCst, &guard);
+
+        if node.tag() == Self::FAIL {
+            self.node
+                .store(node.with_tag(Self::DEFAULT), Ordering::SeqCst);
+            return;
+        }
+
+        todo!("try exchange 중인 스레드가 exchanger 안에 있다가 crash 났을 경우 reset_weak과 helping의 race가 있을 수 있음");
+
+        // let node_ref = unsafe { node.deref() };
+        // if node_ref.response.load(Ordering::SeqCst) {
+        //     node_ref.response.store(false, Ordering::SeqCst);
+        // }
+    }
+}
+
+/// Exchanger의 exchange operation.
+/// 반드시 exchange에 성공함.
+#[derive(Debug)]
+pub struct Exchange<T> {
+    /// exchange item을 담고 다른 스레드 공유하기 위해 할당된 node
+    node: Atomic<Node<T>>,
+}
+
+impl<T> Default for Exchange<T> {
+    fn default() -> Self {
+        Self {
+            node: Atomic::null(),
+        }
+    }
+}
+
+impl<T> ExchangeType<T> for Exchange<T> {
+    #[inline]
+    fn node(&self) -> &Atomic<Node<T>> {
+        &self.node
+    }
+}
+
+unsafe impl<T> Send for Exchange<T> {}
+
+impl<T: Clone> PersistentOp for Exchange<T> {
+    type Object = Exchanger<T>;
+    type Input = T;
+    type Output = T;
+
+    fn run(&mut self, xchg: &Self::Object, value: Self::Input) -> Self::Output {
+        xchg.exchange(self, value, Timeout::Unlimited).unwrap()
+    }
+
+    fn reset(&mut self, _: bool) {
+        self.node.store(Shared::null(), Ordering::SeqCst);
+        // TODO: if not finished -> free node
+        // TODO: if node has not been freed, free node
+    }
 }
 
 /// 스레드 간의 exchanger
@@ -89,36 +194,39 @@ impl<T> Default for Exchanger<T> {
     }
 }
 
-unsafe impl<T: Send> Sync for Exchanger<T> {}
-unsafe impl<T: Send> Send for Exchanger<T> {}
-
 impl<T> Exchanger<T> {
-    fn exchange(&self, client: &mut ExchangeClient<T>, val: T, timeout: Timeout) -> Result<T, ()> {
-        let guard = crossbeam_epoch::pin();
-        let mut myop = client.node.load(Ordering::SeqCst, &guard);
+    fn exchange<C: ExchangeType<T>>(
+        &self,
+        client: &mut C,
+        value: T,
+        timeout: Timeout,
+    ) -> Result<T, TryFail> {
+        let guard = epoch::pin();
+
+        let mut myop = client.node().load(Ordering::SeqCst, &guard);
 
         if myop.is_null() {
-            // First execution
-            let n = Owned::new(Node {
-                mine: val,
-                yours: MaybeUninit::uninit(),
-                response: AtomicBool::new(false),
-                partner: Atomic::null(),
-            });
-
-            myop = n.into_shared(&guard);
-            client.node.store(myop, Ordering::SeqCst);
+            // myop이 null이면 node 할당이 안 된 것이다
+            let n = Owned::new(Node::from(value)).into_shared(&guard);
+            client.node().store(n, Ordering::SeqCst);
+            myop = n;
+        } else if myop.tag() == TryExchange::<T>::FAIL {
+            // tag가 FAIL이면 try exchange 실패했던 것이다
+            return Err(TryFail);
         }
 
-        let start_time = Utc::now();
         let myop_ref = unsafe { myop.deref() };
 
+        let start_time = Utc::now();
         loop {
+            const WAITING: usize = 0; // default
+            const BUSY: usize = 1;
+
             // slot의 상태에 따른 case는 총 네 가지
-            // - Case 1: slot에 아무도 없음
-            // - Case 2: slot에서 내 node가 기다림
-            // - Case 3: slot에서 다른 node가 기다림
-            // - Case 4: slot에서 누군가가 짝짓기 중 (나일 수도 있음)
+            // - Case 1 (null)    : slot에 아무도 없음
+            // - Case 2 (WAITING) : slot에서 내 node가 기다림
+            // - Case 3 (WAITING) : slot에서 다른 node가 기다림
+            // - Case 4 (BUSY)    : slot에서 누군가가 짝짓기 중 (나일 수도 있음)
             let yourop = self.slot.load(Ordering::SeqCst, &guard);
 
             // 내 교환이 이미 끝났다면, 상대에게 가져온 값을 반환함
@@ -127,14 +235,12 @@ impl<T> Exchanger<T> {
             }
 
             // timeout check
+            // NOTE: 이 로직은 내가 기다리는 상황이 아닐 때에도 cas를 시도할 수도 있으므로 비효율적임.
+            //       로직 변경할 때 어차피 바뀔 로직이므로 이대로 방치.
             if let Timeout::Limited(t) = timeout {
                 let now = Utc::now();
                 if now.signed_duration_since(start_time) > t {
-                    if myop != yourop {
-                        return Err(());
-                    }
-
-                    // slot 비우기 -> 실패한다면 그새 짝이 생겼다는 뜻
+                    // slot 비우기
                     if self
                         .slot
                         .compare_exchange(
@@ -146,8 +252,21 @@ impl<T> Exchanger<T> {
                         )
                         .is_ok()
                     {
-                        return Err(());
+                        return Err(TryFail);
                     }
+
+                    // 누군가를 helping 함
+                    let yourop = self.slot.load(Ordering::SeqCst, &guard);
+                    if yourop.tag() == BUSY {
+                        self.help(yourop, &guard);
+                    }
+
+                    // helping 대상이 나일 수도 있으므로 마지막 확인
+                    if myop_ref.response.load(Ordering::SeqCst) {
+                        return Ok(unsafe { Self::finish(myop_ref) });
+                    }
+
+                    return Err(TryFail);
                 }
             }
 
@@ -164,9 +283,6 @@ impl<T> Exchanger<T> {
                 );
                 continue;
             }
-
-            const WAITING: usize = 0; // default
-            const BUSY: usize = 1;
 
             match yourop.tag() {
                 WAITING if myop == yourop => {
@@ -232,49 +348,42 @@ impl<T> Exchanger<T> {
     }
 
     /// 상대에게서 받아온 item을 반환
+    // TODO: 이게 unsafe일 이유는 없을 것 같음
     unsafe fn finish(myop_ref: &Node<T>) -> T {
         ptr::read(myop_ref.yours.as_ptr())
         // TODO: free node
     }
 }
 
-impl<T> PersistentOp<ExchangeClient<T>> for Exchanger<T> {
-    type Input = (T, Timeout);
-    type Output = Result<T, ()>;
-
-    fn persistent_op(&self, client: &mut ExchangeClient<T>, input: Self::Input) -> Self::Output {
-        self.exchange(client, input.0, input.1)
-    }
-}
+unsafe impl<T> Send for Exchanger<T> {}
 
 #[cfg(test)]
 mod test {
     use chrono::Duration;
     use crossbeam_utils::thread;
-    use etrace::ok_or;
-    use std::sync::atomic::AtomicUsize;
+    use serial_test::serial;
 
     use super::*;
 
     #[test]
     fn exchange_once() {
         let xchg: Exchanger<usize> = Exchanger::default(); // TODO(persistent location)
-        let mut clients = vec![ExchangeClient::<usize>::default(); 2]; // TODO(persistent location)
+        let mut exchanges: Vec<Exchange<usize>> = (0..2).map(|_| Default::default()).collect(); // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
         #[allow(box_pointers)]
         thread::scope(|scope| {
-            let xchg_ref = &xchg;
+            let xchg = &xchg;
             for tid in 0..2 {
-                let client = unsafe {
-                    (clients.get_unchecked_mut(tid) as *mut ExchangeClient<usize>)
+                let exchange = unsafe {
+                    (exchanges.get_unchecked_mut(tid) as *mut Exchange<usize>)
                         .as_mut()
                         .unwrap()
                 };
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
-                    let ret = xchg_ref.persistent_op(client, (tid, Timeout::Unlimited));
-                    assert_eq!(ret, Ok(1 - tid));
+                    let ret = exchange.run(xchg, tid);
+                    assert_eq!(ret, 1 - tid);
                 });
             }
         })
@@ -290,42 +399,34 @@ mod test {
         let lxhg = Exchanger::<i32>::default(); // TODO(persistent location)
         let rxhg = Exchanger::<i32>::default(); // TODO(persistent location)
 
-        let mut exclient0 = ExchangeClient::<i32>::default(); // TODO(persistent location)
-        let mut exclient2 = ExchangeClient::<i32>::default(); // TODO(persistent location)
+        let mut exchange0 = Exchange::<i32>::default(); // TODO(persistent location)
+        let mut exchange2 = Exchange::<i32>::default(); // TODO(persistent location)
 
-        let mut exclient1_0 = ExchangeClient::<i32>::default(); // TODO(persistent location)
-        let mut exclient1_2 = ExchangeClient::<i32>::default(); // TODO(persistent location)
+        let mut exchange1_0 = Exchange::<i32>::default(); // TODO(persistent location)
+        let mut exchange1_2 = Exchange::<i32>::default(); // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
         #[allow(box_pointers)]
         thread::scope(|scope| {
             let _ = scope.spawn(|_| {
                 // [0] -> [1]    [2]
-                item0 = lxhg
-                    .persistent_op(&mut exclient0, (item0, Timeout::Unlimited))
-                    .unwrap();
+                item0 = exchange0.run(&lxhg, item0);
                 assert_eq!(item0, 1);
             });
 
             let _ = scope.spawn(|_| {
                 // [0]    [1] <- [2]
-                item2 = rxhg
-                    .persistent_op(&mut exclient2, (item2, Timeout::Unlimited))
-                    .unwrap();
+                item2 = exchange2.run(&rxhg, item2);
                 assert_eq!(item2, 0);
             });
 
             // Composition in the middle
             // Step1: [0] <- [1]    [2]
-            item1 = lxhg
-                .persistent_op(&mut exclient1_0, (item1, Timeout::Unlimited))
-                .unwrap();
+            item1 = exchange1_0.run(&lxhg, item1);
             assert_eq!(item1, 0);
 
             // Step2: [1]    [0] -> [2]
-            item1 = rxhg
-                .persistent_op(&mut exclient1_2, (item1, Timeout::Unlimited))
-                .unwrap();
+            item1 = exchange1_2.run(&rxhg, item1);
             assert_eq!(item1, 2);
         })
         .unwrap();
@@ -333,76 +434,79 @@ mod test {
 
     // 스레드 여러 개의 exchange
     #[test]
+    #[serial] // Multi-threaded test의 속도 저하 방지
     fn exchange_many() {
         const NR_THREAD: usize = 4;
         const COUNT: usize = 1_000_000;
 
         let xchg: Exchanger<usize> = Exchanger::default(); // TODO(persistent location)
-        let mut clients = vec![vec!(ExchangeClient::<usize>::default(); COUNT); NR_THREAD]; // TODO(persistent location)
+        let mut exchanges: Vec<Vec<TryExchange<usize>>> = (0..NR_THREAD)
+            .map(|_| (0..COUNT).map(|_| Default::default()).collect())
+            .collect(); // TODO(persistent location)
 
         // 아래 로직은 idempotent 함
 
-        // tid별 실행횟수 vec 및
-        // return 값별 리턴개수 vec initialization
-        let mut exec_cnts = vec![];
-        let mut ret_cnts = vec![];
-        for _ in 0..NR_THREAD {
-            exec_cnts.push(AtomicUsize::new(0));
-            ret_cnts.push(AtomicUsize::new(0));
-        }
-
         // 혼자만 남은 tid와 남은 횟수
-        let remained_tid = AtomicUsize::new(0);
-        let remained_cnt = AtomicUsize::new(0);
+        static mut UNFINISHED_TID: usize = 0;
+        static mut BREAK_CNT: usize = 0;
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
             for tid in 0..NR_THREAD {
-                let xchg_ref = &xchg;
-                let client_vec = unsafe {
-                    (clients.get_unchecked_mut(tid) as *mut Vec<ExchangeClient<usize>>)
+                let xchg = &xchg;
+                let exchanges = unsafe {
+                    (exchanges.get_unchecked_mut(tid) as *mut Vec<TryExchange<usize>>)
                         .as_mut()
                         .unwrap()
                 };
 
-                let exec_cnts_ref = &exec_cnts;
-                let ret_cnts_ref = &ret_cnts;
-
-                let remained_tid_ref = &remained_tid;
-                let remained_cnt_ref = &remained_cnt;
-
                 let _ = scope.spawn(move |_| {
                     // `move` for `tid`
-                    for (i, client) in client_vec.iter_mut().enumerate() {
-                        let ret = xchg_ref.persistent_op(
-                            client,
-                            (tid, Timeout::Limited(Duration::milliseconds(5000))), // 충분히 긴 시간
-                        );
-                        let ret = ok_or!(ret, {
+                    for (i, exchange) in exchanges.iter_mut().enumerate() {
+                        if let Err(_) = exchange.run(xchg, (tid, Duration::milliseconds(5000))) {
                             // 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
-                            remained_tid_ref.store(tid, Ordering::SeqCst);
-                            remained_cnt_ref.store(COUNT - i, Ordering::SeqCst);
+                            unsafe {
+                                UNFINISHED_TID = tid;
+                                BREAK_CNT = i;
+                            }
                             break;
-                        });
-                        let _ = exec_cnts_ref[tid].fetch_add(1, Ordering::SeqCst);
-                        let _ = ret_cnts_ref[ret].fetch_add(1, Ordering::SeqCst);
+                        }
                     }
                 });
             }
         })
         .unwrap();
 
-        // Check results
-        for (tid, r) in ret_cnts.iter().enumerate() {
-            let rm_tid = remained_tid.load(Ordering::SeqCst);
-            let rm_cnt = remained_cnt.load(Ordering::SeqCst);
-            let ret_cnt = r.load(Ordering::SeqCst);
+        // Gather results
+        let mut results = vec![0_usize; NR_THREAD];
 
-            if tid != rm_tid {
-                assert_eq!(ret_cnt, COUNT);
-            } else {
-                assert_eq!(ret_cnt + rm_cnt, COUNT);
+        for (tid, exchanges) in exchanges.iter_mut().enumerate() {
+            let expected_cnt = unsafe {
+                if tid != UNFINISHED_TID {
+                    COUNT
+                } else {
+                    BREAK_CNT
+                }
+            };
+
+            for (i, exchange) in exchanges.iter_mut().enumerate() {
+                if i == expected_cnt {
+                    break;
+                }
+                let ret = exchange
+                    .run(&xchg, (666, Duration::milliseconds(0)))
+                    .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
+                results[ret] += 1;
             }
         }
+
+        // Check results
+        assert!(results.iter().enumerate().all(|(tid, r)| unsafe {
+            *r == if tid != UNFINISHED_TID {
+                COUNT
+            } else {
+                BREAK_CNT
+            }
+        }));
     }
 }
