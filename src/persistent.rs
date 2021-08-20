@@ -1,30 +1,106 @@
 //! Trait collection for persistent objects
 
-/// op를 exactly-once 실행하기 위한 Client trait
-pub trait PersistentClient: Default {
-    /// 새로운 op을 실행을 위해 info 재사용하기 위해 idempotent 하게 리셋
-    fn reset(&mut self);
+use std::{mem::ManuallyDrop, ptr};
+
+/// Ownership을 얼리기 위한 wrapper.
+///
+/// - `from()`을 통해 target object의 ownership을 얼림
+/// - `own()`을 통해 object의 ownership을 다시 획득
+/// - `ManuallyDrop`과 유사. 차이점은 `ManuallyDrop`은 value가 `Clone`일 때에만 `clone()`하지만
+///   `PersistentShared`는 어떤 value든 `clone()` 가능하다는 것임
+#[derive(Debug)]
+pub struct PersistentShared<T> {
+    value: ManuallyDrop<T>,
 }
 
-/// Persistent obj을 사용하기 위한 Persistent op trait
-pub trait PersistentOp<C: PersistentClient> {
+impl<T> Clone for PersistentShared<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: unsafe { ptr::read(&self.value) },
+        }
+    }
+}
+
+impl<T> From<T> for PersistentShared<T> {
+    fn from(item: T) -> Self {
+        Self {
+            value: ManuallyDrop::new(item),
+        }
+    }
+}
+
+impl<T> PersistentShared<T> {
+    /// object의 ownership을 획득
+    ///
+    /// # Safety
+    ///
+    /// 다음 두 조건을 모두 만족할 때에만 safe:
+    /// - `own()` 후 object로의 마지막 접근(*t1*)과
+    ///   object가 다른 스레드에 넘겨지는 시점 혹은 own한 스레드에서 drop 되는 시점(*t2*) 사이에
+    ///   checkpoint(*c*)가 있어야 함.
+    ///   + checkpoint(*c*): object가 더 이상 필요하지 않음을 나타낼 수 있는 어떠한 증거든 상관 없음 (e.g. flag, states)
+    /// - *c*를 아직 거치지 않았다는 것을 알아야 함.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    ///    use compositional_persistent_object::persistent::PersistentShared;
+    ///
+    ///    // 이 변수들은 언제나 pmem에서 접근 가능함을 가정
+    ///    let src = PersistentShared::<Box<i32>>::from(Box::new(42));
+    ///    let mut data = 0;
+    ///    let mut flag = false;
+    ///
+    ///    {
+    ///        // `src`로부터 메시지를 받아와 data에 저장하는 로직
+    ///        // 이 로직은 crash 이전이나 이후 모두 안전함
+    ///        if !flag { // Checking if the checkpoint c has not yet passed
+    ///            let msg = src.clone(); // Cloning a `PersistentShared` object from somewhere.
+    ///            let x = unsafe { msg.own() }; // This is always safe because `flag` shows that the inner value of `msg` is still valid.
+    ///            data = *x; // The last access to `x` (t1)
+    ///            flag = true; // Checkpointing that `msg` is no longer needed. (c)
+    ///            // x is dropped (t2), no more valid.
+    ///        }
+    ///        assert_eq!(data, 42);
+    ///    }
+    /// ```
+    pub unsafe fn own(self) -> T {
+        ManuallyDrop::into_inner(self.value)
+    }
+}
+
+/// op을 exactly-once 실행하기 위한 trait
+pub trait PersistentOp: Default {
+    /// Persistent op을 수행하는 object
+    type Object;
+
     /// Persistent op의 input type
     type Input;
 
     /// Persistent op의 output type
-    type Output;
+    type Output: Clone;
 
-    /// Persistent op 호출 함수
-    /// - client의 타입을 통해 op을 구분 (e.g. 기존 `Queue.push()`는 `Queue.persistent_op(&mut PushClient)`와 같이 호출)
+    /// Persistent op 동작 함수 (idempotent)
+    ///
+    /// - 같은 input에 대해 언제나 같은 Output을 반환
     /// - Input을 매번 인자로 받아 불필요한 백업을 하지 않음
-    ///   + 참고: Post-crash input과 pre-crash(client-tracked) input이 다른 경우의 정책:
-    ///     * Pre-crash(client-tracked) input을 기반으로 동작함
-    ///     * safe하기만 하면 되므로 상관 없음. functional correctness는 보장하지 않음.
-    /// - 같은 client에 대해 언제나 같은 Output을 반환 (idempotent)
-    fn persistent_op(&self, client: &mut C, input: Self::Input) -> Self::Output;
-
+    /// - Pre-crash op이 충분히 진행됐을 경우 Post-crash 재실행시의 input이 op 결과에 영향을 끼치지 않을 수도 있음.
+    ///   즉, post-crash의 functional correctness는 보장하지 않음. (이러한 동작이 safety를 해치지 않음.)
     // TODO
     // - 구현한 obj를 persistent location에서 동작하도록 바꿀 때 아래처럼 시그니처 바꾸기
     // - 이유: (1) 포인터 참조시, (2) alloc시 어느 풀에서 해야할지 알아야함
     // fn persistent_op(&self, client: &mut C, input: Self::Input, pool: &PoolHandle) -> Self::Output;
+    fn run(&mut self, object: &Self::Object, input: Self::Input) -> Self::Output;
+
+    /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
+    ///
+    /// 어떤 op들의 `reset()`은 1개 이하의 instruction으로 수행될 수도 있고, 어떤 op들은
+    /// 그보다 많은 instruction을 요구할 수도 있다. 후자의 경우 reset 하고 있음을 나타내는 flag를 통해
+    /// reset 도중에 crash가 났을 때에도 이후에 reset 하다가 crash 났음을 알 수 있게 해야만 한다.
+    ///
+    /// `nested`: 상위 op의 `reset()`에서 하위 op을 `reset()`을 호출할 경우 이미 상위 op의 reset 중임을
+    /// 나타내는 flag가 켜져있으므로 하위 op의 reset이 따로 reset flag를 설정할 필요가 없다. 이를 위해 하위
+    /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
+    /// 알려줄 수 있다.
+    fn reset(&mut self, nested: bool);
 }
