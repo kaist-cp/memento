@@ -14,7 +14,7 @@
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
 #![deny(unaligned_references)]
-#![deny(unused_crate_dependencies)]
+// #![deny(unused_crate_dependencies)] // TODO: newop_pipe 리뷰 후 다른 obj들 고칠 때 주석 해제
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
@@ -38,12 +38,8 @@ pub mod queue;
 pub mod stack;
 pub mod treiber_stack;
 
-// TODO: 지웠을 때 `absolute_paths_not_starting_with_crate` lint 에러나는 것 해결
-use crossbeam_epoch as _;
-use crossbeam_utils as _;
-
 // Persistent location
-pub mod plocation;
+// pub mod plocation; // TODO: newop_pipe 리뷰 후 주석 해제
 
 // Utility
 pub mod util;
