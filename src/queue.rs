@@ -225,7 +225,7 @@ impl<T: Clone> Queue<T> {
 
             // node가 정말 내가 pop한 게 맞는지 확인
             if target_ref.popper.load(Ordering::SeqCst) == id {
-                return Self::finish_pop(target_ref);
+                return Some(Self::finish_pop(target_ref));
             }
         }
 
@@ -272,14 +272,13 @@ impl<T: Clone> Queue<T> {
                     Ordering::SeqCst,
                     guard,
                 );
-                Self::finish_pop(next_ref)
+                Some(Self::finish_pop(next_ref))
             })
             .map_err(|_| ())
     }
 
-    fn finish_pop(node: &Node<T>) -> Option<T> {
-        let v = unsafe { node.data.as_ptr().as_ref().unwrap() }.clone();
-        Some(v)
+    fn finish_pop(node: &Node<T>) -> T {
+        unsafe { node.data.as_ptr().as_ref().unwrap() }.clone()
         // free node
     }
 }
