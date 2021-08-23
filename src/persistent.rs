@@ -7,13 +7,13 @@ use std::{mem::ManuallyDrop, ptr};
 /// - `from()`을 통해 target object의 ownership을 얼림
 /// - `own()`을 통해 object의 ownership을 다시 획득
 /// - `ManuallyDrop`과 유사. 차이점은 `ManuallyDrop`은 value가 `Clone`일 때에만 `clone()`하지만
-///   `PersistentShared`는 어떤 value든 `clone()` 가능하다는 것임
+///   `Frozen`은 어떤 value든 `clone()` 가능하다는 것임
 #[derive(Debug)]
-pub struct PersistentShared<T> {
+pub struct Frozen<T> {
     value: ManuallyDrop<T>,
 }
 
-impl<T> Clone for PersistentShared<T> {
+impl<T> Clone for Frozen<T> {
     fn clone(&self) -> Self {
         Self {
             value: unsafe { ptr::read(&self.value) },
@@ -21,7 +21,7 @@ impl<T> Clone for PersistentShared<T> {
     }
 }
 
-impl<T> From<T> for PersistentShared<T> {
+impl<T> From<T> for Frozen<T> {
     fn from(item: T) -> Self {
         Self {
             value: ManuallyDrop::new(item),
@@ -29,7 +29,7 @@ impl<T> From<T> for PersistentShared<T> {
     }
 }
 
-impl<T> PersistentShared<T> {
+impl<T> Frozen<T> {
     /// object의 ownership을 획득
     ///
     /// # Safety
@@ -44,10 +44,10 @@ impl<T> PersistentShared<T> {
     /// # Examples
     ///
     /// ```rust
-    ///    use compositional_persistent_object::persistent::PersistentShared;
+    ///    use compositional_persistent_object::persistent::Frozen;
     ///
     ///    // 이 변수들은 언제나 pmem에서 접근 가능함을 가정
-    ///    let src = PersistentShared::<Box<i32>>::from(Box::new(42));
+    ///    let src = Frozen::<Box<i32>>::from(Box::new(42));
     ///    let mut data = 0;
     ///    let mut flag = false;
     ///
@@ -55,7 +55,7 @@ impl<T> PersistentShared<T> {
     ///        // `src`로부터 메시지를 받아와 data에 저장하는 로직
     ///        // 이 로직은 crash 이전이나 이후 모두 안전함
     ///        if !flag { // Checking if the checkpoint c has not yet passed
-    ///            let msg = src.clone(); // Cloning a `PersistentShared` object from somewhere.
+    ///            let msg = src.clone(); // Cloning a `Frozen` object from somewhere.
     ///            let x = unsafe { msg.own() }; // This is always safe because `flag` shows that the inner value of `msg` is still valid.
     ///            data = *x; // The last access to `x` (t1)
     ///            flag = true; // Checkpointing that `msg` is no longer needed. (c)
