@@ -27,6 +27,16 @@ impl<T: Clone> Default for Node<T> {
     }
 }
 
+impl<T: Clone> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: MaybeUninit::new(value),
+            next: Atomic::null(),
+            popper: AtomicUsize::new(Queue::<T>::no_popper()),
+        }
+    }
+}
+
 /// `Queue`의 Push operation
 #[derive(Debug)]
 pub struct Push<T: Clone> {
@@ -87,6 +97,13 @@ impl<T: Clone> PersistentOp for Pop<T> {
     }
 }
 
+impl<T: Clone> Pop<T> {
+    #[inline]
+    fn id(&self) -> usize {
+        self as *const Self as usize
+    }
+}
+
 /// Peristent queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
@@ -127,13 +144,7 @@ impl<T: Clone> Queue<T> {
 
         // (1) 첫 번째 실행
         if mine.is_null() {
-            let null: *const Pop<T> = ptr::null();
-            let n = Owned::new(Node {
-                data: MaybeUninit::new(value),
-                next: Atomic::null(),
-                popper: AtomicUsize::new(null as usize),
-            })
-            .into_shared(guard);
+            let n = Owned::new(Node::from(value)).into_shared(guard);
 
             client.mine.store(n, Ordering::SeqCst);
             return Some(n);
@@ -217,14 +228,12 @@ impl<T: Clone> Queue<T> {
             return None;
         }
 
-        let id = client as *const _ as usize;
-
         if !target.is_null() {
             // post-crash execution (trying)
             let target_ref = unsafe { target.deref() };
 
             // node가 정말 내가 pop한 게 맞는지 확인
-            if target_ref.popper.load(Ordering::SeqCst) == id {
+            if target_ref.popper.load(Ordering::SeqCst) == client.id() {
                 return Some(Self::finish_pop(target_ref));
             }
         }
@@ -258,12 +267,14 @@ impl<T: Clone> Queue<T> {
         // 우선 내가 pop할 node를 가리키고
         client.target.store(next, Ordering::SeqCst);
 
-        // pop할 node의 popper를 바꿈
-        let null: *const Pop<T> = ptr::null();
-        let id = client as *const _ as usize;
         next_ref
             .popper
-            .compare_exchange(null as usize, id, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(
+                Self::no_popper(),
+                client.id(),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
             .map(|_| {
                 let _ = self.head.compare_exchange(
                     head,
@@ -280,6 +291,12 @@ impl<T: Clone> Queue<T> {
     fn finish_pop(node: &Node<T>) -> T {
         unsafe { node.data.as_ptr().as_ref().unwrap() }.clone()
         // free node
+    }
+
+    #[inline]
+    fn no_popper() -> usize {
+        let null: *const Pop<T> = ptr::null();
+        null as usize
     }
 }
 

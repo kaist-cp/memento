@@ -29,6 +29,16 @@ struct Node<T: Clone> {
     popper: AtomicUsize,
 }
 
+impl<T: Clone> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: value,
+            next: Atomic::null(),
+            popper: AtomicUsize::new(TreiberStack::<T>::no_popper()),
+        }
+    }
+}
+
 trait PushType<T: Clone> {
     fn mine(&self) -> &Atomic<Node<T>>;
     fn is_try(&self) -> bool;
@@ -164,14 +174,17 @@ impl<T: Clone> Default for TryPop<T> {
 }
 
 impl<T: Clone> PopType<T> for TryPop<T> {
+    #[inline]
     fn id(&self) -> usize {
         self as *const Self as usize
     }
 
+    #[inline]
     fn target(&self) -> &Atomic<Node<T>> {
         &self.target
     }
 
+    #[inline]
     fn is_try(&self) -> bool {
         true
     }
@@ -219,14 +232,17 @@ impl<T: Clone> Default for Pop<T> {
 }
 
 impl<T: Clone> PopType<T> for Pop<T> {
+    #[inline]
     fn id(&self) -> usize {
         self as *const Self as usize
     }
 
+    #[inline]
     fn target(&self) -> &Atomic<Node<T>> {
         &self.target
     }
 
+    #[inline]
     fn is_try(&self) -> bool {
         false
     }
@@ -270,12 +286,7 @@ impl<T: Clone> TreiberStack<T> {
 
         if mine.is_null() {
             // (1) mine이 null이면 node 할당이 안 된 것이다
-            let n = Owned::new(Node {
-                data: value,
-                next: Atomic::null(),
-                popper: AtomicUsize::new(Self::no_popper()),
-            })
-            .into_shared(&guard);
+            let n = Owned::new(Node::from(value)).into_shared(&guard);
 
             client.mine().store(n, Ordering::SeqCst);
             mine = n;
