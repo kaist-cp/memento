@@ -13,7 +13,6 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_epoch::{self as epoch, Atomic, Guard, Owned, Shared};
-use epoch::unprotected;
 use etrace::some_or;
 use std::ptr;
 
@@ -101,7 +100,7 @@ impl<T: Clone> TryPush<T> {
     ///   이때 (1)에서 사용된 op을 `reset_weak()` 하여, `node`를 재할당 하지 않고 같은 input에 대해 exchange를 재시도할 수 있음.
     // TODO: 이미 push에 성공했으면 완전 reset 하기? exchanger::TryExchange의 reset_weak()과 일관성이 있어야 할 듯
     pub fn reset_weak(&self) {
-        let guard = unsafe { unprotected() };
+        let guard = unsafe { epoch::unprotected() };
         let mine = self.mine.load(Ordering::SeqCst, guard);
         if mine.tag() == Self::FAIL {
             self.mine
