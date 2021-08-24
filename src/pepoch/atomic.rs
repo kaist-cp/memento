@@ -11,6 +11,7 @@
 //! - 변수명, 타입, 관련된 함수명을 아래와 같이 변경
 //!     - 변경 전: `raw: *const T`(절대주소를 가리키는 포인터), `raw: usize`(절대주소), `from_raw(raw: *mut T) -> Owned<T>`
 //!     - 변경 후: `ptr: PersistentPtr<T>`(상대주소를 가리키는 포인터), `offset: usize`(상대주소), `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
+//! - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
 //! - 모든 doc test를 persistent version으로 변경
 
 use core::cmp;
@@ -333,6 +334,13 @@ impl<T> Atomic<T> {
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> Atomic<T> {
         Self::init(init, pool)
+    }
+
+    // PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
+    // TODO: new와 시그니처 똑같은데 굳이 필요한지 고민
+    /// 주어진 pool에 T 할당 후 이를 가리키는 Atomic 포인터 반환
+    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
+        Self::new(t, pool)
     }
 }
 
@@ -914,6 +922,13 @@ impl<T: ?Sized + Pointable> Atomic<T> {
             Owned::from_usize(self.data.into_inner())
         }
     }
+
+    /// PoolHandle을 받아야하므로 fmt::Pointer trait impl 하던 것을 직접 구현
+    pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
+        let data = self.data.load(Ordering::SeqCst);
+        let (offset, _) = decompose_tag::<T>(data);
+        fmt::Pointer::fmt(&(unsafe { T::deref(offset, pool) as *const _ }), f)
+    }
 }
 
 impl<T: ?Sized + Pointable> fmt::Debug for Atomic<T> {
@@ -925,15 +940,6 @@ impl<T: ?Sized + Pointable> fmt::Debug for Atomic<T> {
             .field("offset", &offset)
             .field("tag", &tag)
             .finish()
-    }
-}
-
-impl<T: ?Sized + Pointable> Atomic<T> {
-    /// fmt::Pointer
-    pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
-        let data = self.data.load(Ordering::SeqCst);
-        let (offset, _) = decompose_tag::<T>(data);
-        fmt::Pointer::fmt(&(unsafe { T::deref(offset, pool) as *const _ }), f)
     }
 }
 
@@ -980,14 +986,6 @@ impl<T: ?Sized + Pointable> From<Owned<T>> for Atomic<T> {
 //         Self::from(Owned::from(b))
 //     }
 // }
-
-// PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
-impl<T> Atomic<T> {
-    /// 주어진 pool에 T 할당 후 이를 가리키는 Atomic 포인터 반환
-    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
-        Self::new(t, pool)
-    }
-}
 
 impl<'g, T: ?Sized + Pointable> From<Shared<'g, T>> for Atomic<T> {
     /// Returns a new atomic pointer pointing to `ptr`.
@@ -1135,6 +1133,13 @@ impl<T> Owned<T> {
     pub fn new(init: T, pool: &PoolHandle) -> Owned<T> {
         Self::init(init, pool)
     }
+
+    // PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
+    // TODO: new와 시그니처 똑같은데 굳이 필요한지 고민
+    /// 주어진 pool에 T 할당 후 이를 가리키는 Owned 포인터 반환
+    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
+        Owned::new(t, pool)
+    }
 }
 
 impl<T: ?Sized + Pointable> Owned<T> {
@@ -1206,6 +1211,68 @@ impl<T: ?Sized + Pointable> Owned<T> {
         let data = self.into_usize();
         unsafe { Self::from_usize(compose_tag::<T>(data, tag)) }
     }
+
+    // PoolHandle을 받아야하므로 Deref trait impl 하던 것을 직접 구현
+    /// 절대주소 참조
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn deref(&self, pool: &PoolHandle) -> &T {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        T::deref(offset, pool)
+    }
+
+    // PoolHandle을 받아야하므로 DerefMut trait impl 하던 것을 직접 구현
+    /// 절대주소 mutable 참조
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &mut T {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        T::deref_mut(offset, pool)
+    }
+
+    // PoolHandle을 받아야하므로 Borrow trait impl 하던 것을 직접 구현
+    /// borrow
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn borrow(&self, pool: &PoolHandle) -> &T {
+        self.deref(pool)
+    }
+
+    // PoolHandle을 받아야하므로 BorrowMut trait impl 하던 것을 직접 구현
+    /// borrow_mut
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn borrow_mut(&mut self, pool: &PoolHandle) -> &mut T {
+        self.deref_mut(pool)
+    }
+
+    // PoolHandle을 받아야하므로 AsRef trait impl 하던 것을 직접 구현
+    /// as_ref
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn as_ref(&self, pool: &PoolHandle) -> &T {
+        self.deref(pool)
+    }
+
+    // PoolHandle을 받아야하므로 AsMut trait impl 하던 것을 직접 구현
+    /// as_mut
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn as_mut(&mut self, pool: &PoolHandle) -> &mut T {
+        self.deref_mut(pool)
+    }
 }
 
 impl<T: ?Sized + Pointable> Drop for Owned<T> {
@@ -1233,37 +1300,6 @@ impl<T: Clone> Owned<T> {
     }
 }
 
-// PoolHandle을 받아야하므로 deref trait impl 하던 것을 직접 구현
-impl<T: ?Sized + Pointable> Owned<T> {
-    /// 절대주소 참조
-    ///
-    /// # Safety
-    ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref(&self, pool: &PoolHandle) -> &T {
-        let (offset, _) = decompose_tag::<T>(self.data);
-        T::deref(offset, pool)
-    }
-
-    /// 절대주소 mutable 참조
-    ///
-    /// # Safety
-    ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &mut T {
-        let (offset, _) = decompose_tag::<T>(self.data);
-        T::deref_mut(offset, pool)
-    }
-}
-
-// PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
-impl<T> Owned<T> {
-    /// 주어진 pool에 T 할당 후 이를 가리키는 Owned 포인터 반환
-    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
-        Owned::new(t, pool)
-    }
-}
-
 // TODO: PersistentBox 구현할지 고민 필요
 // impl<T> From<Box<T>> for Owned<T> {
 //     /// Returns a new owned pointer pointing to `b`.
@@ -1283,47 +1319,6 @@ impl<T> Owned<T> {
 //         unsafe { Self::from_raw(Box::into_raw(b)) }
 //     }
 // }
-
-// PoolHandle을 받아야하므로 borrow, as_ref, .. trait impl 하던 것을 직접 구현
-impl<T: ?Sized + Pointable> Owned<T> {
-    /// borrow
-    ///
-    /// # Safety
-    ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn borrow(&self, pool: &PoolHandle) -> &T {
-        self.deref(pool)
-    }
-
-    /// borrow_mut
-    ///
-    /// # Safety
-    ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn borrow_mut(&mut self, pool: &PoolHandle) -> &mut T {
-        self.deref_mut(pool)
-    }
-
-    /// as_ref
-    ///
-    /// # Safety
-    ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn as_ref(&self, pool: &PoolHandle) -> &T {
-        self.deref(pool)
-    }
-
-    /// as_mut
-    ///
-    ///
-    /// # Safety
-    ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn as_mut(&mut self, pool: &PoolHandle) -> &mut T {
-        self.deref_mut(pool)
-    }
-}
-
 /// A pointer to an object protected by the epoch GC.
 ///
 /// The pointer is valid for use only during the lifetime `'g`.
@@ -1361,7 +1356,7 @@ impl<T: ?Sized + Pointable> Pointer<T> for Shared<'_, T> {
     }
 }
 
-// lint "deny single_use_lifetimes" 로 인해 바꿈
+// lint "deny single_use_lifetimes" 로 인해 lifetime을 'g에서 '_로 바꿈
 impl<T> Shared<'_, T> {
     /// Converts the pointer to a raw pointer (without the tag).
     ///
@@ -1632,6 +1627,12 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     pub fn with_tag(&self, tag: usize) -> Shared<'g, T> {
         unsafe { Self::from_usize(compose_tag::<T>(self.data, tag)) }
     }
+
+    // PoolHandle을 받아야하므로 fmt trait impl 하던 것을 직접 구현
+    /// formatting Pointer
+    pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
+        fmt::Pointer::fmt(&(unsafe { self.deref(pool) as *const _ }), f)
+    }
 }
 
 impl<T> From<PersistentPtr<T>> for Shared<'_, T> {
@@ -1687,14 +1688,6 @@ impl<T: ?Sized + Pointable> fmt::Debug for Shared<'_, T> {
             .field("offset", &offset)
             .field("tag", &tag)
             .finish()
-    }
-}
-
-// PoolHandle을 받아야하므로 fmt trait impl 하던 것을 직접 구현
-impl<T: ?Sized + Pointable> Shared<'_, T> {
-    /// formatting Pointer
-    pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
-        fmt::Pointer::fmt(&(unsafe { self.deref(pool) as *const _ }), f)
     }
 }
 
