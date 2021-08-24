@@ -1229,7 +1229,7 @@ impl<T: ?Sized + Pointable> fmt::Debug for Owned<T> {
 impl<T: Clone> Owned<T> {
     /// 주어진 pool에 clone
     pub fn clone(&self, pool: &PoolHandle) -> Self {
-        Owned::new(unsafe { self.deref(pool) } .clone(), pool).with_tag(self.tag())
+        Owned::new(unsafe { self.deref(pool) }.clone(), pool).with_tag(self.tag())
     }
 }
 
