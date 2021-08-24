@@ -43,6 +43,16 @@ impl<T> PersistentPtr<T> {
     pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &mut T {
         &mut *((pool.start() + self.offset) as *mut T)
     }
+
+    /// offset으로 변환
+    ///
+    /// # Example
+    ///
+    /// pool에 할당하면 나오는 PersistentPtr를 Atomic Pointer로 변환하기 위해 필요
+    /// - `Owned::from_usize(ptr.into_offset())`
+    pub fn into_offset(self) -> usize {
+        self.offset
+    }
 }
 
 impl<T> From<usize> for PersistentPtr<T> {

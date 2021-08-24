@@ -1,17 +1,30 @@
+//! Persistent Atomic Pointer
+//!
+//! crossbeam Atomic/Owned/Shared의 persistent version
+//! 원래 crossbeam과 크게 다른 점은:
+//!   1. 포인터가 절대주소가 아닌 상대주소를 가지고 있고,
+//!   2. load후 참조시 풀의 시작주소와 상대주소를 더한 절대주소 참조
+//!
+//! ## CHANGE LOG
+//! - crossbeam에 원래 있던 TODO는 TODO(crossbeam)으로 명시
+//! - 메모리 관련 operation(e.g. `init`, `deref`)은 `PoolHandle`을 받게 변경. 특히 `deref`는 다른 풀을 참조할 수 있으니 unsafe로 명시
+//! - 변수명, 타입, 관련된 함수명을 아래와 같이 변경
+//!     - 변경 전: `raw: *const T`(절대주소를 가리키는 포인터), `raw: usize`(절대주소), `from_raw(raw: *mut T) -> Owned<T>`
+//!     - 변경 후: `ptr: PersistentPtr<T>`(상대주소를 가리키는 포인터), `offset: usize`(상대주소), `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
 use core::borrow::{Borrow, BorrowMut};
 use core::cmp;
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
-use core::ops::{Deref, DerefMut};
 use core::slice;
 use core::sync::atomic::Ordering;
 
-use crate::alloc::alloc;
-use crate::alloc::boxed::Box;
-use crate::guard::Guard;
-use crate::primitive::sync::atomic::AtomicUsize;
+use crate::pepoch::guard::Guard;
+use crate::plocation::pool::PoolHandle;
+use crate::plocation::ptr::PersistentPtr;
 use crossbeam_utils::atomic::AtomicConsume;
+use std::alloc;
+use std::sync::atomic::AtomicUsize;
 
 /// Given ordering for the success case in a compare-exchange operation, returns the strongest
 /// appropriate ordering for the failure case.
@@ -109,8 +122,8 @@ fn low_bits<T: ?Sized + Pointable>() -> usize {
 
 /// Panics if the pointer is not properly unaligned.
 #[inline]
-fn ensure_aligned<T: ?Sized + Pointable>(raw: usize) {
-    assert_eq!(raw & low_bits::<T>(), 0, "unaligned pointer");
+fn ensure_aligned<T: ?Sized + Pointable>(offset: usize) {
+    assert_eq!(offset & low_bits::<T>(), 0, "unaligned pointer");
 }
 
 /// Given a tagged pointer `data`, returns the same pointer, but tagged with `tag`.
@@ -154,41 +167,44 @@ pub trait Pointable {
     /// The type for initializers.
     type Init;
 
-    /// Initializes a with the given initializer.
+    /// Initializes a with the given initializer in the pool.
     ///
     /// # Safety
     ///
     /// The result should be a multiple of `ALIGN`.
-    unsafe fn init(init: Self::Init) -> usize;
+    unsafe fn init(init: Self::Init, pool: &PoolHandle) -> usize;
 
-    /// Dereferences the given pointer.
+    /// Dereferences the given offset in the pool.
     ///
     /// # Safety
     ///
-    /// - The given `ptr` should have been initialized with [`Pointable::init`].
-    /// - `ptr` should not have yet been dropped by [`Pointable::drop`].
-    /// - `ptr` should not be mutably dereferenced by [`Pointable::deref_mut`] concurrently.
-    unsafe fn deref<'a>(ptr: usize) -> &'a Self;
+    /// - TODO: pool1의 obj에 pool2의 PoolHandle을 사용하는 일이 없도록 해야함
+    /// - The given `offset` should have been initialized with [`Pointable::init`].
+    /// - `offset` should not have yet been dropped by [`Pointable::drop`].
+    /// - `offset` should not be mutably dereferenced by [`Pointable::deref_mut`] concurrently.
+    unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self;
 
-    /// Mutably dereferences the given pointer.
+    /// Mutably dereferences the given offset in the pool.
     ///
     /// # Safety
     ///
-    /// - The given `ptr` should have been initialized with [`Pointable::init`].
-    /// - `ptr` should not have yet been dropped by [`Pointable::drop`].
-    /// - `ptr` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
+    /// - TODO: pool1의 obj에 pool2의 PoolHandle을 사용하는 일이 없도록 해야함
+    /// - The given `offset` should have been initialized with [`Pointable::init`].
+    /// - `offset` should not have yet been dropped by [`Pointable::drop`].
+    /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
-    unsafe fn deref_mut<'a>(ptr: usize) -> &'a mut Self;
+    unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self;
 
-    /// Drops the object pointed to by the given pointer.
+    /// Drops the object pointed to by the given offset in the pool.
     ///
     /// # Safety
     ///
-    /// - The given `ptr` should have been initialized with [`Pointable::init`].
-    /// - `ptr` should not have yet been dropped by [`Pointable::drop`].
-    /// - `ptr` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
+    /// - TODO: pool1의 obj에 pool2의 PoolHandle을 사용하는 일이 없도록 해야함
+    /// - The given `offset` should have been initialized with [`Pointable::init`].
+    /// - `offset` should not have yet been dropped by [`Pointable::drop`].
+    /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
-    unsafe fn drop(ptr: usize);
+    unsafe fn drop(offset: usize, pool: &PoolHandle);
 }
 
 impl<T> Pointable for T {
@@ -196,20 +212,24 @@ impl<T> Pointable for T {
 
     type Init = T;
 
-    unsafe fn init(init: Self::Init) -> usize {
-        Box::into_raw(Box::new(init)) as usize
+    unsafe fn init(init: Self::Init, pool: &PoolHandle) -> usize {
+        let mut ptr = pool.alloc::<T>();
+        // TODO: 여기서 crash 나면 leak남. 해결 필요
+        let t = ptr.deref_mut(pool);
+        *t = init;
+        ptr.into_offset()
     }
 
-    unsafe fn deref<'a>(ptr: usize) -> &'a Self {
-        &*(ptr as *const T)
+    unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self {
+        &*((pool.start() + offset) as *const T)
     }
 
-    unsafe fn deref_mut<'a>(ptr: usize) -> &'a mut Self {
-        &mut *(ptr as *mut T)
+    unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self {
+        &mut *((pool.start() + offset) as *mut T)
     }
 
-    unsafe fn drop(ptr: usize) {
-        drop(Box::from_raw(ptr as *mut T));
+    unsafe fn drop(offset: usize, pool: &PoolHandle) {
+        pool.free(PersistentPtr::<T>::from(offset));
     }
 }
 
@@ -248,34 +268,34 @@ impl<T> Pointable for [MaybeUninit<T>] {
 
     type Init = usize;
 
-    unsafe fn init(len: Self::Init) -> usize {
+    unsafe fn init(len: Self::Init, pool: &PoolHandle) -> usize {
         let size = mem::size_of::<Array<T>>() + mem::size_of::<MaybeUninit<T>>() * len;
         let align = mem::align_of::<Array<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
-        let ptr = alloc::alloc(layout) as *mut Array<T>;
+        let mut ptr = pool.alloc_layout::<Array<T>>(layout);
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
         }
-        (*ptr).len = len;
-        ptr as usize
+        (ptr.deref_mut(pool)).len = len;
+        ptr.into_offset()
     }
 
-    unsafe fn deref<'a>(ptr: usize) -> &'a Self {
-        let array = &*(ptr as *const Array<T>);
+    unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self {
+        let array = &*((pool.start() + offset) as *const Array<T>);
         slice::from_raw_parts(array.elements.as_ptr() as *const _, array.len)
     }
 
-    unsafe fn deref_mut<'a>(ptr: usize) -> &'a mut Self {
-        let array = &*(ptr as *mut Array<T>);
+    unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self {
+        let array = &*((pool.start() + offset) as *mut Array<T>);
         slice::from_raw_parts_mut(array.elements.as_ptr() as *mut _, array.len)
     }
 
-    unsafe fn drop(ptr: usize) {
-        let array = &*(ptr as *mut Array<T>);
+    unsafe fn drop(offset: usize, pool: &PoolHandle) {
+        let array = &*((pool.start() + offset) as *mut Array<T>);
         let size = mem::size_of::<Array<T>>() + mem::size_of::<MaybeUninit<T>>() * array.len;
         let align = mem::align_of::<Array<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
-        alloc::dealloc(ptr as *mut u8, layout);
+        pool.free_layout(offset, layout)
     }
 }
 
@@ -306,8 +326,8 @@ impl<T> Atomic<T> {
     ///
     /// let a = Atomic::new(1234);
     /// ```
-    pub fn new(init: T) -> Atomic<T> {
-        Self::init(init)
+    pub fn new(init: T, pool: &PoolHandle) -> Atomic<T> {
+        Self::init(init, pool)
     }
 }
 
@@ -321,8 +341,8 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// let a = Atomic::<i32>::init(1234);
     /// ```
-    pub fn init(init: T::Init) -> Atomic<T> {
-        Self::from(Owned::init(init))
+    pub fn init(init: T::Init, pool: &PoolHandle) -> Atomic<T> {
+        Self::from(Owned::init(init, pool))
     }
 
     /// Returns a new atomic pointer pointing to the tagged pointer `data`.
@@ -346,7 +366,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     #[cfg_attr(all(feature = "nightly", not(crossbeam_loom)), const_fn::const_fn)]
     pub fn null() -> Atomic<T> {
         Self {
-            data: AtomicUsize::new(0),
+            data: AtomicUsize::new(usize::MAX),
             _marker: PhantomData,
         }
     }
@@ -859,7 +879,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     pub unsafe fn into_owned(self) -> Owned<T> {
         #[cfg(crossbeam_loom)]
         {
-            // FIXME: loom does not yet support into_inner, so we use unsync_load for now,
+            // FIXME(crossbeam): loom does not yet support into_inner, so we use unsync_load for now,
             // which should have the same synchronization properties:
             // https://github.com/tokio-rs/loom/issues/117
             Owned::from_usize(self.data.unsync_load())
@@ -874,20 +894,21 @@ impl<T: ?Sized + Pointable> Atomic<T> {
 impl<T: ?Sized + Pointable> fmt::Debug for Atomic<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
-        let (raw, tag) = decompose_tag::<T>(data);
+        let (offset, tag) = decompose_tag::<T>(data);
 
         f.debug_struct("Atomic")
-            .field("raw", &raw)
+            .field("offset", &offset)
             .field("tag", &tag)
             .finish()
     }
 }
 
-impl<T: ?Sized + Pointable> fmt::Pointer for Atomic<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<T: ?Sized + Pointable> Atomic<T> {
+    /// fmt::Pointer
+    pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
-        let (raw, _) = decompose_tag::<T>(data);
-        fmt::Pointer::fmt(&(unsafe { T::deref(raw) as *const _ }), f)
+        let (offset, _) = decompose_tag::<T>(data);
+        fmt::Pointer::fmt(&(unsafe { T::deref(offset, pool) as *const _ }), f)
     }
 }
 
@@ -925,15 +946,19 @@ impl<T: ?Sized + Pointable> From<Owned<T>> for Atomic<T> {
     }
 }
 
-impl<T> From<Box<T>> for Atomic<T> {
-    fn from(b: Box<T>) -> Self {
-        Self::from(Owned::from(b))
-    }
-}
+// TODO: PersistentBox 구현?
+//
+// impl<T> From<Box<T>> for Atomic<T> {
+//     fn from(b: Box<T>) -> Self {
+//         Self::from(Owned::from(b))
+//     }
+// }
 
-impl<T> From<T> for Atomic<T> {
-    fn from(t: T) -> Self {
-        Self::new(t)
+// PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
+impl<T> Atomic<T> {
+    /// TODO: comment
+    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
+        Self::new(t, pool)
     }
 }
 
@@ -952,8 +977,8 @@ impl<'g, T: ?Sized + Pointable> From<Shared<'g, T>> for Atomic<T> {
     }
 }
 
-impl<T> From<*const T> for Atomic<T> {
-    /// Returns a new atomic pointer pointing to `raw`.
+impl<T> From<PersistentPtr<T>> for Atomic<T> {
+    /// Returns a new atomic pointer pointing to `ptr`.
     ///
     /// # Examples
     ///
@@ -963,8 +988,8 @@ impl<T> From<*const T> for Atomic<T> {
     ///
     /// let a = Atomic::<i32>::from(ptr::null::<i32>());
     /// ```
-    fn from(raw: *const T) -> Self {
-        Self::from_usize(raw as usize)
+    fn from(ptr: PersistentPtr<T>) -> Self {
+        Self::from_usize(ptr.into_offset())
     }
 }
 
@@ -990,7 +1015,8 @@ pub trait Pointer<T: ?Sized + Pointable> {
 /// least significant bits of the address.
 pub struct Owned<T: ?Sized + Pointable> {
     data: usize,
-    _marker: PhantomData<Box<T>>,
+    // TODO: PhantomData<PersistentBox<T>>로 해야할지 고민 필요
+    _marker: PhantomData<T>,
 }
 
 impl<T: ?Sized + Pointable> Pointer<T> for Owned<T> {
@@ -1039,28 +1065,29 @@ impl<T> Owned<T> {
     ///
     /// let o = unsafe { Owned::from_raw(Box::into_raw(Box::new(1234))) };
     /// ```
-    pub unsafe fn from_raw(raw: *mut T) -> Owned<T> {
-        let raw = raw as usize;
-        ensure_aligned::<T>(raw);
-        Self::from_usize(raw)
+    pub unsafe fn from_ptr(ptr: PersistentPtr<T>) -> Owned<T> {
+        let offset = ptr.into_offset();
+        ensure_aligned::<T>(offset);
+        Self::from_usize(offset)
     }
 
-    /// Converts the owned pointer into a `Box`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use crossbeam_epoch::Owned;
-    ///
-    /// let o = Owned::new(1234);
-    /// let b: Box<i32> = o.into_box();
-    /// assert_eq!(*b, 1234);
-    /// ```
-    pub fn into_box(self) -> Box<T> {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        mem::forget(self);
-        unsafe { Box::from_raw(raw as *mut _) }
-    }
+    // TODO: PersistentBox 구현할지 고민 필요
+    // /// Converts the owned pointer into a `Box`.
+    // ///
+    // /// # Examples
+    // ///
+    // /// ```
+    // /// use crossbeam_epoch::Owned;
+    // ///
+    // /// let o = Owned::new(1234);
+    // /// let b: Box<i32> = o.into_box();
+    // /// assert_eq!(*b, 1234);
+    // /// ```
+    // pub fn into_box(self) -> Box<T> {
+    //     let (raw, _) = decompose_tag::<T>(self.data);
+    //     mem::forget(self);
+    //     unsafe { Box::from_raw(raw as *mut _) }
+    // }
 
     /// Allocates `value` on the heap and returns a new owned pointer pointing to it.
     ///
@@ -1071,8 +1098,8 @@ impl<T> Owned<T> {
     ///
     /// let o = Owned::new(1234);
     /// ```
-    pub fn new(init: T) -> Owned<T> {
-        Self::init(init)
+    pub fn new(init: T, pool: &PoolHandle) -> Owned<T> {
+        Self::init(init, pool)
     }
 }
 
@@ -1086,8 +1113,8 @@ impl<T: ?Sized + Pointable> Owned<T> {
     ///
     /// let o = Owned::<i32>::init(1234);
     /// ```
-    pub fn init(init: T::Init) -> Owned<T> {
-        unsafe { Self::from_usize(T::init(init)) }
+    pub fn init(init: T::Init, pool: &PoolHandle) -> Owned<T> {
+        unsafe { Self::from_usize(T::init(init, pool)) }
     }
 
     /// Converts the owned pointer into a [`Shared`].
@@ -1141,92 +1168,117 @@ impl<T: ?Sized + Pointable> Owned<T> {
 
 impl<T: ?Sized + Pointable> Drop for Owned<T> {
     fn drop(&mut self) {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        unsafe {
-            T::drop(raw);
-        }
+        // TODO: 어느 풀에서 free할지 알아야함 (i.e. PoolHandle을 받아야함)
     }
 }
 
 impl<T: ?Sized + Pointable> fmt::Debug for Owned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (raw, tag) = decompose_tag::<T>(self.data);
+        let (offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Owned")
-            .field("raw", &raw)
+            .field("offset", &offset)
             .field("tag", &tag)
             .finish()
     }
 }
 
-impl<T: Clone> Clone for Owned<T> {
-    fn clone(&self) -> Self {
-        Owned::new((**self).clone()).with_tag(self.tag())
+// PoolHandle을 받아야하므로 Clone trait impl 하던 것을 직접 구현
+impl<T: Clone> Owned<T> {
+    /// 주어진 pool에 clone
+    pub fn clone(&self, pool: &PoolHandle) -> Self {
+        Owned::new(unsafe { self.deref(pool) } .clone(), pool).with_tag(self.tag())
     }
 }
 
-impl<T: ?Sized + Pointable> Deref for Owned<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        unsafe { T::deref(raw) }
-    }
-}
-
-impl<T: ?Sized + Pointable> DerefMut for Owned<T> {
-    fn deref_mut(&mut self) -> &mut T {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        unsafe { T::deref_mut(raw) }
-    }
-}
-
-impl<T> From<T> for Owned<T> {
-    fn from(t: T) -> Self {
-        Owned::new(t)
-    }
-}
-
-impl<T> From<Box<T>> for Owned<T> {
-    /// Returns a new owned pointer pointing to `b`.
+// PoolHandle을 받아야하므로 deref trait impl 하던 것을 직접 구현
+impl<T: ?Sized + Pointable> Owned<T> {
+    /// 절대주소 참조
     ///
-    /// # Panics
+    /// # Safety
     ///
-    /// Panics if the pointer (the `Box`) is not properly aligned.
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn deref(&self, pool: &PoolHandle) -> &T {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        T::deref(offset, pool)
+    }
+
+    /// 절대주소 mutable 참조
     ///
-    /// # Examples
+    /// # Safety
     ///
-    /// ```
-    /// use crossbeam_epoch::Owned;
-    ///
-    /// let o = unsafe { Owned::from_raw(Box::into_raw(Box::new(1234))) };
-    /// ```
-    fn from(b: Box<T>) -> Self {
-        unsafe { Self::from_raw(Box::into_raw(b)) }
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &mut T {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        T::deref_mut(offset, pool)
     }
 }
 
-impl<T: ?Sized + Pointable> Borrow<T> for Owned<T> {
-    fn borrow(&self) -> &T {
-        self.deref()
+// PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
+impl<T> Owned<T> {
+    /// 주어진 pool에 T 할당 후 이를 가리키는 Owned 포인터 반환
+    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
+        Owned::new(t, pool)
     }
 }
 
-impl<T: ?Sized + Pointable> BorrowMut<T> for Owned<T> {
-    fn borrow_mut(&mut self) -> &mut T {
-        self.deref_mut()
-    }
-}
+// TODO: PersistentBox 구현할지 고민 필요
+// impl<T> From<Box<T>> for Owned<T> {
+//     /// Returns a new owned pointer pointing to `b`.
+//     ///
+//     /// # Panics
+//     ///
+//     /// Panics if the pointer (the `Box`) is not properly aligned.
+//     ///
+//     /// # Examples
+//     ///
+//     /// ```
+//     /// use crossbeam_epoch::Owned;
+//     ///
+//     /// let o = unsafe { Owned::from_raw(Box::into_raw(Box::new(1234))) };
+//     /// ```
+//     fn from(b: Box<T>) -> Self {
+//         unsafe { Self::from_raw(Box::into_raw(b)) }
+//     }
+// }
 
-impl<T: ?Sized + Pointable> AsRef<T> for Owned<T> {
-    fn as_ref(&self) -> &T {
-        self.deref()
+// PoolHandle을 받아야하므로 borrow, as_ref, .. trait impl 하던 것을 직접 구현
+impl<T: ?Sized + Pointable> Owned<T> {
+    /// borrow
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn borrow(&self, pool: &PoolHandle) -> &T {
+        self.deref(pool)
     }
-}
 
-impl<T: ?Sized + Pointable> AsMut<T> for Owned<T> {
-    fn as_mut(&mut self) -> &mut T {
-        self.deref_mut()
+    /// borrow_mut
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn borrow_mut(&mut self, pool: &PoolHandle) -> &mut T {
+        self.deref_mut(pool)
+    }
+
+    /// as_ref
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn as_ref(&self, pool: &PoolHandle) -> &T {
+        self.deref(pool)
+    }
+
+    /// as_mut
+    ///
+    ///
+    /// # Safety
+    ///
+    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    pub unsafe fn as_mut(&mut self, pool: &PoolHandle) -> &mut T {
+        self.deref_mut(pool)
     }
 }
 
@@ -1267,7 +1319,8 @@ impl<T: ?Sized + Pointable> Pointer<T> for Shared<'_, T> {
     }
 }
 
-impl<'g, T> Shared<'g, T> {
+// lint "deny single_use_lifetimes" 로 인해 바꿈
+impl<T> Shared<'_, T> {
     /// Converts the pointer to a raw pointer (without the tag).
     ///
     /// # Examples
@@ -1285,9 +1338,9 @@ impl<'g, T> Shared<'g, T> {
     /// assert_eq!(p.as_raw(), raw);
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn as_raw(&self) -> *const T {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        raw as *const _
+    pub fn as_ptr(&self) -> PersistentPtr<T> {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        PersistentPtr::from(offset)
     }
 }
 
@@ -1304,7 +1357,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// ```
     pub fn null() -> Shared<'g, T> {
         Shared {
-            data: 0,
+            data: usize::MAX,
             _marker: PhantomData,
         }
     }
@@ -1325,8 +1378,8 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn is_null(&self) -> bool {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        raw == 0
+        // NOTE: decompose_tag하면 안됨. null 식별자인 usize::MAX랑 달라짐
+        self.data == usize::MAX
     }
 
     /// Dereferences the pointer.
@@ -1362,9 +1415,9 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[allow(clippy::should_implement_trait)]
-    pub unsafe fn deref(&self) -> &'g T {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        T::deref(raw)
+    pub unsafe fn deref(&self, pool: &PoolHandle) -> &'g T {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        T::deref(offset, pool)
     }
 
     /// Dereferences the pointer.
@@ -1404,9 +1457,9 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// }
     /// ```
     #[allow(clippy::should_implement_trait)]
-    pub unsafe fn deref_mut(&mut self) -> &'g mut T {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        T::deref_mut(raw)
+    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &'g mut T {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        T::deref_mut(offset, pool)
     }
 
     /// Converts the pointer to a reference.
@@ -1441,12 +1494,12 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// }
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub unsafe fn as_ref(&self) -> Option<&'g T> {
-        let (raw, _) = decompose_tag::<T>(self.data);
-        if raw == 0 {
+    pub unsafe fn as_ref(&self, pool: &PoolHandle) -> Option<&'g T> {
+        let (offset, _) = decompose_tag::<T>(self.data);
+        if offset == usize::MAX {
             None
         } else {
-            Some(T::deref(raw))
+            Some(T::deref(offset, pool))
         }
     }
 
@@ -1522,7 +1575,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     }
 }
 
-impl<T> From<*const T> for Shared<'_, T> {
+impl<T> From<PersistentPtr<T>> for Shared<'_, T> {
     /// Returns a new pointer pointing to `raw`.
     ///
     /// # Panics
@@ -1537,10 +1590,10 @@ impl<T> From<*const T> for Shared<'_, T> {
     /// let p = Shared::from(Box::into_raw(Box::new(1234)) as *const _);
     /// assert!(!p.is_null());
     /// ```
-    fn from(raw: *const T) -> Self {
-        let raw = raw as usize;
-        ensure_aligned::<T>(raw);
-        unsafe { Self::from_usize(raw) }
+    fn from(ptr: PersistentPtr<T>) -> Self {
+        let offset = ptr.into_offset();
+        ensure_aligned::<T>(offset);
+        unsafe { Self::from_usize(offset) }
     }
 }
 
@@ -1566,18 +1619,20 @@ impl<T: ?Sized + Pointable> Ord for Shared<'_, T> {
 
 impl<T: ?Sized + Pointable> fmt::Debug for Shared<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (raw, tag) = decompose_tag::<T>(self.data);
+        let (offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Shared")
-            .field("raw", &raw)
+            .field("offset", &offset)
             .field("tag", &tag)
             .finish()
     }
 }
 
-impl<T: ?Sized + Pointable> fmt::Pointer for Shared<'_, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Pointer::fmt(&(unsafe { self.deref() as *const _ }), f)
+// PoolHandle을 받아야하므로 fmt trait impl 하던 것을 직접 구현
+impl<T: ?Sized + Pointable> Shared<'_, T> {
+    /// formatting Pointer
+    pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
+        fmt::Pointer::fmt(&(unsafe { self.deref(pool) as *const _ }), f)
     }
 }
 
@@ -1594,12 +1649,12 @@ mod tests {
 
     #[test]
     fn valid_tag_i8() {
-        Shared::<i8>::null().with_tag(0);
+        let _ = Shared::<i8>::null().with_tag(0);
     }
 
     #[test]
     fn valid_tag_i64() {
-        Shared::<i64>::null().with_tag(7);
+        let _ = Shared::<i64>::null().with_tag(7);
     }
 
     #[cfg(feature = "nightly")]
@@ -1611,8 +1666,9 @@ mod tests {
 
     #[test]
     fn array_init() {
-        let owned = Owned::<[MaybeUninit<usize>]>::init(10);
-        let arr: &[MaybeUninit<usize>] = &*owned;
+        let pool = crate::util::get_test_handle("atomic_array_init.pool");
+        let owned = Owned::<[MaybeUninit<usize>]>::init(10, &pool);
+        let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
         assert_eq!(arr.len(), 10);
     }
 }

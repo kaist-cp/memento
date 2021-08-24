@@ -3,6 +3,7 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use memmap::*;
+use std::alloc::Layout;
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
@@ -97,10 +98,30 @@ impl PoolHandle {
         self.pool().alloc::<T>()
     }
 
+    /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
+    ///
+    /// # Safety
+    ///
+    /// TODO
+    #[inline]
+    pub unsafe fn alloc_layout<T>(&self, layout: Layout) -> PersistentPtr<T> {
+        self.pool().alloc_layout(layout)
+    }
+
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     #[inline]
-    pub fn free<T>(&self, pptr: &mut PersistentPtr<T>) {
+    pub fn free<T>(&self, pptr: PersistentPtr<T>) {
         self.pool().free(pptr)
+    }
+
+    /// offset 주소부터 Layout 크기만큼 할당 해제
+    ///
+    /// # Safety
+    ///
+    /// TODO
+    #[inline]
+    pub unsafe fn free_layout(&self, offset: usize, layout: Layout) {
+        self.pool().free_layout(offset, layout)
     }
 
     #[inline]
@@ -192,9 +213,27 @@ impl Pool {
         PersistentPtr::from(addr_allocated)
     }
 
+    /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
+    ///
+    /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
+    /// - e.g. dynamically sized slices
+    unsafe fn alloc_layout<T>(&self, _layout: Layout) -> PersistentPtr<T> {
+        // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
+        let addr_allocated = 1024;
+        PersistentPtr::from(addr_allocated)
+    }
+
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
-    fn free<T>(&self, _pptr: &mut PersistentPtr<T>) {
+    fn free<T>(&self, _pptr: PersistentPtr<T>) {
         todo!("pptr이 가리키는 메모리 블록 할당해제")
+    }
+
+    /// offset 주소부터 Layout 크기만큼 할당 해제
+    ///
+    /// - `PersistentPtr<T>`가 가리키는 데이터의 크기를 정적으로 알 수 없을때, 할당 해제할 크기(`Layout`)를 직접 지정하기 위해 필요
+    /// - e.g. dynamically sized slices
+    unsafe fn free_layout(&self, _offset: usize, _layout: Layout) {
+        todo!()
     }
 }
 
