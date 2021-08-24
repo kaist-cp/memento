@@ -64,3 +64,11 @@ impl<T> From<usize> for PersistentPtr<T> {
         }
     }
 }
+
+impl<T> PartialEq<PersistentPtr<T>> for PersistentPtr<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.offset == other.offset
+    }
+}
+
+impl<T> Eq for PersistentPtr<T> {}

@@ -51,6 +51,7 @@ use crate::plocation::ptr::PersistentPtr;
 /// # }
 ///
 /// // 풀 생성 후 풀의 핸들러 얻기
+/// # let _ = std::fs::remove_file("foo.pool"); // 테스트에 사용한 파일 제거
 /// let pool_handle = Pool::create::<MyRootObj, MyRootClient>("foo.pool", 8 * 1024).unwrap();
 ///
 /// // 핸들러로 풀의 루트 오브젝트, 루트 클라이언트 가져오기
@@ -59,7 +60,6 @@ use crate::plocation::ptr::PersistentPtr;
 ///
 /// // 루트 클라이언트로 루트 오브젝트의 op 실행
 /// root_obj.persistent_op(root_client, ()).unwrap();
-/// # let _ = std::fs::remove_file("foo.pool"); // 테스트에 사용한 파일 제거
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {

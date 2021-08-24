@@ -11,7 +11,8 @@
 //! - 변수명, 타입, 관련된 함수명을 아래와 같이 변경
 //!     - 변경 전: `raw: *const T`(절대주소를 가리키는 포인터), `raw: usize`(절대주소), `from_raw(raw: *mut T) -> Owned<T>`
 //!     - 변경 후: `ptr: PersistentPtr<T>`(상대주소를 가리키는 포인터), `offset: usize`(상대주소), `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
-use core::borrow::{Borrow, BorrowMut};
+//! - 모든 doc test를 persistent version으로 변경
+
 use core::cmp;
 use core::fmt;
 use core::marker::PhantomData;
@@ -155,10 +156,12 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 /// particular, Crossbeam supports dynamically sized slices as follows.
 ///
 /// ```
+/// # use compositional_persistent_object::util::*;
+/// # let pool = get_test_handle("pointable");
 /// use std::mem::MaybeUninit;
-/// use crossbeam_epoch::Owned;
+/// use compositional_persistent_object::pepoch::Owned;
 ///
-/// let o = Owned::<[MaybeUninit<i32>]>::init(10); // allocating [i32; 10]
+/// let o = Owned::<[MaybeUninit<i32>]>::init(10, &pool); // allocating [i32; 10]
 /// ```
 pub trait Pointable {
     /// The alignment of pointer.
@@ -322,9 +325,11 @@ impl<T> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Atomic;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_new");
+    /// use compositional_persistent_object::pepoch::Atomic;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> Atomic<T> {
         Self::init(init, pool)
@@ -337,9 +342,11 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Atomic;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_init");
+    /// use compositional_persistent_object::pepoch::Atomic;
     ///
-    /// let a = Atomic::<i32>::init(1234);
+    /// let a = Atomic::<i32>::init(1234, &pool);
     /// ```
     pub fn init(init: T::Init, pool: &PoolHandle) -> Atomic<T> {
         Self::from(Owned::init(init, pool))
@@ -358,7 +365,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Atomic;
+    /// use compositional_persistent_object::pepoch::Atomic;
     ///
     /// let a = Atomic::<i32>::null();
     /// ```
@@ -379,10 +386,12 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_load");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// ```
@@ -405,9 +414,11 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_load_consume");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     /// let p = a.load_consume(guard);
     /// ```
@@ -423,12 +434,14 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{Atomic, Owned, Shared};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_store");
+    /// use compositional_persistent_object::pepoch::{Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// a.store(Shared::null(), SeqCst);
-    /// a.store(Owned::new(1234), SeqCst);
+    /// a.store(Owned::new(1234, &pool), SeqCst);
     /// ```
     pub fn store<P: Pointer<T>>(&self, new: P, ord: Ordering) {
         self.data.store(new.into_usize(), ord);
@@ -443,10 +456,12 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Shared};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_swap");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     /// let p = a.swap(Shared::null(), SeqCst, guard);
     /// ```
@@ -474,15 +489,17 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_compare_exchange");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     ///
     /// let guard = &epoch::pin();
     /// let curr = a.load(SeqCst, guard);
     /// let res1 = a.compare_exchange(curr, Shared::null(), SeqCst, SeqCst, guard);
-    /// let res2 = a.compare_exchange(curr, Owned::new(5678), SeqCst, SeqCst, guard);
+    /// let res2 = a.compare_exchange(curr, Owned::new(5678, &pool), SeqCst, SeqCst, guard);
     /// ```
     pub fn compare_exchange<'g, P>(
         &self,
@@ -530,13 +547,15 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_compare_exchange_weak");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     ///
-    /// let mut new = Owned::new(5678);
+    /// let mut new = Owned::new(5678, &pool);
     /// let mut ptr = a.load(SeqCst, guard);
     /// loop {
     ///     match a.compare_exchange_weak(ptr, new, SeqCst, SeqCst, guard) {
@@ -609,10 +628,12 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_fetch_update");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     ///
     /// let res1 = a.fetch_update(SeqCst, SeqCst, guard, |x| Some(x.with_tag(1)));
@@ -669,15 +690,17 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # #![allow(deprecated)]
-    /// use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_compare_and_set");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     ///
     /// let guard = &epoch::pin();
     /// let curr = a.load(SeqCst, guard);
     /// let res1 = a.compare_and_set(curr, Shared::null(), SeqCst, guard);
-    /// let res2 = a.compare_and_set(curr, Owned::new(5678), SeqCst, guard);
+    /// let res2 = a.compare_and_set(curr, Owned::new(5678, &pool), SeqCst, guard);
     /// ```
     // TODO(crossbeam): remove in the next major version.
     #[allow(deprecated)]
@@ -727,13 +750,15 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # #![allow(deprecated)]
-    /// use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_compare_and_set_weak");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     ///
-    /// let mut new = Owned::new(5678);
+    /// let mut new = Owned::new(5678, &pool);
     /// let mut ptr = a.load(SeqCst, guard);
     /// loop {
     ///     match a.compare_and_set_weak(ptr, new, SeqCst, guard) {
@@ -784,7 +809,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Shared};
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// let a = Atomic::<i32>::from(Shared::null().with_tag(3));
@@ -807,7 +832,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Shared};
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// let a = Atomic::<i32>::from(Shared::null().with_tag(1));
@@ -830,7 +855,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Shared};
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// let a = Atomic::<i32>::from(Shared::null().with_tag(1));
@@ -861,7 +886,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```rust
     /// # use std::mem;
-    /// # use crossbeam_epoch::Atomic;
+    /// # use compositional_persistent_object::pepoch::Atomic;
     /// struct DataStructure {
     ///     ptr: Atomic<usize>,
     /// }
@@ -935,9 +960,11 @@ impl<T: ?Sized + Pointable> From<Owned<T>> for Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{Atomic, Owned};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("atomic_from_owned");
+    /// use compositional_persistent_object::pepoch::{Atomic, Owned};
     ///
-    /// let a = Atomic::<i32>::from(Owned::new(1234));
+    /// let a = Atomic::<i32>::from(Owned::new(1234, &pool));
     /// ```
     fn from(owned: Owned<T>) -> Self {
         let data = owned.data;
@@ -956,7 +983,7 @@ impl<T: ?Sized + Pointable> From<Owned<T>> for Atomic<T> {
 
 // PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
 impl<T> Atomic<T> {
-    /// TODO: comment
+    /// 주어진 pool에 T 할당 후 이를 가리키는 Atomic 포인터 반환
     pub fn from_t(t: T, pool: &PoolHandle) -> Self {
         Self::new(t, pool)
     }
@@ -968,7 +995,7 @@ impl<'g, T: ?Sized + Pointable> From<Shared<'g, T>> for Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{Atomic, Shared};
+    /// use compositional_persistent_object::pepoch::{Atomic, Shared};
     ///
     /// let a = Atomic::<i32>::from(Shared::<i32>::null());
     /// ```
@@ -984,9 +1011,10 @@ impl<T> From<PersistentPtr<T>> for Atomic<T> {
     ///
     /// ```
     /// use std::ptr;
-    /// use crossbeam_epoch::Atomic;
+    /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
+    /// use compositional_persistent_object::pepoch::Atomic;
     ///
-    /// let a = Atomic::<i32>::from(ptr::null::<i32>());
+    /// let a = Atomic::<i32>::from(PersistentPtr::<i32>::null());
     /// ```
     fn from(ptr: PersistentPtr<T>) -> Self {
         Self::from_usize(ptr.into_offset())
@@ -1061,9 +1089,13 @@ impl<T> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Owned;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("owned_from_ptr");
+    /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
+    /// use compositional_persistent_object::pepoch::Owned;
     ///
-    /// let o = unsafe { Owned::from_raw(Box::into_raw(Box::new(1234))) };
+    /// let mut ptr = pool.alloc::<usize>();
+    /// let o = unsafe { Owned::from_ptr(ptr) };
     /// ```
     pub unsafe fn from_ptr(ptr: PersistentPtr<T>) -> Owned<T> {
         let offset = ptr.into_offset();
@@ -1094,9 +1126,11 @@ impl<T> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Owned;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("owned_new");
+    /// use compositional_persistent_object::pepoch::Owned;
     ///
-    /// let o = Owned::new(1234);
+    /// let o = Owned::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> Owned<T> {
         Self::init(init, pool)
@@ -1109,9 +1143,11 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Owned;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("owend_init");
+    /// use compositional_persistent_object::pepoch::Owned;
     ///
-    /// let o = Owned::<i32>::init(1234);
+    /// let o = Owned::<i32>::init(1234, &pool);
     /// ```
     pub fn init(init: T::Init, pool: &PoolHandle) -> Owned<T> {
         unsafe { Self::from_usize(T::init(init, pool)) }
@@ -1122,9 +1158,11 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Owned};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("owned_into_shared");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Owned};
     ///
-    /// let o = Owned::new(1234);
+    /// let o = Owned::new(1234, &pool);
     /// let guard = &epoch::pin();
     /// let p = o.into_shared(guard);
     /// ```
@@ -1138,9 +1176,11 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Owned;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("owend_tag");
+    /// use compositional_persistent_object::pepoch::Owned;
     ///
-    /// assert_eq!(Owned::new(1234).tag(), 0);
+    /// assert_eq!(Owned::new(1234, &pool).tag(), 0);
     /// ```
     pub fn tag(&self) -> usize {
         let (_, tag) = decompose_tag::<T>(self.data);
@@ -1153,9 +1193,11 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Owned;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("owend_with_tag");
+    /// use compositional_persistent_object::pepoch::Owned;
     ///
-    /// let o = Owned::new(0u64);
+    /// let o = Owned::new(0u64, &pool);
     /// assert_eq!(o.tag(), 0);
     /// let o = o.with_tag(2);
     /// assert_eq!(o.tag(), 2);
@@ -1326,16 +1368,19 @@ impl<T> Shared<'_, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Owned};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_as_ptr");
+    /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let o = Owned::new(1234);
-    /// let raw = &*o as *const _;
+    /// let o = Owned::new(1234, &pool);
+    /// let ptr = PersistentPtr::from(unsafe { o.deref(&pool) as *const _ as usize } - pool.start());
     /// let a = Atomic::from(o);
     ///
     /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
-    /// assert_eq!(p.as_raw(), raw);
+    /// assert_eq!(p.as_ptr(), ptr);
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn as_ptr(&self) -> PersistentPtr<T> {
@@ -1350,7 +1395,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Shared;
+    /// use compositional_persistent_object::pepoch::Shared;
     ///
     /// let p = Shared::<i32>::null();
     /// assert!(p.is_null());
@@ -1367,13 +1412,15 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Owned};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_is_null");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// let a = Atomic::null();
     /// let guard = &epoch::pin();
     /// assert!(a.load(SeqCst, guard).is_null());
-    /// a.store(Owned::new(1234), SeqCst);
+    /// a.store(Owned::new(1234, &pool), SeqCst);
     /// assert!(!a.load(SeqCst, guard).is_null());
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -1403,14 +1450,16 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_deref");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// unsafe {
-    ///     assert_eq!(p.deref(), &1234);
+    ///     assert_eq!(p.deref(&pool), &1234);
     /// }
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -1436,16 +1485,18 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_deref_mut");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(vec![1, 2, 3, 4]);
+    /// let a = Atomic::new(vec![1, 2, 3, 4], &pool);
     /// let guard = &epoch::pin();
     ///
     /// let mut p = a.load(SeqCst, guard);
     /// unsafe {
     ///     assert!(!p.is_null());
-    ///     let b = p.deref_mut();
+    ///     let b = p.deref_mut(&pool);
     ///     assert_eq!(b, &vec![1, 2, 3, 4]);
     ///     b.push(5);
     ///     assert_eq!(b, &vec![1, 2, 3, 4, 5]);
@@ -1453,7 +1504,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// let p = a.load(SeqCst, guard);
     /// unsafe {
-    ///     assert_eq!(p.deref(), &vec![1, 2, 3, 4, 5]);
+    ///     assert_eq!(p.deref(&pool), &vec![1, 2, 3, 4, 5]);
     /// }
     /// ```
     #[allow(clippy::should_implement_trait)]
@@ -1483,14 +1534,16 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_as_ref");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// unsafe {
-    ///     assert_eq!(p.as_ref(), Some(&1234));
+    ///     assert_eq!(p.as_ref(&pool), Some(&1234));
     /// }
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -1517,10 +1570,12 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_into_owned");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234);
+    /// let a = Atomic::new(1234, &pool);
     /// unsafe {
     ///     let guard = &epoch::unprotected();
     ///     let p = a.load(SeqCst, guard);
@@ -1537,10 +1592,12 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic, Owned};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_tag");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::<u64>::from(Owned::new(0u64).with_tag(2));
+    /// let a = Atomic::<u64>::from(Owned::new(0u64, &pool).with_tag(2));
     /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// assert_eq!(p.tag(), 2);
@@ -1557,17 +1614,19 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_with_tag");
+    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(0u64);
+    /// let a = Atomic::new(0u64, &pool);
     /// let guard = &epoch::pin();
     /// let p1 = a.load(SeqCst, guard);
     /// let p2 = p1.with_tag(2);
     ///
     /// assert_eq!(p1.tag(), 0);
     /// assert_eq!(p2.tag(), 2);
-    /// assert_eq!(p1.as_raw(), p2.as_raw());
+    /// assert_eq!(p1.as_ptr(), p2.as_ptr());
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn with_tag(&self, tag: usize) -> Shared<'g, T> {
@@ -1585,9 +1644,12 @@ impl<T> From<PersistentPtr<T>> for Shared<'_, T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_epoch::Shared;
+    /// # use compositional_persistent_object::util::*;
+    /// # let pool = get_test_handle("shared_from_ptr");
+    /// use compositional_persistent_object::pepoch::Shared;
     ///
-    /// let p = Shared::from(Box::into_raw(Box::new(1234)) as *const _);
+    /// let ptr = pool.alloc::<usize>();
+    /// let p = Shared::from(ptr);
     /// assert!(!p.is_null());
     /// ```
     fn from(ptr: PersistentPtr<T>) -> Self {
