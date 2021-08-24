@@ -12,13 +12,14 @@
 // - Ordering 최적화
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{self as epoch, Atomic, Guard, Owned, Shared};
 use etrace::some_or;
 use std::ptr;
 
 use crate::persistent::*;
+use crate::stack::*;
 
-struct Node<T> {
+struct Node<T: Clone> {
     data: T,
     next: Atomic<Node<T>>,
 
@@ -27,63 +28,252 @@ struct Node<T> {
     popper: AtomicUsize,
 }
 
-/// `TreiberStack::push()`를 호출할 때 쓰일 client
-/// `TreiberStack::push(client, (val, is_try))`:
-/// - Treiber stack에 `val`을 삽입함
-/// - `is_try`가 `true`라면 1회만 시도
-#[derive(Debug, Clone)]
-pub struct PushClient<T> {
+impl<T: Clone> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: value,
+            next: Atomic::null(),
+            popper: AtomicUsize::new(TreiberStack::<T>::no_popper()),
+        }
+    }
+}
+
+trait PushType<T: Clone> {
+    fn mine(&self) -> &Atomic<Node<T>>;
+    fn is_try(&self) -> bool;
+}
+
+/// TreiberStack의 try push operation
+#[derive(Debug)]
+pub struct TryPush<T: Clone> {
     /// push를 위해 할당된 node
-    node: Atomic<Node<T>>,
+    mine: Atomic<Node<T>>,
 }
 
-impl<T> Default for PushClient<T> {
+impl<T: Clone> Default for TryPush<T> {
     fn default() -> Self {
         Self {
-            node: Atomic::null(),
+            mine: Atomic::null(),
         }
     }
 }
 
-impl<T> PersistentClient for PushClient<T> {
-    fn reset(&mut self) {
+impl<T: Clone> PushType<T> for TryPush<T> {
+    #[inline]
+    fn mine(&self) -> &Atomic<Node<T>> {
+        &self.mine
+    }
+
+    #[inline]
+    fn is_try(&self) -> bool {
+        true
+    }
+}
+
+unsafe impl<T: Clone> Send for TryPush<T> {}
+
+impl<T: Clone> PersistentOp for TryPush<T> {
+    type Object = TreiberStack<T>;
+    type Input = T;
+    type Output = Result<(), TryFail>;
+
+    fn run(&mut self, stack: &Self::Object, value: Self::Input) -> Self::Output {
+        stack.push(self, value)
+    }
+
+    fn reset(&mut self, _: bool) {
         // TODO: if not finished -> free node
-        self.node.store(Shared::null(), Ordering::SeqCst);
+        self.mine.store(Shared::null(), Ordering::SeqCst);
     }
 }
 
-/// `TreiberStack::pop()`를 호출할 때 쓰일 client
-/// `TreiberStack::pop(client, is_try)`:
-/// - Treiber stack에서 top node의 아이템을 반환함
-/// - 비어 있을 경우 `Ok(None)`을 반환
-/// - `is_try`가 `true`라면 1회만 시도 -> 실패시 `Err(())` 반환
-#[derive(Debug, Clone)]
-pub struct PopClient<T> {
-    /// pup를 위해 할당된 node
-    node: Atomic<Node<T>>,
-}
+impl<T: Clone> TryPush<T> {
+    /// 기본값 태그
+    const DEFAULT: usize = 0;
 
-impl<T> Default for PopClient<T> {
-    fn default() -> Self {
-        Self {
-            node: Atomic::null(),
+    /// try push/pop 결과 실패를 표시하기 위한 태그
+    const FAIL: usize = 1;
+
+    /// 만약 input이 있다면 input은 남겨두고 try 실행을 안 한 것처럼 리셋함
+    /// - 같은 input에 대해 exchange를 재시도하고 싶을 때 사용.
+    ///   예를 들어, elimination stack의 push 구현 시 순서대로 (1) central stack try push/pop 실패, (2) exchange 실패, (3) central stack try push 재시도 하는 경우가 있음
+    ///   이때 (1)에서 사용된 op을 `reset_weak()` 하여, `node`를 재할당 하지 않고 같은 input에 대해 exchange를 재시도할 수 있음.
+    // TODO: 이미 push에 성공했으면 완전 reset 하기? exchanger::TryExchange의 reset_weak()과 일관성이 있어야 할 듯
+    pub fn reset_weak(&self) {
+        let guard = unsafe { epoch::unprotected() };
+        let mine = self.mine.load(Ordering::SeqCst, guard);
+        if mine.tag() == Self::FAIL {
+            self.mine
+                .store(mine.with_tag(Self::DEFAULT), Ordering::SeqCst);
         }
     }
 }
 
-impl<T> PersistentClient for PopClient<T> {
-    fn reset(&mut self) {
-        self.node.store(Shared::null(), Ordering::SeqCst);
+/// TreiberStack의 push operation
+#[derive(Debug)]
+pub struct Push<T: Clone> {
+    /// push를 위해 할당된 node
+    mine: Atomic<Node<T>>,
+}
+
+impl<T: Clone> Default for Push<T> {
+    fn default() -> Self {
+        Self {
+            mine: Atomic::null(),
+        }
+    }
+}
+
+impl<T: Clone> PushType<T> for Push<T> {
+    #[inline]
+    fn mine(&self) -> &Atomic<Node<T>> {
+        &self.mine
+    }
+
+    #[inline]
+    fn is_try(&self) -> bool {
+        false
+    }
+}
+
+unsafe impl<T: Clone> Send for Push<T> {}
+
+impl<T: Clone> PersistentOp for Push<T> {
+    type Object = TreiberStack<T>;
+    type Input = T;
+    type Output = ();
+
+    fn run(&mut self, stack: &Self::Object, value: Self::Input) -> Self::Output {
+        let pushed = stack.push(self, value);
+        debug_assert!(pushed.is_ok())
+    }
+
+    fn reset(&mut self, _: bool) {
+        // TODO: if not finished -> free node
+        self.mine.store(Shared::null(), Ordering::SeqCst);
+    }
+}
+
+trait PopType<T: Clone> {
+    fn id(&self) -> usize;
+    fn target(&self) -> &Atomic<Node<T>>;
+    fn is_try(&self) -> bool;
+}
+
+/// TreiberStack의 try pop operation
+#[derive(Debug)]
+pub struct TryPop<T: Clone> {
+    /// pup를 위해 할당된 node
+    target: Atomic<Node<T>>,
+}
+
+impl<T: Clone> Default for TryPop<T> {
+    fn default() -> Self {
+        Self {
+            target: Atomic::null(),
+        }
+    }
+}
+
+impl<T: Clone> PopType<T> for TryPop<T> {
+    #[inline]
+    fn id(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    #[inline]
+    fn target(&self) -> &Atomic<Node<T>> {
+        &self.target
+    }
+
+    #[inline]
+    fn is_try(&self) -> bool {
+        true
+    }
+}
+
+unsafe impl<T: Clone> Send for TryPop<T> {}
+
+impl<T: Clone> PersistentOp for TryPop<T> {
+    type Object = TreiberStack<T>;
+    type Input = ();
+    type Output = Result<Option<T>, TryFail>;
+
+    fn run(&mut self, stack: &Self::Object, _: Self::Input) -> Self::Output {
+        stack.pop(self)
+    }
+
+    fn reset(&mut self, _: bool) {
+        // TODO: if node has not been freed, check if the node is mine and free it
+        // TODO: null이 아닐 때에만 store하는 게 더 빠를까?
+        self.target.store(Shared::null(), Ordering::SeqCst);
+    }
+}
+
+impl<T: Clone> TryPop<T> {
+    /// try push/pop 결과 실패를 표시하기 위한 태그
+    const FAIL: usize = 1;
+
+    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
+    const EMPTY: usize = 2;
+}
+
+/// TreiberStack의 pop operation
+#[derive(Debug)]
+pub struct Pop<T: Clone> {
+    /// pup를 위해 할당된 node
+    target: Atomic<Node<T>>,
+}
+
+impl<T: Clone> Default for Pop<T> {
+    fn default() -> Self {
+        Self {
+            target: Atomic::null(),
+        }
+    }
+}
+
+impl<T: Clone> PopType<T> for Pop<T> {
+    #[inline]
+    fn id(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    #[inline]
+    fn target(&self) -> &Atomic<Node<T>> {
+        &self.target
+    }
+
+    #[inline]
+    fn is_try(&self) -> bool {
+        false
+    }
+}
+
+unsafe impl<T: Clone> Send for Pop<T> {}
+
+impl<T: Clone> PersistentOp for Pop<T> {
+    type Object = TreiberStack<T>;
+    type Input = ();
+    type Output = Option<T>;
+
+    fn run(&mut self, stack: &Self::Object, _: Self::Input) -> Self::Output {
+        stack.pop(self).unwrap()
+    }
+
+    fn reset(&mut self, _: bool) {
+        // TODO: if node has not been freed, check if the node is mine and free it
+        self.target.store(Shared::null(), Ordering::SeqCst);
     }
 }
 
 /// Persistent Treiber stack
 #[derive(Debug)]
-pub struct TreiberStack<T> {
+pub struct TreiberStack<T: Clone> {
     top: Atomic<Node<T>>,
 }
 
-impl<T> Default for TreiberStack<T> {
+impl<T: Clone> Default for TreiberStack<T> {
     fn default() -> Self {
         Self {
             top: Atomic::null(),
@@ -91,76 +281,43 @@ impl<T> Default for TreiberStack<T> {
     }
 }
 
-impl<T> TreiberStack<T> {
-    /// `push()` 결과 중 trying/failure를 표시하기 위한 태그
-    const TRYING: usize = 0; // default
-    const FAIL: usize = 1;
+impl<T: Clone> TreiberStack<T> {
+    fn push<C: PushType<T>>(&self, client: &C, value: T) -> Result<(), TryFail> {
+        let guard = epoch::pin();
+        let mut mine = client.mine().load(Ordering::SeqCst, &guard);
 
-    fn push(&self, client: &mut PushClient<T>, val: T, is_try: bool) -> Result<(), ()> {
-        let guard = crossbeam_epoch::pin();
-        let node = some_or!(self.is_incomplete(client, val, &guard), return Ok(()));
+        if mine.is_null() {
+            // (1) mine이 null이면 node 할당이 안 된 것이다
+            let n = Owned::new(Node::from(value)).into_shared(&guard);
 
-        if is_try {
-            self.try_push_inner(node, &guard).map_err(|_| {
-                // 재시도시 불필요한 search를 피하기 위한 FAIL 결과 태깅
+            client.mine().store(n, Ordering::SeqCst);
+            mine = n;
+        } else if mine.tag() == TryPush::<T>::FAIL {
+            // (2) tag가 FAIL이면 try push 실패했던 것이다
+            return Err(TryFail);
+        } else if self.search(mine, &guard)
+            || unsafe { mine.deref() }.popper.load(Ordering::SeqCst) != Self::no_popper()
+        {
+            // (3) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
+            // (4) 이미 pop 되었다면 push된 것이다
+            return Ok(());
+        }
+
+        if client.is_try() {
+            self.try_push(mine, &guard).map_err(|e| {
                 client
-                    .node
-                    .store(node.with_tag(Self::FAIL), Ordering::SeqCst);
+                    .mine()
+                    .store(mine.with_tag(TryPush::<T>::FAIL), Ordering::SeqCst);
+                e
             })
         } else {
-            while self.try_push_inner(node, &guard).is_err() {}
+            while self.try_push(mine, &guard).is_err() {}
             Ok(())
         }
     }
 
-    /// client의 push 작업이 이미 끝났는지 체크
-    /// 끝나지 않았다면 Some(`push 할 node_ptr`) 반환
-    fn is_incomplete<'g>(
-        &self,
-        client: &PushClient<T>,
-        val: T,
-        guard: &'g Guard,
-    ) -> Option<Shared<'g, Node<T>>> {
-        let node = client.node.load(Ordering::SeqCst, guard);
-
-        // (1) first execution
-        if node.is_null() {
-            let null: *const PopClient<T> = ptr::null();
-            let n = Owned::new(Node {
-                data: val,
-                next: Atomic::null(),
-                popper: AtomicUsize::new(null as usize),
-            })
-            .into_shared(guard);
-            client.node.store(n, Ordering::SeqCst);
-            return Some(n);
-        }
-
-        // (2) tag가 FAIL이면 `try_push()` 실패했던 것이다
-        if node.tag() == 1 {
-            client
-                .node
-                .store(node.with_tag(Self::TRYING), Ordering::SeqCst);
-            return Some(node.with_tag(Self::TRYING));
-        }
-
-        // (3) stack 안에 있으면 push된 것이다 (Direct tracking)
-        if self.search(node, guard) {
-            return None;
-        }
-
-        // (4) 이미 pop 되었다면 push된 것이다
-        let node_ref = unsafe { node.deref() };
-        let null: *const PopClient<T> = ptr::null();
-        if node_ref.popper.load(Ordering::SeqCst) != null as usize {
-            return None;
-        }
-
-        Some(node)
-    }
-
     /// top에 새 `node` 연결을 시도
-    fn try_push_inner(&self, node: Shared<'_, Node<T>>, guard: &Guard) -> Result<(), ()> {
+    fn try_push(&self, node: Shared<'_, Node<T>>, guard: &Guard) -> Result<(), TryFail> {
         let node_ref = unsafe { node.deref() };
         let top = self.top.load(Ordering::SeqCst, guard);
 
@@ -168,7 +325,7 @@ impl<T> TreiberStack<T> {
         self.top
             .compare_exchange(top, node, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| ())
-            .map_err(|_| ())
+            .map_err(|_| TryFail)
     }
 
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
@@ -176,7 +333,7 @@ impl<T> TreiberStack<T> {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
-            if curr.as_raw() == node.as_raw() {
+            if curr == node {
                 return true;
             }
 
@@ -187,164 +344,123 @@ impl<T> TreiberStack<T> {
         false
     }
 
-    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
-    const EMPTY: usize = 1;
+    fn pop<C: PopType<T>>(&self, client: &mut C) -> Result<Option<T>, TryFail> {
+        let guard = epoch::pin();
+        let target = client.target().load(Ordering::SeqCst, &guard);
 
-    fn pop(&self, client: &mut PopClient<T>, is_try: bool) -> Result<Option<T>, ()> {
-        let guard = crossbeam_epoch::pin();
-
-        let node = client.node.load(Ordering::SeqCst, &guard);
-
-        if node.tag() == Self::EMPTY {
+        if target.tag() == TryPop::<T>::EMPTY {
             // post-crash execution (empty)
             return Ok(None);
         }
 
-        if !node.is_null() {
+        if !target.is_null() {
             // post-crash execution (trying)
-            let node_ref = unsafe { node.deref() };
-            let my_id = client as *const PopClient<T> as usize;
+            let target_ref = unsafe { target.deref() };
 
-            // node가 정말 내가 pop한 게 맞는지 확인
-            if node_ref.popper.load(Ordering::SeqCst) == my_id {
-                return Ok(Some(unsafe { ptr::read(&node_ref.data as *const _) }));
+            // target이 내가 pop한 게 맞는지 확인
+            if target_ref.popper.load(Ordering::SeqCst) == client.id() {
+                return Ok(Some(Self::finish_pop(target_ref)));
                 // TODO: free node
             };
+
+            // target이 stack에서 pop되긴 했는지 확인
+            if !self.search(target, &guard) {
+                // stack에서 나온 상태에서 crash 난 경우이므로 popper를 마저 기록해줌
+                // cas인 이유: 다른 스레드도 같은 target을 노리던 중이었을 수도 있음
+                if target_ref
+                    .popper
+                    .compare_exchange(
+                        Self::no_popper(),
+                        client.id(),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
+                    return Ok(Some(Self::finish_pop(target_ref)));
+                    // TODO: free node
+                }
+            }
         }
 
-        let mut top = self.top.load(Ordering::SeqCst, &guard);
+        if client.is_try() {
+            return self.try_pop(client, &guard).map_err(|e| {
+                client
+                    .target()
+                    .store(Shared::null().with_tag(TryPop::<T>::FAIL), Ordering::SeqCst);
+                e
+            });
+        }
+
         loop {
-            match self.try_pop_inner(client as *const _ as usize, &client.node, top, &guard) {
-                Ok(Some(v)) => return Ok(Some(v)),
-                Ok(None) => return Ok(None),
-                Err(_) if is_try => return Err(()),
-                Err(Some(new_top)) => top = new_top,
-                Err(None) => top = self.top.load(Ordering::SeqCst, &guard),
+            let result = self.try_pop(client, &guard);
+            if result.is_ok() {
+                return result;
             }
         }
     }
 
     /// top node를 pop 시도
-    fn try_pop_inner<'g>(
-        &self,
-        client_id: usize,
-        client_node: &Atomic<Node<T>>,
-        top: Shared<'_, Node<T>>,
-        guard: &'g Guard,
-    ) -> Result<Option<T>, Option<Shared<'g, Node<T>>>> {
+    fn try_pop<C: PopType<T>>(&self, client: &C, guard: &Guard) -> Result<Option<T>, TryFail> {
+        let top = self.top.load(Ordering::SeqCst, guard);
         let top_ref = some_or!(unsafe { top.as_ref() }, {
             // empty
-            client_node.store(Shared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
+            client.target().store(
+                Shared::null().with_tag(TryPop::<T>::EMPTY),
+                Ordering::SeqCst,
+            );
             return Ok(None);
         });
 
         // 우선 내가 top node를 가리키고
-        client_node.store(top, Ordering::SeqCst);
-
-        // top node에 내 이름 새겨넣음
-        let null: *const PopClient<T> = ptr::null();
-        let pop_succ = top_ref
-            .popper
-            .compare_exchange(null as usize, client_id, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok();
+        client.target().store(top, Ordering::SeqCst);
 
         // top node를 next로 바꿈
         let next = top_ref.next.load(Ordering::SeqCst, guard);
-        let top_set_succ = self
-            .top
+        self.top
             .compare_exchange(top, next, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .is_ok();
-
-        match (pop_succ, top_set_succ) {
-            (true, _) => {
+            .map(|_| {
+                // top node에 내 이름 새겨넣음
+                top_ref.popper.store(client.id(), Ordering::SeqCst);
                 // TODO: free node
-                Ok(Some(unsafe { ptr::read(&top_ref.data as *const _) })) // popped
-            }
-            (false, true) => Err(Some(next)), // I changed top -> return the next top
-            (false, false) => Err(None),      // Someone changed top
-        }
+                Some(Self::finish_pop(top_ref))
+            })
+            .map_err(|_| TryFail)
+    }
+
+    fn finish_pop(node: &Node<T>) -> T {
+        node.data.clone()
+        // free node
+    }
+
+    #[inline]
+    fn no_popper() -> usize {
+        let null: *const TryPop<T> = ptr::null();
+        null as usize
     }
 }
 
-impl<T> PersistentOp<PushClient<T>> for TreiberStack<T> {
-    type Input = (T, bool); // value, try mode
-    type Output = Result<(), ()>;
+unsafe impl<T: Clone> Send for TreiberStack<T> {}
 
-    fn persistent_op(&self, client: &mut PushClient<T>, input: Self::Input) -> Self::Output {
-        self.push(client, input.0, input.1)
-    }
-}
-
-impl<T> PersistentOp<PopClient<T>> for TreiberStack<T> {
-    type Input = bool; // try mode
-    type Output = Result<Option<T>, ()>;
-
-    fn persistent_op(&self, client: &mut PopClient<T>, input: Self::Input) -> Self::Output {
-        self.pop(client, input)
-    }
+impl<T: Clone> Stack<T> for TreiberStack<T> {
+    type TryPush = TryPush<T>;
+    type Push = Push<T>;
+    type TryPop = TryPop<T>;
+    type Pop = Pop<T>;
 }
 
 #[cfg(test)]
 mod test {
+    use serial_test::serial;
+
     use super::*;
-    use crossbeam_utils::thread;
+
+    const NR_THREAD: usize = 4;
+    const COUNT: usize = 1_000_000;
 
     #[test]
+    #[serial] // Multi-threaded test의 속도 저하 방지
     fn push_pop() {
-        const NR_THREAD: usize = 4;
-        const COUNT: usize = 1_000_000;
-
-        let stack = TreiberStack::<usize>::default(); // TODO(persistent location)
-        let mut push_clients = vec![vec!(PushClient::<usize>::default(); COUNT); NR_THREAD]; // TODO(persistent location)
-        let mut pop_clients = vec![vec!(PopClient::<usize>::default(); COUNT); NR_THREAD]; // TODO(persistent location)
-
-        // 아래 로직은 idempotent 함
-
-        #[allow(box_pointers)]
-        thread::scope(|scope| {
-            for tid in 0..NR_THREAD {
-                let stack_ref = &stack;
-                let push_vec = unsafe {
-                    (push_clients.get_unchecked_mut(tid) as *mut Vec<PushClient<usize>>)
-                        .as_mut()
-                        .unwrap()
-                };
-                let pop_vec = unsafe {
-                    (pop_clients.get_unchecked_mut(tid) as *mut Vec<PopClient<usize>>)
-                        .as_mut()
-                        .unwrap()
-                };
-
-                let _ = scope.spawn(move |_| {
-                    for i in 0..COUNT {
-                        let _ = stack_ref.persistent_op(&mut push_vec[i], (tid, false));
-                        assert!(stack_ref
-                            .persistent_op(&mut pop_vec[i], false)
-                            .unwrap()
-                            .is_some());
-                    }
-                });
-            }
-        })
-        .unwrap();
-
-        // Check empty
-        assert!(stack
-            .persistent_op(&mut PopClient::<usize>::default(), false)
-            .unwrap()
-            .is_none());
-
-        // Check results
-        let mut results = vec![0_usize; NR_THREAD];
-        for client_vec in pop_clients.iter_mut() {
-            for client in client_vec.iter_mut() {
-                let ret = stack.persistent_op(client, false).unwrap().unwrap();
-                results[ret] += 1;
-            }
-        }
-
-        for &r in results.iter() {
-            assert_eq!(r, COUNT);
-        }
+        test_push_pop::<TreiberStack<_>>(NR_THREAD, COUNT);
     }
 }
