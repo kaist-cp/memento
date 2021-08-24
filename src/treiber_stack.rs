@@ -96,6 +96,9 @@ impl<T: Clone> TryPush<T> {
     const FAIL: usize = 1;
 
     /// 만약 input이 있다면 input은 남겨두고 try 실행을 안 한 것처럼 리셋함
+    /// - 같은 input에 대해 exchange를 재시도하고 싶을 때 사용.
+    ///   예를 들어, elimination stack의 push 구현 시 순서대로 (1) central stack try push/pop 실패, (2) exchange 실패, (3) central stack try push 재시도 하는 경우가 있음
+    ///   이때 (1)에서 사용된 op을 `reset_weak()` 하여, `node`를 재할당 하지 않고 같은 input에 대해 exchange를 재시도할 수 있음.
     // TODO: 이미 push에 성공했으면 완전 reset 하기? exchanger::TryExchange의 reset_weak()과 일관성이 있어야 할 듯
     pub fn reset_weak(&self) {
         let guard = unsafe { unprotected() };

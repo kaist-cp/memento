@@ -47,7 +47,7 @@ impl<T> Frozen<T> {
     ///    use compositional_persistent_object::persistent::Frozen;
     ///
     ///    // 이 변수들은 언제나 pmem에서 접근 가능함을 가정
-    ///    let src = Frozen::<Box<i32>>::from(Box::new(42));
+    ///    let src = Frozen::<Box<i32>>::from(Box::new(42)); // TODO: use `PBox`
     ///    let mut data = 0;
     ///    let mut flag = false;
     ///
