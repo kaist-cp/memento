@@ -26,7 +26,7 @@ fn strongest_failure_ordering(ord: Ordering) -> Ordering {
 }
 
 /// The error returned on failed compare-and-set operation.
-// TODO: remove in the next major version.
+// TODO(crossbeam): remove in the next major version.
 #[deprecated(note = "Use `CompareExchangeError` instead")]
 pub type CompareAndSetError<'g, T, P> = CompareExchangeError<'g, T, P>;
 
@@ -59,7 +59,7 @@ impl<T, P: Pointer<T> + fmt::Debug> fmt::Debug for CompareExchangeError<'_, T, P
 ///    ordering is chosen.
 /// 2. A pair of `Ordering`s. The first one is for the success case, while the second one is
 ///    for the failure case.
-// TODO: remove in the next major version.
+// TODO(crossbeam): remove in the next major version.
 #[deprecated(
     note = "`compare_and_set` and `compare_and_set_weak` that use this trait are deprecated, \
             use `compare_exchange` or `compare_exchange_weak instead`"
@@ -234,7 +234,7 @@ impl<T> Pointable for T {
 /// Elements are not present in the type, but they will be in the allocation.
 /// ```
 ///
-// TODO(@jeehoonkang): once we bump the minimum required Rust version to 1.44 or newer, use
+// TODO(crossbeam)(@jeehoonkang): once we bump the minimum required Rust version to 1.44 or newer, use
 // [`alloc::alloc::Layout::extend`] instead.
 #[repr(C)]
 struct Array<T> {
@@ -659,7 +659,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// let res1 = a.compare_and_set(curr, Shared::null(), SeqCst, guard);
     /// let res2 = a.compare_and_set(curr, Owned::new(5678), SeqCst, guard);
     /// ```
-    // TODO: remove in the next major version.
+    // TODO(crossbeam): remove in the next major version.
     #[allow(deprecated)]
     #[deprecated(note = "Use `compare_exchange` instead")]
     pub fn compare_and_set<'g, O, P>(
@@ -736,7 +736,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///     }
     /// }
     /// ```
-    // TODO: remove in the next major version.
+    // TODO(crossbeam): remove in the next major version.
     #[allow(deprecated)]
     #[deprecated(note = "Use `compare_exchange_weak` instead")]
     pub fn compare_and_set_weak<'g, O, P>(
