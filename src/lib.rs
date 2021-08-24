@@ -31,15 +31,16 @@
 #![deny(unused_lifetimes)]
 
 // Persistent objects collection
-pub mod exchanger;
+// TODO: persistent location으로 동작시킬 때 주석해제
+// pub mod exchanger;
 pub mod persistent;
-pub mod pipe;
-pub mod queue;
-pub mod stack;
-pub mod treiber_stack;
+// pub mod pipe;
+// pub mod queue;
+// pub mod stack;
+// pub mod treiber_stack;
 
 // Persistent location
-// pub mod plocation; // TODO: newop_pipe 리뷰 후 주석 해제
+pub mod plocation;
 
 // Persistent version of crossbeam_epoch
 pub mod pepoch;

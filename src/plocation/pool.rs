@@ -19,35 +19,25 @@ use crate::plocation::ptr::PersistentPtr;
 /// ```
 /// # // "풀을 열면 핸들러를 얻을 수 있고, 그 핸들러로 풀을 접근할 수 있다"만 보이기 위해 불필요한 정보는 숨김
 /// #
-/// # use compositional_persistent_object::plocation::pool::Pool;
+/// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
 /// #
 /// # #[derive(Default)]
-/// # struct MyRootObj {
-/// # }
+/// # struct MyRootObj {}
 /// #
-/// # impl MyRootObj {
-/// #     fn my_root_op(&self, client: &mut MyRootClient, input: ()) -> Result<(), ()> {
-/// #         Ok(())
-/// #     }
-/// # }
+/// # #[derive(Default)]
+/// # struct MyRootClient {}
 /// #
-/// # impl PersistentOp<MyRootClient> for MyRootObj {
+/// # impl PersistentOp for MyRootClient {
+/// #     type Object = MyRootObj;
 /// #     type Input = ();
 /// #     type Output = Result<(), ()>;
 /// #
-/// #     fn persistent_op(&self, client: &mut MyRootClient, input: Self::Input) -> Self::Output {
-/// #         self.my_root_op(client, input)
+/// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+/// #         Ok(())
 /// #     }
-/// # }
 /// #
-/// # #[derive(Default)]
-/// # struct MyRootClient {
-/// # }
-/// #
-/// # impl PersistentClient for MyRootClient {
-/// #     fn reset(&mut self) {
-/// #     }
+/// #     fn reset(&mut self, _: bool) {}
 /// # }
 ///
 /// // 풀 생성 후 풀의 핸들러 얻기
@@ -59,7 +49,7 @@ use crate::plocation::ptr::PersistentPtr;
 /// let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
 /// // 루트 클라이언트로 루트 오브젝트의 op 실행
-/// root_obj.persistent_op(root_client, ()).unwrap();
+/// root_client.run(root_obj, (), &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -85,9 +75,7 @@ impl PoolHandle {
 
     /// 풀의 루트(루트 오브젝트/루트 클라이언트 tuple)를 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O: PersistentOp<C>, C: PersistentClient>(
-        &self,
-    ) -> Result<PersistentPtr<(O, C)>, Error> {
+    pub fn get_root<O, C: PersistentOp>(&self) -> Result<PersistentPtr<(O, C)>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
         Ok(PersistentPtr::from(self.pool().root_offset))
     }
@@ -151,7 +139,7 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
-    pub fn create<O: Default + PersistentOp<C>, C: PersistentClient>(
+    pub fn create<O: Default, C: PersistentOp>(
         filepath: &str,
         size: usize,
     ) -> Result<PoolHandle, Error> {
@@ -247,24 +235,16 @@ mod test {
     use crate::plocation::pool::*;
     use crate::util::*;
 
+    #[derive(Default)]
     struct RootObj {
         // 단순 usize, bool이 아닌 Atomic을 사용하는 이유: `PersistentOp` trait이 &mut self를 받지 않기때문
         value: AtomicUsize,
         flag: AtomicBool,
     }
 
-    impl Default for RootObj {
-        fn default() -> Self {
-            Self {
-                value: AtomicUsize::new(0),
-                flag: AtomicBool::new(false),
-            }
-        }
-    }
-
     impl RootObj {
         /// invariant 검사(flag=1 => value=42)
-        fn check_inv(&self, _client: &mut RootClient, _input: ()) -> Result<(), ()> {
+        fn check_inv(&self, _input: ()) -> Result<(), ()> {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
@@ -277,24 +257,28 @@ mod test {
         }
     }
 
-    impl PersistentOp<RootClient> for RootObj {
-        type Input = ();
-        type Output = Result<(), ()>;
-
-        fn persistent_op(&self, client: &mut RootClient, input: Self::Input) -> Self::Output {
-            self.check_inv(client, input)
-        }
-    }
-
     #[derive(Default)]
     struct RootClient {
         // 이 테스트는 간단한 예제이기 때문에 `RootClient` 필드가 비어있음
     // 그러나 만약 `RootObj`에 Queue가 들어간다면 Queue를 위한 Push/PopClient를 필드로 추가해야함
     }
 
-    impl PersistentClient for RootClient {
-        fn reset(&mut self) {
-            // no op
+    impl PersistentOp for RootClient {
+        type Object = RootObj;
+        type Input = ();
+        type Output = Result<(), ()>;
+
+        fn run(
+            &mut self,
+            object: &Self::Object,
+            input: Self::Input,
+            _: &PoolHandle,
+        ) -> Self::Output {
+            object.check_inv(input)
+        }
+
+        fn reset(&mut self, _: bool) {
+            // no-op
         }
     }
 
@@ -318,6 +302,6 @@ mod test {
 
         // 루트 클라이언트로 루트 오브젝트의 op 실행
         // 이 경우 루트 오브젝트의 op은 invariant 검사하는 `check_inv()`
-        root_obj.persistent_op(root_client, ()).unwrap();
+        root_client.run(root_obj, (), &pool_handle).unwrap();
     }
 }
