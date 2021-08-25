@@ -4,14 +4,15 @@ use std::marker::PhantomData;
 
 /// 풀에 속한 오브젝트를 가리킬 포인터
 /// - 풀의 시작주소로부터의 offset을 가지고 있음
-/// - 참조시 풀의 시작주소와 offset을 더한 절대주소를 참조  
+/// - 참조시 풀의 시작주소와 offset을 더한 절대주소를 참조
+// Ptr<T>로부터 얻은 &T는 Ptr<T>가 drop되어도 참조가능하므로 lifetime 명시
 #[derive(Debug)]
-pub struct PersistentPtr<T> {
+pub struct PersistentPtr<'t, T: 't> {
     offset: usize,
-    marker: PhantomData<T>,
+    marker: PhantomData<(T, &'t ())>,
 }
 
-impl<T> PersistentPtr<T> {
+impl<'t, T> PersistentPtr<'t, T> {
     /// null 포인터 반환
     pub fn null() -> Self {
         // TODO: 현재는 usize::MAX를 null 식별자로 사용중. 더 좋은 방법 찾기?
@@ -31,7 +32,7 @@ impl<T> PersistentPtr<T> {
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref(&self, pool: &PoolHandle) -> &T {
+    pub unsafe fn deref(&self, pool: &PoolHandle) -> &'t T {
         &*((pool.start() + self.offset) as *const T)
     }
 
@@ -40,7 +41,7 @@ impl<T> PersistentPtr<T> {
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &mut T {
+    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &'t mut T {
         &mut *((pool.start() + self.offset) as *mut T)
     }
 
@@ -55,7 +56,7 @@ impl<T> PersistentPtr<T> {
     }
 }
 
-impl<T> From<usize> for PersistentPtr<T> {
+impl<T> From<usize> for PersistentPtr<'_, T> {
     /// 주어진 offset을 T obj의 시작 주소로 간주하고 이를 참조하는 포인터 반환
     fn from(off: usize) -> Self {
         Self {
@@ -65,10 +66,10 @@ impl<T> From<usize> for PersistentPtr<T> {
     }
 }
 
-impl<T> PartialEq<PersistentPtr<T>> for PersistentPtr<T> {
+impl<'t, T> PartialEq<PersistentPtr<'t, T>> for PersistentPtr<'t, T> {
     fn eq(&self, other: &Self) -> bool {
         self.offset == other.offset
     }
 }
 
-impl<T> Eq for PersistentPtr<T> {}
+impl<T> Eq for PersistentPtr<'_, T> {}

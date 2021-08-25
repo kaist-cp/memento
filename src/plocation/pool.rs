@@ -75,14 +75,14 @@ impl PoolHandle {
 
     /// 풀의 루트(루트 오브젝트/루트 클라이언트 tuple)를 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O, C: PersistentOp>(&self) -> Result<PersistentPtr<(O, C)>, Error> {
+    pub fn get_root<O, C: PersistentOp>(&self) -> Result<PersistentPtr<'_, (O, C)>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
         Ok(PersistentPtr::from(self.pool().root_offset))
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     #[inline]
-    pub fn alloc<T>(&self) -> PersistentPtr<T> {
+    pub fn alloc<T>(&self) -> PersistentPtr<'_, T> {
         self.pool().alloc::<T>()
     }
 
@@ -92,13 +92,13 @@ impl PoolHandle {
     ///
     /// TODO
     #[inline]
-    pub unsafe fn alloc_layout<T>(&self, layout: Layout) -> PersistentPtr<T> {
+    pub unsafe fn alloc_layout<T>(&self, layout: Layout) -> PersistentPtr<'_, T> {
         self.pool().alloc_layout(layout)
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     #[inline]
-    pub fn free<T>(&self, pptr: PersistentPtr<T>) {
+    pub fn free<T>(&self, pptr: PersistentPtr<'_, T>) {
         self.pool().free(pptr)
     }
 
@@ -194,7 +194,7 @@ impl Pool {
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
-    fn alloc<T>(&self) -> PersistentPtr<T> {
+    fn alloc<T>(&self) -> PersistentPtr<'_, T> {
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = self.allocator.alloc(mem::size_of::<T>());
         let addr_allocated = 1024;
@@ -205,14 +205,14 @@ impl Pool {
     ///
     /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
     /// - e.g. dynamically sized slices
-    unsafe fn alloc_layout<T>(&self, _layout: Layout) -> PersistentPtr<T> {
+    unsafe fn alloc_layout<T>(&self, _layout: Layout) -> PersistentPtr<'_, T> {
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         let addr_allocated = 1024;
         PersistentPtr::from(addr_allocated)
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
-    fn free<T>(&self, _pptr: PersistentPtr<T>) {
+    fn free<T>(&self, _pptr: PersistentPtr<'_, T>) {
         todo!("pptr이 가리키는 메모리 블록 할당해제")
     }
 

@@ -221,18 +221,18 @@ impl<T> Pointable for T {
 
     unsafe fn init(init: Self::Init, pool: &PoolHandle) -> usize {
         let mut ptr = pool.alloc::<T>();
-        // TODO: 여기서 crash 나면 leak남. 해결 필요
+        // TODO(persistent allocator): 여기서 crash 나면 leak남. 해결 필요
         let t = ptr.deref_mut(pool);
         *t = init;
         ptr.into_offset()
     }
 
     unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self {
-        &*((pool.start() + offset) as *const T)
+        PersistentPtr::<T>::from(offset).deref(pool)
     }
 
     unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self {
-        &mut *((pool.start() + offset) as *mut T)
+        PersistentPtr::from(offset).deref_mut(pool)
     }
 
     unsafe fn drop(offset: usize, pool: &PoolHandle) {
@@ -280,6 +280,7 @@ impl<T> Pointable for [MaybeUninit<T>] {
         let align = mem::align_of::<Array<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
         let mut ptr = pool.alloc_layout::<Array<T>>(layout);
+        // TODO(persistent allocator): 여기서 crash나면 할당은 됐지만 len이 초기화안됨. 이러면 재시작 시 len이 초기화 됐는지/안됐는지 구분이 힘듬
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
         }
@@ -288,17 +289,17 @@ impl<T> Pointable for [MaybeUninit<T>] {
     }
 
     unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self {
-        let array = &*((pool.start() + offset) as *const Array<T>);
+        let array = &*(PersistentPtr::from(offset).deref(pool) as *const Array<T>);
         slice::from_raw_parts(array.elements.as_ptr() as *const _, array.len)
     }
 
     unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self {
-        let array = &*((pool.start() + offset) as *mut Array<T>);
+        let array = &*(PersistentPtr::from(offset).deref_mut(pool) as *mut Array<T>);
         slice::from_raw_parts_mut(array.elements.as_ptr() as *mut _, array.len)
     }
 
     unsafe fn drop(offset: usize, pool: &PoolHandle) {
-        let array = &*((pool.start() + offset) as *mut Array<T>);
+        let array = &*(PersistentPtr::from(offset).deref_mut(pool) as *mut Array<T>);
         let size = mem::size_of::<Array<T>>() + mem::size_of::<MaybeUninit<T>>() * array.len;
         let align = mem::align_of::<Array<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
@@ -998,7 +999,7 @@ impl<'g, T: ?Sized + Pointable> From<Shared<'g, T>> for Atomic<T> {
     }
 }
 
-impl<T> From<PersistentPtr<T>> for Atomic<T> {
+impl<T> From<PersistentPtr<'_, T>> for Atomic<T> {
     /// Returns a new atomic pointer pointing to `ptr`.
     ///
     /// # Examples
@@ -1010,7 +1011,7 @@ impl<T> From<PersistentPtr<T>> for Atomic<T> {
     ///
     /// let a = Atomic::<i32>::from(PersistentPtr::<i32>::null());
     /// ```
-    fn from(ptr: PersistentPtr<T>) -> Self {
+    fn from(ptr: PersistentPtr<'_, T>) -> Self {
         Self::from_usize(ptr.into_offset())
     }
 }
@@ -1091,7 +1092,7 @@ impl<T> Owned<T> {
     /// let mut ptr = pool.alloc::<usize>();
     /// let o = unsafe { Owned::from_ptr(ptr) };
     /// ```
-    pub unsafe fn from_ptr(ptr: PersistentPtr<T>) -> Owned<T> {
+    pub unsafe fn from_ptr(ptr: PersistentPtr<'_, T>) -> Owned<T> {
         let offset = ptr.into_offset();
         ensure_aligned::<T>(offset);
         Self::from_usize(offset)
@@ -1128,13 +1129,6 @@ impl<T> Owned<T> {
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> Owned<T> {
         Self::init(init, pool)
-    }
-
-    // PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
-    // TODO: new와 시그니처 똑같은데 굳이 필요한지 고민
-    /// 주어진 pool에 T 할당 후 이를 가리키는 Owned 포인터 반환
-    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
-        Owned::new(t, pool)
     }
 }
 
@@ -1374,7 +1368,7 @@ impl<T> Shared<'_, T> {
     /// assert_eq!(p.as_ptr(), ptr);
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn as_ptr(&self) -> PersistentPtr<T> {
+    pub fn as_ptr(&self) -> PersistentPtr<'_, T> {
         let (offset, _) = decompose_tag::<T>(self.data);
         PersistentPtr::from(offset)
     }
@@ -1631,7 +1625,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     }
 }
 
-impl<T> From<PersistentPtr<T>> for Shared<'_, T> {
+impl<T> From<PersistentPtr<'_, T>> for Shared<'_, T> {
     /// Returns a new pointer pointing to `raw`.
     ///
     /// # Panics
@@ -1649,7 +1643,7 @@ impl<T> From<PersistentPtr<T>> for Shared<'_, T> {
     /// let p = Shared::from(ptr);
     /// assert!(!p.is_null());
     /// ```
-    fn from(ptr: PersistentPtr<T>) -> Self {
+    fn from(ptr: PersistentPtr<'_, T>) -> Self {
         let offset = ptr.into_offset();
         ensure_aligned::<T>(offset);
         unsafe { Self::from_usize(offset) }
