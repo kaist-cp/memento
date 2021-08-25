@@ -1,18 +1,17 @@
-//! Persistent Atomic Pointer
+//! Persistent Atomic Pointer (crossbeam_epoch atomic.rs의 persistent 버전)
 //!
-//! crossbeam Atomic/Owned/Shared의 persistent version
-//! 원래 crossbeam과 크게 다른 점은:
-//!   1. 포인터가 절대주소가 아닌 상대주소를 가지고 있고,
-//!   2. load후 참조시 풀의 시작주소와 상대주소를 더한 절대주소 참조
-//!
-//! ## CHANGE LOG
-//! - crossbeam에 원래 있던 TODO는 TODO(crossbeam)으로 명시
-//! - 메모리 관련 operation(e.g. `init`, `deref`)은 `PoolHandle`을 받게 변경. 특히 `deref`는 다른 풀을 참조할 수 있으니 unsafe로 명시
-//! - 변수명, 타입, 관련된 함수명을 아래와 같이 변경
-//!     - 변경 전: `raw: *const T`(절대주소를 가리키는 포인터), `raw: usize`(절대주소), `from_raw(raw: *mut T) -> Owned<T>`
-//!     - 변경 후: `ptr: PersistentPtr<T>`(상대주소를 가리키는 포인터), `offset: usize`(상대주소), `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
-//! - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
-//! - 모든 doc test를 persistent version으로 변경
+//! # crossbeam에서 달라진 점
+//! - high-level
+//!     - 포인터가 절대주소가 아닌 상대주소를 가지고 있고,
+//!     - load후 참조시 풀의 시작주소와 상대주소를 더한 절대주소 참조
+//! - change log
+//!     - 변수명, 타입, 관련된 함수명을 아래와 같이 변경
+//!         - 변경 전: `raw: *const T`(절대주소를 가리키는 포인터), `raw: usize`(절대주소), `from_raw(raw: *mut T) -> Owned<T>`
+//!         - 변경 후: `ptr: PersistentPtr<T>`(상대주소를 가리키는 포인터), `offset: usize`(상대주소), `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
+//!     - crossbeam에 원래 있던 TODO는 TODO(crossbeam)으로 명시
+//!     - 메모리 관련 operation(e.g. `init`, `deref`)은 `PoolHandle`을 받게 변경. 특히 `deref`는 다른 풀을 참조할 수 있으니 unsafe로 명시
+//!     - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
+//!     - 모든 test를 persistent 버전으로 변경
 
 use core::cmp;
 use core::fmt;
