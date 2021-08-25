@@ -186,6 +186,7 @@ pub trait Pointable {
     /// - The given `offset` should have been initialized with [`Pointable::init`].
     /// - `offset` should not have yet been dropped by [`Pointable::drop`].
     /// - `offset` should not be mutably dereferenced by [`Pointable::deref_mut`] concurrently.
+    // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
     unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self;
 
     /// Mutably dereferences the given offset in the pool.
@@ -197,6 +198,7 @@ pub trait Pointable {
     /// - `offset` should not have yet been dropped by [`Pointable::drop`].
     /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
+    // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
     unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self;
 
     /// Drops the object pointed to by the given offset in the pool.
@@ -208,6 +210,7 @@ pub trait Pointable {
     /// - `offset` should not have yet been dropped by [`Pointable::drop`].
     /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
+    // crossbeam에선 절대주소를 받아 drop하니 여기선 상대주소를 받도록 함
     unsafe fn drop(offset: usize, pool: &PoolHandle);
 }
 
