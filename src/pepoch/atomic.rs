@@ -338,13 +338,6 @@ impl<T> Atomic<T> {
     pub fn new(init: T, pool: &PoolHandle) -> Atomic<T> {
         Self::init(init, pool)
     }
-
-    // PoolHandle을 받아야하므로 From<T> trait impl 하던 것을 직접 구현
-    // TODO: new와 시그니처 똑같은데 굳이 필요한지 고민
-    /// 주어진 pool에 T 할당 후 이를 가리키는 Atomic 포인터 반환
-    pub fn from_t(t: T, pool: &PoolHandle) -> Self {
-        Self::new(t, pool)
-    }
 }
 
 impl<T: ?Sized + Pointable> Atomic<T> {
