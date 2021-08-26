@@ -157,7 +157,7 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 ///
 /// ```
 /// # use compositional_persistent_object::util::*;
-/// # let pool = get_test_handle("pointable");
+/// # let pool = get_test_handle().unwrap();
 /// use std::mem::MaybeUninit;
 /// use compositional_persistent_object::pepoch::Owned;
 ///
@@ -330,7 +330,7 @@ impl<T> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_new");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::Atomic;
     ///
     /// let a = Atomic::new(1234, &pool);
@@ -347,7 +347,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_init");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::Atomic;
     ///
     /// let a = Atomic::<i32>::init(1234, &pool);
@@ -391,7 +391,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_load");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -419,7 +419,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_load_consume");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     ///
     /// let a = Atomic::new(1234, &pool);
@@ -439,7 +439,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_store");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -461,7 +461,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_swap");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -494,7 +494,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_compare_exchange");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -552,7 +552,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_compare_exchange_weak");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -633,7 +633,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_fetch_update");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -695,7 +695,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_compare_and_set");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -755,7 +755,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_compare_and_set_weak");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -963,7 +963,7 @@ impl<T: ?Sized + Pointable> From<Owned<T>> for Atomic<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("atomic_from_owned");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{Atomic, Owned};
     ///
     /// let a = Atomic::<i32>::from(Owned::new(1234, &pool));
@@ -1084,7 +1084,7 @@ impl<T> Owned<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("owned_from_ptr");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
     /// use compositional_persistent_object::pepoch::Owned;
     ///
@@ -1121,7 +1121,7 @@ impl<T> Owned<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("owned_new");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::Owned;
     ///
     /// let o = Owned::new(1234, &pool);
@@ -1138,7 +1138,7 @@ impl<T: ?Sized + Pointable> Owned<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("owend_init");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::Owned;
     ///
     /// let o = Owned::<i32>::init(1234, &pool);
@@ -1153,7 +1153,7 @@ impl<T: ?Sized + Pointable> Owned<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("owned_into_shared");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Owned};
     ///
     /// let o = Owned::new(1234, &pool);
@@ -1171,7 +1171,7 @@ impl<T: ?Sized + Pointable> Owned<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("owend_tag");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::Owned;
     ///
     /// assert_eq!(Owned::new(1234, &pool).tag(), 0);
@@ -1188,7 +1188,7 @@ impl<T: ?Sized + Pointable> Owned<T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("owend_with_tag");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::Owned;
     ///
     /// let o = Owned::new(0u64, &pool);
@@ -1353,7 +1353,7 @@ impl<T> Shared<'_, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_as_ptr");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
     /// use std::sync::atomic::Ordering::SeqCst;
@@ -1397,7 +1397,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_is_null");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1435,7 +1435,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_deref");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1470,7 +1470,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_deref_mut");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1519,7 +1519,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_as_ref");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1555,7 +1555,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_into_owned");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1577,7 +1577,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_tag");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1599,7 +1599,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_with_tag");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1635,7 +1635,7 @@ impl<T> From<PersistentPtr<'_, T>> for Shared<'_, T> {
     ///
     /// ```
     /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle("shared_from_ptr");
+    /// # let pool = get_test_handle().unwrap();
     /// use compositional_persistent_object::pepoch::Shared;
     ///
     /// let ptr = pool.alloc::<usize>();
@@ -1710,7 +1710,7 @@ mod tests {
 
     #[test]
     fn array_init() {
-        let pool = crate::util::get_test_handle("atomic_array_init.pool");
+        let pool = crate::util::get_test_handle().unwrap();
         let owned = Owned::<[MaybeUninit<usize>]>::init(10, &pool);
         let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
         assert_eq!(arr.len(), 10);

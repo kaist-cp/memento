@@ -1,6 +1,9 @@
 //! Utilities
 
+use std::io::Error;
 use std::path::Path;
+use tempfile::NamedTempFile;
+
 use crate::persistent::PersistentOp;
 use crate::plocation::pool::{Pool, PoolHandle};
 
@@ -16,8 +19,7 @@ pub fn get_test_path<P: AsRef<Path>>(filepath: P) -> String {
 }
 
 /// test에 사용하기 위한 더미용 PoolHandle 얻기
-// NOTE: 다른 test에 같은 파일이름 사용하면 안됨. test가 parallel하게 돔
-pub fn get_test_handle(filename: &str) -> PoolHandle {
+pub fn get_test_handle() -> Result<PoolHandle, Error> {
     #[derive(Default)]
     struct RootObj {}
 
@@ -36,7 +38,7 @@ pub fn get_test_handle(filename: &str) -> PoolHandle {
         fn reset(&mut self, _: bool) {}
     }
 
-    let filepath = get_test_path(filename);
-    let _ = std::fs::remove_file(&filepath); // 기존 파일 제거
-    Pool::create::<RootObj, RootClient>(&filepath, 8 * 1024).unwrap()
+    let temp_file = NamedTempFile::new_in(get_test_path(""))?; // 테스트 폴더에 임시파일 생성
+    let _ = temp_file.as_file().set_len(8 * 1024 * 1024 * 1024); // 임시파일 크기 설정. 할당 많이하는 테스트를 대비해 8GB로 함
+    Pool::open(temp_file.path())
 }
