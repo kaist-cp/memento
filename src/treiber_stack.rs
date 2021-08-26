@@ -450,9 +450,10 @@ impl<T: Clone> Stack<T> for TreiberStack<T> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use serial_test::serial;
 
+    use crate::stack::tests::*;
     use super::*;
 
     const NR_THREAD: usize = 4;

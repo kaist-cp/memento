@@ -1699,6 +1699,8 @@ mod tests {
     use super::{Owned, Shared};
     use std::mem::MaybeUninit;
 
+    use crate::utils::test::*;
+
     #[test]
     fn valid_tag_i8() {
         let _ = Shared::<i8>::null().with_tag(0);
@@ -1718,7 +1720,7 @@ mod tests {
 
     #[test]
     fn array_init() {
-        let pool = crate::util::get_test_handle().unwrap();
+        let pool = get_test_handle().unwrap();
         let owned = Owned::<[MaybeUninit<usize>]>::init(10, &pool);
         let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
         assert_eq!(arr.len(), 10);

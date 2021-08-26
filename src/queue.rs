@@ -301,7 +301,7 @@ impl<T: Clone> Queue<T> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crossbeam_utils::thread;
     use serial_test::serial;
 

@@ -361,7 +361,7 @@ impl<T> Exchanger<T> {
 unsafe impl<T> Send for Exchanger<T> {}
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use chrono::Duration;

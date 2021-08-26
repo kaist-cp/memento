@@ -58,7 +58,7 @@ where
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crate::persistent::*;
     use crate::queue::*;
 

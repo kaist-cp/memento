@@ -229,14 +229,14 @@ impl Pool {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use env_logger as _;
     use log::{self as _, debug};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
     use crate::persistent::PersistentOp;
     use crate::plocation::pool::*;
-    use crate::util::*;
+    use crate::utils::test::*;
 
     #[derive(Default)]
     struct RootObj {
