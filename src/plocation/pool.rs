@@ -22,15 +22,13 @@ use crate::plocation::ptr::PersistentPtr;
 /// #
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
+/// # use compositional_persistent_object::util::*;
 /// #
 /// # #[derive(Default)]
-/// # struct MyRootObj {}
+/// # struct MyRootOp {}
 /// #
-/// # #[derive(Default)]
-/// # struct MyRootClient {}
-/// #
-/// # impl PersistentOp for MyRootClient {
-/// #     type Object = MyRootObj;
+/// # impl PersistentOp for MyRootOp {
+/// #     type Object = ();
 /// #     type Input = ();
 /// #     type Output = Result<(), ()>;
 /// #
@@ -42,15 +40,17 @@ use crate::plocation::ptr::PersistentPtr;
 /// # }
 ///
 /// // 풀 생성 후 풀의 핸들러 얻기
-/// # let _ = std::fs::remove_file("foo.pool"); // 테스트에 사용한 파일 제거
-/// let pool_handle = Pool::create::<MyRootObj, MyRootClient>("foo.pool", 8 * 1024).unwrap();
+/// # let filepath = get_test_path("foo.pool");
+/// # let _ = std::fs::remove_file(&filepath); // 테스트에 사용한 파일 제거
+/// # let filepath = &filepath;
+/// let pool_handle = Pool::create::<MyRootOp>(filepath, 8 * 1024).unwrap();
 ///
-/// // 핸들러로 풀의 루트 오브젝트, 루트 클라이언트 가져오기
-/// let mut root_ptr = pool_handle.get_root::<MyRootObj, MyRootClient>().unwrap();
-/// let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
+/// // 핸들러로 풀의 루트 Op 가져오기
+/// let mut root_ptr = pool_handle.get_root::<MyRootOp>().unwrap();
+/// let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
-/// // 루트 클라이언트로 루트 오브젝트의 op 실행
-/// root_client.run(root_obj, ()).unwrap();
+/// // 루트 Op 실행
+/// root_op.run(&(), ()).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -74,9 +74,9 @@ impl PoolHandle {
         self.start() + self.len
     }
 
-    /// 풀의 루트(루트 오브젝트/루트 클라이언트 tuple)를 가리키는 포인터 반환
+    /// 풀의 루트 Op을 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O, C: PersistentOp>(&self) -> Result<PersistentPtr<'_, (O, C)>, Error> {
+    pub fn get_root<O: PersistentOp>(&self) -> Result<PersistentPtr<'_, O>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
         Ok(PersistentPtr::from(self.pool().root_offset))
     }
@@ -124,12 +124,12 @@ impl PoolHandle {
 /// # Pool Address Layout
 ///
 /// ```test
-/// [ metadata | (root obj, root client) |       ...        ]
+/// [ metadata | root op |       ...        ]
 /// ^ base     ^ base + root offset                         ^ end
 /// ```
 #[derive(Debug)]
 pub struct Pool {
-    /// 풀의 시작주소로부터 루트 오브젝트/클라이언트까지의 거리
+    /// 풀의 시작주소로부터 루트 Op까지의 거리
     root_offset: usize,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
@@ -142,7 +142,7 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
-    pub fn create<O: Default, C: PersistentOp>(
+    pub fn create<O: PersistentOp>(
         filepath: &str,
         size: usize,
     ) -> Result<PoolHandle, Error> {
@@ -165,10 +165,9 @@ impl Pool {
         // 메타데이터 초기화
         pool.root_offset = mem::size_of::<Pool>(); // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
 
-        // 루트 오브젝트/클라이언트 초기화
-        let (root_obj, root_client) = unsafe { &mut *((start + pool.root_offset) as *mut (O, C)) };
-        *root_obj = O::default();
-        *root_client = C::default();
+        // 루트 Op 초기화
+        let root_op = unsafe { &mut *((start + pool.root_offset) as *mut O) };
+        *root_op = O::default();
 
         // # 초기화된 임시파일을 "filepath"로 옮기기
         // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return할지 고민하기
@@ -239,15 +238,19 @@ mod tests {
     use crate::utils::test::*;
 
     #[derive(Default)]
-    struct RootObj {
+    struct RootOp {
         // 단순 usize, bool이 아닌 Atomic을 사용하는 이유: `PersistentOp` trait이 &mut self를 받지 않기때문
         value: AtomicUsize,
         flag: AtomicBool,
     }
 
-    impl RootObj {
-        /// invariant 검사(flag=1 => value=42)
-        fn check_inv(&self, _input: ()) -> Result<(), ()> {
+    impl PersistentOp for RootOp {
+        type Object = ();
+        type Input = ();
+        type Output = Result<(), ()>;
+
+        // invariant 검사(flag=1 => value=42)
+        fn run(&mut self, _: &Self::Object, _: Self::Input) -> Self::Output {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
@@ -257,22 +260,6 @@ mod tests {
                 self.flag.store(true, SeqCst);
             }
             Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct RootClient {
-        // 이 테스트는 간단한 예제이기 때문에 `RootClient` 필드가 비어있음
-    // 그러나 만약 `RootObj`에 Queue가 들어간다면 Queue를 위한 Push/PopClient를 필드로 추가해야함
-    }
-
-    impl PersistentOp for RootClient {
-        type Object = RootObj;
-        type Input = ();
-        type Output = Result<(), ()>;
-
-        fn run(&mut self, object: &Self::Object, input: Self::Input) -> Self::Output {
-            object.check_inv(input)
         }
 
         fn reset(&mut self, _: bool) {
@@ -292,14 +279,13 @@ mod tests {
 
         // 풀 열기 (없으면 새로 만듦)
         let pool_handle = Pool::open(&filepath)
-            .unwrap_or_else(|_| Pool::create::<RootObj, RootClient>(&filepath, FILE_SIZE).unwrap());
+            .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
 
-        // 루트 오브젝트, 루트 클라이언트 가져오기
-        let mut root_ptr = pool_handle.get_root::<RootObj, RootClient>().unwrap();
-        let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
+        // 루트 Op 가져오기
+        let mut root_ptr = pool_handle.get_root::<RootOp>().unwrap();
+        let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 
-        // 루트 클라이언트로 루트 오브젝트의 op 실행
-        // 이 경우 루트 오브젝트의 op은 invariant 검사하는 `check_inv()`
-        root_client.run(root_obj, ()).unwrap();
+        // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
+        root_op.run(&(), ()).unwrap();
     }
 }
