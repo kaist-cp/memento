@@ -2,6 +2,9 @@
 use super::pool::PoolHandle;
 use std::marker::PhantomData;
 
+/// NULL 식별자
+pub const NULL: usize = usize::MAX;
+
 /// 풀에 속한 오브젝트를 가리킬 포인터
 /// - 풀의 시작주소로부터의 offset을 가지고 있음
 /// - 참조시 풀의 시작주소와 offset을 더한 절대주소를 참조
@@ -15,16 +18,15 @@ pub struct PersistentPtr<'t, T: 't> {
 impl<'t, T> PersistentPtr<'t, T> {
     /// null 포인터 반환
     pub fn null() -> Self {
-        // TODO: 현재는 usize::MAX를 null 식별자로 사용중. 더 좋은 방법 찾기?
         Self {
-            offset: usize::MAX,
+            offset: NULL,
             marker: PhantomData,
         }
     }
 
     /// null 포인터인지 확인
     pub fn is_null(&self) -> bool {
-        self.offset == usize::MAX
+        self.offset == NULL
     }
 
     /// 절대주소 참조

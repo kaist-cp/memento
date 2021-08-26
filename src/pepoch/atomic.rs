@@ -23,6 +23,7 @@ use core::sync::atomic::Ordering;
 use crate::pepoch::guard::Guard;
 use crate::plocation::pool::PoolHandle;
 use crate::plocation::ptr::PersistentPtr;
+use crate::plocation::ptr;
 use crossbeam_utils::atomic::AtomicConsume;
 use std::alloc;
 use std::sync::atomic::AtomicUsize;
@@ -377,7 +378,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     #[cfg_attr(all(feature = "nightly", not(crossbeam_loom)), const_fn::const_fn)]
     pub fn null() -> Atomic<T> {
         Self {
-            data: AtomicUsize::new(usize::MAX),
+            data: AtomicUsize::new(ptr::NULL),
             _marker: PhantomData,
         }
     }
@@ -1386,7 +1387,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// ```
     pub fn null() -> Shared<'g, T> {
         Shared {
-            data: usize::MAX,
+            data: ptr::NULL,
             _marker: PhantomData,
         }
     }
@@ -1410,7 +1411,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn is_null(&self) -> bool {
         // NOTE: decompose_tag하면 안됨. null 식별자인 usize::MAX랑 달라짐
-        self.data == usize::MAX
+        self.data == ptr::NULL
     }
 
     /// Dereferences the pointer.
@@ -1533,7 +1534,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub unsafe fn as_ref(&self, pool: &PoolHandle) -> Option<&'g T> {
         let (offset, _) = decompose_tag::<T>(self.data);
-        if offset == usize::MAX {
+        if offset == ptr::NULL {
             None
         } else {
             Some(T::deref(offset, pool))
