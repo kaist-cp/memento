@@ -1417,8 +1417,8 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn is_null(&self) -> bool {
-        // NOTE: decompose_tag하면 안됨. null 식별자인 usize::MAX랑 달라짐
-        self.data == ptr::NULL
+        let (offset, _) = decompose_tag::<T>(self.data);
+        offset == ptr::NULL
     }
 
     /// Dereferences the pointer.
