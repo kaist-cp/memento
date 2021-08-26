@@ -5,9 +5,15 @@
 //!     - 포인터가 절대주소가 아닌 상대주소를 가지고 있고,
 //!     - load후 참조시 풀의 시작주소와 상대주소를 더한 절대주소 참조
 //! - change log
-//!     - 변수명, 타입, 관련된 함수명을 아래와 같이 변경
-//!         - 변경 전: `raw: *const T`(절대주소를 가리키는 포인터), `raw: usize`(절대주소), `from_raw(raw: *mut T) -> Owned<T>`
-//!         - 변경 후: `ptr: PersistentPtr<T>`(상대주소를 가리키는 포인터), `offset: usize`(상대주소), `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
+//!     - 변수명, 타입, 관련함수를 아래와 같이 변경
+//!         - 변경 전
+//!             - 절대주소를 가리키는 포인터: `raw: *const T`
+//!             - 절대주소: `raw: usize`
+//!             - 함수: `from_raw(raw: *mut T) -> Owned<T>`
+//!         - 변경 후
+//!             - 상대주소를 가리키는 포인터: `ptr: PersistentPtr<T>`
+//!             - 상대주소: `offset: usize`
+//!             - 함수: `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
 //!     - crossbeam에 원래 있던 TODO는 TODO(crossbeam)으로 명시
 //!     - 메모리 관련 operation(e.g. `init`, `deref`)은 `PoolHandle`을 받게 변경. 특히 `deref`는 다른 풀을 참조할 수 있으니 unsafe로 명시
 //!     - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
@@ -22,8 +28,8 @@ use core::sync::atomic::Ordering;
 
 use crate::pepoch::guard::Guard;
 use crate::plocation::pool::PoolHandle;
-use crate::plocation::ptr::PersistentPtr;
 use crate::plocation::ptr;
+use crate::plocation::ptr::PersistentPtr;
 use crossbeam_utils::atomic::AtomicConsume;
 use std::alloc;
 use std::sync::atomic::AtomicUsize;
@@ -240,6 +246,7 @@ impl<T> Pointable for T {
     }
 }
 
+// TODO: 주석 수정할지 고민하기. `Box<[T]>` -> `PersistentBox<[T]>`?
 /// Array with size.
 ///
 /// # Memory layout
@@ -325,7 +332,7 @@ unsafe impl<T: ?Sized + Pointable + Send + Sync> Send for Atomic<T> {}
 unsafe impl<T: ?Sized + Pointable + Send + Sync> Sync for Atomic<T> {}
 
 impl<T> Atomic<T> {
-    /// Allocates `value` on the heap and returns a new atomic pointer pointing to it.
+    /// Allocates `value` on the persistent heap and returns a new atomic pointer pointing to it.
     ///
     /// # Examples
     ///
@@ -342,7 +349,7 @@ impl<T> Atomic<T> {
 }
 
 impl<T: ?Sized + Pointable> Atomic<T> {
-    /// Allocates `value` on the heap and returns a new atomic pointer pointing to it.
+    /// Allocates `value` on the persistent heap and returns a new atomic pointer pointing to it.
     ///
     /// # Examples
     ///
@@ -1066,20 +1073,20 @@ impl<T: ?Sized + Pointable> Pointer<T> for Owned<T> {
 }
 
 impl<T> Owned<T> {
-    /// Returns a new owned pointer pointing to `raw`.
+    /// Returns a new owned pointer pointing to `ptr`.
     ///
-    /// This function is unsafe because improper use may lead to memory problems. Argument `raw`
+    /// This function is unsafe because improper use may lead to memory problems. Argument `ptr`
     /// must be a valid pointer. Also, a double-free may occur if the function is called twice on
-    /// the same raw pointer.
+    /// the same ptr pointer.
     ///
     /// # Panics
     ///
-    /// Panics if `raw` is not properly aligned.
+    /// Panics if `ptr` is not properly aligned.
     ///
     /// # Safety
     ///
-    /// The given `raw` should have been derived from `Owned`, and one `raw` should not be converted
-    /// back by `Owned::from_raw()` multiple times.
+    /// The given `ptr` should have been derived from `Owned`, and one `ptr` should not be converted
+    /// back by `Owned::from_ptr()` multiple times.
     ///
     /// # Examples
     ///
@@ -1116,7 +1123,7 @@ impl<T> Owned<T> {
     //     unsafe { Box::from_raw(raw as *mut _) }
     // }
 
-    /// Allocates `value` on the heap and returns a new owned pointer pointing to it.
+    /// Allocates `value` on the persistent heap and returns a new owned pointer pointing to it.
     ///
     /// # Examples
     ///
@@ -1133,7 +1140,7 @@ impl<T> Owned<T> {
 }
 
 impl<T: ?Sized + Pointable> Owned<T> {
-    /// Allocates `value` on the heap and returns a new owned pointer pointing to it.
+    /// Allocates `value` on the persistent heap and returns a new owned pointer pointing to it.
     ///
     /// # Examples
     ///
@@ -1348,7 +1355,7 @@ impl<T: ?Sized + Pointable> Pointer<T> for Shared<'_, T> {
 
 // lint "deny single_use_lifetimes" 로 인해 lifetime을 'g에서 '_로 바꿈
 impl<T> Shared<'_, T> {
-    /// Converts the pointer to a raw pointer (without the tag).
+    /// Converts the shared pointer to a raw persistent pointer (without the tag).
     ///
     /// # Examples
     ///
@@ -1425,8 +1432,8 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// Another concern is the possibility of data races due to lack of proper synchronization.
     /// For example, consider the following scenario:
     ///
-    /// 1. A thread creates a new object: `a.store(Owned::new(10), Relaxed)`
-    /// 2. Another thread reads it: `*a.load(Relaxed, guard).as_ref().unwrap()`
+    /// 1. A thread creates a new object: `a.store(Owned::new(10, &pool), Relaxed)`
+    /// 2. Another thread reads it: `*a.load(Relaxed, guard).as_ref(&pool).unwrap()`
     ///
     /// The problem is that relaxed orderings don't synchronize initialization of the object with
     /// the read from the second thread. This is a data race. A possible solution would be to use
@@ -1465,7 +1472,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     ///   The user must know that there are no concurrent accesses towards the object itself.
     ///
-    /// * Other than the above, all safety concerns of `deref()` applies here.
+    /// * Other than the above, all safety concerns of `deref(&pool)` applies here.
     ///
     /// # Examples
     ///
@@ -1509,8 +1516,8 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// Another concern is the possibility of data races due to lack of proper synchronization.
     /// For example, consider the following scenario:
     ///
-    /// 1. A thread creates a new object: `a.store(Owned::new(10), Relaxed)`
-    /// 2. Another thread reads it: `*a.load(Relaxed, guard).as_ref().unwrap()`
+    /// 1. A thread creates a new object: `a.store(Owned::new(10, &pool), Relaxed)`
+    /// 2. Another thread reads it: `*a.load(Relaxed, guard).as_ref(&pool).unwrap()`
     ///
     /// The problem is that relaxed orderings don't synchronize initialization of the object with
     /// the read from the second thread. This is a data race. A possible solution would be to use
@@ -1626,11 +1633,11 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
 }
 
 impl<T> From<PersistentPtr<'_, T>> for Shared<'_, T> {
-    /// Returns a new pointer pointing to `raw`.
+    /// Returns a new pointer pointing to `ptr`.
     ///
     /// # Panics
     ///
-    /// Panics if `raw` is not properly aligned.
+    /// Panics if `ptr` is not properly aligned.
     ///
     /// # Examples
     ///
