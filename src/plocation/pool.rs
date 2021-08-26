@@ -7,6 +7,7 @@ use std::alloc::Layout;
 use std::fs::OpenOptions;
 use std::io::Error;
 use std::mem;
+use std::path::Path;
 use tempfile::*;
 
 use crate::persistent::*;
@@ -122,8 +123,10 @@ impl PoolHandle {
 ///
 /// # Pool Address Layout
 ///
-/// [ metadata | (root obj, root client) |            ...               ]
+/// ```test
+/// [ metadata | (root obj, root client) |       ...        ]
 /// ^ base     ^ base + root offset                         ^ end
+/// ```
 #[derive(Debug)]
 pub struct Pool {
     /// 풀의 시작주소로부터 루트 오브젝트/클라이언트까지의 거리
@@ -148,7 +151,7 @@ impl Pool {
         //   2. 초기화가 완료되면 "filepath"로 옮김
 
         // # 임시파일 생성
-        let pmem_path = std::path::Path::new(filepath).parent().unwrap(); // pmem mounted directory
+        let pmem_path = Path::new(filepath).parent().unwrap(); // pmem mounted directory
         std::fs::create_dir_all(pmem_path)?; // e.g. "a/b/c.pool"라면, a/b/ 폴더도 만들어줌
         let temp_file = NamedTempFile::new_in(pmem_path.as_os_str())?; // 임시파일 또한 pmem mount된 경로에서 생성돼야함
         let file = temp_file.as_file();
@@ -182,7 +185,7 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 존재하지 않는다면 실패
-    pub fn open(filepath: &str) -> Result<PoolHandle, Error> {
+    pub fn open<P: AsRef<Path>>(filepath: P) -> Result<PoolHandle, Error> {
         // 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
