@@ -34,7 +34,7 @@ use crate::plocation::ptr::PersistentPtr;
 /// #     type Input = ();
 /// #     type Output = Result<(), ()>;
 /// #
-/// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+/// #     fn run(&mut self, _: &Self::Object, _: Self::Input) -> Self::Output {
 /// #         Ok(())
 /// #     }
 /// #
@@ -50,7 +50,7 @@ use crate::plocation::ptr::PersistentPtr;
 /// let (root_obj, root_client) = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
 /// // 루트 클라이언트로 루트 오브젝트의 op 실행
-/// root_client.run(root_obj, (), &pool_handle).unwrap();
+/// root_client.run(root_obj, ()).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -271,12 +271,7 @@ mod test {
         type Input = ();
         type Output = Result<(), ()>;
 
-        fn run(
-            &mut self,
-            object: &Self::Object,
-            input: Self::Input,
-            _: &PoolHandle,
-        ) -> Self::Output {
+        fn run(&mut self, object: &Self::Object, input: Self::Input) -> Self::Output {
             object.check_inv(input)
         }
 
@@ -305,6 +300,6 @@ mod test {
 
         // 루트 클라이언트로 루트 오브젝트의 op 실행
         // 이 경우 루트 오브젝트의 op은 invariant 검사하는 `check_inv()`
-        root_client.run(root_obj, (), &pool_handle).unwrap();
+        root_client.run(root_obj, ()).unwrap();
     }
 }

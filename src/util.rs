@@ -31,7 +31,7 @@ pub fn get_test_handle() -> Result<PoolHandle, Error> {
         type Input = ();
         type Output = Result<(), ()>;
 
-        fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+        fn run(&mut self, _: &Self::Object, _: Self::Input) -> Self::Output {
             Ok(())
         }
 
