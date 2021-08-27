@@ -78,7 +78,7 @@ pub trait POp<Object>: Default {
     type Input;
 
     /// Persistent op의 output type
-    type Output: Clone;
+    type Output: Clone + 'o;
 
     /// Persistent op 동작 함수 (idempotent)
     ///
