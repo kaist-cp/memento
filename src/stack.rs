@@ -10,21 +10,21 @@ pub struct TryFail;
 pub trait Stack<T> {
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
-    type TryPush: PersistentOp<Object = Self, Input = T, Output = Result<(), TryFail>>;
+    type TryPush: POp<Object = Self, Input = T, Output = Result<(), TryFail>>;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
-    type Push: PersistentOp<Object = Self, Input = T, Output = ()>;
+    type Push: POp<Object = Self, Input = T, Output = ()>;
 
     /// Try pop 연산을 위한 Persistent op.
     /// Try pop의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     /// Try pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type TryPop: PersistentOp<Object = Self, Input = (), Output = Result<Option<T>, TryFail>>;
+    type TryPop: POp<Object = Self, Input = (), Output = Result<Option<T>, TryFail>>;
 
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
     /// pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type Pop: PersistentOp<Object = Self, Input = (), Output = Option<T>>;
+    type Pop: POp<Object = Self, Input = (), Output = Option<T>>;
 }
 
 /// push_pop을 반복하는 Concurrent stack test
@@ -34,8 +34,8 @@ pub trait Stack<T> {
 /// - 마지막에 지금까지의 모든 pop의 결과물이 각 tid값의 정확한 누적 횟수를 가지는지 체크
 #[cfg(test)]
 pub(crate) mod tests {
-    use crossbeam_utils::thread;
     use super::*;
+    use crossbeam_utils::thread;
 
     pub(crate) fn test_push_pop<S>(nr_thread: usize, cnt: usize)
     where

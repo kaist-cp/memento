@@ -70,7 +70,8 @@ impl<T> Frozen<T> {
 }
 
 /// op을 exactly-once 실행하기 위한 trait
-pub trait PersistentOp: Default {
+// TODO: Pop operation과 헷갈릴 수 있음. 구분 필요하면 "Op"부분을 바꾸기
+pub trait POp: Default {
     /// Persistent op을 수행하는 object
     type Object;
 

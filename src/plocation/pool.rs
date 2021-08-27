@@ -11,23 +11,22 @@ use std::path::Path;
 use tempfile::*;
 
 use crate::persistent::*;
-use crate::plocation::ptr::PersistentPtr;
+use crate::plocation::ptr::PPtr;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
 /// # Example
 ///
-/// ```
-/// # // "풀을 열면 핸들러를 얻을 수 있고, 그 핸들러로 풀을 접근할 수 있다"만 보이기 위해 불필요한 정보는 숨김
+/// ```no_run
+/// # // "이렇게 사용한다"만 보이기 위해 불필요한 정보는 숨기고 "no_run"으로 함
 /// #
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
-/// # use compositional_persistent_object::util::*;
 /// #
 /// # #[derive(Default)]
 /// # struct MyRootOp {}
 /// #
-/// # impl PersistentOp for MyRootOp {
+/// # impl POp for MyRootOp {
 /// #     type Object = ();
 /// #     type Input = ();
 /// #     type Output = Result<(), ()>;
@@ -40,10 +39,7 @@ use crate::plocation::ptr::PersistentPtr;
 /// # }
 ///
 /// // 풀 생성 후 풀의 핸들러 얻기
-/// # let filepath = get_test_path("foo.pool");
-/// # let _ = std::fs::remove_file(&filepath); // 테스트에 사용한 파일 제거
-/// # let filepath = &filepath;
-/// let pool_handle = Pool::create::<MyRootOp>(filepath, 8 * 1024).unwrap();
+/// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
 ///
 /// // 핸들러로 풀의 루트 Op 가져오기
 /// let mut root_ptr = pool_handle.get_root::<MyRootOp>().unwrap();
@@ -76,14 +72,14 @@ impl PoolHandle {
 
     /// 풀의 루트 Op을 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O: PersistentOp>(&self) -> Result<PersistentPtr<'_, O>, Error> {
+    pub fn get_root<O: POp>(&self) -> Result<PPtr<O>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
-        Ok(PersistentPtr::from(self.pool().root_offset))
+        Ok(PPtr::from(self.pool().root_offset))
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     #[inline]
-    pub fn alloc<T>(&self) -> PersistentPtr<'_, T> {
+    pub fn alloc<T>(&self) -> PPtr<T> {
         self.pool().alloc::<T>()
     }
 
@@ -93,13 +89,13 @@ impl PoolHandle {
     ///
     /// TODO
     #[inline]
-    pub unsafe fn alloc_layout<T>(&self, layout: Layout) -> PersistentPtr<'_, T> {
+    pub unsafe fn alloc_layout<T>(&self, layout: Layout) -> PPtr<T> {
         self.pool().alloc_layout(layout)
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     #[inline]
-    pub fn free<T>(&self, pptr: PersistentPtr<'_, T>) {
+    pub fn free<T>(&self, pptr: PPtr<T>) {
         self.pool().free(pptr)
     }
 
@@ -142,10 +138,8 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
-    pub fn create<O: PersistentOp>(
-        filepath: &str,
-        size: usize,
-    ) -> Result<PoolHandle, Error> {
+    // TODO: filepath의 타입이 `P: AsRef<Path>`이면 좋겠다. 그런데 이러면 generic P에 대한 type inference가 안돼서 사용자가 `Pool::create::<RootOp, &str>("foo.pool")`처럼 호출해야함. 이게 괜찮나?
+    pub fn create<O: POp>(filepath: &str, size: usize) -> Result<PoolHandle, Error> {
         // 초기화 도중의 crash를 고려하여,
         //   1. 임시파일로서 풀을 초기화 한 후
         //   2. 초기화가 완료되면 "filepath"로 옮김
@@ -196,25 +190,25 @@ impl Pool {
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
-    fn alloc<T>(&self) -> PersistentPtr<'_, T> {
+    fn alloc<T>(&self) -> PPtr<T> {
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         // let addr_allocated = self.allocator.alloc(mem::size_of::<T>());
         let addr_allocated = 1024;
-        PersistentPtr::from(addr_allocated)
+        PPtr::from(addr_allocated)
     }
 
     /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
     ///
     /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
     /// - e.g. dynamically sized slices
-    unsafe fn alloc_layout<T>(&self, _layout: Layout) -> PersistentPtr<'_, T> {
+    unsafe fn alloc_layout<T>(&self, _layout: Layout) -> PPtr<T> {
         // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
         let addr_allocated = 1024;
-        PersistentPtr::from(addr_allocated)
+        PPtr::from(addr_allocated)
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
-    fn free<T>(&self, _pptr: PersistentPtr<'_, T>) {
+    fn free<T>(&self, _pptr: PPtr<T>) {
         todo!("pptr이 가리키는 메모리 블록 할당해제")
     }
 
@@ -233,9 +227,9 @@ mod tests {
     use log::{self as _, debug};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
-    use crate::persistent::PersistentOp;
+    use crate::persistent::POp;
     use crate::plocation::pool::*;
-    use crate::utils::test::*;
+    use crate::utils::tests::*;
 
     #[derive(Default)]
     struct RootOp {
@@ -244,7 +238,7 @@ mod tests {
         flag: AtomicBool,
     }
 
-    impl PersistentOp for RootOp {
+    impl POp for RootOp {
         type Object = ();
         type Input = ();
         type Output = Result<(), ()>;

@@ -2,14 +2,14 @@
 
 use std::marker::PhantomData;
 
-use crate::persistent::PersistentOp;
+use crate::persistent::POp;
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 #[derive(Debug, Default)]
 pub struct Pipe<'o, O1, O2>
 where
-    O1: PersistentOp,
-    O2: PersistentOp,
+    O1: POp,
+    O2: POp,
 {
     /// 먼저 실행될 op. `Pipe` op의 input은 `from` op의 input과 같음
     from: O1,
@@ -22,10 +22,10 @@ where
     _marker: PhantomData<&'o ()>,
 }
 
-impl<'o, O1, O2> PersistentOp for Pipe<'o, O1, O2>
+impl<'o, O1, O2> POp for Pipe<'o, O1, O2>
 where
-    O1: PersistentOp<Output = O2::Input>,
-    O2: PersistentOp,
+    O1: POp<Output = O2::Input>,
+    O2: POp,
     O1::Object: 'o,
     O2::Object: 'o,
 {
@@ -82,7 +82,7 @@ mod tests {
         }
     }
 
-    impl<T: Clone> PersistentOp for MustPop<T> {
+    impl<T: Clone> POp for MustPop<T> {
         type Object = Queue<T>;
         type Input = ();
         type Output = T;

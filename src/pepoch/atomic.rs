@@ -11,9 +11,9 @@
 //!             - 절대주소: `raw: usize`
 //!             - 함수: `from_raw(raw: *mut T) -> Owned<T>`
 //!         - 변경 후
-//!             - 상대주소를 가리키는 포인터: `ptr: PersistentPtr<T>`
+//!             - 상대주소를 가리키는 포인터: `ptr: PPtr<T>`
 //!             - 상대주소: `offset: usize`
-//!             - 함수: `from_ptr(ptr: PersistentPtr<T>) -> Owned<T>`
+//!             - 함수: `from_ptr(ptr: PPtr<T>) -> Owned<T>`
 //!     - crossbeam에 원래 있던 TODO는 TODO(crossbeam)으로 명시
 //!     - 메모리 관련 operation(e.g. `init`, `deref`)은 `PoolHandle`을 받게 변경. 특히 `deref`는 다른 풀을 참조할 수 있으니 unsafe로 명시
 //!     - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
@@ -28,8 +28,7 @@ use core::sync::atomic::Ordering;
 
 use crate::pepoch::guard::Guard;
 use crate::plocation::pool::PoolHandle;
-use crate::plocation::ptr;
-use crate::plocation::ptr::PersistentPtr;
+use crate::plocation::ptr::PPtr;
 use crossbeam_utils::atomic::AtomicConsume;
 use std::alloc;
 use std::sync::atomic::AtomicUsize;
@@ -54,7 +53,7 @@ pub type CompareAndSetError<'g, T, P> = CompareExchangeError<'g, T, P>;
 /// The error returned on failed compare-and-swap operation.
 pub struct CompareExchangeError<'g, T: ?Sized + Pointable, P: Pointer<T>> {
     /// The value in the atomic pointer at the time of the failed operation.
-    pub current: Shared<'g, T>,
+    pub current: PShared<'g, T>,
 
     /// The new value, which the operation failed to store.
     pub new: P,
@@ -148,6 +147,7 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
     (data & !low_bits::<T>(), data & low_bits::<T>())
 }
 
+// TODO: 배포 전에 주석을 persistent 버전에 알맞게 수정
 /// Types that are pointed to by a single word.
 ///
 /// In concurrent programming, it is necessary to represent an object within a word because atomic
@@ -159,16 +159,19 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 /// `[MaybeUninit<T>]` by storing its size along with its elements and pointing to the pair of array
 /// size and elements.
 ///
-/// Pointers to `Pointable` types can be stored in [`Atomic`], [`Owned`], and [`Shared`].  In
+/// Pointers to `Pointable` types can be stored in [`PAtomic`], [`POwned`], and [`PShared`].  In
 /// particular, Crossbeam supports dynamically sized slices as follows.
 ///
 /// ```
-/// # use compositional_persistent_object::util::*;
-/// # let pool = get_test_handle().unwrap();
+/// # // 테스트용 pool 얻기
+/// # use compositional_persistent_object::plocation::pool::Pool;
+/// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+/// # let _ = temp_file.as_file().set_len(8 * 1024);
+/// # let pool = Pool::open(temp_file.path()).unwrap();
 /// use std::mem::MaybeUninit;
-/// use compositional_persistent_object::pepoch::Owned;
+/// use compositional_persistent_object::pepoch::POwned;
 ///
-/// let o = Owned::<[MaybeUninit<i32>]>::init(10, &pool); // allocating [i32; 10]
+/// let o = POwned::<[MaybeUninit<i32>]>::init(10, &pool); // allocating [i32; 10]
 /// ```
 pub trait Pointable {
     /// The alignment of pointer.
@@ -193,7 +196,8 @@ pub trait Pointable {
     /// - `offset` should not have yet been dropped by [`Pointable::drop`].
     /// - `offset` should not be mutably dereferenced by [`Pointable::deref_mut`] concurrently.
     // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
-    unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self;
+    // crossbeam에선 <'a>를 명시하지만 여기선 &PoolHandle이 추가되니 inference됨
+    unsafe fn deref(offset: usize, pool: &PoolHandle) -> &Self;
 
     /// Mutably dereferences the given offset in the pool.
     ///
@@ -205,7 +209,9 @@ pub trait Pointable {
     /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
     // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
-    unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self;
+    // crossbeam에선 <'a>를 명시하지만 여기선 &PoolHandle이 추가되니 inference됨
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn deref_mut(offset: usize, pool: &PoolHandle) -> &mut Self;
 
     /// Drops the object pointed to by the given offset in the pool.
     ///
@@ -233,16 +239,16 @@ impl<T> Pointable for T {
         ptr.into_offset()
     }
 
-    unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self {
-        PersistentPtr::<T>::from(offset).deref(pool)
+    unsafe fn deref(offset: usize, pool: &PoolHandle) -> &Self {
+        PPtr::from(offset).deref(pool)
     }
 
-    unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self {
-        PersistentPtr::from(offset).deref_mut(pool)
+    unsafe fn deref_mut(offset: usize, pool: &PoolHandle) -> &mut Self {
+        PPtr::from(offset).deref_mut(pool)
     }
 
     unsafe fn drop(offset: usize, pool: &PoolHandle) {
-        pool.free(PersistentPtr::<T>::from(offset));
+        pool.free(PPtr::<T>::from(offset));
     }
 }
 
@@ -271,22 +277,22 @@ impl<T> Pointable for T {
 // TODO(crossbeam)(@jeehoonkang): once we bump the minimum required Rust version to 1.44 or newer, use
 // [`alloc::alloc::Layout::extend`] instead.
 #[repr(C)]
-struct Array<T> {
+struct PArray<T> {
     /// The number of elements (not the number of bytes).
     len: usize,
     elements: [MaybeUninit<T>; 0],
 }
 
 impl<T> Pointable for [MaybeUninit<T>] {
-    const ALIGN: usize = mem::align_of::<Array<T>>();
+    const ALIGN: usize = mem::align_of::<PArray<T>>();
 
     type Init = usize;
 
     unsafe fn init(len: Self::Init, pool: &PoolHandle) -> usize {
-        let size = mem::size_of::<Array<T>>() + mem::size_of::<MaybeUninit<T>>() * len;
-        let align = mem::align_of::<Array<T>>();
+        let size = mem::size_of::<PArray<T>>() + mem::size_of::<MaybeUninit<T>>() * len;
+        let align = mem::align_of::<PArray<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
-        let mut ptr = pool.alloc_layout::<Array<T>>(layout);
+        let mut ptr = pool.alloc_layout::<PArray<T>>(layout);
         // TODO(persistent allocator): 여기서 crash나면 할당은 됐지만 len이 초기화안됨. 이러면 재시작 시 len이 초기화 됐는지/안됐는지 구분이 힘듬
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
@@ -295,20 +301,20 @@ impl<T> Pointable for [MaybeUninit<T>] {
         ptr.into_offset()
     }
 
-    unsafe fn deref<'a>(offset: usize, pool: &PoolHandle) -> &'a Self {
-        let array = &*(PersistentPtr::from(offset).deref(pool) as *const Array<T>);
+    unsafe fn deref(offset: usize, pool: &PoolHandle) -> &Self {
+        let array = &*(PPtr::from(offset).deref(pool) as *const PArray<T>);
         slice::from_raw_parts(array.elements.as_ptr() as *const _, array.len)
     }
 
-    unsafe fn deref_mut<'a>(offset: usize, pool: &PoolHandle) -> &'a mut Self {
-        let array = &*(PersistentPtr::from(offset).deref_mut(pool) as *mut Array<T>);
+    unsafe fn deref_mut(offset: usize, pool: &PoolHandle) -> &mut Self {
+        let array = &*(PPtr::from(offset).deref_mut(pool) as *mut PArray<T>);
         slice::from_raw_parts_mut(array.elements.as_ptr() as *mut _, array.len)
     }
 
     unsafe fn drop(offset: usize, pool: &PoolHandle) {
-        let array = &*(PersistentPtr::from(offset).deref_mut(pool) as *mut Array<T>);
-        let size = mem::size_of::<Array<T>>() + mem::size_of::<MaybeUninit<T>>() * array.len;
-        let align = mem::align_of::<Array<T>>();
+        let array = &*(PPtr::from(offset).deref_mut(pool) as *mut PArray<T>);
+        let size = mem::size_of::<PArray<T>>() + mem::size_of::<MaybeUninit<T>>() * array.len;
+        let align = mem::align_of::<PArray<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
         pool.free_layout(offset, layout)
     }
@@ -323,45 +329,51 @@ impl<T> Pointable for [MaybeUninit<T>] {
 /// Any method that loads the pointer must be passed a reference to a [`Guard`].
 ///
 /// Crossbeam supports dynamically sized types.  See [`Pointable`] for details.
-pub struct Atomic<T: ?Sized + Pointable> {
+pub struct PAtomic<T: ?Sized + Pointable> {
     data: AtomicUsize,
     _marker: PhantomData<*mut T>,
 }
 
-unsafe impl<T: ?Sized + Pointable + Send + Sync> Send for Atomic<T> {}
-unsafe impl<T: ?Sized + Pointable + Send + Sync> Sync for Atomic<T> {}
+unsafe impl<T: ?Sized + Pointable + Send + Sync> Send for PAtomic<T> {}
+unsafe impl<T: ?Sized + Pointable + Send + Sync> Sync for PAtomic<T> {}
 
-impl<T> Atomic<T> {
+impl<T> PAtomic<T> {
     /// Allocates `value` on the persistent heap and returns a new atomic pointer pointing to it.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::Atomic;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::PAtomic;
     ///
-    /// let a = Atomic::new(1234, &pool);
+    /// let a = PAtomic::new(1234, &pool);
     /// ```
-    pub fn new(init: T, pool: &PoolHandle) -> Atomic<T> {
+    pub fn new(init: T, pool: &PoolHandle) -> PAtomic<T> {
         Self::init(init, pool)
     }
 }
 
-impl<T: ?Sized + Pointable> Atomic<T> {
+impl<T: ?Sized + Pointable> PAtomic<T> {
     /// Allocates `value` on the persistent heap and returns a new atomic pointer pointing to it.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::Atomic;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::PAtomic;
     ///
-    /// let a = Atomic::<i32>::init(1234, &pool);
+    /// let a = PAtomic::<i32>::init(1234, &pool);
     /// ```
-    pub fn init(init: T::Init, pool: &PoolHandle) -> Atomic<T> {
-        Self::from(Owned::init(init, pool))
+    pub fn init(init: T::Init, pool: &PoolHandle) -> PAtomic<T> {
+        Self::from(POwned::init(init, pool))
     }
 
     /// Returns a new atomic pointer pointing to the tagged pointer `data`.
@@ -377,20 +389,21 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::Atomic;
+    /// use compositional_persistent_object::pepoch::PAtomic;
     ///
-    /// let a = Atomic::<i32>::null();
+    /// let a = PAtomic::<i32>::null();
     /// ```
     ///
     #[cfg_attr(all(feature = "nightly", not(crossbeam_loom)), const_fn::const_fn)]
-    pub fn null() -> Atomic<T> {
+    pub fn null() -> PAtomic<T> {
+        let (offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
         Self {
-            data: AtomicUsize::new(ptr::NULL),
+            data: AtomicUsize::new(offset),
             _marker: PhantomData,
         }
     }
 
-    /// Loads a `Shared` from the atomic pointer.
+    /// Loads a `PShared` from the atomic pointer.
     ///
     /// This method takes an [`Ordering`] argument which describes the memory ordering of this
     /// operation.
@@ -398,20 +411,23 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
     /// ```
-    pub fn load<'g>(&self, ord: Ordering, _: &'g Guard) -> Shared<'g, T> {
-        unsafe { Shared::from_usize(self.data.load(ord)) }
+    pub fn load<'g>(&self, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+        unsafe { PShared::from_usize(self.data.load(ord)) }
     }
 
-    /// Loads a `Shared` from the atomic pointer using a "consume" memory ordering.
+    /// Loads a `PShared` from the atomic pointer using a "consume" memory ordering.
     ///
     /// This is similar to the "acquire" ordering, except that an ordering is
     /// only guaranteed with operations that "depend on" the result of the load.
@@ -426,19 +442,22 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     /// let p = a.load_consume(guard);
     /// ```
-    pub fn load_consume<'g>(&self, _: &'g Guard) -> Shared<'g, T> {
-        unsafe { Shared::from_usize(self.data.load_consume()) }
+    pub fn load_consume<'g>(&self, _: &'g Guard<'_>) -> PShared<'g, T> {
+        unsafe { PShared::from_usize(self.data.load_consume()) }
     }
 
-    /// Stores a `Shared` or `Owned` pointer into the atomic pointer.
+    /// Stores a `PShared` or `POwned` pointer into the atomic pointer.
     ///
     /// This method takes an [`Ordering`] argument which describes the memory ordering of this
     /// operation.
@@ -446,21 +465,24 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{Atomic, Owned, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// a.store(Shared::null(), SeqCst);
-    /// a.store(Owned::new(1234, &pool), SeqCst);
+    /// let a = PAtomic::new(1234, &pool);
+    /// a.store(PShared::null(), SeqCst);
+    /// a.store(POwned::new(1234, &pool), SeqCst);
     /// ```
     pub fn store<P: Pointer<T>>(&self, new: P, ord: Ordering) {
         self.data.store(new.into_usize(), ord);
     }
 
-    /// Stores a `Shared` or `Owned` pointer into the atomic pointer, returning the previous
-    /// `Shared`.
+    /// Stores a `PShared` or `POwned` pointer into the atomic pointer, returning the previous
+    /// `PShared`.
     ///
     /// This method takes an [`Ordering`] argument which describes the memory ordering of this
     /// operation.
@@ -468,20 +490,28 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
-    /// let p = a.swap(Shared::null(), SeqCst, guard);
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
+    /// let p = a.swap(PShared::null(), SeqCst, guard);
     /// ```
-    pub fn swap<'g, P: Pointer<T>>(&self, new: P, ord: Ordering, _: &'g Guard) -> Shared<'g, T> {
-        unsafe { Shared::from_usize(self.data.swap(new.into_usize(), ord)) }
+    pub fn swap<'g, P: Pointer<T>>(
+        &self,
+        new: P,
+        ord: Ordering,
+        _: &'g Guard<'_>,
+    ) -> PShared<'g, T> {
+        unsafe { PShared::from_usize(self.data.swap(new.into_usize(), ord)) }
     }
 
-    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic pointer if the current
+    /// Stores the pointer `new` (either `PShared` or `POwned`) into the atomic pointer if the current
     /// value is the same as `current`. The tag is also taken into account, so two pointers to the
     /// same object, but with different tags, will not be considered equal.
     ///
@@ -501,42 +531,45 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
+    /// let a = PAtomic::new(1234, &pool);
     ///
-    /// let guard = &epoch::pin();
+    /// let guard = &epoch::pin(&pool);
     /// let curr = a.load(SeqCst, guard);
-    /// let res1 = a.compare_exchange(curr, Shared::null(), SeqCst, SeqCst, guard);
-    /// let res2 = a.compare_exchange(curr, Owned::new(5678, &pool), SeqCst, SeqCst, guard);
+    /// let res1 = a.compare_exchange(curr, PShared::null(), SeqCst, SeqCst, guard);
+    /// let res2 = a.compare_exchange(curr, POwned::new(5678, &pool), SeqCst, SeqCst, guard);
     /// ```
     pub fn compare_exchange<'g, P>(
         &self,
-        current: Shared<'_, T>,
+        current: PShared<'_, T>,
         new: P,
         success: Ordering,
         failure: Ordering,
-        _: &'g Guard,
-    ) -> Result<Shared<'g, T>, CompareExchangeError<'g, T, P>>
+        _: &'g Guard<'_>,
+    ) -> Result<PShared<'g, T>, CompareExchangeError<'g, T, P>>
     where
         P: Pointer<T>,
     {
         let new = new.into_usize();
         self.data
             .compare_exchange(current.into_usize(), new, success, failure)
-            .map(|_| unsafe { Shared::from_usize(new) })
+            .map(|_| unsafe { PShared::from_usize(new) })
             .map_err(|current| unsafe {
                 CompareExchangeError {
-                    current: Shared::from_usize(current),
+                    current: PShared::from_usize(current),
                     new: P::from_usize(new),
                 }
             })
     }
 
-    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic pointer if the current
+    /// Stores the pointer `new` (either `PShared` or `POwned`) into the atomic pointer if the current
     /// value is the same as `current`. The tag is also taken into account, so two pointers to the
     /// same object, but with different tags, will not be considered equal.
     ///
@@ -554,20 +587,23 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// `Relaxed`. The failure ordering can only be `SeqCst`, `Acquire` or `Relaxed`
     /// and must be equivalent to or weaker than the success ordering.
     ///
-    /// [`compare_exchange`]: Atomic::compare_exchange
+    /// [`compare_exchange`]: PAtomic::compare_exchange
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     ///
-    /// let mut new = Owned::new(5678, &pool);
+    /// let mut new = POwned::new(5678, &pool);
     /// let mut ptr = a.load(SeqCst, guard);
     /// loop {
     ///     match a.compare_exchange_weak(ptr, new, SeqCst, SeqCst, guard) {
@@ -584,7 +620,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// let mut curr = a.load(SeqCst, guard);
     /// loop {
-    ///     match a.compare_exchange_weak(curr, Shared::null(), SeqCst, SeqCst, guard) {
+    ///     match a.compare_exchange_weak(curr, PShared::null(), SeqCst, SeqCst, guard) {
     ///         Ok(_) => break,
     ///         Err(err) => curr = err.current,
     ///     }
@@ -592,22 +628,22 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// ```
     pub fn compare_exchange_weak<'g, P>(
         &self,
-        current: Shared<'_, T>,
+        current: PShared<'_, T>,
         new: P,
         success: Ordering,
         failure: Ordering,
-        _: &'g Guard,
-    ) -> Result<Shared<'g, T>, CompareExchangeError<'g, T, P>>
+        _: &'g Guard<'_>,
+    ) -> Result<PShared<'g, T>, CompareExchangeError<'g, T, P>>
     where
         P: Pointer<T>,
     {
         let new = new.into_usize();
         self.data
             .compare_exchange_weak(current.into_usize(), new, success, failure)
-            .map(|_| unsafe { Shared::from_usize(new) })
+            .map(|_| unsafe { PShared::from_usize(new) })
             .map_err(|current| unsafe {
                 CompareExchangeError {
-                    current: Shared::from_usize(current),
+                    current: PShared::from_usize(current),
                     new: P::from_usize(new),
                 }
             })
@@ -624,7 +660,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// ordering of this operation. The first describes the required ordering for
     /// when the operation finally succeeds while the second describes the
     /// required ordering for loads. These correspond to the success and failure
-    /// orderings of [`Atomic::compare_exchange`] respectively.
+    /// orderings of [`PAtomic::compare_exchange`] respectively.
     ///
     /// Using [`Acquire`] as success ordering makes the store part of this
     /// operation [`Relaxed`], and using [`Release`] makes the final successful
@@ -640,13 +676,16 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     ///
     /// let res1 = a.fetch_update(SeqCst, SeqCst, guard, |x| Some(x.with_tag(1)));
     /// assert!(res1.is_ok());
@@ -658,11 +697,11 @@ impl<T: ?Sized + Pointable> Atomic<T> {
         &self,
         set_order: Ordering,
         fail_order: Ordering,
-        guard: &'g Guard,
+        guard: &'g Guard<'_>,
         mut func: F,
-    ) -> Result<Shared<'g, T>, Shared<'g, T>>
+    ) -> Result<PShared<'g, T>, PShared<'g, T>>
     where
-        F: FnMut(Shared<'g, T>) -> Option<Shared<'g, T>>,
+        F: FnMut(PShared<'g, T>) -> Option<PShared<'g, T>>,
     {
         let mut prev = self.load(fail_order, guard);
         while let Some(next) = func(prev) {
@@ -674,7 +713,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
         Err(prev)
     }
 
-    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic pointer if the current
+    /// Stores the pointer `new` (either `PShared` or `POwned`) into the atomic pointer if the current
     /// value is the same as `current`. The tag is also taken into account, so two pointers to the
     /// same object, but with different tags, will not be considered equal.
     ///
@@ -702,28 +741,31 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # #![allow(deprecated)]
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
+    /// let a = PAtomic::new(1234, &pool);
     ///
-    /// let guard = &epoch::pin();
+    /// let guard = &epoch::pin(&pool);
     /// let curr = a.load(SeqCst, guard);
-    /// let res1 = a.compare_and_set(curr, Shared::null(), SeqCst, guard);
-    /// let res2 = a.compare_and_set(curr, Owned::new(5678, &pool), SeqCst, guard);
+    /// let res1 = a.compare_and_set(curr, PShared::null(), SeqCst, guard);
+    /// let res2 = a.compare_and_set(curr, POwned::new(5678, &pool), SeqCst, guard);
     /// ```
     // TODO(crossbeam): remove in the next major version.
     #[allow(deprecated)]
     #[deprecated(note = "Use `compare_exchange` instead")]
     pub fn compare_and_set<'g, O, P>(
         &self,
-        current: Shared<'_, T>,
+        current: PShared<'_, T>,
         new: P,
         ord: O,
-        guard: &'g Guard,
-    ) -> Result<Shared<'g, T>, CompareAndSetError<'g, T, P>>
+        guard: &'g Guard<'_>,
+    ) -> Result<PShared<'g, T>, CompareAndSetError<'g, T, P>>
     where
         O: CompareAndSetOrdering,
         P: Pointer<T>,
@@ -731,7 +773,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
         self.compare_exchange(current, new, ord.success(), ord.failure(), guard)
     }
 
-    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic pointer if the current
+    /// Stores the pointer `new` (either `PShared` or `POwned`) into the atomic pointer if the current
     /// value is the same as `current`. The tag is also taken into account, so two pointers to the
     /// same object, but with different tags, will not be considered equal.
     ///
@@ -743,7 +785,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// This method takes a [`CompareAndSetOrdering`] argument which describes the memory
     /// ordering of this operation.
     ///
-    /// [`compare_and_set`]: Atomic::compare_and_set
+    /// [`compare_and_set`]: PAtomic::compare_and_set
     ///
     /// # Migrating to `compare_exchange_weak`
     ///
@@ -762,15 +804,18 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```
     /// # #![allow(deprecated)]
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     ///
-    /// let mut new = Owned::new(5678, &pool);
+    /// let mut new = POwned::new(5678, &pool);
     /// let mut ptr = a.load(SeqCst, guard);
     /// loop {
     ///     match a.compare_and_set_weak(ptr, new, SeqCst, guard) {
@@ -787,7 +832,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// let mut curr = a.load(SeqCst, guard);
     /// loop {
-    ///     match a.compare_and_set_weak(curr, Shared::null(), SeqCst, guard) {
+    ///     match a.compare_and_set_weak(curr, PShared::null(), SeqCst, guard) {
     ///         Ok(_) => break,
     ///         Err(err) => curr = err.current,
     ///     }
@@ -798,11 +843,11 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     #[deprecated(note = "Use `compare_exchange_weak` instead")]
     pub fn compare_and_set_weak<'g, O, P>(
         &self,
-        current: Shared<'_, T>,
+        current: PShared<'_, T>,
         new: P,
         ord: O,
-        guard: &'g Guard,
-    ) -> Result<Shared<'g, T>, CompareAndSetError<'g, T, P>>
+        guard: &'g Guard<'_>,
+    ) -> Result<PShared<'g, T>, CompareAndSetError<'g, T, P>>
     where
         O: CompareAndSetOrdering,
         P: Pointer<T>,
@@ -821,16 +866,21 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::<i32>::from(Shared::null().with_tag(3));
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::<i32>::from(PShared::null().with_tag(3));
+    /// let guard = &epoch::pin(&pool);
     /// assert_eq!(a.fetch_and(2, SeqCst, guard).tag(), 3);
     /// assert_eq!(a.load(SeqCst, guard).tag(), 2);
     /// ```
-    pub fn fetch_and<'g>(&self, val: usize, ord: Ordering, _: &'g Guard) -> Shared<'g, T> {
-        unsafe { Shared::from_usize(self.data.fetch_and(val | !low_bits::<T>(), ord)) }
+    pub fn fetch_and<'g>(&self, val: usize, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+        unsafe { PShared::from_usize(self.data.fetch_and(val | !low_bits::<T>(), ord)) }
     }
 
     /// Bitwise "or" with the current tag.
@@ -844,16 +894,20 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
-    ///
-    /// let a = Atomic::<i32>::from(Shared::null().with_tag(1));
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
+    /// let guard = &epoch::pin(&pool);
     /// assert_eq!(a.fetch_or(2, SeqCst, guard).tag(), 1);
     /// assert_eq!(a.load(SeqCst, guard).tag(), 3);
     /// ```
-    pub fn fetch_or<'g>(&self, val: usize, ord: Ordering, _: &'g Guard) -> Shared<'g, T> {
-        unsafe { Shared::from_usize(self.data.fetch_or(val & low_bits::<T>(), ord)) }
+    pub fn fetch_or<'g>(&self, val: usize, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+        unsafe { PShared::from_usize(self.data.fetch_or(val & low_bits::<T>(), ord)) }
     }
 
     /// Bitwise "xor" with the current tag.
@@ -867,22 +921,27 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Shared};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::<i32>::from(Shared::null().with_tag(1));
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
+    /// let guard = &epoch::pin(&pool);
     /// assert_eq!(a.fetch_xor(3, SeqCst, guard).tag(), 1);
     /// assert_eq!(a.load(SeqCst, guard).tag(), 2);
     /// ```
-    pub fn fetch_xor<'g>(&self, val: usize, ord: Ordering, _: &'g Guard) -> Shared<'g, T> {
-        unsafe { Shared::from_usize(self.data.fetch_xor(val & low_bits::<T>(), ord)) }
+    pub fn fetch_xor<'g>(&self, val: usize, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+        unsafe { PShared::from_usize(self.data.fetch_xor(val & low_bits::<T>(), ord)) }
     }
 
     /// Takes ownership of the pointee.
     ///
-    /// This consumes the atomic and converts it into [`Owned`]. As [`Atomic`] doesn't have a
-    /// destructor and doesn't drop the pointee while [`Owned`] does, this is suitable for
+    /// This consumes the atomic and converts it into [`POwned`]. As [`PAtomic`] doesn't have a
+    /// destructor and doesn't drop the pointee while [`POwned`] does, this is suitable for
     /// destructors of data structures.
     ///
     /// # Panics
@@ -898,9 +957,9 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// ```rust
     /// # use std::mem;
-    /// # use compositional_persistent_object::pepoch::Atomic;
+    /// # use compositional_persistent_object::pepoch::PAtomic;
     /// struct DataStructure {
-    ///     ptr: Atomic<usize>,
+    ///     ptr: PAtomic<usize>,
     /// }
     ///
     /// impl Drop for DataStructure {
@@ -908,22 +967,22 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///         // By now the DataStructure lives only in our thread and we are sure we don't hold
     ///         // any Shared or & to it ourselves.
     ///         unsafe {
-    ///             drop(mem::replace(&mut self.ptr, Atomic::null()).into_owned());
+    ///             drop(mem::replace(&mut self.ptr, PAtomic::null()).into_owned());
     ///         }
     ///     }
     /// }
     /// ```
-    pub unsafe fn into_owned(self) -> Owned<T> {
+    pub unsafe fn into_owned(self) -> POwned<T> {
         #[cfg(crossbeam_loom)]
         {
             // FIXME(crossbeam): loom does not yet support into_inner, so we use unsync_load for now,
             // which should have the same synchronization properties:
             // https://github.com/tokio-rs/loom/issues/117
-            Owned::from_usize(self.data.unsync_load())
+            POwned::from_usize(self.data.unsync_load())
         }
         #[cfg(not(crossbeam_loom))]
         {
-            Owned::from_usize(self.data.into_inner())
+            POwned::from_usize(self.data.into_inner())
         }
     }
 
@@ -935,7 +994,7 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     }
 }
 
-impl<T: ?Sized + Pointable> fmt::Debug for Atomic<T> {
+impl<T: ?Sized + Pointable> fmt::Debug for PAtomic<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
         let (offset, tag) = decompose_tag::<T>(data);
@@ -947,36 +1006,39 @@ impl<T: ?Sized + Pointable> fmt::Debug for Atomic<T> {
     }
 }
 
-impl<T: ?Sized + Pointable> Clone for Atomic<T> {
+impl<T: ?Sized + Pointable> Clone for PAtomic<T> {
     /// Returns a copy of the atomic value.
     ///
     /// Note that a `Relaxed` load is used here. If you need synchronization, use it with other
     /// atomics or fences.
     fn clone(&self) -> Self {
         let data = self.data.load(Ordering::Relaxed);
-        Atomic::from_usize(data)
+        PAtomic::from_usize(data)
     }
 }
 
-impl<T: ?Sized + Pointable> Default for Atomic<T> {
+impl<T: ?Sized + Pointable> Default for PAtomic<T> {
     fn default() -> Self {
-        Atomic::null()
+        PAtomic::null()
     }
 }
 
-impl<T: ?Sized + Pointable> From<Owned<T>> for Atomic<T> {
-    /// Returns a new atomic pointer pointing to `owned`.
+impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
+    /// Returns a new atomic pointer pointing to `POwned`.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{Atomic, Owned};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{PAtomic, POwned};
     ///
-    /// let a = Atomic::<i32>::from(Owned::new(1234, &pool));
+    /// let a = PAtomic::<i32>::from(POwned::new(1234, &pool));
     /// ```
-    fn from(owned: Owned<T>) -> Self {
+    fn from(owned: POwned<T>) -> Self {
         let data = owned.data;
         mem::forget(owned);
         Self::from_usize(data)
@@ -991,39 +1053,39 @@ impl<T: ?Sized + Pointable> From<Owned<T>> for Atomic<T> {
 //     }
 // }
 
-impl<'g, T: ?Sized + Pointable> From<Shared<'g, T>> for Atomic<T> {
+impl<'g, T: ?Sized + Pointable> From<PShared<'g, T>> for PAtomic<T> {
     /// Returns a new atomic pointer pointing to `ptr`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::{Atomic, Shared};
+    /// use compositional_persistent_object::pepoch::{PAtomic, PShared};
     ///
-    /// let a = Atomic::<i32>::from(Shared::<i32>::null());
+    /// let a = PAtomic::<i32>::from(PShared::<i32>::null());
     /// ```
-    fn from(ptr: Shared<'g, T>) -> Self {
+    fn from(ptr: PShared<'g, T>) -> Self {
         Self::from_usize(ptr.data)
     }
 }
 
-impl<T> From<PersistentPtr<'_, T>> for Atomic<T> {
+impl<T> From<PPtr<T>> for PAtomic<T> {
     /// Returns a new atomic pointer pointing to `ptr`.
     ///
     /// # Examples
     ///
     /// ```
     /// use std::ptr;
-    /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
-    /// use compositional_persistent_object::pepoch::Atomic;
+    /// use compositional_persistent_object::plocation::ptr::PPtr;
+    /// use compositional_persistent_object::pepoch::PAtomic;
     ///
-    /// let a = Atomic::<i32>::from(PersistentPtr::<i32>::null());
+    /// let a = PAtomic::<i32>::from(PPtr::<i32>::null());
     /// ```
-    fn from(ptr: PersistentPtr<'_, T>) -> Self {
+    fn from(ptr: PPtr<T>) -> Self {
         Self::from_usize(ptr.into_offset())
     }
 }
 
-/// A trait for either `Owned` or `Shared` pointers.
+/// A trait for either `POwned` or `PShared` pointers.
 pub trait Pointer<T: ?Sized + Pointable> {
     /// Returns the machine representation of the pointer.
     fn into_usize(self) -> usize;
@@ -1043,13 +1105,13 @@ pub trait Pointer<T: ?Sized + Pointable> {
 ///
 /// The pointer must be properly aligned. Since it is aligned, a tag can be stored into the unused
 /// least significant bits of the address.
-pub struct Owned<T: ?Sized + Pointable> {
+pub struct POwned<T: ?Sized + Pointable> {
     data: usize,
     // TODO: PhantomData<PersistentBox<T>>로 해야할지 고민 필요
     _marker: PhantomData<T>,
 }
 
-impl<T: ?Sized + Pointable> Pointer<T> for Owned<T> {
+impl<T: ?Sized + Pointable> Pointer<T> for POwned<T> {
     #[inline]
     fn into_usize(self) -> usize {
         let data = self.data;
@@ -1064,15 +1126,15 @@ impl<T: ?Sized + Pointable> Pointer<T> for Owned<T> {
     /// Panics if the data is zero in debug mode.
     #[inline]
     unsafe fn from_usize(data: usize) -> Self {
-        debug_assert!(data != 0, "converting zero into `Owned`");
-        Owned {
+        debug_assert!(data != 0, "converting zero into `POwned`");
+        POwned {
             data,
             _marker: PhantomData,
         }
     }
 }
 
-impl<T> Owned<T> {
+impl<T> POwned<T> {
     /// Returns a new owned pointer pointing to `ptr`.
     ///
     /// This function is unsafe because improper use may lead to memory problems. Argument `ptr`
@@ -1085,21 +1147,24 @@ impl<T> Owned<T> {
     ///
     /// # Safety
     ///
-    /// The given `ptr` should have been derived from `Owned`, and one `ptr` should not be converted
-    /// back by `Owned::from_ptr()` multiple times.
+    /// The given `ptr` should have been derived from `POwned`, and one `ptr` should not be converted
+    /// back by `POwned::from_ptr()` multiple times.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
-    /// use compositional_persistent_object::pepoch::Owned;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::plocation::ptr::PPtr;
+    /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// let mut ptr = pool.alloc::<usize>();
-    /// let o = unsafe { Owned::from_ptr(ptr) };
+    /// let o = unsafe { POwned::from_ptr(ptr) };
     /// ```
-    pub unsafe fn from_ptr(ptr: PersistentPtr<'_, T>) -> Owned<T> {
+    pub unsafe fn from_ptr(ptr: PPtr<T>) -> POwned<T> {
         let offset = ptr.into_offset();
         ensure_aligned::<T>(offset);
         Self::from_usize(offset)
@@ -1128,49 +1193,58 @@ impl<T> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::Owned;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::POwned;
     ///
-    /// let o = Owned::new(1234, &pool);
+    /// let o = POwned::new(1234, &pool);
     /// ```
-    pub fn new(init: T, pool: &PoolHandle) -> Owned<T> {
+    pub fn new(init: T, pool: &PoolHandle) -> POwned<T> {
         Self::init(init, pool)
     }
 }
 
-impl<T: ?Sized + Pointable> Owned<T> {
+impl<T: ?Sized + Pointable> POwned<T> {
     /// Allocates `value` on the persistent heap and returns a new owned pointer pointing to it.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::Owned;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::POwned;
     ///
-    /// let o = Owned::<i32>::init(1234, &pool);
+    /// let o = POwned::<i32>::init(1234, &pool);
     /// ```
-    pub fn init(init: T::Init, pool: &PoolHandle) -> Owned<T> {
+    pub fn init(init: T::Init, pool: &PoolHandle) -> POwned<T> {
         unsafe { Self::from_usize(T::init(init, pool)) }
     }
 
-    /// Converts the owned pointer into a [`Shared`].
+    /// Converts the owned pointer into a [`PShared`].
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Owned};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, POwned};
     ///
-    /// let o = Owned::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let o = POwned::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     /// let p = o.into_shared(guard);
     /// ```
     #[allow(clippy::needless_lifetimes)]
-    pub fn into_shared<'g>(self, _: &'g Guard) -> Shared<'g, T> {
-        unsafe { Shared::from_usize(self.into_usize()) }
+    pub fn into_shared<'g>(self, _: &'g Guard<'_>) -> PShared<'g, T> {
+        unsafe { PShared::from_usize(self.into_usize()) }
     }
 
     /// Returns the tag stored within the pointer.
@@ -1178,11 +1252,14 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::Owned;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::POwned;
     ///
-    /// assert_eq!(Owned::new(1234, &pool).tag(), 0);
+    /// assert_eq!(POwned::new(1234, &pool).tag(), 0);
     /// ```
     pub fn tag(&self) -> usize {
         let (_, tag) = decompose_tag::<T>(self.data);
@@ -1195,16 +1272,19 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::Owned;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::POwned;
     ///
-    /// let o = Owned::new(0u64, &pool);
+    /// let o = POwned::new(0u64, &pool);
     /// assert_eq!(o.tag(), 0);
     /// let o = o.with_tag(2);
     /// assert_eq!(o.tag(), 2);
     /// ```
-    pub fn with_tag(self, tag: usize) -> Owned<T> {
+    pub fn with_tag(self, tag: usize) -> POwned<T> {
         let data = self.into_usize();
         unsafe { Self::from_usize(compose_tag::<T>(data, tag)) }
     }
@@ -1215,7 +1295,7 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref(&self, pool: &PoolHandle) -> &T {
+    pub unsafe fn deref<'a>(&self, pool: &'a PoolHandle) -> &'a T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
@@ -1226,7 +1306,8 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &mut T {
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn deref_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
@@ -1237,7 +1318,7 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn borrow(&self, pool: &PoolHandle) -> &T {
+    pub unsafe fn borrow<'a>(&self, pool: &'a PoolHandle) -> &'a T {
         self.deref(pool)
     }
 
@@ -1247,7 +1328,8 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn borrow_mut(&mut self, pool: &PoolHandle) -> &mut T {
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn borrow_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
         self.deref_mut(pool)
     }
 
@@ -1257,7 +1339,7 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn as_ref(&self, pool: &PoolHandle) -> &T {
+    pub unsafe fn as_ref<'a>(&self, pool: &'a PoolHandle) -> &'a T {
         self.deref(pool)
     }
 
@@ -1267,18 +1349,19 @@ impl<T: ?Sized + Pointable> Owned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn as_mut(&mut self, pool: &PoolHandle) -> &mut T {
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn as_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
         self.deref_mut(pool)
     }
 }
 
-impl<T: ?Sized + Pointable> Drop for Owned<T> {
+impl<T: ?Sized + Pointable> Drop for POwned<T> {
     fn drop(&mut self) {
         // TODO: 어느 풀에서 free할지 알아야함 (i.e. PoolHandle을 받아야함)
     }
 }
 
-impl<T: ?Sized + Pointable> fmt::Debug for Owned<T> {
+impl<T: ?Sized + Pointable> fmt::Debug for POwned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (offset, tag) = decompose_tag::<T>(self.data);
 
@@ -1290,10 +1373,10 @@ impl<T: ?Sized + Pointable> fmt::Debug for Owned<T> {
 }
 
 // PoolHandle을 받아야하므로 Clone trait impl 하던 것을 직접 구현
-impl<T: Clone> Owned<T> {
+impl<T: Clone> POwned<T> {
     /// 주어진 pool에 clone
     pub fn clone(&self, pool: &PoolHandle) -> Self {
-        Owned::new(unsafe { self.deref(pool) }.clone(), pool).with_tag(self.tag())
+        POwned::new(unsafe { self.deref(pool) }.clone(), pool).with_tag(self.tag())
     }
 }
 
@@ -1322,12 +1405,12 @@ impl<T: Clone> Owned<T> {
 ///
 /// The pointer must be properly aligned. Since it is aligned, a tag can be stored into the unused
 /// least significant bits of the address.
-pub struct Shared<'g, T: 'g + ?Sized + Pointable> {
+pub struct PShared<'g, T: 'g + ?Sized + Pointable> {
     data: usize,
     _marker: PhantomData<(&'g (), *const T)>,
 }
 
-impl<T: ?Sized + Pointable> Clone for Shared<'_, T> {
+impl<T: ?Sized + Pointable> Clone for PShared<'_, T> {
     fn clone(&self) -> Self {
         Self {
             data: self.data,
@@ -1336,9 +1419,9 @@ impl<T: ?Sized + Pointable> Clone for Shared<'_, T> {
     }
 }
 
-impl<T: ?Sized + Pointable> Copy for Shared<'_, T> {}
+impl<T: ?Sized + Pointable> Copy for PShared<'_, T> {}
 
-impl<T: ?Sized + Pointable> Pointer<T> for Shared<'_, T> {
+impl<T: ?Sized + Pointable> Pointer<T> for PShared<'_, T> {
     #[inline]
     fn into_usize(self) -> usize {
         self.data
@@ -1346,55 +1429,58 @@ impl<T: ?Sized + Pointable> Pointer<T> for Shared<'_, T> {
 
     #[inline]
     unsafe fn from_usize(data: usize) -> Self {
-        Shared {
+        PShared {
             data,
             _marker: PhantomData,
         }
     }
 }
 
-// lint "deny single_use_lifetimes" 로 인해 lifetime을 'g에서 '_로 바꿈
-impl<T> Shared<'_, T> {
+impl<T> PShared<'_, T> {
     /// Converts the shared pointer to a raw persistent pointer (without the tag).
     ///
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::plocation::ptr::PersistentPtr;
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::plocation::ptr::PPtr;
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let o = Owned::new(1234, &pool);
-    /// let ptr = PersistentPtr::from(unsafe { o.deref(&pool) as *const _ as usize } - pool.start());
-    /// let a = Atomic::from(o);
+    /// let o = POwned::new(1234, &pool);
+    /// let ptr = PPtr::from(unsafe { o.deref(&pool) as *const _ as usize } - pool.start());
+    /// let a = PAtomic::from(o);
     ///
-    /// let guard = &epoch::pin();
+    /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
     /// assert_eq!(p.as_ptr(), ptr);
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn as_ptr(&self) -> PersistentPtr<'_, T> {
+    pub fn as_ptr(&self) -> PPtr<T> {
         let (offset, _) = decompose_tag::<T>(self.data);
-        PersistentPtr::from(offset)
+        PPtr::from(offset)
     }
 }
 
-impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
+impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// Returns a new null pointer.
     ///
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::Shared;
+    /// use compositional_persistent_object::pepoch::PShared;
     ///
-    /// let p = Shared::<i32>::null();
+    /// let p = PShared::<i32>::null();
     /// assert!(p.is_null());
     /// ```
-    pub fn null() -> Shared<'g, T> {
-        Shared {
-            data: ptr::NULL,
+    pub fn null() -> PShared<'g, T> {
+        let (offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        PShared {
+            data: offset,
             _marker: PhantomData,
         }
     }
@@ -1404,21 +1490,25 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::null();
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::null();
+    /// let guard = &epoch::pin(&pool);
     /// assert!(a.load(SeqCst, guard).is_null());
-    /// a.store(Owned::new(1234, &pool), SeqCst);
+    /// a.store(POwned::new(1234, &pool), SeqCst);
     /// assert!(!a.load(SeqCst, guard).is_null());
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn is_null(&self) -> bool {
-        let (offset, _) = decompose_tag::<T>(self.data);
-        offset == ptr::NULL
+        let (null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (my_offset, _) = decompose_tag::<T>(self.data);
+        my_offset == null_offset
     }
 
     /// Dereferences the pointer.
@@ -1432,7 +1522,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// Another concern is the possibility of data races due to lack of proper synchronization.
     /// For example, consider the following scenario:
     ///
-    /// 1. A thread creates a new object: `a.store(Owned::new(10, &pool), Relaxed)`
+    /// 1. A thread creates a new object: `a.store(POwned::new(10, &pool), Relaxed)`
     /// 2. Another thread reads it: `*a.load(Relaxed, guard).as_ref(&pool).unwrap()`
     ///
     /// The problem is that relaxed orderings don't synchronize initialization of the object with
@@ -1442,13 +1532,16 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
     /// unsafe {
     ///     assert_eq!(p.deref(&pool), &1234);
@@ -1456,7 +1549,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[allow(clippy::should_implement_trait)]
-    pub unsafe fn deref(&self, pool: &PoolHandle) -> &'g T {
+    pub unsafe fn deref(&self, pool: &'g PoolHandle) -> &'g T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
@@ -1477,13 +1570,16 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(vec![1, 2, 3, 4], &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(vec![1, 2, 3, 4], &pool);
+    /// let guard = &epoch::pin(&pool);
     ///
     /// let mut p = a.load(SeqCst, guard);
     /// unsafe {
@@ -1500,7 +1596,8 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// }
     /// ```
     #[allow(clippy::should_implement_trait)]
-    pub unsafe fn deref_mut(&mut self, pool: &PoolHandle) -> &'g mut T {
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn deref_mut(&mut self, pool: &'g PoolHandle) -> &'g mut T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
@@ -1526,25 +1623,29 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(1234, &pool);
+    /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
     /// unsafe {
     ///     assert_eq!(p.as_ref(&pool), Some(&1234));
     /// }
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub unsafe fn as_ref(&self, pool: &PoolHandle) -> Option<&'g T> {
-        let (offset, _) = decompose_tag::<T>(self.data);
-        if offset == ptr::NULL {
+    pub unsafe fn as_ref(&self, pool: &'g PoolHandle) -> Option<&'g T> {
+        let (null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (my_offset, _) = decompose_tag::<T>(self.data);
+        if my_offset == null_offset {
             None
         } else {
-            Some(T::deref(offset, pool))
+            Some(T::deref(my_offset, pool))
         }
     }
 
@@ -1562,21 +1663,24 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(1234, &pool);
+    /// let a = PAtomic::new(1234, &pool);
     /// unsafe {
-    ///     let guard = &epoch::unprotected();
+    ///     let guard = &epoch::unprotected(&pool);
     ///     let p = a.load(SeqCst, guard);
     ///     drop(p.into_owned());
     /// }
     /// ```
-    pub unsafe fn into_owned(self) -> Owned<T> {
-        debug_assert!(!self.is_null(), "converting a null `Shared` into `Owned`");
-        Owned::from_usize(self.data)
+    pub unsafe fn into_owned(self) -> POwned<T> {
+        debug_assert!(!self.is_null(), "converting a null `PShared` into `POwned`");
+        POwned::from_usize(self.data)
     }
 
     /// Returns the tag stored within the pointer.
@@ -1584,13 +1688,16 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic, Owned};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::<u64>::from(Owned::new(0u64, &pool).with_tag(2));
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::<u64>::from(POwned::new(0u64, &pool).with_tag(2));
+    /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
     /// assert_eq!(p.tag(), 2);
     /// ```
@@ -1606,13 +1713,16 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, Atomic};
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
-    /// let a = Atomic::new(0u64, &pool);
-    /// let guard = &epoch::pin();
+    /// let a = PAtomic::new(0u64, &pool);
+    /// let guard = &epoch::pin(&pool);
     /// let p1 = a.load(SeqCst, guard);
     /// let p2 = p1.with_tag(2);
     ///
@@ -1621,7 +1731,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// assert_eq!(p1.as_ptr(), p2.as_ptr());
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn with_tag(&self, tag: usize) -> Shared<'g, T> {
+    pub fn with_tag(&self, tag: usize) -> PShared<'g, T> {
         unsafe { Self::from_usize(compose_tag::<T>(self.data, tag)) }
     }
 
@@ -1632,7 +1742,7 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     }
 }
 
-impl<T> From<PersistentPtr<'_, T>> for Shared<'_, T> {
+impl<T> From<PPtr<T>> for PShared<'_, T> {
     /// Returns a new pointer pointing to `ptr`.
     ///
     /// # Panics
@@ -1642,42 +1752,45 @@ impl<T> From<PersistentPtr<'_, T>> for Shared<'_, T> {
     /// # Examples
     ///
     /// ```
-    /// # use compositional_persistent_object::util::*;
-    /// # let pool = get_test_handle().unwrap();
-    /// use compositional_persistent_object::pepoch::Shared;
+    /// # // 테스트용 pool 얻기
+    /// # use compositional_persistent_object::plocation::pool::Pool;
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # let _ = temp_file.as_file().set_len(8 * 1024);
+    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// use compositional_persistent_object::pepoch::PShared;
     ///
     /// let ptr = pool.alloc::<usize>();
-    /// let p = Shared::from(ptr);
+    /// let p = PShared::from(ptr);
     /// assert!(!p.is_null());
     /// ```
-    fn from(ptr: PersistentPtr<'_, T>) -> Self {
+    fn from(ptr: PPtr<T>) -> Self {
         let offset = ptr.into_offset();
         ensure_aligned::<T>(offset);
         unsafe { Self::from_usize(offset) }
     }
 }
 
-impl<'g, T: ?Sized + Pointable> PartialEq<Shared<'g, T>> for Shared<'g, T> {
+impl<'g, T: ?Sized + Pointable> PartialEq<PShared<'g, T>> for PShared<'g, T> {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
     }
 }
 
-impl<T: ?Sized + Pointable> Eq for Shared<'_, T> {}
+impl<T: ?Sized + Pointable> Eq for PShared<'_, T> {}
 
-impl<'g, T: ?Sized + Pointable> PartialOrd<Shared<'g, T>> for Shared<'g, T> {
+impl<'g, T: ?Sized + Pointable> PartialOrd<PShared<'g, T>> for PShared<'g, T> {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         self.data.partial_cmp(&other.data)
     }
 }
 
-impl<T: ?Sized + Pointable> Ord for Shared<'_, T> {
+impl<T: ?Sized + Pointable> Ord for PShared<'_, T> {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.data.cmp(&other.data)
     }
 }
 
-impl<T: ?Sized + Pointable> fmt::Debug for Shared<'_, T> {
+impl<T: ?Sized + Pointable> fmt::Debug for PShared<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (offset, tag) = decompose_tag::<T>(self.data);
 
@@ -1688,40 +1801,40 @@ impl<T: ?Sized + Pointable> fmt::Debug for Shared<'_, T> {
     }
 }
 
-impl<T: ?Sized + Pointable> Default for Shared<'_, T> {
+impl<T: ?Sized + Pointable> Default for PShared<'_, T> {
     fn default() -> Self {
-        Shared::null()
+        PShared::null()
     }
 }
 
 #[cfg(all(test, not(crossbeam_loom)))]
 mod tests {
-    use super::{Owned, Shared};
+    use super::{POwned, PShared};
     use std::mem::MaybeUninit;
 
-    use crate::utils::test::*;
+    use crate::utils::tests::*;
 
     #[test]
     fn valid_tag_i8() {
-        let _ = Shared::<i8>::null().with_tag(0);
+        let _ = PShared::<i8>::null().with_tag(0);
     }
 
     #[test]
     fn valid_tag_i64() {
-        let _ = Shared::<i64>::null().with_tag(7);
+        let _ = PShared::<i64>::null().with_tag(7);
     }
 
     #[cfg(feature = "nightly")]
     #[test]
     fn const_atomic_null() {
-        use super::Atomic;
-        static _U: Atomic<u8> = Atomic::<u8>::null();
+        use super::PAtomic;
+        static _U: PAtomic<u8> = PAtomic::<u8>::null();
     }
 
     #[test]
     fn array_init() {
         let pool = get_test_handle().unwrap();
-        let owned = Owned::<[MaybeUninit<usize>]>::init(10, &pool);
+        let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
         let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
         assert_eq!(arr.len(), 10);
     }
