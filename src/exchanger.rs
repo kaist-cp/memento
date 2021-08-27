@@ -92,7 +92,7 @@ impl<T> ExchangeType<T> for TryExchange<T> {
 
 unsafe impl<T> Send for TryExchange<T> {}
 
-impl<T: Clone> PersistentOp for TryExchange<T> {
+impl<T: Clone> POp for TryExchange<T> {
     type Object = Exchanger<T>;
     type Input = (T, Duration);
     type Output = Result<T, TryFail>;
@@ -164,7 +164,7 @@ impl<T> ExchangeType<T> for Exchange<T> {
 
 unsafe impl<T> Send for Exchange<T> {}
 
-impl<T: Clone> PersistentOp for Exchange<T> {
+impl<T: Clone> POp for Exchange<T> {
     type Object = Exchanger<T>;
     type Input = T;
     type Output = T;
@@ -361,7 +361,7 @@ impl<T> Exchanger<T> {
 unsafe impl<T> Send for Exchanger<T> {}
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use chrono::Duration;

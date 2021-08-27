@@ -70,7 +70,8 @@ impl<T> Frozen<T> {
 }
 
 /// op을 exactly-once 실행하기 위한 trait
-pub trait PersistentOp: Default {
+// TODO: Pop operation과 헷갈릴 수 있음. 구분 필요하면 "Op"부분을 바꾸기
+pub trait POp: Default {
     /// Persistent op을 수행하는 object
     type Object;
 
@@ -87,9 +88,8 @@ pub trait PersistentOp: Default {
     /// - Pre-crash op이 충분히 진행됐을 경우 Post-crash 재실행시의 input이 op 결과에 영향을 끼치지 않을 수도 있음.
     ///   즉, post-crash의 functional correctness는 보장하지 않음. (이러한 동작이 safety를 해치지 않음.)
     // TODO
-    // - 구현한 obj를 persistent location에서 동작하도록 바꿀 때 아래처럼 시그니처 바꾸기
-    // - 이유: (1) 포인터 참조시, (2) alloc시 어느 풀에서 해야할지 알아야함
-    // fn persistent_op(&self, client: &mut C, input: Self::Input, pool: &PoolHandle) -> Self::Output;
+    // - 구현한 obj를 persistent location에서 동작하도록 바꿀 때, PoolHandle도 받게하기
+    // - 이유: (1) 포인터 참조시, (2) alloc, free시 어느 풀에서 해야할지 알아야함
     fn run(&mut self, object: &Self::Object, input: Self::Input) -> Self::Output;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)

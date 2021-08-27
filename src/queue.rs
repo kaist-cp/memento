@@ -52,7 +52,7 @@ impl<T: Clone> Default for Push<T> {
     }
 }
 
-impl<T: Clone> PersistentOp for Push<T> {
+impl<T: Clone> POp for Push<T> {
     type Object = Queue<T>;
     type Input = T;
     type Output = ();
@@ -82,7 +82,7 @@ impl<T: Clone> Default for Pop<T> {
     }
 }
 
-impl<T: Clone> PersistentOp for Pop<T> {
+impl<T: Clone> POp for Pop<T> {
     type Object = Queue<T>;
     type Input = ();
     type Output = Option<T>;
@@ -301,7 +301,7 @@ impl<T: Clone> Queue<T> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crossbeam_utils::thread;
     use serial_test::serial;
 

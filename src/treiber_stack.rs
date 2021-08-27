@@ -72,7 +72,7 @@ impl<T: Clone> PushType<T> for TryPush<T> {
 
 unsafe impl<T: Clone> Send for TryPush<T> {}
 
-impl<T: Clone> PersistentOp for TryPush<T> {
+impl<T: Clone> POp for TryPush<T> {
     type Object = TreiberStack<T>;
     type Input = T;
     type Output = Result<(), TryFail>;
@@ -138,7 +138,7 @@ impl<T: Clone> PushType<T> for Push<T> {
 
 unsafe impl<T: Clone> Send for Push<T> {}
 
-impl<T: Clone> PersistentOp for Push<T> {
+impl<T: Clone> POp for Push<T> {
     type Object = TreiberStack<T>;
     type Input = T;
     type Output = ();
@@ -194,7 +194,7 @@ impl<T: Clone> PopType<T> for TryPop<T> {
 
 unsafe impl<T: Clone> Send for TryPop<T> {}
 
-impl<T: Clone> PersistentOp for TryPop<T> {
+impl<T: Clone> POp for TryPop<T> {
     type Object = TreiberStack<T>;
     type Input = ();
     type Output = Result<Option<T>, TryFail>;
@@ -252,7 +252,7 @@ impl<T: Clone> PopType<T> for Pop<T> {
 
 unsafe impl<T: Clone> Send for Pop<T> {}
 
-impl<T: Clone> PersistentOp for Pop<T> {
+impl<T: Clone> POp for Pop<T> {
     type Object = TreiberStack<T>;
     type Input = ();
     type Output = Option<T>;
@@ -450,10 +450,11 @@ impl<T: Clone> Stack<T> for TreiberStack<T> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use serial_test::serial;
 
     use super::*;
+    use crate::stack::tests::*;
 
     const NR_THREAD: usize = 4;
     const COUNT: usize = 1_000_000;

@@ -39,7 +39,10 @@ pub mod stack;
 pub mod treiber_stack;
 
 // Persistent location
-// pub mod plocation; // TODO: newop_pipe 리뷰 후 주석 해제
+pub mod plocation;
+
+// Persistent version of crossbeam_epoch
+pub mod pepoch;
 
 // Utility
-pub mod util;
+pub mod utils;
