@@ -1,17 +1,25 @@
 //! Persistent ticket lock
 
-use std::sync::atomic::AtomicUsize;
+use std::{fmt::Debug, marker::PhantomData, sync::atomic::AtomicUsize};
 
-use crate::persistent::PersistentOp;
+use crate::persistent::POp;
 
 /// TODO: doc
-#[derive(Debug, Clone)] // 문제: Guard를 Clone으로 해야된다는 건 비직관적
-pub struct Guard<'l> {
-    lock: &'l TicketLock
+#[derive(Debug)] // 문제: Guard를 Clone으로 해야된다는 건 비직관적
+pub struct Guard<'l, T> {
+    lock: &'l TicketLock<T>
     // TODO: token
 }
 
-impl Drop for Guard<'_> {
+impl<T> Clone for Guard<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            lock: self.lock.clone()
+        }
+    }
+}
+
+impl<T> Drop for Guard<'_, T> {
     fn drop(&mut self) {
         // TODO: 구현
         // TODO: clone 된 guard에 대처
@@ -21,15 +29,25 @@ impl Drop for Guard<'_> {
 }
 
 /// TODO: doc
-#[derive(Debug, Default)]
-pub struct Lock {
+#[derive(Debug)]
+pub struct Lock<T> {
     // TODO: 구현
+    _marker: PhantomData<T>
 }
 
-impl<'l> PersistentOp<'l> for Lock {
-    type Object = &'l TicketLock;
+impl<T> Default for Lock<T> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default()
+        }
+    }
+}
+
+// TODO: the lifetime parameter `'l` is not constrained by the impl trait, self type, or predicates unconstrained lifetime parameter
+impl<'l, T> POp for Lock<T> {
+    type Object = &'l TicketLock<T>;
     type Input = ();
-    type Output = Guard<'l>;
+    type Output = Guard<'l, T>;
 
     fn run(&mut self, lock: Self::Object, _: Self::Input) -> Self::Output {
         // TODO: 구현
@@ -37,16 +55,16 @@ impl<'l> PersistentOp<'l> for Lock {
     }
 
     fn reset(&mut self, nested: bool) {
-        // TODO: 구현.
-        let _ = nested;
+        unimplemented!()
     }
 }
 
 /// TODO: doc
 #[derive(Debug, Default)]
-pub struct TicketLock {
+pub struct TicketLock<T> {
+    inner: T,
     curr: AtomicUsize,
-    next: AtomicUsize
+    next: AtomicUsize,
 }
 
 #[cfg(test)]
@@ -60,38 +78,42 @@ mod tests {
     const COUNT: usize = 1_000_000;
 
     type Queue<T> = VecDeque<T>;
+    type LockBasedQueue<T> = TicketLock<Queue<T>>;
 
-    #[derive(Default)]
-    struct Obj {
-        queue: Queue<usize>,
-        lock: TicketLock,
-    }
-
-    #[derive(Default)]
-    struct PushPop {
-        lock: Lock,
+    struct PushPop<T> {
+        lock: Lock<LockBasedQueue<T>>,
         // TODO: Queue의 push,
         // TODO: Queue의 Pop,
         resetting: bool
     }
 
-    impl<'o> PersistentOp<'o> for PushPop {
-        type Object = &'o Obj;
-        type Input = usize;
-        type Output = Option<usize>;
+    impl<T> Default for PushPop<T> {
+        fn default() -> Self {
+            Self {
+                lock: Default::default(),
+                resetting: false
+            }
+        }
+    }
+
+    // TODO: lifetime parameter `'q` only used once this lifetime...
+    impl<'q, T: Clone> POp for PushPop<T> {
+        type Object = &'q LockBasedQueue<T>;
+        type Input = T;
+        type Output = Option<T>;
 
         // TODO: 쓰임새를 보이는 용도로 VecDequeue의 push_back(), pop_back()를 사용.
         //       이들은 PersistentOp이 아니므로 이 run()은 지금은 idempotent 하지 않음.
-        fn run(&mut self, object: Self::Object, input: Self::Input) -> Self::Output {
+        fn run(&mut self, queue: Self::Object, input: Self::Input) -> Self::Output {
             if self.resetting {
                 self.reset(false);
             }
 
             // Lock the object
-            let _guard = self.lock.run(&object.lock, ());
+            let _guard = self.lock.run(queue, ());
 
             // Push & Pop
-            let q: &mut Queue<usize> = unsafe { &mut *(&object.queue as *const _ as *mut _) };
+            let q: &mut Queue<T> = unsafe { &mut *(&queue.inner as *const _ as *mut _) };
             q.push_back(input);
             q.pop_front()
         } // Unlock when `_guard` is dropped
@@ -102,7 +124,7 @@ mod tests {
             }
 
             self.lock.reset(true);
-            // TODO: reset Push and Pop
+            todo!("reset Push and Pop");
 
             if !nested {
                 self.resetting = false;
@@ -112,8 +134,8 @@ mod tests {
 
     #[test]
     fn push_pop_seq_queue() {
-        let obj = Obj::default(); // TODO(persistent location)
-        let mut push_pops: Vec<Vec<PushPop>> = (0..NR_THREAD)
+        let obj = LockBasedQueue::default(); // TODO(persistent location)
+        let mut push_pops: Vec<Vec<PushPop<usize>>> = (0..NR_THREAD)
             .map(|_| (0..COUNT).map(|_| PushPop::default()).collect())
             .collect(); // TODO(persistent location)
 
@@ -122,7 +144,7 @@ mod tests {
             for tid in 0..NR_THREAD {
                 let obj = &obj;
                 let push_pops = unsafe {
-                    (push_pops.get_unchecked_mut(tid) as *mut Vec<PushPop>)
+                    (push_pops.get_unchecked_mut(tid) as *mut Vec<PushPop<usize>>)
                         .as_mut()
                         .unwrap()
                 };
