@@ -31,12 +31,13 @@
 #![deny(unused_lifetimes)]
 
 // Persistent objects collection
-pub mod exchanger;
+// TODO: plocation으로 동작시키며 주석해제
+// pub mod exchanger;
 pub mod persistent;
-pub mod pipe;
+// pub mod pipe;
 pub mod queue;
-pub mod stack;
-pub mod treiber_stack;
+// pub mod stack;
+// pub mod treiber_stack;
 
 // Persistent location
 pub mod plocation;

@@ -70,6 +70,16 @@ impl PoolHandle {
         self.start() + self.len
     }
 
+    /// 절대주소를 상대주소로 변환.
+    // TODO: valid아니면 0으로라도 넘겨야함. volatile에 만든 Pop::default로 바로 검사하는 게 동작하기 위해서.
+    #[inline]
+    pub fn get_persistent_addr(&self, raw: usize) -> Option<usize> {
+        if self.valid(raw) {
+            return Some(raw - self.start());
+        }
+        None
+    }
+
     /// 풀의 루트 Op을 가리키는 포인터 반환
     #[inline]
     pub fn get_root<O: POp>(&self) -> Result<PPtr<O>, Error> {
@@ -112,6 +122,12 @@ impl PoolHandle {
     #[inline]
     fn pool(&self) -> &Pool {
         unsafe { &*(self.start() as *const Pool) }
+    }
+
+    #[inline]
+    /// 절대주소가 풀에 속한 주소인지 확인
+    fn valid(&self, raw: usize) -> bool {
+        raw >= self.start() && raw < self.end()
     }
 }
 
@@ -244,7 +260,7 @@ mod tests {
         type Output = Result<(), ()>;
 
         // invariant 검사(flag=1 => value=42)
-        fn run(&mut self, _: &Self::Object, _: Self::Input) -> Self::Output {
+        fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
@@ -280,6 +296,6 @@ mod tests {
         let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
-        root_op.run(&(), ()).unwrap();
+        root_op.run(&(), (), &pool_handle).unwrap();
     }
 }
