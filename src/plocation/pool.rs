@@ -71,8 +71,10 @@ impl PoolHandle {
         self.start() + self.len
     }
 
-    /// 절대주소를 상대주소로 변환.
-    // TODO: valid아니면 0으로라도 넘겨야함. volatile에 만든 Pop::default로 바로 검사하는 게 동작하기 위해서.
+    /// 절대주소를 풀의 상대주소로 변환
+    ///
+    /// - e.g. `Pop` Op의 식별함수 id()가 절대주소로 식별하던 것을 상대주소로 식별하기 위해 필요
+    /// - 풀에 속하지 않은 절대주소이면 None 반환
     #[inline]
     pub fn get_persistent_addr(&self, raw: usize) -> Option<usize> {
         if self.valid(raw) {
@@ -146,11 +148,12 @@ pub struct Pool {
     root_offset: usize,
 
     /// 메타데이터, 루트를 제외한 공간을 관리할 allocator
+    // TODO: allocator를 global obj로 특별취급 하지 않을때 이 필드 삭제
     allocator: Allocator,
 
     /// 풀의 시작주소로부터 동적할당되는 영역까지의 거리
     /// - e.g. `allocator` 입장에선 `0x00`에 할당하더라도 실제로는 `alloc_offset+0` 주소에 할당돼야함
-    // TODO: `alloc_base`가 어울리는 것 같기도함
+    // TODO: allocator를 global obj로 특별취급 하지 않을때 이 필드 삭제
     alloc_offset: usize,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
