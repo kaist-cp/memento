@@ -1,12 +1,12 @@
 //! Persistent queue
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-// use crossbeam_epoch::{self as epoch, Atomic, Guard, Owned, Shared};
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use etrace::some_or;
 use std::{mem::MaybeUninit, ptr};
 
-use crate::{persistent::*, plocation::pool::PoolHandle};
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
+use crate::persistent::*;
+use crate::plocation::pool::PoolHandle;
 
 struct Node<T: Clone> {
     data: MaybeUninit<T>,
