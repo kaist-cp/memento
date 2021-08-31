@@ -40,10 +40,10 @@ pub mod queue;
 // pub mod treiber_stack;
 
 // Persistent location
-pub mod plocation;
+// pub mod plocation;
 
 // Persistent version of crossbeam_epoch
-pub mod pepoch;
+// pub mod pepoch;
 
 // Utility
-pub mod utils;
+// pub mod utils;

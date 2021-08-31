@@ -1,59 +1,60 @@
 //! Persistent ticket lock
 
-use std::{fmt::Debug, marker::PhantomData, sync::atomic::AtomicUsize};
+use std::{fmt::Debug, sync::atomic::AtomicUsize};
 
-use crate::persistent::POp;
+use crate::persistent::*;
 
 /// TODO: doc
-#[derive(Debug)] // 문제: Guard를 Clone으로 해야된다는 건 비직관적
+#[derive(Debug)]
 pub struct Guard<'l, T> {
     lock: &'l TicketLock<T>
     // TODO: token
 }
 
-impl<T> Clone for Guard<'_, T> {
-    fn clone(&self) -> Self {
-        Self {
-            lock: self.lock.clone()
-        }
-    }
-}
-
 impl<T> Drop for Guard<'_, T> {
     fn drop(&mut self) {
         // TODO: 구현
-        // TODO: clone 된 guard에 대처
-        //       - ticket lock의 curr와 같은지 확인
-        //       - overflow wrap되어 한바퀴 돈 ticket을 unlock하는 불상사 대비
+    }
+}
+
+impl<'l, T> Guard<'l, T> {
+    /// TODO: doc
+    pub fn defer_unlock(guard: Frozen<Guard<'l, T>>) -> Self {
+        unsafe { guard.own() }
     }
 }
 
 /// TODO: doc
-#[derive(Debug)]
-pub struct Lock<T> {
+#[derive(Debug, Default)]
+pub struct Lock {
     // TODO: 구현
-    _marker: PhantomData<T>
 }
 
-impl<T> Default for Lock<T> {
-    fn default() -> Self {
-        Self {
-            _marker: Default::default()
-        }
-    }
-}
-
-// TODO: the lifetime parameter `'l` is not constrained by the impl trait, self type, or predicates unconstrained lifetime parameter
-impl<'l, T> POp for Lock<T> {
-    type Object = &'l TicketLock<T>;
+impl<'l, T> POp<&'l TicketLock<T>> for Lock {
     type Input = ();
-    type Output = Guard<'l, T>;
+    type Output = Frozen<Guard<'l, T>>;
 
-    fn run(&mut self, lock: Self::Object, _: Self::Input) -> Self::Output {
-        // TODO: 구현
-        Guard { lock }
+    /// Guard를 얼려서 반환하므로 unlock을 하기 위해선 Guard::defer_unlock()을 호출해야 함.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let x = TicketLock<usize>::default();
+    /// let lock = Lock; // Assume this is on persistent location.
+    ///
+    /// {
+    ///     let guard = lock.run(&x, ());
+    ///     let _guard = Guard::defer_unlock(guard);
+    ///
+    ///     ... // Critical section
+    /// } // Unlock when `_guard` is dropped
+    /// ```
+    // TODO: 구현
+    fn run(&mut self, lock: &'l TicketLock<T>, _: Self::Input) -> Self::Output {
+        Frozen::from(Guard { lock })
     }
 
+    #[allow(unused_variables)]
     fn reset(&mut self, nested: bool) {
         unimplemented!()
     }
@@ -72,7 +73,7 @@ mod tests {
     use crossbeam_utils::thread;
 
     use super::*;
-    use std::collections::VecDeque;
+    use std::{collections::VecDeque, marker::PhantomData};
 
     const NR_THREAD: usize = 4;
     const COUNT: usize = 1_000_000;
@@ -81,36 +82,36 @@ mod tests {
     type LockBasedQueue<T> = TicketLock<Queue<T>>;
 
     struct PushPop<T> {
-        lock: Lock<LockBasedQueue<T>>,
-        // TODO: Queue의 push,
-        // TODO: Queue의 Pop,
-        resetting: bool
+        lock: Lock,
+        resetting: bool,
+        _marker: PhantomData<T> // TODO: T를 위한 임시. 원래는 POp인 Push<T>, Pop<T>가 있어야 함.
     }
 
     impl<T> Default for PushPop<T> {
         fn default() -> Self {
             Self {
                 lock: Default::default(),
-                resetting: false
+                resetting: false,
+                _marker: PhantomData
             }
         }
     }
 
     // TODO: lifetime parameter `'q` only used once this lifetime...
-    impl<'q, T: Clone> POp for PushPop<T> {
-        type Object = &'q LockBasedQueue<T>;
+    impl<T: Clone> POp<&LockBasedQueue<T>> for PushPop<T> {
         type Input = T;
         type Output = Option<T>;
 
         // TODO: 쓰임새를 보이는 용도로 VecDequeue의 push_back(), pop_back()를 사용.
         //       이들은 PersistentOp이 아니므로 이 run()은 지금은 idempotent 하지 않음.
-        fn run(&mut self, queue: Self::Object, input: Self::Input) -> Self::Output {
+        fn run(&mut self, queue: &LockBasedQueue<T>, input: Self::Input) -> Self::Output {
             if self.resetting {
                 self.reset(false);
             }
 
             // Lock the object
-            let _guard = self.lock.run(queue, ());
+            let guard = self.lock.run(queue, ());
+            let _guard = Guard::defer_unlock(guard);
 
             // Push & Pop
             let q: &mut Queue<T> = unsafe { &mut *(&queue.inner as *const _ as *mut _) };
@@ -123,9 +124,10 @@ mod tests {
                 self.resetting = true;
             }
 
-            self.lock.reset(true);
+            // self.lock.reset(true); // TODO: cannot infer type for type parameter `T` (in POp<T>)
             todo!("reset Push and Pop");
 
+            #[allow(unreachable_code)]
             if !nested {
                 self.resetting = false;
             }
