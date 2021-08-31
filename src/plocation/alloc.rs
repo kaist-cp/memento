@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Persistent Allocator
 // TODO: global obj로 취급하지 않기
-// TODO: 현재는 adhoc하게 alloc만 가능하게 돼있음. 디테일한 구현 필요
+// TODO: 현재는 adhoc하게 구현돼있음. 디테일한 구현 필요
 #[derive(Debug, Default)]
 pub struct Allocator {
     /// 할당 가능한 다음위치

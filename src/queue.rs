@@ -115,7 +115,6 @@ pub struct Queue<T: Clone> {
 }
 
 impl<T: Clone> Queue<T> {
-    // TODO: 우리만의 new or default를 trait에 넣어야한다
     /// new
     pub fn new(pool: &PoolHandle) -> Self {
         let sentinel = Node::default();
@@ -314,7 +313,6 @@ impl<T: Clone> Queue<T> {
     }
 }
 
-// TODO
 #[cfg(test)]
 mod test {
     use crossbeam_utils::thread;
@@ -325,20 +323,18 @@ mod test {
 
     use super::*;
 
+    #[derive(Default)]
     struct RootOp {
+        // PAtomic인 이유
+        // - Queue 초기화시 PoolHandle을 넘겨줘야하는데, Default로는 그게 안됌
+        // - 따라서 일단 null로 초기화한 후 이후에 실제로 Queue 초기화
         queue: PAtomic<Queue<usize>>,
+
+        // PAtomic을 사용하는 이유
+        // - NR_TRHEAD * COUNT 수만큼 전부 정적할당하려하니 stack 터지는 등 잘 안됐음
+        // - 따라서 동적할당 사용
         pushes: [PAtomic<[MaybeUninit<Push<usize>>]>; NR_THREAD],
         pops: [PAtomic<[MaybeUninit<Pop<usize>>]>; NR_THREAD],
-    }
-
-    impl Default for RootOp {
-        fn default() -> Self {
-            Self {
-                queue: PAtomic::null(),
-                pushes: Default::default(), // NR_THREAD=32까지만 default로 초기화 가능
-                pops: Default::default(),
-            }
-        }
     }
 
     impl RootOp {

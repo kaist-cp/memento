@@ -152,7 +152,7 @@ pub struct Pool {
     allocator: Allocator,
 
     /// 풀의 시작주소로부터 동적할당되는 영역까지의 거리
-    /// - e.g. `allocator` 입장에선 `0x00`에 할당하더라도 실제로는 `alloc_offset+0` 주소에 할당돼야함
+    /// - e.g. `allocator` 입장에선 `0x00`에 할당하더라도 실제로는 `alloc_offset+0` 주소에 할당
     // TODO: allocator를 global obj로 특별취급 하지 않을때 이 필드 삭제
     alloc_offset: usize,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
@@ -221,6 +221,7 @@ impl Pool {
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
     fn alloc<T>(&self) -> PPtr<T> {
+        // TODO: allocator가 start, end 주소를 갖게하고 여기서 alloc_offset 더하는 것 또한 allocator가 하게 하기
         PPtr::from(self.alloc_offset + self.allocator.alloc(Layout::new::<T>()))
     }
 
@@ -229,6 +230,7 @@ impl Pool {
     /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
     /// - e.g. dynamically sized slices
     unsafe fn alloc_layout<T>(&self, layout: Layout) -> PPtr<T> {
+        // TODO: allocator가 start, end 주소를 갖게하고 여기서 alloc_offset 더하는 것 또한 allocator가 하게 하기
         PPtr::from(self.alloc_offset + self.allocator.alloc(layout))
     }
 
