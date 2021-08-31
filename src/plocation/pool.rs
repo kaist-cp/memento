@@ -11,6 +11,7 @@ use std::path::Path;
 use tempfile::*;
 
 use crate::persistent::*;
+use crate::plocation::alloc::Allocator;
 use crate::plocation::ptr::PPtr;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
@@ -31,7 +32,7 @@ use crate::plocation::ptr::PPtr;
 /// #     type Input = ();
 /// #     type Output = Result<(), ()>;
 /// #
-/// #     fn run(&mut self, _: &Self::Object, _: Self::Input) -> Self::Output {
+/// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
 /// #         Ok(())
 /// #     }
 /// #
@@ -46,7 +47,7 @@ use crate::plocation::ptr::PPtr;
 /// let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
 /// // 루트 Op 실행
-/// root_op.run(&(), ()).unwrap();
+/// root_op.run(&(), (), &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -136,13 +137,21 @@ impl PoolHandle {
 /// # Pool Address Layout
 ///
 /// ```test
-/// [ metadata | root op |       ...        ]
-/// ^ base     ^ base + root offset                         ^ end
+/// [ metadata |     root op           |       동적할당되는 영역        ]
+/// ^ base     ^ base + root offset    ^ base + alloc offset        ^ end
 /// ```
 #[derive(Debug)]
 pub struct Pool {
     /// 풀의 시작주소로부터 루트 Op까지의 거리
     root_offset: usize,
+
+    /// 메타데이터, 루트를 제외한 공간을 관리할 allocator
+    allocator: Allocator,
+
+    /// 풀의 시작주소로부터 동적할당되는 영역까지의 거리
+    /// - e.g. `allocator` 입장에선 `0x00`에 할당하더라도 실제로는 `alloc_offset+0` 주소에 할당돼야함
+    // TODO: `alloc_base`가 어울리는 것 같기도함
+    alloc_offset: usize,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
@@ -174,6 +183,8 @@ impl Pool {
 
         // 메타데이터 초기화
         pool.root_offset = mem::size_of::<Pool>(); // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
+        pool.allocator = Allocator::new();
+        pool.alloc_offset = mem::size_of::<Pool>() + mem::size_of::<O>(); // e.g. 메타데이터 크기가 16, 루트 크기가 8이라면 alloc되는 영역은 24부터 시작
 
         // 루트 Op 초기화
         let root_op = unsafe { &mut *((start + pool.root_offset) as *mut O) };
@@ -207,20 +218,15 @@ impl Pool {
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
     fn alloc<T>(&self) -> PPtr<T> {
-        // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
-        // let addr_allocated = self.allocator.alloc(mem::size_of::<T>());
-        let addr_allocated = 1024;
-        PPtr::from(addr_allocated)
+        PPtr::from(self.alloc_offset + self.allocator.alloc(Layout::new::<T>()))
     }
 
     /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
     ///
     /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
     /// - e.g. dynamically sized slices
-    unsafe fn alloc_layout<T>(&self, _layout: Layout) -> PPtr<T> {
-        // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
-        let addr_allocated = 1024;
-        PPtr::from(addr_allocated)
+    unsafe fn alloc_layout<T>(&self, layout: Layout) -> PPtr<T> {
+        PPtr::from(self.alloc_offset + self.allocator.alloc(layout))
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제

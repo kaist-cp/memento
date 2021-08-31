@@ -164,10 +164,29 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 ///
 /// ```
 /// # // 테스트용 pool 얻기
-/// # use compositional_persistent_object::plocation::pool::Pool;
-/// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-/// # let _ = temp_file.as_file().set_len(8 * 1024);
-/// # let pool = Pool::open(temp_file.path()).unwrap();
+/// # use compositional_persistent_object::plocation::pool::*;
+/// # use compositional_persistent_object::persistent::*;
+/// # use tempfile::NamedTempFile;
+/// # #[derive(Default)]
+/// # struct RootOp {}
+/// # impl POp for RootOp {
+/// #     type Object = ();
+/// #     type Input = ();
+/// #     type Output = Result<(), ()>;
+/// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+/// #         Ok(())
+/// #     }
+/// #     fn reset(&mut self, _: bool) {
+/// #         // no-op
+/// #     }
+/// # }
+/// # let temp_path = NamedTempFile::new().unwrap()
+/// #     .path()
+/// #     .to_str()
+/// #     .unwrap()
+/// #     .to_owned()
+/// #     .clone();
+/// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
 /// use std::mem::MaybeUninit;
 /// use compositional_persistent_object::pepoch::POwned;
 ///
@@ -344,10 +363,29 @@ impl<T> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PAtomic;
     ///
     /// let a = PAtomic::new(1234, &pool);
@@ -364,10 +402,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PAtomic;
     ///
     /// let a = PAtomic::<i32>::init(1234, &pool);
@@ -412,10 +469,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -443,10 +519,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     ///
     /// let a = PAtomic::new(1234, &pool);
@@ -466,10 +561,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -491,10 +605,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -532,10 +665,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -593,10 +745,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -677,10 +848,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -742,10 +932,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -805,10 +1014,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -867,10 +1095,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -895,10 +1142,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
@@ -922,10 +1188,29 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1030,10 +1315,29 @@ impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{PAtomic, POwned};
     ///
     /// let a = PAtomic::<i32>::from(POwned::new(1234, &pool));
@@ -1154,10 +1458,29 @@ impl<T> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::plocation::ptr::PPtr;
     /// use compositional_persistent_object::pepoch::POwned;
     ///
@@ -1194,10 +1517,29 @@ impl<T> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// let o = POwned::new(1234, &pool);
@@ -1214,10 +1556,29 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// let o = POwned::<i32>::init(1234, &pool);
@@ -1232,10 +1593,29 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, POwned};
     ///
     /// let o = POwned::new(1234, &pool);
@@ -1253,10 +1633,29 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// assert_eq!(POwned::new(1234, &pool).tag(), 0);
@@ -1273,10 +1672,29 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// let o = POwned::new(0u64, &pool);
@@ -1443,10 +1861,29 @@ impl<T> PShared<'_, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::plocation::ptr::PPtr;
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
@@ -1491,10 +1928,29 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1533,10 +1989,29 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1571,10 +2046,29 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1624,10 +2118,29 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1664,10 +2177,29 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1689,10 +2221,29 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1714,10 +2265,29 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1753,10 +2323,29 @@ impl<T> From<PPtr<T>> for PShared<'_, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use tempfile::NamedTempFile;
+    /// # #[derive(Default)]
+    /// # struct RootOp {}
+    /// # impl POp for RootOp {
+    /// #     type Object = ();
+    /// #     type Input = ();
+    /// #     type Output = Result<(), ()>;
+    /// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+    /// #         Ok(())
+    /// #     }
+    /// #     fn reset(&mut self, _: bool) {
+    /// #         // no-op
+    /// #     }
+    /// # }
+    /// # let temp_path = NamedTempFile::new().unwrap()
+    /// #     .path()
+    /// #     .to_str()
+    /// #     .unwrap()
+    /// #     .to_owned()
+    /// #     .clone();
+    /// # let pool = Pool::create::<RootOp>(&temp_path, 8 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PShared;
     ///
     /// let ptr = pool.alloc::<usize>();
