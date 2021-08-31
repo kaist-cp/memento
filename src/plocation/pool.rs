@@ -183,7 +183,7 @@ impl Pool {
 
         // 메타데이터 초기화
         pool.root_offset = mem::size_of::<Pool>(); // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
-        pool.allocator = Allocator::new();
+        pool.allocator = Allocator::default();
         pool.alloc_offset = mem::size_of::<Pool>() + mem::size_of::<O>(); // e.g. 메타데이터 크기가 16, 루트 크기가 8이라면 alloc되는 영역은 24부터 시작
 
         // 루트 Op 초기화

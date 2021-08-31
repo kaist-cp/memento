@@ -131,7 +131,7 @@ impl<T: Clone> Queue<T> {
 
     // TODO: try mode
     fn push(&self, client: &mut Push<T>, value: T, pool: &PoolHandle) {
-        let guard = epoch::pin(&pool);
+        let guard = epoch::pin(pool);
         let node = some_or!(self.is_incomplete(client, value, &guard, pool), return);
 
         while self.try_push(node, &guard, pool).is_err() {}
@@ -229,7 +229,7 @@ impl<T: Clone> Queue<T> {
     const EMPTY: usize = 1;
 
     fn pop(&self, client: &mut Pop<T>, pool: &PoolHandle) -> Option<T> {
-        let guard = epoch::pin(&pool);
+        let guard = epoch::pin(pool);
         let target = client.target.load(Ordering::SeqCst, &guard);
 
         if target.tag() == Self::EMPTY {
