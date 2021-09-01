@@ -323,56 +323,40 @@ mod test {
 
     use super::*;
 
-    #[derive(Default)]
     struct RootOp {
         // PAtomic인 이유
         // - Queue 초기화시 PoolHandle을 넘겨줘야하는데, Default로는 그게 안됌
         // - 따라서 일단 null로 초기화한 후 이후에 실제로 Queue 초기화
         queue: PAtomic<Queue<usize>>,
 
-        // PAtomic인 이유
-        // - NR_TRHEAD * COUNT 수만큼 전부 정적할당하려하니 stack 터지는 등 잘 안됐음
-        // - 따라서 임시로 동적할당 사용
-        pushes: [PAtomic<[MaybeUninit<Push<usize>>]>; NR_THREAD],
-        pops: [PAtomic<[MaybeUninit<Pop<usize>>]>; NR_THREAD],
+        pushes: [[Push<usize>; COUNT]; NR_THREAD],
+        pops: [[Pop<usize>; COUNT]; NR_THREAD],
+    }
+
+    impl Default for RootOp {
+        fn default() -> Self {
+            Self {
+                queue: Default::default(),
+                pushes: array_init::array_init(|_| {
+                    array_init::array_init(|_| Push::<usize>::default())
+                }),
+                pops: array_init::array_init(|_| {
+                    array_init::array_init(|_| Pop::<usize>::default())
+                }),
+            }
+        }
     }
 
     impl RootOp {
         fn init(&self, pool: &PoolHandle) {
             let guard = unsafe { epoch::unprotected(&pool) };
+            let q = self.queue.load(Ordering::SeqCst, guard);
 
             // Initialize queue
-            let q = self.queue.load(Ordering::SeqCst, guard);
             if q.is_null() {
                 let q = POwned::new(Queue::<usize>::new(pool), pool);
                 // TODO: 여기서 crash나면 leak남
                 self.queue.store(q, Ordering::SeqCst);
-            }
-
-            // Initialize Push/Pop
-            for i in 0..NR_THREAD {
-                let (push, pop) = (
-                    self.pushes[i].load(Ordering::SeqCst, guard),
-                    self.pops[i].load(Ordering::SeqCst, guard),
-                );
-                if push.is_null() {
-                    let mut owned = POwned::<[MaybeUninit<Push<usize>>]>::init(COUNT, &pool);
-                    // TODO: 여기서 crash나면 leak남
-                    let refs = unsafe { owned.deref_mut(pool) };
-                    for i in 0..COUNT {
-                        refs[i] = MaybeUninit::new(Push::default());
-                    }
-                    self.pushes[i].store(owned, Ordering::SeqCst);
-                }
-                if pop.is_null() {
-                    let mut owned = POwned::<[MaybeUninit<Pop<usize>>]>::init(COUNT, &pool);
-                    // TODO: 여기서 crash나면 leak남
-                    let refs = unsafe { owned.deref_mut(pool) };
-                    for i in 0..COUNT {
-                        refs[i] = MaybeUninit::new(Pop::default());
-                    }
-                    self.pops[i].store(owned, Ordering::SeqCst);
-                }
             }
         }
     }
@@ -385,31 +369,33 @@ mod test {
         /// idempotent push_pop
         fn run(&mut self, _: &Self::Object, _: Self::Input, pool: &PoolHandle) -> Self::Output {
             self.init(pool);
+
+            // Alias
             let guard = unsafe { epoch::unprotected(&pool) };
-            let q = unsafe { self.queue.load(Ordering::SeqCst, guard).deref(pool) };
+            let (q, pushes, pops) = (
+                unsafe { self.queue.load(Ordering::SeqCst, guard).deref(pool) },
+                &mut self.pushes,
+                &mut self.pops,
+            );
 
             #[allow(box_pointers)]
             thread::scope(|scope| {
                 for tid in 0..NR_THREAD {
-                    let (pushes, pops) = unsafe {
-                        (
-                            self.pushes[tid]
-                                .load(Ordering::SeqCst, guard)
-                                .deref_mut(pool),
-                            self.pops[tid].load(Ordering::SeqCst, guard).deref_mut(pool),
-                        )
+                    let push_arr = unsafe {
+                        (pushes.get_unchecked_mut(tid) as *mut [Push<usize>])
+                            .as_mut()
+                            .unwrap()
                     };
+                    let pop_arr = unsafe {
+                        (pops.get_unchecked_mut(tid) as *mut [Pop<usize>])
+                            .as_mut()
+                            .unwrap()
+                    };
+
                     let _ = scope.spawn(move |_| {
                         for i in 0..COUNT {
-                            let (push, pop) = unsafe {
-                                (
-                                    pushes.get_unchecked_mut(i).as_mut_ptr().as_mut().unwrap(),
-                                    pops.get_unchecked_mut(i).as_mut_ptr().as_mut().unwrap(),
-                                )
-                            };
-
-                            push.run(q, tid, pool);
-                            assert!(pop.run(q, (), pool).is_some());
+                            push_arr[i].run(q, tid, pool);
+                            assert!(pop_arr[i].run(q, (), pool).is_some());
                         }
                     });
                 }
@@ -417,15 +403,12 @@ mod test {
             .unwrap();
 
             // Check empty
-            let mut pop = POwned::new(Pop::default(), pool);
-            assert!(q.pop(unsafe { pop.deref_mut(pool) }, pool).is_none());
+            assert!(q.pop(&mut Pop::default(), pool).is_none());
 
             // Check results
             let mut results = vec![0_usize; NR_THREAD];
-            for pops in self.pops.iter_mut() {
-                let pops = unsafe { pops.load(Ordering::SeqCst, guard).deref_mut(pool) };
-                for pop in pops {
-                    let pop = unsafe { pop.as_mut_ptr().as_mut().unwrap() };
+            for pop_arr in pops.iter_mut() {
+                for pop in pop_arr.iter_mut() {
                     let ret = pop.run(&q, (), pool).unwrap();
                     results[ret] += 1;
                 }
