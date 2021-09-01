@@ -35,9 +35,10 @@ check:
 debug:
   stage: test
   script:
-    - cargo test
+    # 테스트시 Op들을 정적할당하기 위해 Stack 크기가 커야함
+    - RUST_MIN_STACK=1073741824 cargo test
 
 release:
   stage: test
   script:
-    - cargo test --release
+    - RUST_MIN_STACK=1073741824 cargo test --release
