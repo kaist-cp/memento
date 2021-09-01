@@ -330,9 +330,9 @@ mod test {
         // - 따라서 일단 null로 초기화한 후 이후에 실제로 Queue 초기화
         queue: PAtomic<Queue<usize>>,
 
-        // PAtomic을 사용하는 이유
+        // PAtomic인 이유
         // - NR_TRHEAD * COUNT 수만큼 전부 정적할당하려하니 stack 터지는 등 잘 안됐음
-        // - 따라서 동적할당 사용
+        // - 따라서 임시로 동적할당 사용
         pushes: [PAtomic<[MaybeUninit<Push<usize>>]>; NR_THREAD],
         pops: [PAtomic<[MaybeUninit<Pop<usize>>]>; NR_THREAD],
     }

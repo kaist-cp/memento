@@ -19,26 +19,10 @@ use crate::plocation::ptr::PPtr;
 /// # Example
 ///
 /// ```no_run
-/// # // "이렇게 사용한다"만 보이기 위해 불필요한 정보는 숨기고 "no_run"으로 함
-/// #
+/// # // "이렇게 사용한다"만 보이기 위해 파일을 실제로 만들진 않고 "no_run"으로 함
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
-/// #
-/// # #[derive(Default)]
-/// # struct MyRootOp {}
-/// #
-/// # impl POp for MyRootOp {
-/// #     type Object = ();
-/// #     type Input = ();
-/// #     type Output = Result<(), ()>;
-/// #
-/// #     fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
-/// #         Ok(())
-/// #     }
-/// #
-/// #     fn reset(&mut self, _: bool) {}
-/// # }
-///
+/// # use compositional_persistent_object::utils::tests::TestRootOp as MyRootOp;
 /// // 풀 생성 후 풀의 핸들러 얻기
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
 ///
