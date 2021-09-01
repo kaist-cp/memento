@@ -434,6 +434,7 @@ mod test {
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn push_pop() {
         let filepath = get_test_path(FILE_NAME);
+        let _ = std::fs::remove_file(&filepath).unwrap();
 
         // 풀 열기 (없으면 새로 만듦)
         let pool_handle = Pool::open(&filepath)
