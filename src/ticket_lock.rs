@@ -24,7 +24,23 @@ impl<'l, T> Guard<'l, T> {
     }
 }
 
-/// TODO: doc
+/// TicketLock의 lock()을 수행하는 Persistent Op.
+/// Guard를 얼려서 반환하므로 unlock을 하기 위해선 Guard::defer_unlock()을 호출해야 함.
+///
+/// # Examples
+///
+/// ```rust
+/// // Assume these are on persistent location:
+/// let x = TicketLock<usize>::default();
+/// let lock = Lock;
+///
+/// {
+///     let guard = lock.run(&x, ());
+///     let _guard = Guard::defer_unlock(guard);
+///
+///     ... // Critical section
+/// } // Unlock when `_guard` is dropped
+/// ```
 #[derive(Debug, Default)]
 pub struct Lock {
     // TODO: 구현
@@ -34,21 +50,6 @@ impl<'l, T> POp<&'l TicketLock<T>> for Lock {
     type Input = ();
     type Output = Frozen<Guard<'l, T>>;
 
-    /// Guard를 얼려서 반환하므로 unlock을 하기 위해선 Guard::defer_unlock()을 호출해야 함.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let x = TicketLock<usize>::default();
-    /// let lock = Lock; // Assume this is on persistent location.
-    ///
-    /// {
-    ///     let guard = lock.run(&x, ());
-    ///     let _guard = Guard::defer_unlock(guard);
-    ///
-    ///     ... // Critical section
-    /// } // Unlock when `_guard` is dropped
-    /// ```
     // TODO: 구현
     fn run(&mut self, lock: &'l TicketLock<T>, _: Self::Input) -> Self::Output {
         Frozen::from(Guard { lock })
@@ -97,7 +98,6 @@ mod tests {
         }
     }
 
-    // TODO: lifetime parameter `'q` only used once this lifetime...
     impl<T: Clone> POp<&LockBasedQueue<T>> for PushPop<T> {
         type Input = T;
         type Output = Option<T>;
