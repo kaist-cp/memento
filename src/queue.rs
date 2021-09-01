@@ -430,6 +430,7 @@ mod test {
     const COUNT: usize = 1_000_000;
 
     // TODO: stack의 push_pop과 합치기
+    // 테스트시 Push/Pop 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn push_pop() {
