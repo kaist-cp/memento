@@ -124,7 +124,7 @@ mod tests {
                 self.resetting = true;
             }
 
-            // self.lock.reset(true); // TODO: cannot infer type for type parameter `T` (in POp<T>)
+            POp::<&LockBasedQueue<T>>::reset(&mut self.lock, true);
             todo!("reset Push and Pop");
 
             #[allow(unreachable_code)]
