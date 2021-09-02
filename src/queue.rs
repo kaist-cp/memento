@@ -327,6 +327,8 @@ mod test {
         // PAtomic인 이유
         // - Queue 초기화시 PoolHandle을 넘겨줘야하는데, Default로는 그게 안됌
         // - 따라서 일단 null로 초기화한 후 이후에 실제로 Queue 초기화
+        //
+        // TODO: 위처럼 adhoc한 방법 말고 더 나은 solution으로 바꾸기 (https://cp-git.kaist.ac.kr/persistent-mem/compositional-persistent-object/-/issues/74)
         queue: PAtomic<Queue<usize>>,
 
         pushes: [[Push<usize>; COUNT]; NR_THREAD],
@@ -336,7 +338,7 @@ mod test {
     impl Default for RootOp {
         fn default() -> Self {
             Self {
-                queue: Default::default(),
+                queue: PAtomic::null(),
                 pushes: array_init::array_init(|_| {
                     array_init::array_init(|_| Push::<usize>::default())
                 }),
