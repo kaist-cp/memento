@@ -11,6 +11,7 @@ use std::path::Path;
 use tempfile::*;
 
 use crate::persistent::*;
+use crate::plocation::alloc::Allocator;
 use crate::plocation::ptr::PPtr;
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
@@ -18,26 +19,10 @@ use crate::plocation::ptr::PPtr;
 /// # Example
 ///
 /// ```no_run
-/// # // "이렇게 사용한다"만 보이기 위해 불필요한 정보는 숨기고 "no_run"으로 함
-/// #
+/// # // "이렇게 사용한다"만 보이기 위해 파일을 실제로 만들진 않고 "no_run"으로 함
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
-/// #
-/// # #[derive(Default)]
-/// # struct MyRootOp {}
-/// #
-/// # impl POp for MyRootOp {
-/// #     type Object = ();
-/// #     type Input = ();
-/// #     type Output = Result<(), ()>;
-/// #
-/// #     fn run(&mut self, _: &Self::Object, _: Self::Input) -> Self::Output {
-/// #         Ok(())
-/// #     }
-/// #
-/// #     fn reset(&mut self, _: bool) {}
-/// # }
-///
+/// # use compositional_persistent_object::utils::tests::TestRootOp as MyRootOp;
 /// // 풀 생성 후 풀의 핸들러 얻기
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
 ///
@@ -46,7 +31,7 @@ use crate::plocation::ptr::PPtr;
 /// let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
 /// // 루트 Op 실행
-/// root_op.run(&(), ()).unwrap();
+/// root_op.run(&(), (), &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -68,6 +53,18 @@ impl PoolHandle {
     #[inline]
     pub fn end(&self) -> usize {
         self.start() + self.len
+    }
+
+    /// 절대주소를 풀의 상대주소로 변환
+    ///
+    /// - e.g. `Pop` Op의 식별함수 id()가 절대주소로 식별하던 것을 상대주소로 식별하기 위해 필요
+    /// - 풀에 속하지 않은 절대주소이면 None 반환
+    #[inline]
+    pub fn get_persistent_addr(&self, raw: usize) -> Option<usize> {
+        if self.valid(raw) {
+            return Some(raw - self.start());
+        }
+        None
     }
 
     /// 풀의 루트 Op을 가리키는 포인터 반환
@@ -113,6 +110,12 @@ impl PoolHandle {
     fn pool(&self) -> &Pool {
         unsafe { &*(self.start() as *const Pool) }
     }
+
+    #[inline]
+    /// 절대주소가 풀에 속한 주소인지 확인
+    fn valid(&self, raw: usize) -> bool {
+        raw >= self.start() && raw < self.end()
+    }
 }
 
 /// 풀 열기/닫기 및 메타데이터를 관리하는 역할
@@ -120,13 +123,22 @@ impl PoolHandle {
 /// # Pool Address Layout
 ///
 /// ```test
-/// [ metadata | root op |       ...        ]
-/// ^ base     ^ base + root offset                         ^ end
+/// [ metadata |     root op           |       동적할당되는 영역        ]
+/// ^ base     ^ base + root offset    ^ base + alloc offset        ^ end
 /// ```
 #[derive(Debug)]
 pub struct Pool {
     /// 풀의 시작주소로부터 루트 Op까지의 거리
     root_offset: usize,
+
+    /// 메타데이터, 루트를 제외한 공간을 관리할 allocator
+    // TODO: allocator를 global obj로 특별취급 하지 않을때 이 필드 삭제
+    allocator: Allocator,
+
+    /// 풀의 시작주소로부터 동적할당되는 영역까지의 거리
+    /// - e.g. `allocator` 입장에선 `0x00`에 할당하더라도 실제로는 `alloc_offset+0` 주소에 할당
+    // TODO: allocator를 global obj로 특별취급 하지 않을때 이 필드 삭제
+    alloc_offset: usize,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
@@ -158,6 +170,8 @@ impl Pool {
 
         // 메타데이터 초기화
         pool.root_offset = mem::size_of::<Pool>(); // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
+        pool.allocator = Allocator::default();
+        pool.alloc_offset = mem::size_of::<Pool>() + mem::size_of::<O>(); // e.g. 메타데이터 크기가 16, 루트 크기가 8이라면 alloc되는 영역은 24부터 시작
 
         // 루트 Op 초기화
         let root_op = unsafe { &mut *((start + pool.root_offset) as *mut O) };
@@ -191,20 +205,17 @@ impl Pool {
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
     fn alloc<T>(&self) -> PPtr<T> {
-        // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
-        // let addr_allocated = self.allocator.alloc(mem::size_of::<T>());
-        let addr_allocated = 1024;
-        PPtr::from(addr_allocated)
+        // TODO: allocator가 start, end 주소를 갖게하고 여기서 alloc_offset 더하는 것 또한 allocator가 하게 하기
+        PPtr::from(self.alloc_offset + self.allocator.alloc(Layout::new::<T>()))
     }
 
     /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
     ///
     /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
     /// - e.g. dynamically sized slices
-    unsafe fn alloc_layout<T>(&self, _layout: Layout) -> PPtr<T> {
-        // TODO: 실제 allocator 사용 (현재는 base + 1024 위치에 할당된 것처럼 동작)
-        let addr_allocated = 1024;
-        PPtr::from(addr_allocated)
+    unsafe fn alloc_layout<T>(&self, layout: Layout) -> PPtr<T> {
+        // TODO: allocator가 start, end 주소를 갖게하고 여기서 alloc_offset 더하는 것 또한 allocator가 하게 하기
+        PPtr::from(self.alloc_offset + self.allocator.alloc(layout))
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
@@ -244,7 +255,7 @@ mod tests {
         type Output = Result<(), ()>;
 
         // invariant 검사(flag=1 => value=42)
-        fn run(&mut self, _: &Self::Object, _: Self::Input) -> Self::Output {
+        fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
@@ -280,6 +291,6 @@ mod tests {
         let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
-        root_op.run(&(), ()).unwrap();
+        root_op.run(&(), (), &pool_handle).unwrap();
     }
 }

@@ -164,13 +164,14 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 ///
 /// ```
 /// # // 테스트용 pool 얻기
-/// # use compositional_persistent_object::plocation::pool::Pool;
-/// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-/// # let _ = temp_file.as_file().set_len(8 * 1024);
-/// # let pool = Pool::open(temp_file.path()).unwrap();
+/// # use compositional_persistent_object::plocation::pool::*;
+/// # use compositional_persistent_object::persistent::*;
+/// # use compositional_persistent_object::utils::tests::get_test_handle;
+/// # let pool = get_test_handle(8 * 1024).unwrap();
 /// use std::mem::MaybeUninit;
 /// use compositional_persistent_object::pepoch::POwned;
 ///
+/// // Assume there are PoolHandle, `pool`
 /// let o = POwned::<[MaybeUninit<i32>]>::init(10, &pool); // allocating [i32; 10]
 /// ```
 pub trait Pointable {
@@ -344,12 +345,13 @@ impl<T> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PAtomic;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> PAtomic<T> {
@@ -364,12 +366,13 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PAtomic;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::init(1234, &pool);
     /// ```
     pub fn init(init: T::Init, pool: &PoolHandle) -> PAtomic<T> {
@@ -412,13 +415,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
@@ -443,12 +447,13 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     /// let p = a.load_consume(guard);
@@ -466,13 +471,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// a.store(PShared::null(), SeqCst);
     /// a.store(POwned::new(1234, &pool), SeqCst);
@@ -491,13 +497,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     /// let p = a.swap(PShared::null(), SeqCst, guard);
@@ -532,13 +539,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     ///
     /// let guard = &epoch::pin(&pool);
@@ -593,13 +601,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     ///
@@ -677,13 +686,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     ///
@@ -742,13 +752,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     ///
     /// let guard = &epoch::pin(&pool);
@@ -805,13 +816,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     ///
@@ -867,13 +879,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(3));
     /// let guard = &epoch::pin(&pool);
     /// assert_eq!(a.fetch_and(2, SeqCst, guard).tag(), 3);
@@ -895,12 +908,13 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
     /// let guard = &epoch::pin(&pool);
     /// assert_eq!(a.fetch_or(2, SeqCst, guard).tag(), 1);
@@ -922,13 +936,14 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
     /// let guard = &epoch::pin(&pool);
     /// assert_eq!(a.fetch_xor(3, SeqCst, guard).tag(), 1);
@@ -1030,12 +1045,13 @@ impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{PAtomic, POwned};
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(POwned::new(1234, &pool));
     /// ```
     fn from(owned: POwned<T>) -> Self {
@@ -1154,13 +1170,14 @@ impl<T> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::plocation::ptr::PPtr;
     /// use compositional_persistent_object::pepoch::POwned;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let mut ptr = pool.alloc::<usize>();
     /// let o = unsafe { POwned::from_ptr(ptr) };
     /// ```
@@ -1194,12 +1211,13 @@ impl<T> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> POwned<T> {
@@ -1214,12 +1232,13 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::<i32>::init(1234, &pool);
     /// ```
     pub fn init(init: T::Init, pool: &PoolHandle) -> POwned<T> {
@@ -1232,12 +1251,13 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, POwned};
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     /// let p = o.into_shared(guard);
@@ -1253,12 +1273,13 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// assert_eq!(POwned::new(1234, &pool).tag(), 0);
     /// ```
     pub fn tag(&self) -> usize {
@@ -1273,12 +1294,13 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(0u64, &pool);
     /// assert_eq!(o.tag(), 0);
     /// let o = o.with_tag(2);
@@ -1443,14 +1465,15 @@ impl<T> PShared<'_, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::plocation::ptr::PPtr;
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(1234, &pool);
     /// let ptr = PPtr::from(unsafe { o.deref(&pool) as *const _ as usize } - pool.start());
     /// let a = PAtomic::from(o);
@@ -1491,13 +1514,14 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::null();
     /// let guard = &epoch::pin(&pool);
     /// assert!(a.load(SeqCst, guard).is_null());
@@ -1533,13 +1557,14 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
@@ -1571,13 +1596,14 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(vec![1, 2, 3, 4], &pool);
     /// let guard = &epoch::pin(&pool);
     ///
@@ -1624,13 +1650,14 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
@@ -1664,13 +1691,14 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// unsafe {
     ///     let guard = &epoch::unprotected(&pool);
@@ -1689,13 +1717,14 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<u64>::from(POwned::new(0u64, &pool).with_tag(2));
     /// let guard = &epoch::pin(&pool);
     /// let p = a.load(SeqCst, guard);
@@ -1714,13 +1743,14 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(0u64, &pool);
     /// let guard = &epoch::pin(&pool);
     /// let p1 = a.load(SeqCst, guard);
@@ -1753,12 +1783,13 @@ impl<T> From<PPtr<T>> for PShared<'_, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::Pool;
-    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
-    /// # let _ = temp_file.as_file().set_len(8 * 1024);
-    /// # let pool = Pool::open(temp_file.path()).unwrap();
+    /// # use compositional_persistent_object::plocation::pool::*;
+    /// # use compositional_persistent_object::persistent::*;
+    /// # use compositional_persistent_object::utils::tests::get_test_handle;
+    /// # let pool = get_test_handle(8 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PShared;
     ///
+    /// // Assume there is PoolHandle, `pool`
     /// let ptr = pool.alloc::<usize>();
     /// let p = PShared::from(ptr);
     /// assert!(!p.is_null());
@@ -1833,7 +1864,7 @@ mod tests {
 
     #[test]
     fn array_init() {
-        let pool = get_test_handle().unwrap();
+        let pool = get_test_handle(8 * 1024).unwrap();
         let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
         let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
         assert_eq!(arr.len(), 10);

@@ -2,6 +2,8 @@
 
 use std::{mem::ManuallyDrop, ptr};
 
+use crate::plocation::pool::PoolHandle;
+
 /// Ownership을 얼리기 위한 wrapper.
 ///
 /// - `from()`을 통해 target object의 ownership을 얼림
@@ -87,10 +89,11 @@ pub trait POp: Default {
     /// - Input을 매번 인자로 받아 불필요한 백업을 하지 않음
     /// - Pre-crash op이 충분히 진행됐을 경우 Post-crash 재실행시의 input이 op 결과에 영향을 끼치지 않을 수도 있음.
     ///   즉, post-crash의 functional correctness는 보장하지 않음. (이러한 동작이 safety를 해치지 않음.)
-    // TODO
-    // - 구현한 obj를 persistent location에서 동작하도록 바꿀 때, PoolHandle도 받게하기
-    // - 이유: (1) 포인터 참조시, (2) alloc, free시 어느 풀에서 해야할지 알아야함
-    fn run(&mut self, object: &Self::Object, input: Self::Input) -> Self::Output;
+    ///
+    /// # Argument
+    /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
+    fn run(&mut self, object: &Self::Object, input: Self::Input, pool: &PoolHandle)
+        -> Self::Output;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
     ///
