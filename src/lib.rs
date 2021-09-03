@@ -33,6 +33,7 @@
 // Persistent objects collection
 // TODO: plocation으로 동작시키며 주석해제
 // pub mod exchanger;
+pub mod list;
 pub mod persistent;
 // pub mod pipe;
 pub mod queue;
