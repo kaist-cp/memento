@@ -1,16 +1,22 @@
 //! Persistent ticket lock
 
-use std::{cell::UnsafeCell, fmt::Debug, ops::{Deref, DerefMut}, sync::atomic::{AtomicUsize, Ordering}};
+use std::{
+    cell::UnsafeCell,
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crossbeam_epoch::{self as epoch, Atomic};
+use etrace::some_or;
 
 use crate::{list::List, persistent::*};
 
 /// TODO: doc
 #[derive(Debug)]
 pub struct Guard<'l, T> {
-    lock: &'l TicketLock<T>
-    // TODO: token
+    lock: &'l TicketLock<T>,
+    op: &'l Lock,
 }
 
 impl<T> Drop for Guard<'_, T> {
@@ -50,7 +56,7 @@ const NO_TICKET: usize = 1;
 #[derive(Debug)]
 struct Membership {
     id: usize,
-    ticket: usize, // TODO: atomic?
+    ticket: usize,   // TODO: atomic?
     ticketing: bool, // TODO: atomic?
 }
 
@@ -59,7 +65,7 @@ impl Membership {
         Self {
             id,
             ticket: NO_TICKET,
-            ticketing: false
+            ticketing: false,
         }
     }
 
@@ -94,16 +100,15 @@ impl Membership {
 pub struct Lock {
     // TODO: 구현
     membership: Atomic<Membership>,
-    registered: bool
+    registered: bool,
 }
 
 impl<'l, T> POp<&'l TicketLock<T>> for Lock {
     type Input = ();
     type Output = Frozen<Guard<'l, T>>;
 
-    // TODO: 구현
     fn run(&mut self, lock: &'l TicketLock<T>, _: Self::Input) -> Self::Output {
-        Frozen::from(Guard { lock })
+        Frozen::from(lock.lock(self))
     }
 
     #[allow(unused_variables)]
@@ -118,7 +123,7 @@ pub struct TicketLock<T> {
     inner: UnsafeCell<T>,
     curr: AtomicUsize,
     next: AtomicUsize,
-    members: List<usize, Atomic<Membership>> // TODO: 비효율?
+    members: List<usize, Atomic<Membership>>, // TODO: 비효율?
 }
 
 impl<T> From<T> for TicketLock<T> {
@@ -127,13 +132,13 @@ impl<T> From<T> for TicketLock<T> {
             inner: UnsafeCell::from(value),
             curr: AtomicUsize::new(TICKET_LOCK_INIT),
             next: AtomicUsize::new(TICKET_LOCK_INIT),
-            members: Default::default()
+            members: Default::default(),
         }
     }
 }
 
 impl<T> TicketLock<T> {
-    fn lock(&self, client: Lock) -> Guard<'_, T> {
+    fn lock(&self, client: &mut Lock) -> Guard<'_, T> {
         let guard = epoch::pin();
         let id = client.id(); // TODO: id 쓸 일 있나?
         let m = client.membership.load(Ordering::SeqCst, &guard);
@@ -165,14 +170,17 @@ impl<T> TicketLock<T> {
             membership.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
             membership.ticketing = false;
             membership.ticket
-        }
+        };
+
+        // TODO: 이미 써버린 티켓일 때
 
         while ticket != self.curr.load(Ordering::SeqCst) {
             // Back-off
         }
 
         Guard {
-            lock: &self
+            lock: &self,
+            op: &client,
         }
     }
 
@@ -181,12 +189,45 @@ impl<T> TicketLock<T> {
     }
 
     fn recover(&self) {
+        // 현재 next를 캡처
+        let bound = self.next.load(Ordering::SeqCst);
+
+        // 멤버들 중에서 next보다 작은 애들 전부 취합 (문제1: overflow, 문제2: 멤버가 끝도 없이 늘어날 수도 있음)
+        // TODO
+
+        loop {
+            // 잃어버린 티켓 찾음 -> 없으면 복구 끝
+            let lost = some_or!(self.find_lost(bound), return);
+
+            // curr가 티켓에 도달할 때까지 기다림
+            while lost != self.curr.load(Ordering::SeqCst) {
+                // Back-off
+            }
+
+            // CAS로 잃어버린 티켓을 건너뛰게 해줌
+            // 성공하면 잃어버린 티켓이 자기꺼였다고 간주하고 리턴
+            // (뒤에 잃어버린 티켓이 더 있을 수 있지만 그건 다른 복구 스레드의 소관임)
+            if self
+                .curr
+                .compare_exchange(
+                    lost,
+                    lost.wrapping_add(TICKET_JUMP),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                return;
+            }
+        }
+    }
+
+    fn find_lost(&self, bound: usize) -> Option<usize> {
         unimplemented!()
-        // 1. 현재 next를 캡처
-        // 2. 멤버들 중에서 next보다 작은 애들 전부 취합 (문제1: overflow, 문제2: 멤버가 끝도 없이 늘어날 수도 있음)
-        // 3. 구멍 찾음
-        // 4. curr가 구멍에 도달할 때까지 기다렸다가 구멍에 도달하면 CAS로 구멍을 스킵시켜줌
-        // 5. CAS 성공하거나 curr가 1.에서 캡처한 next보다 커지면 리턴
+    }
+
+    fn unlock(&self, client: &mut Lock) {
+        unimplemented!()
     }
 }
 
@@ -206,7 +247,7 @@ mod tests {
     struct PushPop<T> {
         lock: Lock,
         resetting: bool,
-        _marker: PhantomData<T> // TODO: T를 위한 임시. 원래는 POp인 Push<T>, Pop<T>가 있어야 함.
+        _marker: PhantomData<T>, // TODO: T를 위한 임시. 원래는 POp인 Push<T>, Pop<T>가 있어야 함.
     }
 
     impl<T> Default for PushPop<T> {
@@ -214,7 +255,7 @@ mod tests {
             Self {
                 lock: Default::default(),
                 resetting: false,
-                _marker: PhantomData
+                _marker: PhantomData,
             }
         }
     }

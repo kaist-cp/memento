@@ -8,20 +8,20 @@ use crate::persistent::POp;
 struct Node<K, V> {
     key: K,
     value: V,
-    next: Atomic<Node<K, V>>
+    next: Atomic<Node<K, V>>,
 }
 
 /// TODO: doc
 #[derive(Debug)]
 pub struct Insert<K, V> {
     // TODO: 구현
-    node: Atomic<Node<K, V>>
+    node: Atomic<Node<K, V>>,
 }
 
 impl<K, V> Default for Insert<K, V> {
     fn default() -> Self {
         Self {
-            node: Atomic::null()
+            node: Atomic::null(),
         }
     }
 }
@@ -73,13 +73,13 @@ pub struct Cursor<'n, K, V> {
 /// TODO: doc
 #[derive(Debug)]
 pub struct List<K, V> {
-    head: Atomic<Node<K, V>>
+    head: Atomic<Node<K, V>>,
 }
 
 impl<K, V> Default for List<K, V> {
     fn default() -> Self {
         Self {
-            head: Atomic::null()
+            head: Atomic::null(),
         }
     }
 }

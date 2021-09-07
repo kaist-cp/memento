@@ -32,9 +32,8 @@ where
             from: Default::default(),
             to: Default::default(),
             resetting: false,
-            _marker: Default::default()
+            _marker: Default::default(),
         }
-
     }
 }
 
