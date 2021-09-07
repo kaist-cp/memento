@@ -37,6 +37,7 @@ pub mod list;
 pub mod persistent;
 // pub mod pipe;
 pub mod queue;
+pub mod lock;
 // pub mod stack;
 // pub mod treiber_stack;
 

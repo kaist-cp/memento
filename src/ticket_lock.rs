@@ -3,7 +3,6 @@
 use std::{
     cell::UnsafeCell,
     fmt::Debug,
-    ops::{Deref, DerefMut},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -11,40 +10,6 @@ use crossbeam_epoch::{self as epoch, Atomic};
 use etrace::some_or;
 
 use crate::{list::List, persistent::*};
-
-/// TODO: doc
-#[derive(Debug)]
-pub struct Guard<'l, T> {
-    lock: &'l TicketLock<T>,
-    op: &'l Lock,
-}
-
-impl<T> Drop for Guard<'_, T> {
-    fn drop(&mut self) {
-        // TODO: 구현
-    }
-}
-
-impl<T> Deref for Guard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.lock.inner.get() }
-    }
-}
-
-impl<T> DerefMut for Guard<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.lock.inner.get() }
-    }
-}
-
-impl<'l, T> Guard<'l, T> {
-    /// TODO: doc
-    pub fn defer_unlock(guard: Frozen<Guard<'l, T>>) -> Self {
-        unsafe { guard.own() }
-    }
-}
 
 /// TicketLock의 ticket은 짝수만 갖게 됨
 /// 이는 초기에 ticket을 발급받지 않은 것과 이전에 받은 ticket을 구별하기 위함
@@ -138,9 +103,9 @@ impl<T> From<T> for TicketLock<T> {
 }
 
 impl<T> TicketLock<T> {
-    fn lock(&self, client: &mut Lock) -> Guard<'_, T> {
+    fn lock<'l>(&'l self, client: &'l mut Lock) -> Guard<'l, T> {
         let guard = epoch::pin();
-        let id = client.id(); // TODO: id 쓸 일 있나?
+        // let id = client.id(); // TODO: id 쓸 일 있나?
         let m = client.membership.load(Ordering::SeqCst, &guard);
 
         if m.is_null() {
@@ -149,7 +114,7 @@ impl<T> TicketLock<T> {
 
         if !client.registered {
             // TODO: membership 등록하기
-            self.register(client.id());
+            // self.register(client.id());
         }
 
         let membership = unsafe { m.deref_mut() };
@@ -180,7 +145,7 @@ impl<T> TicketLock<T> {
 
         Guard {
             lock: &self,
-            op: &client,
+            op: client,
         }
     }
 
@@ -233,94 +198,17 @@ impl<T> TicketLock<T> {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_utils::thread;
+    use serial_test::serial;
 
     use super::*;
-    use std::{collections::VecDeque, marker::PhantomData};
+    use crate::lock::tests::*;
 
     const NR_THREAD: usize = 4;
     const COUNT: usize = 1_000_000;
 
-    type Queue<T> = VecDeque<T>;
-    type LockBasedQueue<T> = TicketLock<Queue<T>>;
-
-    struct PushPop<T> {
-        lock: Lock,
-        resetting: bool,
-        _marker: PhantomData<T>, // TODO: T를 위한 임시. 원래는 POp인 Push<T>, Pop<T>가 있어야 함.
-    }
-
-    impl<T> Default for PushPop<T> {
-        fn default() -> Self {
-            Self {
-                lock: Default::default(),
-                resetting: false,
-                _marker: PhantomData,
-            }
-        }
-    }
-
-    impl<T: Clone> POp<&LockBasedQueue<T>> for PushPop<T> {
-        type Input = T;
-        type Output = Option<T>;
-
-        // TODO: 쓰임새를 보이는 용도로 VecDequeue의 push_back(), pop_back()를 사용.
-        //       이들은 PersistentOp이 아니므로 이 run()은 지금은 idempotent 하지 않음.
-        fn run(&mut self, queue: &LockBasedQueue<T>, input: Self::Input) -> Self::Output {
-            if self.resetting {
-                self.reset(false);
-            }
-
-            // Lock the object
-            let guard = self.lock.run(queue, ());
-            let q = Guard::defer_unlock(guard);
-
-            // Push & Pop
-            q.push_back(input);
-            q.pop_front()
-        } // Unlock when `q` is dropped
-
-        fn reset(&mut self, nested: bool) {
-            if !nested {
-                self.resetting = true;
-            }
-
-            POp::<&LockBasedQueue<T>>::reset(&mut self.lock, true);
-            todo!("reset Push and Pop");
-
-            #[allow(unreachable_code)]
-            if !nested {
-                self.resetting = false;
-            }
-        }
-    }
-
     #[test]
-    fn push_pop_seq_queue() {
-        let obj = LockBasedQueue::from(Queue::<usize>::default()); // TODO(persistent location)
-        let mut push_pops: Vec<Vec<PushPop<usize>>> = (0..NR_THREAD)
-            .map(|_| (0..COUNT).map(|_| PushPop::default()).collect())
-            .collect(); // TODO(persistent location)
-
-        #[allow(box_pointers)]
-        thread::scope(|scope| {
-            for tid in 0..NR_THREAD {
-                let obj = &obj;
-                let push_pops = unsafe {
-                    (push_pops.get_unchecked_mut(tid) as *mut Vec<PushPop<usize>>)
-                        .as_mut()
-                        .unwrap()
-                };
-
-                let _ = scope.spawn(move |_| {
-                    for i in 0..COUNT {
-                        // Check if push_pop acts like an identity function
-                        // lock 구현 안 되어 있으므로 assertion 실패함
-                        assert_eq!(push_pops[i].run(obj, tid), Some(tid));
-                    }
-                });
-            }
-        })
-        .unwrap();
+    #[serial] // Multi-threaded test의 속도 저하 방지
+    fn push_pop_queue() {
+        test_push_pop_queue::<TicketLock<_>>(NR_THREAD, COUNT);
     }
 }
