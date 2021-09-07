@@ -28,16 +28,18 @@
 #![deny(single_use_lifetimes)]
 #![deny(unreachable_pub)]
 #![deny(unstable_features)]
-#![deny(unused_lifetimes)]
+// #![deny(unused_lifetimes)]
+#![allow(unstable_features)]
+#![feature(generic_associated_types)]
 
 // Persistent objects collection
 // TODO: plocation으로 동작시키며 주석해제
 // pub mod exchanger;
 pub mod list;
+pub mod lock;
 pub mod persistent;
 // pub mod pipe;
 pub mod queue;
-pub mod lock;
 // pub mod stack;
 // pub mod treiber_stack;
 

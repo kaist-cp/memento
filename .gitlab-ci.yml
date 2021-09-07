@@ -19,7 +19,7 @@ stages:
 install:
   stage: install
   script:
-    - rustup default stable
+    - rustup default nightly
 
 check:
   stage: test
