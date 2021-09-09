@@ -1,6 +1,7 @@
 //! Persistent ticket lock
 
 use std::{
+    collections::BinaryHeap,
     fmt::Debug,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -142,9 +143,7 @@ impl TicketLock {
             membership.ticket
         };
 
-        // TODO: 이미 지나간 티켓일 때 예외처리
-
-        while ticket != self.curr.load(Ordering::SeqCst) {
+        while ticket < self.curr.load(Ordering::SeqCst) {
             // Back-off
         }
 
@@ -152,15 +151,31 @@ impl TicketLock {
     }
 
     fn recover(&self) {
-        // 현재 next를 캡처
-        let bound = self.next.load(Ordering::SeqCst);
+        // 현재 next와 curr를 캡처
+        let end = self.next.load(Ordering::SeqCst);
+        let start = self.curr.load(Ordering::SeqCst);
 
-        // 멤버들 중에서 next보다 작은 애들 전부 취합 (문제: 멤버가 끝도 없이 늘어날 수도 있음)
-        // TODO
+        // 멤버들 중에서 start와 end 사이에 있는 티켓 가진 애들 전부 취합 (문제: 멤버가 끝도 없이 늘어날 수도 있음)
+        let snapshot = self
+            .members
+            .head()
+            .fold(BinaryHeap::<usize>::default(), |acc, m| {
+                if start <= m.ticket && m.ticket < end {
+                    acc.push(m.ticket);
+                }
+                acc
+            })
+            .into_sorted_vec()
+            .iter()
+            .skip_while(|t| {
+                let now = start;
+                start += TICKET_JUMP;
+                now != **t
+            });
 
         loop {
             // 잃어버린 티켓 찾음 -> 없으면 복구 끝
-            let lost = some_or!(self.find_lost(bound), return);
+            let lost = *some_or!(snapshot.next(), return);
 
             // curr가 티켓에 도달할 때까지 기다림
             while lost != self.curr.load(Ordering::SeqCst) {
@@ -183,10 +198,6 @@ impl TicketLock {
                 return;
             }
         }
-    }
-
-    fn find_lost(&self, _bound: usize) -> Option<usize> {
-        unimplemented!()
     }
 
     fn unlock(&self) {

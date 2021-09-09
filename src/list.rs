@@ -1,6 +1,6 @@
 //! Persistent list
 
-use std::fmt::Debug;
+use std::{collections::linked_list::Iter, fmt::Debug};
 
 use crossbeam_epoch::{Atomic, Shared};
 
@@ -87,8 +87,15 @@ impl<K, V> Default for List<K, V> {
 }
 
 impl<K, V> List<K, V> {
-    /// TODO: doc
-    pub fn search(&self) -> Cursor<'_, K, V> {
-        todo!()
+    pub fn head(&self) -> Cursor<'_, K, V> {
+        unimplemented!()
+    }
+}
+
+impl<K, V> Iterator for Cursor<'_, K, V> {
+    type Item = V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        unimplemented!()
     }
 }
