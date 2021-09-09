@@ -17,6 +17,10 @@ const NO_TICKET: usize = 0;
 const TICKET_LOCK_INIT: usize = 1;
 const TICKET_JUMP: usize = 1;
 
+struct State {
+
+}
+
 #[derive(Debug)]
 struct Membership {
     id: usize,
@@ -160,6 +164,7 @@ impl TicketLock {
             .members
             .head()
             .fold(BinaryHeap::<usize>::default(), |acc, m| {
+                // TODO: NO_TICKET && TICKETING 인 애는 상태가 바뀔 때까지 기다려줘야 함
                 if start <= m.ticket && m.ticket < end {
                     acc.push(m.ticket);
                 }

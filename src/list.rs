@@ -1,6 +1,6 @@
 //! Persistent list
 
-use std::{collections::linked_list::Iter, fmt::Debug};
+use std::fmt::Debug;
 
 use crossbeam_epoch::{Atomic, Shared};
 

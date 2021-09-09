@@ -6,22 +6,19 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crossbeam_epoch::Owned;
-
 use crate::persistent::*;
 
-/// TODO: doc
+/// Persistent raw lock
 pub trait RawLock: Default + Send + Sync {
-    /// TODO: doc
+    /// lock 잡았음을 증명하는 토큰
     type Token: Clone;
 
-    /// TODO: doc
+    /// Lock operation을 수행하는 POp
     type Lock<'l>: POp<&'l Self, Input = (), Output = Self::Token>
     where
         Self: 'l;
 
-    /// TODO: doc
-    // TODO: UnsafePOp 만들기? (e.g. unsafe fn run()...)
+    /// Unlock operation을 수행하는 POp
     type Unlock<'l>: POp<&'l Self, Input = Self::Token, Output = ()>
     where
         Self: 'l;
@@ -65,6 +62,7 @@ unsafe impl<T: Send, L: RawLock> Sync for LockBased<T, L> {}
 #[derive(Debug)]
 pub struct Lock<'l, L: 'l + RawLock> {
     lock: L::Lock<'l>,
+    unlock: L::Unlock<'l>,
 }
 
 impl<'l, L: 'l + RawLock> Default for Lock<'l, L> {
@@ -80,9 +78,8 @@ impl<'l, T, L: RawLock> POp<&'l LockBased<T, L>> for Lock<'l, L> {
     fn run(&mut self, locked: &'l LockBased<T, L>, _: Self::Input) -> Self::Output {
         let token = self.lock.run(&locked.lock, ());
         Frozen::from(LockGuard {
-            // TODO: LockGuard는 PNew로 생성되어야 함
             locked,
-            unlock: Owned::new(Default::default()),
+            unlock: &mut unsafe { *(&mut self.unlock as *mut _) }, // TODO: How to safely borrow
             token,
             _marker: Default::default(),
         })
@@ -99,7 +96,7 @@ unsafe impl<'l, L: 'l + RawLock> Send for Lock<'l, L> {}
 #[derive(Debug)]
 pub struct LockGuard<'l, T, L: RawLock> {
     locked: &'l LockBased<T, L>,
-    unlock: Owned<L::Unlock<'l>>, // 동적할당 이유: Lock이 LockGuard를 재생성할 때 이전 Unlock도 복구될 수 있어야 함
+    unlock: &'l mut L::Unlock<'l>,
     token: L::Token,
     _marker: PhantomData<*const ()>, // !Send + !Sync
 }
