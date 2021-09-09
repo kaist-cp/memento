@@ -6,6 +6,8 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use crossbeam_epoch::Owned;
+
 use crate::persistent::*;
 
 /// TODO: doc
@@ -78,8 +80,9 @@ impl<'l, T, L: RawLock> POp<&'l LockBased<T, L>> for Lock<'l, L> {
     fn run(&mut self, locked: &'l LockBased<T, L>, _: Self::Input) -> Self::Output {
         let token = self.lock.run(&locked.lock, ());
         Frozen::from(LockGuard {
+            // TODO: LockGuard는 PNew로 생성되어야 함
             locked,
-            unlock: Default::default(), // POp이지만 volatile하게 쓰임
+            unlock: Owned::new(Default::default()),
             token,
             _marker: Default::default(),
         })
@@ -96,7 +99,7 @@ unsafe impl<'l, L: 'l + RawLock> Send for Lock<'l, L> {}
 #[derive(Debug)]
 pub struct LockGuard<'l, T, L: RawLock> {
     locked: &'l LockBased<T, L>,
-    unlock: L::Unlock<'l>,
+    unlock: Owned<L::Unlock<'l>>, // 동적할당 이유: Lock이 LockGuard를 재생성할 때 이전 Unlock도 복구될 수 있어야 함
     token: L::Token,
     _marker: PhantomData<*const ()>, // !Send + !Sync
 }

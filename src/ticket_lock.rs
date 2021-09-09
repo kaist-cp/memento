@@ -12,7 +12,6 @@ use crate::{list::List, lock::RawLock, persistent::*};
 
 /// TicketLock은 1부터 시작. 0은 ticket이 없음을 표현하기 위해 예약됨.
 /// 이는 초기에 ticket을 발급받지 않은 것과 이전에 받은 ticket을 구별하기 위함
-// TODO: ticket의 overflow는 없다고 가정한다고 코멘트
 const NO_TICKET: usize = 0;
 const TICKET_LOCK_INIT: usize = 1;
 const TICKET_JUMP: usize = 1;
@@ -91,7 +90,7 @@ impl<'l> POp<&'l TicketLock> for Unlock {
     }
 }
 
-/// TODO: doc
+/// IMPORTANT: ticket의 overflow는 없다고 가정
 #[derive(Debug)]
 pub struct TicketLock {
     curr: AtomicUsize,
