@@ -73,10 +73,7 @@ impl<T> Frozen<T> {
 
 /// op을 exactly-once 실행하기 위한 trait
 // TODO: Pop operation과 헷갈릴 수 있음. 구분 필요하면 "Op"부분을 바꾸기
-pub trait POp: Default {
-    /// Persistent op을 수행하는 object
-    type Object;
-
+pub trait POp<Object>: Default {
     /// Persistent op의 input type
     type Input;
 
@@ -92,8 +89,7 @@ pub trait POp: Default {
     ///
     /// # Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
-    fn run(&mut self, object: &Self::Object, input: Self::Input, pool: &PoolHandle)
-        -> Self::Output;
+    fn run(&mut self, object: Object, input: Self::Input, pool: &PoolHandle) -> Self::Output;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
     ///

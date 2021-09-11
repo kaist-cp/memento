@@ -23,11 +23,10 @@ pub mod tests {
 
     #[derive(Debug, Default)]
     pub struct TestRootOp {}
-    impl POp for TestRootOp {
-        type Object = ();
+    impl POp<()> for TestRootOp {
         type Input = ();
         type Output = Result<(), ()>;
-        fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+        fn run(&mut self, _: (), _: Self::Input, _: &PoolHandle) -> Self::Output {
             Ok(())
         }
         fn reset(&mut self, _: bool) {

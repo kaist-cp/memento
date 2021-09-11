@@ -53,12 +53,11 @@ impl<T: Clone> Default for Push<T> {
     }
 }
 
-impl<T: Clone> POp for Push<T> {
-    type Object = Queue<T>;
+impl<T: Clone> POp<&Queue<T>> for Push<T> {
     type Input = T;
     type Output = ();
 
-    fn run(&mut self, queue: &Self::Object, value: Self::Input, pool: &PoolHandle) -> Self::Output {
+    fn run(&mut self, queue: &Queue<T>, value: Self::Input, pool: &PoolHandle) -> Self::Output {
         queue.push(self, value, pool);
     }
 
@@ -83,12 +82,11 @@ impl<T: Clone> Default for Pop<T> {
     }
 }
 
-impl<T: Clone> POp for Pop<T> {
-    type Object = Queue<T>;
+impl<T: Clone> POp<&Queue<T>> for Pop<T> {
     type Input = ();
     type Output = Option<T>;
 
-    fn run(&mut self, queue: &Self::Object, _: Self::Input, pool: &PoolHandle) -> Self::Output {
+    fn run(&mut self, queue: &Queue<T>, _: Self::Input, pool: &PoolHandle) -> Self::Output {
         queue.pop(self, pool)
     }
 
@@ -363,13 +361,12 @@ mod test {
         }
     }
 
-    impl POp for RootOp {
-        type Object = ();
+    impl POp<()> for RootOp {
         type Input = ();
         type Output = Result<(), ()>;
 
         /// idempotent push_pop
-        fn run(&mut self, _: &Self::Object, _: Self::Input, pool: &PoolHandle) -> Self::Output {
+        fn run(&mut self, _: (), _: Self::Input, pool: &PoolHandle) -> Self::Output {
             self.init(pool);
 
             // Alias
@@ -437,7 +434,6 @@ mod test {
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn push_pop() {
         let filepath = get_test_path(FILE_NAME);
-        let _ = std::fs::remove_file(&filepath).unwrap();
 
         // 풀 열기 (없으면 새로 만듦)
         let pool_handle = Pool::open(&filepath)
@@ -448,6 +444,6 @@ mod test {
         let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 
         // 루트 op 실행
-        root_op.run(&(), (), &pool_handle).unwrap();
+        root_op.run((), (), &pool_handle).unwrap();
     }
 }

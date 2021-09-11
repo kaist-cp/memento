@@ -31,7 +31,7 @@ use crate::plocation::ptr::PPtr;
 /// let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 ///
 /// // 루트 Op 실행
-/// root_op.run(&(), (), &pool_handle).unwrap();
+/// root_op.run((), (), &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
@@ -69,7 +69,7 @@ impl PoolHandle {
 
     /// 풀의 루트 Op을 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O: POp>(&self) -> Result<PPtr<O>, Error> {
+    pub fn get_root<O: POp<()>>(&self) -> Result<PPtr<O>, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
         Ok(PPtr::from(self.pool().root_offset))
     }
@@ -151,7 +151,7 @@ impl Pool {
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
     // TODO: filepath의 타입이 `P: AsRef<Path>`이면 좋겠다. 그런데 이러면 generic P에 대한 type inference가 안돼서 사용자가 `Pool::create::<RootOp, &str>("foo.pool")`처럼 호출해야함. 이게 괜찮나?
-    pub fn create<O: POp>(filepath: &str, size: usize) -> Result<PoolHandle, Error> {
+    pub fn create<O: POp<()>>(filepath: &str, size: usize) -> Result<PoolHandle, Error> {
         // 초기화 도중의 crash를 고려하여,
         //   1. 임시파일로서 풀을 초기화 한 후
         //   2. 초기화가 완료되면 "filepath"로 옮김
@@ -249,13 +249,12 @@ mod tests {
         flag: AtomicBool,
     }
 
-    impl POp for RootOp {
-        type Object = ();
+    impl POp<()> for RootOp {
         type Input = ();
         type Output = Result<(), ()>;
 
         // invariant 검사(flag=1 => value=42)
-        fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+        fn run(&mut self, _: (), _: Self::Input, _: &PoolHandle) -> Self::Output {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
@@ -291,6 +290,6 @@ mod tests {
         let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
-        root_op.run(&(), (), &pool_handle).unwrap();
+        root_op.run((), (), &pool_handle).unwrap();
     }
 }
