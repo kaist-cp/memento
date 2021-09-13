@@ -30,16 +30,16 @@ impl<K, V> Default for Insert<K, V> {
 
 impl<K, V> POp<&List<K, V>> for Insert<K, V> {
     type Input = (K, V);
-    type Output = ();
+    type Output = bool;
 
     fn run(&mut self, object: &List<K, V>, input: Self::Input) -> Self::Output {
-        // TODO: 구현
         let _ = (object, input);
+        unimplemented!()
     }
 
     fn reset(&mut self, nested: bool) {
-        // TODO: 구현
         let _ = nested;
+        unimplemented!()
     }
 }
 
@@ -54,14 +54,13 @@ impl<K, V> POp<&List<K, V>> for Remove {
     type Output = Result<(), ()>; // TODO: return data
 
     fn run(&mut self, object: &List<K, V>, input: Self::Input) -> Self::Output {
-        // TODO: 구현
         let _ = (object, input);
-        Ok(())
+        unimplemented!()
     }
 
     fn reset(&mut self, nested: bool) {
-        // TODO: 구현
         let _ = nested;
+        unimplemented!()
     }
 }
 

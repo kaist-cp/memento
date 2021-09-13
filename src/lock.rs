@@ -122,9 +122,12 @@ impl<T, L: RawLock> DerefMut for LockGuard<'_, T, L> {
 }
 
 impl<'l, T, L: RawLock> LockGuard<'l, T, L> {
+    /// 보호된 데이터의 접근 권한을 얻고 unlock을 예약함.
+    ///
     /// # Safety
     ///
-    /// 같은 guard에 대해 이전에 unlock한 적이 없어야 함.
+    /// `LockBased`에 대한 `POp`들은 `Lock`보다 나중에 reset 되어야 함.
+    /// 이유: 그렇지 않으면, 서로 다른 스레드가 `LockGuard`를 각각 가지고 있을 때 모두 fresh `POp`을 수행할 수 있으므로 mutex가 깨짐.
     pub unsafe fn defer_unlock(guard: Frozen<LockGuard<'l, T, L>>) -> Self {
         guard.own()
     }

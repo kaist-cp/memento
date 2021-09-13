@@ -7,9 +7,14 @@ use std::{
 };
 
 use crossbeam_epoch::{self as epoch, Atomic};
+use epoch::{Owned, Pointer, Shared};
 use etrace::some_or;
 
-use crate::{list::List, lock::RawLock, persistent::*};
+use crate::{
+    list::{self, List},
+    lock::RawLock,
+    persistent::*,
+};
 
 /// TicketLock은 1부터 시작. 0은 ticket이 없음을 표현하기 위해 예약됨.
 /// 이는 초기에 ticket을 발급받지 않은 것과 이전에 받은 ticket을 구별하기 위함
@@ -17,27 +22,22 @@ const NO_TICKET: usize = 0;
 const TICKET_LOCK_INIT: usize = 1;
 const TICKET_JUMP: usize = 1;
 
-struct State {
-
-}
-
 #[derive(Debug)]
 struct Membership {
-    id: usize,
-    ticket: usize,   // TODO: atomic?
-    ticketing: bool, // TODO: atomic?
+    ticket: usize, // TODO: atomic?
+    trying: bool,  // TODO: atomic?
+}
+
+impl Default for Membership {
+    fn default() -> Self {
+        Self {
+            ticket: NO_TICKET,
+            trying: false,
+        }
+    }
 }
 
 impl Membership {
-    #[allow(dead_code)]
-    fn new(id: usize) -> Self {
-        Self {
-            id,
-            ticket: NO_TICKET,
-            ticketing: false,
-        }
-    }
-
     fn ticket(&self) -> Option<usize> {
         if self.ticket == NO_TICKET {
             None
@@ -45,20 +45,25 @@ impl Membership {
             Some(self.ticket)
         }
     }
+
+    #[inline]
+    fn is_ticketing(&self) -> bool {
+        self.ticket == NO_TICKET && self.trying
+    }
 }
 
 /// TicketLock의 lock()을 수행하는 Persistent Op.
 // TODO: Drop 될 때 membership을 해제해야 함
 #[derive(Debug, Default)]
 pub struct Lock {
-    // TODO: 구현
     membership: Atomic<Membership>,
+    register: list::Insert<usize, usize>,
     registered: bool,
 }
 
 impl<'l> POp<&'l TicketLock> for Lock {
     type Input = ();
-    type Output = (usize, usize);
+    type Output = usize;
 
     fn run(&mut self, lock: &'l TicketLock, _: Self::Input) -> Self::Output {
         lock.lock(self)
@@ -76,23 +81,19 @@ impl Lock {
     }
 }
 
-/// TODO: doc
+/// TicketLock의 unlock()을 수행하는 Persistent Op.
 #[derive(Debug, Default)]
-pub struct Unlock {
-    // TODO: 구현
-}
+pub struct Unlock;
 
 impl<'l> POp<&'l TicketLock> for Unlock {
-    type Input = (usize, usize);
+    type Input = usize;
     type Output = ();
 
-    fn run(&mut self, lock: &'l TicketLock, _: Self::Input) -> Self::Output {
-        lock.unlock()
+    fn run(&mut self, lock: &'l TicketLock, ticket: Self::Input) -> Self::Output {
+        lock.unlock(ticket)
     }
 
-    fn reset(&mut self, _nested: bool) {
-        unimplemented!()
-    }
+    fn reset(&mut self, _nested: bool) {}
 }
 
 /// IMPORTANT: ticket의 overflow는 없다고 가정
@@ -100,7 +101,7 @@ impl<'l> POp<&'l TicketLock> for Unlock {
 pub struct TicketLock {
     curr: AtomicUsize,
     next: AtomicUsize,
-    members: List<usize, Atomic<Membership>>, // TODO: 비효율?
+    members: List<usize, usize>,
 }
 
 impl Default for TicketLock {
@@ -114,36 +115,40 @@ impl Default for TicketLock {
 }
 
 impl TicketLock {
-    fn lock(&self, client: &mut Lock) -> (usize, usize) {
+    fn lock(&self, client: &mut Lock) -> usize {
         let guard = epoch::pin();
-        let id = client.id();
+
         let mut m = client.membership.load(Ordering::SeqCst, &guard);
-
         if m.is_null() {
-            // TODO: membership 만들기
+            // membership 생성
+            let n = Owned::new(Membership::default()).into_shared(&guard);
+            client.membership.store(n, Ordering::SeqCst);
+            m = n;
         }
 
-        if !client.registered {
-            // TODO: membership 등록하기
-        }
+        // membership 등록: "(key: id, value: membership 포인터)"를 멤버리스트에 삽입
+        let inserted = client
+            .register
+            .run(&self.members, (client.id(), m.into_usize())); // insert는 한 번만 일어남 (thanks to POp)
+        debug_assert!(inserted);
 
         let membership = unsafe { m.deref_mut() };
         let t = membership.ticket();
         let ticket = if let Some(v) = t {
-            if membership.ticketing {
-                membership.ticketing = false;
+            if membership.trying {
+                membership.trying = false;
             }
             v
         } else {
-            if membership.ticketing {
+            if membership.trying {
                 // post-crash
+                membership.trying = false;
                 self.recover()
-            } else {
-                membership.ticketing = true;
             }
 
+            membership.trying = true;
             membership.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
-            membership.ticketing = false;
+            membership.trying = false;
             membership.ticket
         };
 
@@ -151,36 +156,41 @@ impl TicketLock {
             // Back-off
         }
 
-        (id, ticket)
+        ticket
     }
 
     fn recover(&self) {
         // 현재 next와 curr를 캡처
         let end = self.next.load(Ordering::SeqCst);
-        let start = self.curr.load(Ordering::SeqCst);
+        let mut start = self.curr.load(Ordering::SeqCst);
 
         // 멤버들 중에서 start와 end 사이에 있는 티켓 가진 애들 전부 취합 (문제: 멤버가 끝도 없이 늘어날 수도 있음)
         let snapshot = self
             .members
             .head()
-            .fold(BinaryHeap::<usize>::default(), |acc, m| {
-                // TODO: NO_TICKET && TICKETING 인 애는 상태가 바뀔 때까지 기다려줘야 함
-                if start <= m.ticket && m.ticket < end {
-                    acc.push(m.ticket);
+            .fold(BinaryHeap::<usize>::default(), |mut acc, mptr| {
+                let m: Shared<'_, Membership> = unsafe { Shared::from_usize(mptr) };
+                let membership = unsafe { m.deref() };
+
+                // 현재 티켓 뽑고 있는 애는 기다려야 함
+                while membership.is_ticketing() {}
+
+                let t = membership.ticket().unwrap();
+                if start <= t && t < end {
+                    acc.push(t);
                 }
                 acc
             })
-            .into_sorted_vec()
-            .iter()
-            .skip_while(|t| {
-                let now = start;
-                start += TICKET_JUMP;
-                now != **t
-            });
+            .into_sorted_vec();
+        let mut it = snapshot.iter().skip_while(|t| {
+            let now = start;
+            start += TICKET_JUMP;
+            now != **t
+        });
 
         loop {
             // 잃어버린 티켓 찾음 -> 없으면 복구 끝
-            let lost = *some_or!(snapshot.next(), return);
+            let lost = *some_or!(it.next(), return);
 
             // curr가 티켓에 도달할 때까지 기다림
             while lost != self.curr.load(Ordering::SeqCst) {
@@ -205,13 +215,17 @@ impl TicketLock {
         }
     }
 
-    fn unlock(&self) {
-        unimplemented!()
+    fn unlock(&self, ticket: usize) {
+        let curr = self.curr.load(Ordering::SeqCst);
+        assert!(ticket <= curr); // for idempotency of `Unlock::run()`
+        if curr == ticket {
+            self.curr.store(ticket.wrapping_add(1), Ordering::SeqCst);
+        }
     }
 }
 
 impl RawLock for TicketLock {
-    type Token = (usize, usize); // (membership id, ticket)
+    type Token = usize; // ticket
     type Lock<'l> = Lock;
     type Unlock<'l> = Unlock;
 }
