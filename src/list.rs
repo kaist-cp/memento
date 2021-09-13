@@ -86,6 +86,7 @@ impl<K, V> Default for List<K, V> {
 }
 
 impl<K, V> List<K, V> {
+    /// TODO: doc
     pub fn head(&self) -> Cursor<'_, K, V> {
         unimplemented!()
     }

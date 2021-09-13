@@ -8,18 +8,25 @@ use std::{
 
 use crate::persistent::*;
 
+/// TODO: doc
+#[derive(Debug)]
+pub enum LockOp<T> {
+    /// TODO: doc
+    Lock,
+
+    /// TODO: doc
+    Unlock(T),
+}
+
 /// Persistent raw lock
 pub trait RawLock: Default + Send + Sync {
     /// lock 잡았음을 증명하는 토큰
     type Token: Clone;
 
-    /// Lock operation을 수행하는 POp
-    type Lock<'l>: POp<&'l Self, Input = (), Output = Self::Token>
-    where
-        Self: 'l;
-
-    /// Unlock operation을 수행하는 POp
-    type Unlock<'l>: POp<&'l Self, Input = Self::Token, Output = ()>
+    /// Lock 및 Unlock operation을 수행하는 POp
+    /// - Lock 수행시 `Some(token)` 리턴
+    /// - Unlock 수행시 `None` 리턴 (실제 token이 아닌 값으로 unlock 호출시 panic)
+    type LockUnlock<'l>: POp<&'l Self, Input = LockOp<Self::Token>, Output = Option<Self::Token>>
     where
         Self: 'l;
 }
@@ -61,8 +68,7 @@ unsafe impl<T: Send, L: RawLock> Sync for LockBased<T, L> {}
 /// ```
 #[derive(Debug)]
 pub struct Lock<'l, L: 'l + RawLock> {
-    lock: L::Lock<'l>,
-    unlock: L::Unlock<'l>,
+    lock_unlock: L::LockUnlock<'l>,
 }
 
 impl<'l, L: 'l + RawLock> Default for Lock<'l, L> {
@@ -76,17 +82,17 @@ impl<'l, T, L: RawLock> POp<&'l LockBased<T, L>> for Lock<'l, L> {
     type Output = Frozen<LockGuard<'l, T, L>>;
 
     fn run(&mut self, locked: &'l LockBased<T, L>, _: Self::Input) -> Self::Output {
-        let token = self.lock.run(&locked.lock, ());
+        let token = self.lock_unlock.run(&locked.lock, LockOp::Lock).unwrap();
         Frozen::from(LockGuard {
             locked,
-            unlock: &mut unsafe { *(&mut self.unlock as *mut _) }, // TODO: How to safely borrow
+            op: &self.lock_unlock as *const _, // TODO: How to borrow `self.lock_unlock`
             token,
             _marker: Default::default(),
         })
     }
 
     fn reset(&mut self, nested: bool) {
-        self.lock.reset(nested);
+        self.lock_unlock.reset(nested); // UNSAFE! ( TODO: LockGuard가 살아있을 때 reset을 컴파일 타임에 막기 위해선, lock_unlock을 borrow 할 수 있어야 함. )
     }
 }
 
@@ -96,14 +102,15 @@ unsafe impl<'l, L: 'l + RawLock> Send for Lock<'l, L> {}
 #[derive(Debug)]
 pub struct LockGuard<'l, T, L: RawLock> {
     locked: &'l LockBased<T, L>,
-    unlock: &'l mut L::Unlock<'l>,
+    op: *const L::LockUnlock<'l>,
     token: L::Token,
     _marker: PhantomData<*const ()>, // !Send + !Sync
 }
 
 impl<T, L: RawLock> Drop for LockGuard<'_, T, L> {
     fn drop(&mut self) {
-        self.unlock.run(&self.locked.lock, self.token.clone());
+        let op = unsafe { &mut *(self.op as *mut L::LockUnlock<'_>) }; // TODO: How to safely borrow from Lock::run()
+        let _ = op.run(&self.locked.lock, LockOp::Unlock(self.token.clone()));
     }
 }
 
