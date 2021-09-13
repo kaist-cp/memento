@@ -27,8 +27,7 @@ use crate::plocation::ptr::PPtr;
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
 ///
 /// // 핸들러로 풀의 루트 Op 가져오기
-/// let mut root_ptr = pool_handle.get_root::<MyRootOp>().unwrap();
-/// let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
+/// let root_op = pool_handle.get_root::<MyRootOp>().unwrap();
 ///
 /// // 루트 Op 실행
 /// root_op.run((), (), &pool_handle).unwrap();
@@ -69,9 +68,11 @@ impl PoolHandle {
 
     /// 풀의 루트 Op을 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O: POp<()>>(&self) -> Result<PPtr<O>, Error> {
+    pub fn get_root<O: POp<()>>(&self) -> Result<&mut O, Error> {
         // TODO: 잘못된 타입으로 가져오려하면 에러 반환
-        Ok(PPtr::from(self.pool().root_offset))
+        let mut root_ptr = PPtr::<O>::from(self.pool().root_offset);
+        let root_op = unsafe { root_ptr.deref_mut(self) };
+        Ok(root_op)
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
@@ -286,8 +287,7 @@ mod tests {
             .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
 
         // 루트 Op 가져오기
-        let mut root_ptr = pool_handle.get_root::<RootOp>().unwrap();
-        let root_op = unsafe { root_ptr.deref_mut(&pool_handle) };
+        let root_op = pool_handle.get_root::<RootOp>().unwrap();
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
         root_op.run((), (), &pool_handle).unwrap();
