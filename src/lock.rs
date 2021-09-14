@@ -26,6 +26,7 @@ pub trait RawLock: Default + Send + Sync {
     /// Lock 및 Unlock operation을 수행하는 POp
     /// - Lock 수행시 `Some(token)` 리턴
     /// - Unlock 수행시 `None` 리턴 (실제 token이 아닌 값으로 unlock 호출시 panic)
+    // TODO: Output에 Frozen을 강제해야 할 수도 있음. LockGuard 인터페이스 없이 RawLock만으로는 critical section의 mutex 보장 못함.
     type LockUnlock<'l>: POp<&'l Self, Input = LockOp<Self::Token>, Output = Option<Self::Token>>
     where
         Self: 'l;
