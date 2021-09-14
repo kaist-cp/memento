@@ -12,7 +12,7 @@ use etrace::some_or;
 
 use crate::{
     list::{self, List},
-    lock::{LockOp, RawLock},
+    lock::RawLock,
     persistent::*,
 };
 
@@ -54,24 +54,18 @@ impl Membership {
 /// TicketLock의 lock()을 수행하는 Persistent Op.
 // TODO: Drop 될 때 membership을 해제해야 함
 #[derive(Debug, Default)]
-pub struct LockUnlock {
+pub struct Lock {
     membership: Atomic<Membership>,
     register: list::Insert<usize, usize>,
     registered: bool,
 }
 
-impl<'l> POp<&'l TicketLock> for LockUnlock {
-    type Input = LockOp<usize>;
-    type Output = Option<usize>;
+impl<'l> POp<&'l TicketLock> for Lock {
+    type Input = ();
+    type Output = usize;
 
-    fn run(&mut self, lock: &'l TicketLock, op: Self::Input) -> Self::Output {
-        match op {
-            LockOp::Lock => Some(lock.lock(self)),
-            LockOp::Unlock(t) => {
-                lock.unlock(t);
-                None
-            }
-        }
+    fn run(&mut self, lock: &'l TicketLock, _: Self::Input) -> Self::Output {
+        lock.lock(self)
     }
 
     fn reset(&mut self, _nested: bool) {
@@ -82,7 +76,7 @@ impl<'l> POp<&'l TicketLock> for LockUnlock {
     // membership: state->Ready, ticket->NO_TICKET
 }
 
-impl LockUnlock {
+impl Lock {
     #[inline]
     fn id(&self) -> usize {
         self as *const Self as usize
@@ -123,7 +117,7 @@ impl Default for TicketLock {
 }
 
 impl TicketLock {
-    fn lock(&self, client: &mut LockUnlock) -> usize {
+    fn lock(&self, client: &mut Lock) -> usize {
         let guard = epoch::pin();
 
         let mut m = client.membership.load(Ordering::SeqCst, &guard);
@@ -237,7 +231,8 @@ impl TicketLock {
 
 impl RawLock for TicketLock {
     type Token = usize; // ticket
-    type LockUnlock<'l> = LockUnlock;
+    type Lock = Lock;
+    type Unlock = Unlock;
 }
 
 #[cfg(test)]

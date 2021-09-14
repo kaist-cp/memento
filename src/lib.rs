@@ -25,12 +25,10 @@
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
-#![deny(single_use_lifetimes)]
+// #![deny(single_use_lifetimes)]
 #![deny(unreachable_pub)]
 #![deny(unstable_features)]
-// #![deny(unused_lifetimes)]
-#![allow(unstable_features)]
-#![feature(generic_associated_types)]
+#![deny(unused_lifetimes)]
 
 // Persistent objects collection
 // TODO: plocation으로 동작시키며 주석해제
