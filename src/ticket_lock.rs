@@ -60,7 +60,7 @@ pub struct Lock {
     registered: bool,
 }
 
-impl<'l> POp<&'l TicketLock> for Lock {
+impl<'l> POp<'l, &'l TicketLock> for Lock {
     type Input = ();
     type Output = usize;
 
@@ -87,7 +87,7 @@ impl Lock {
 #[derive(Debug, Default)]
 pub struct Unlock;
 
-impl<'l> POp<&'l TicketLock> for Unlock {
+impl<'l> POp<'l, &'l TicketLock> for Unlock {
     type Input = usize;
     type Output = ();
 

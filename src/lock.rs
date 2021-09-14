@@ -14,13 +14,13 @@ pub trait RawLock: Default + Send + Sync {
     type Token: Clone;
 
     /// Lock operation을 수행하는 POp
-    type Lock: for<'l> POp<&'l Self, Input = (), Output = Self::Token>;
+    type Lock: for<'l> POp<'l, &'l Self, Input = (), Output = Self::Token>;
 
     /// Unlock operation을 수행하는 POp
     ///
     /// 실제 token이 아닌 값으로 unlock 호출시 panic
     // TODO: Output에 Frozen을 강제해야 할 수도 있음. MutexGuard 인터페이스 없이 RawLock만으로는 critical section의 mutex 보장 못함.
-    type Unlock: for<'l> POp<&'l Self, Input = Self::Token, Output = ()>;
+    type Unlock: for<'l> POp<'l, &'l Self, Input = Self::Token, Output = ()>;
 }
 
 /// TODO: doc
@@ -70,24 +70,22 @@ impl<L: RawLock> Default for Lock<L> {
     }
 }
 
-impl<'l, T, L: RawLock> POp<&'l Mutex<T, L>> for Lock<L> {
+impl<'l, T, L: RawLock> POp<'l, &'l Mutex<T, L>> for Lock<L> {
     type Input = ();
     type Output = Frozen<MutexGuard<'l, T, L>>;
 
-    fn run(&mut self, locked: &'l Mutex<T, L>, _: Self::Input) -> Self::Output {
+    fn run(&'l mut self, locked: &'l Mutex<T, L>, _: Self::Input) -> Self::Output {
         let token = self.lock.run(&locked.lock, ());
         Frozen::from(MutexGuard {
             locked,
-            unlock: &self.unlock as *const _, // TODO: How to borrow `&mut self.unlock`
+            unlock: &mut self.unlock,
             token,
             _marker: Default::default(),
         })
     }
 
     fn reset(&mut self, nested: bool) {
-        // UNSAFE!
-        // TODO: MutexGuard가 살아있을 때 reset을 컴파일 타임에 막기 위해선
-        //       self.unlock을 run()에서 borrow 할 수 있어야 함.
+        // `MutexGuard`가 살아있을 때 이 함수 호출은 컴파일 타임에 막아짐.
         self.lock.reset(nested);
     }
 }
@@ -98,15 +96,14 @@ unsafe impl<L: RawLock> Send for Lock<L> {}
 #[derive(Debug)]
 pub struct MutexGuard<'l, T, L: RawLock> {
     locked: &'l Mutex<T, L>,
-    unlock: *const L::Unlock, // TODO: &mut L::Unlock
+    unlock: &'l mut L::Unlock,
     token: L::Token,
     _marker: PhantomData<*const ()>, // !Send + !Sync
 }
 
 impl<T, L: RawLock> Drop for MutexGuard<'_, T, L> {
     fn drop(&mut self) {
-        let unlock = unsafe { &mut *(self.unlock as *mut L::Unlock) }; // TODO: How to safely borrow from Lock::run()
-        let _ = unlock.run(&self.locked.lock, self.token.clone());
+        let _ = self.unlock.run(&self.locked.lock, self.token.clone());
     }
 }
 
@@ -161,7 +158,7 @@ pub(crate) mod tests {
         }
     }
 
-    impl<T: Clone, L: RawLock> POp<&Mutex<Queue<T>, L>> for PushPop<T, L> {
+    impl<'m, T: Clone, L: RawLock> POp<'m, &'m Mutex<Queue<T>, L>> for PushPop<T, L> {
         type Input = T;
         type Output = Option<T>;
 

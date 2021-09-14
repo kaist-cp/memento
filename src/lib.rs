@@ -25,7 +25,7 @@
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
-// #![deny(single_use_lifetimes)]
+#![deny(single_use_lifetimes)]
 #![deny(unreachable_pub)]
 #![deny(unstable_features)]
 #![deny(unused_lifetimes)]

@@ -28,7 +28,7 @@ impl<K, V> Default for Insert<K, V> {
     }
 }
 
-impl<K, V> POp<&List<K, V>> for Insert<K, V> {
+impl<'l, K, V> POp<'l, &'l List<K, V>> for Insert<K, V> {
     type Input = (K, V);
     type Output = bool;
 
@@ -49,7 +49,7 @@ pub struct Remove {
     // TODO: 구현
 }
 
-impl<K, V> POp<&List<K, V>> for Remove {
+impl<'l, K, V> POp<'l, &'l List<K, V>> for Remove {
     type Input = usize;
     type Output = Result<(), ()>; // TODO: return data
 

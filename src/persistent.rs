@@ -73,12 +73,12 @@ impl<T> Frozen<T> {
 
 /// op을 exactly-once 실행하기 위한 trait
 // TODO: Pop operation과 헷갈릴 수 있음. 구분 필요하면 "Op"부분을 바꾸기
-pub trait POp<Object>: Default {
+pub trait POp<'o, Object: 'o>: Default {
     /// Persistent op의 input type
     type Input;
 
     /// Persistent op의 output type
-    type Output: Clone;
+    type Output: Clone + 'o;
 
     /// Persistent op 동작 함수 (idempotent)
     ///

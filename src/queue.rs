@@ -53,7 +53,7 @@ impl<T: Clone> Default for Push<T> {
     }
 }
 
-impl<T: Clone> POp<&Queue<T>> for Push<T> {
+impl<'q, T: Clone> POp<'q, &'q Queue<T>> for Push<T> {
     type Input = T;
     type Output = ();
 
@@ -87,7 +87,7 @@ impl<T: Clone> Default for Pop<T> {
     }
 }
 
-impl<T: Clone> POp<&Queue<T>> for Pop<T> {
+impl<'q, T: Clone> POp<'q, &'q Queue<T>> for Pop<T> {
     type Input = ();
     type Output = Option<T>;
 
