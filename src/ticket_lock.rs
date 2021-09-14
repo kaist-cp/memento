@@ -22,33 +22,32 @@ const NO_TICKET: usize = 0;
 const TICKET_LOCK_INIT: usize = 1;
 const TICKET_JUMP: usize = 1;
 
+#[derive(Debug, PartialEq)]
+enum State {
+    Ready,
+    Trying,
+    Recovering,
+}
+
 #[derive(Debug)]
 struct Membership {
     ticket: usize, // TODO: atomic?
-    trying: bool,  // TODO: atomic?
+    state: State,
 }
 
 impl Default for Membership {
     fn default() -> Self {
         Self {
             ticket: NO_TICKET,
-            trying: false,
+            state: State::Ready,
         }
     }
 }
 
 impl Membership {
-    fn ticket(&self) -> Option<usize> {
-        if self.ticket == NO_TICKET {
-            None
-        } else {
-            Some(self.ticket)
-        }
-    }
-
     #[inline]
     fn is_ticketing(&self) -> bool {
-        self.ticket == NO_TICKET && self.trying
+        self.ticket == NO_TICKET && self.state == State::Trying
     }
 }
 
@@ -80,6 +79,7 @@ impl<'l> POp<&'l TicketLock> for LockUnlock {
     }
 
     // TODO: membership 재활용을 위해선 `reset_weak`이 필요할 것임
+    // membership: state->Ready, ticket->NO_TICKET
 }
 
 impl LockUnlock {
@@ -141,30 +141,33 @@ impl TicketLock {
         debug_assert!(inserted);
 
         let membership = unsafe { m.deref_mut() };
-        let t = membership.ticket();
-        let ticket = if let Some(v) = t {
-            if membership.trying {
-                membership.trying = false;
-            }
-            v
-        } else {
-            if membership.trying {
-                // post-crash
-                membership.trying = false;
-                self.recover()
-            }
+        loop {
+            match membership.state {
+                State::Ready => {
+                    debug_assert_eq!(membership.ticket, NO_TICKET);
+                    membership.state = State::Trying;
+                    membership.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
+                    break;
+                }
+                State::Trying => {
+                    if membership.ticket != NO_TICKET {
+                        break;
+                    }
 
-            membership.trying = true;
-            membership.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
-            membership.trying = false;
-            membership.ticket
-        };
+                    membership.state = State::Recovering;
+                }
+                State::Recovering => {
+                    self.recover();
+                    membership.state = State::Ready;
+                }
+            };
+        }
 
-        while ticket < self.curr.load(Ordering::SeqCst) {
+        while membership.ticket < self.curr.load(Ordering::SeqCst) {
             // Back-off
         }
 
-        ticket
+        membership.ticket
     }
 
     fn recover(&self) {
@@ -183,7 +186,7 @@ impl TicketLock {
                 // 현재 티켓 뽑고 있는 애는 기다려야 함
                 while membership.is_ticketing() {}
 
-                let t = membership.ticket().unwrap();
+                let t = membership.ticket;
                 if start <= t && t < end {
                     acc.push(t);
                 }
