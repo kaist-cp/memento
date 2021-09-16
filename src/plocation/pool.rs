@@ -6,6 +6,7 @@ use memmap::*;
 use std::alloc::Layout;
 use std::fs::OpenOptions;
 use std::io::Error;
+use std::marker::PhantomData;
 use std::mem;
 use std::path::Path;
 use tempfile::*;
@@ -27,21 +28,24 @@ use crate::plocation::ptr::PPtr;
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
 ///
 /// // 핸들러로 풀의 루트 Op 가져오기
-/// let root_op = pool_handle.get_root::<MyRootOp>().unwrap();
+/// let root_op = pool_handle.get_root().unwrap();
 ///
 /// // 루트 Op 실행
 /// root_op.run((), (), &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
-pub struct PoolHandle {
+pub struct PoolHandle<O: POp<()>> {
     /// 메모리 매핑에 사용한 오브젝트 (drop으로 인해 매핑 해제되지 않게끔 들고 있어야함)
     mmap: MmapMut,
 
     /// 풀의 길이
     len: usize,
+
+    /// Root 타입 marker
+    _marker: PhantomData<O>,
 }
 
-impl PoolHandle {
+impl<O: POp<()>> PoolHandle<O> {
     /// 풀의 시작주소 반환
     #[inline]
     pub fn start(&self) -> usize {
@@ -68,8 +72,7 @@ impl PoolHandle {
 
     /// 풀의 루트 Op을 가리키는 포인터 반환
     #[inline]
-    pub fn get_root<O: POp<()>>(&self) -> Result<&mut O, Error> {
-        // TODO: 잘못된 타입으로 가져오려하면 에러 반환
+    pub fn get_root(&self) -> Result<&mut O, Error> {
         let mut root_ptr = PPtr::<O>::from(self.pool().root_offset);
         let root_op = unsafe { root_ptr.deref_mut(self) };
         Ok(root_op)
@@ -152,7 +155,7 @@ impl Pool {
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
     // TODO: filepath의 타입이 `P: AsRef<Path>`이면 좋겠다. 그런데 이러면 generic P에 대한 type inference가 안돼서 사용자가 `Pool::create::<RootOp, &str>("foo.pool")`처럼 호출해야함. 이게 괜찮나?
-    pub fn create<O: POp<()>>(filepath: &str, size: usize) -> Result<PoolHandle, Error> {
+    pub fn create<O: POp<()>>(filepath: &str, size: usize) -> Result<PoolHandle<O>, Error> {
         // 초기화 도중의 crash를 고려하여,
         //   1. 임시파일로서 풀을 초기화 한 후
         //   2. 초기화가 완료되면 "filepath"로 옮김
@@ -183,24 +186,29 @@ impl Pool {
         let _ = temp_file.persist_noclobber(filepath)?;
 
         // # 생성한 파일을 풀로서 open
-        Self::open(filepath)
+        unsafe { Self::open(filepath) }
     }
 
     /// 풀 열기
     ///
-    /// 파일을 persistent heap으로 매핑 후 풀을 다룰 수 있는 핸들러를 반환함
+    /// 파일을 persistent heap으로 매핑 후, 루트타입 `O`를 가진 풀의 핸들러 반환
+    ///
+    /// # Safety
+    ///
+    /// * 잘못된 파일이나 잘못된 루트 타입으로 열면 안됨
     ///
     /// # Errors
     ///
     /// * `filepath`에 파일이 존재하지 않는다면 실패
-    pub fn open<P: AsRef<Path>>(filepath: P) -> Result<PoolHandle, Error> {
+    pub unsafe fn open<P: AsRef<Path>, O: POp<()>>(filepath: P) -> Result<PoolHandle<O>, Error> {
         // 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
         // 메모리 매핑 후 풀의 핸들러 반환
         Ok(PoolHandle {
-            mmap: unsafe { memmap::MmapOptions::new().map_mut(&file)? },
+            mmap: memmap::MmapOptions::new().map_mut(&file)?,
             len: file.metadata()?.len() as usize,
+            _marker: PhantomData,
         })
     }
 
@@ -255,7 +263,7 @@ mod tests {
         type Output = Result<(), ()>;
 
         // invariant 검사(flag=1 => value=42)
-        fn run(&mut self, _: (), _: Self::Input, _: &PoolHandle) -> Self::Output {
+        fn run<O: POp<()>>(&mut self, _: (), _: Self::Input, _: &PoolHandle<O>) -> Self::Output {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
@@ -283,11 +291,11 @@ mod tests {
         let filepath = get_test_path(FILE_NAME);
 
         // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = Pool::open(&filepath)
+        let pool_handle = unsafe { Pool::open(&filepath) }
             .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
 
         // 루트 Op 가져오기
-        let root_op = pool_handle.get_root::<RootOp>().unwrap();
+        let root_op = pool_handle.get_root().unwrap();
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
         root_op.run((), (), &pool_handle).unwrap();

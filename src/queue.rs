@@ -57,7 +57,12 @@ impl<T: Clone> POp<&Queue<T>> for Push<T> {
     type Input = T;
     type Output = ();
 
-    fn run(&mut self, queue: &Queue<T>, value: Self::Input, pool: &PoolHandle) -> Self::Output {
+    fn run<O: POp<()>>(
+        &mut self,
+        queue: &Queue<T>,
+        value: Self::Input,
+        pool: &PoolHandle<O>,
+    ) -> Self::Output {
         queue.push(self, value, pool);
     }
 
@@ -86,7 +91,12 @@ impl<T: Clone> POp<&Queue<T>> for Pop<T> {
     type Input = ();
     type Output = Option<T>;
 
-    fn run(&mut self, queue: &Queue<T>, _: Self::Input, pool: &PoolHandle) -> Self::Output {
+    fn run<O: POp<()>>(
+        &mut self,
+        queue: &Queue<T>,
+        _: Self::Input,
+        pool: &PoolHandle<O>,
+    ) -> Self::Output {
         queue.pop(self, pool)
     }
 
@@ -98,7 +108,7 @@ impl<T: Clone> POp<&Queue<T>> for Pop<T> {
 
 impl<T: Clone> Pop<T> {
     #[inline]
-    fn id(&self, pool: &PoolHandle) -> usize {
+    fn id<O: POp<()>>(&self, pool: &PoolHandle<O>) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         pool.get_persistent_addr(self as *const Self as usize)
             .unwrap()
@@ -114,7 +124,7 @@ pub struct Queue<T: Clone> {
 
 impl<T: Clone> Queue<T> {
     /// new
-    pub fn new(pool: &PoolHandle) -> Self {
+    pub fn new<O: POp<()>>(pool: &PoolHandle<O>) -> Self {
         let sentinel = Node::default();
         unsafe {
             let guard = epoch::unprotected(pool);
@@ -127,19 +137,19 @@ impl<T: Clone> Queue<T> {
     }
 
     // TODO: try mode
-    fn push(&self, client: &mut Push<T>, value: T, pool: &PoolHandle) {
+    fn push<O: POp<()>>(&self, client: &mut Push<T>, value: T, pool: &PoolHandle<O>) {
         let guard = epoch::pin(pool);
         let node = some_or!(self.is_incomplete(client, value, &guard, pool), return);
 
         while self.try_push(node, &guard, pool).is_err() {}
     }
 
-    fn is_incomplete<'g>(
+    fn is_incomplete<'g, O: POp<()>>(
         &self,
         client: &Push<T>,
         value: T,
         guard: &'g Guard<'_>,
-        pool: &PoolHandle,
+        pool: &PoolHandle<O>,
     ) -> Option<PShared<'g, Node<T>>> {
         let mine = client.mine.load(Ordering::SeqCst, guard);
 
@@ -167,11 +177,11 @@ impl<T: Clone> Queue<T> {
     }
 
     /// tail에 새 `node` 연결을 시도
-    fn try_push(
+    fn try_push<O: POp<()>>(
         &self,
         node: PShared<'_, Node<T>>,
         guard: &Guard<'_>,
-        pool: &PoolHandle,
+        pool: &PoolHandle<O>,
     ) -> Result<(), ()> {
         let tail = self.tail.load(Ordering::SeqCst, guard);
         let tail_ref = unsafe { tail.deref(pool) };
@@ -206,7 +216,12 @@ impl<T: Clone> Queue<T> {
     }
 
     /// `node`가 Queue 안에 있는지 head부터 tail까지 순회하며 검색
-    fn search(&self, node: PShared<'_, Node<T>>, guard: &Guard<'_>, pool: &PoolHandle) -> bool {
+    fn search<O: POp<()>>(
+        &self,
+        node: PShared<'_, Node<T>>,
+        guard: &Guard<'_>,
+        pool: &PoolHandle<O>,
+    ) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
         // TODO: null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
@@ -225,7 +240,7 @@ impl<T: Clone> Queue<T> {
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 1;
 
-    fn pop(&self, client: &mut Pop<T>, pool: &PoolHandle) -> Option<T> {
+    fn pop<O: POp<()>>(&self, client: &mut Pop<T>, pool: &PoolHandle<O>) -> Option<T> {
         let guard = epoch::pin(pool);
         let target = client.target.load(Ordering::SeqCst, &guard);
 
@@ -252,11 +267,11 @@ impl<T: Clone> Queue<T> {
     }
 
     /// head를 pop 시도
-    fn try_pop(
+    fn try_pop<O: POp<()>>(
         &self,
         client: &mut Pop<T>,
         guard: &Guard<'_>,
-        pool: &PoolHandle,
+        pool: &PoolHandle<O>,
     ) -> Result<Option<T>, ()> {
         let head = self.head.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head.deref(pool) };
@@ -348,7 +363,7 @@ mod test {
     }
 
     impl RootOp {
-        fn init(&self, pool: &PoolHandle) {
+        fn init<O: POp<()>>(&self, pool: &PoolHandle<O>) {
             let guard = unsafe { epoch::unprotected(&pool) };
             let q = self.queue.load(Ordering::SeqCst, guard);
 
@@ -366,7 +381,12 @@ mod test {
         type Output = Result<(), ()>;
 
         /// idempotent push_pop
-        fn run(&mut self, _: (), _: Self::Input, pool: &PoolHandle) -> Self::Output {
+        fn run<O: POp<()> + Sync>(
+            &mut self,
+            _: (),
+            _: Self::Input,
+            pool: &PoolHandle<O>,
+        ) -> Self::Output {
             self.init(pool);
 
             // Alias
@@ -436,11 +456,11 @@ mod test {
         let filepath = get_test_path(FILE_NAME);
 
         // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = Pool::open(&filepath)
+        let pool_handle = unsafe { Pool::open(&filepath) }
             .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
 
         // 루트 op 가져오기
-        let root_op = pool_handle.get_root::<RootOp>().unwrap();
+        let root_op = pool_handle.get_root().unwrap();
 
         // 루트 op 실행
         root_op.run((), (), &pool_handle).unwrap();

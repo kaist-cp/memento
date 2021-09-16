@@ -1,6 +1,7 @@
 //! Default function of pepoch module
 
 use crate::pepoch::guard::Guard;
+use crate::persistent::POp;
 use crate::plocation::pool::PoolHandle;
 use std::marker::PhantomData;
 
@@ -39,7 +40,7 @@ use std::marker::PhantomData;
 /// // PoolHandle이 drop되었으니 guard도 사용불가
 /// let guard = &guard; // compile error
 /// ```
-pub fn pin(_: &PoolHandle) -> Guard<'_> {
+pub fn pin<O: POp<()>>(_: &PoolHandle<O>) -> Guard<'_> {
     Guard {
         _marker: PhantomData,
     }
@@ -50,7 +51,7 @@ pub fn pin(_: &PoolHandle) -> Guard<'_> {
 /// # Safety
 ///
 /// TODO
-pub unsafe fn unprotected(_: &PoolHandle) -> &Guard<'_> {
+pub unsafe fn unprotected<O: POp<()>>(_: &PoolHandle<O>) -> &Guard<'_> {
     static UNPROTECTED: Guard<'_> = Guard {
         _marker: PhantomData,
     };
