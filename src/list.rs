@@ -15,6 +15,7 @@ struct Node<K, V> {
 
 /// TODO: doc
 #[derive(Debug)]
+#[allow(dead_code)] // TODO: 지우기
 pub struct Insert<K, V> {
     // TODO: 구현
     node: Atomic<Node<K, V>>,
@@ -66,6 +67,7 @@ impl<'l, K, V> POp<'l, &'l List<K, V>> for Remove {
 
 /// TODO: doc
 #[derive(Debug)]
+#[allow(dead_code)] // TODO: 지우기
 pub struct Cursor<'n, K, V> {
     prev: &'n Atomic<Node<K, V>>,
     curr: Shared<'n, Node<K, V>>,
@@ -73,6 +75,7 @@ pub struct Cursor<'n, K, V> {
 
 /// TODO: doc
 #[derive(Debug)]
+#[allow(dead_code)] // TODO: 지우기
 pub struct List<K, V> {
     head: Atomic<Node<K, V>>,
 }

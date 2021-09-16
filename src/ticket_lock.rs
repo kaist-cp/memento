@@ -57,7 +57,6 @@ impl Membership {
 pub struct Lock {
     membership: Atomic<Membership>,
     register: list::Insert<usize, usize>,
-    registered: bool,
 }
 
 impl<'l> POp<'l, &'l TicketLock> for Lock {
