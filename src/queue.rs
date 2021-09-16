@@ -381,12 +381,7 @@ mod test {
         type Output = Result<(), ()>;
 
         /// idempotent push_pop
-        fn run<O: POp<()> + Sync>(
-            &mut self,
-            _: (),
-            _: Self::Input,
-            pool: &PoolHandle<O>,
-        ) -> Self::Output {
+        fn run<O: POp<()>>(&mut self, _: (), _: Self::Input, pool: &PoolHandle<O>) -> Self::Output {
             self.init(pool);
 
             // Alias

@@ -45,6 +45,9 @@ pub struct PoolHandle<O: POp<()>> {
     _marker: PhantomData<O>,
 }
 
+// Sync인 이유: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러
+unsafe impl<O: POp<()>> Sync for PoolHandle<O> {}
+
 impl<O: POp<()>> PoolHandle<O> {
     /// 풀의 시작주소 반환
     #[inline]
