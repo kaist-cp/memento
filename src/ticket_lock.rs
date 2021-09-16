@@ -190,15 +190,21 @@ impl TicketLock {
         let mut it = snapshot.iter().skip_while(|t| {
             let now = start;
             start += TICKET_JUMP;
-            now != **t
+            now == **t
         });
 
         loop {
             // 잃어버린 티켓 찾음 -> 없으면 복구 끝
             let lost = *some_or!(it.next(), return);
 
+            if lost < self.curr.load(Ordering::SeqCst) {
+                // 잃어버린 티켓이 아니었던 거임.
+                // 멤버십 순회 전에 범위에 있던 애가 일 마치고 티켓을 다시 뽑은 경우
+                continue;
+            }
+
             // curr가 티켓에 도달할 때까지 기다림
-            while lost != self.curr.load(Ordering::SeqCst) {
+            while lost > self.curr.load(Ordering::SeqCst) {
                 // Back-off
             }
 
