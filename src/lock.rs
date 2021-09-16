@@ -184,6 +184,9 @@ pub(crate) mod tests {
             }
 
             POp::<&Mutex<L, Queue<T>>>::reset(&mut self.lock, true);
+
+            // sequential queue로써 임시로 사용하고 있는 VecDeque은 persistent version이 아니므로
+            // push/pop에 해당하는 POp이 없음
             todo!("reset Push and Pop");
 
             #[allow(unreachable_code)]
