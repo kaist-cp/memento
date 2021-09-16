@@ -460,7 +460,7 @@ mod test {
             .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
 
         // 루트 op 가져오기
-        let root_op = pool_handle.get_root().unwrap();
+        let root_op = pool_handle.get_root();
 
         // 루트 op 실행
         root_op.run((), (), &pool_handle).unwrap();

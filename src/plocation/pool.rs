@@ -28,7 +28,7 @@ use crate::plocation::ptr::PPtr;
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
 ///
 /// // 핸들러로 풀의 루트 Op 가져오기
-/// let root_op = pool_handle.get_root().unwrap();
+/// let root_op = pool_handle.get_root();
 ///
 /// // 루트 Op 실행
 /// root_op.run((), (), &pool_handle).unwrap();
@@ -71,11 +71,11 @@ impl<O: POp<()>> PoolHandle<O> {
     }
 
     /// 풀의 루트 Op을 가리키는 포인터 반환
+    #[allow(clippy::mut_from_ref)]
     #[inline]
-    pub fn get_root(&self) -> Result<&mut O, Error> {
+    pub fn get_root(&self) -> &mut O {
         let mut root_ptr = PPtr::<O>::from(self.pool().root_offset);
-        let root_op = unsafe { root_ptr.deref_mut(self) };
-        Ok(root_op)
+        unsafe { root_ptr.deref_mut(self) }
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
@@ -295,7 +295,7 @@ mod tests {
             .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
 
         // 루트 Op 가져오기
-        let root_op = pool_handle.get_root().unwrap();
+        let root_op = pool_handle.get_root();
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
         root_op.run((), (), &pool_handle).unwrap();

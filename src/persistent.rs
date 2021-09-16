@@ -88,12 +88,12 @@ pub trait POp<Object>: Default {
     ///   즉, post-crash의 functional correctness는 보장하지 않음. (이러한 동작이 safety를 해치지 않음.)
     ///
     /// ## Generic
-    /// * `O` - `PoolHandle`이 가진 루트의 타입 (`Sync`: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러) 
+    /// * `O` - `PoolHandle`이 가진 루트의 타입 (`Sync`: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러)
     ///
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
     ///
-    // Sync인 이유: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러 
+    // Sync인 이유: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러
     fn run<O: POp<()> + Sync>(
         &mut self,
         object: Object,
