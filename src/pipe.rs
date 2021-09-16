@@ -5,27 +5,30 @@ use std::marker::PhantomData;
 use crate::persistent::POp;
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
+///
+/// - `'p`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
+/// - `O#`: `Op#`이 실행되는 object
 #[derive(Debug)]
-pub struct Pipe<'p, O1, T1, O2, T2>
+pub struct Pipe<'p, Op1, O1, Op2, O2>
 where
-    O1: POp<'p, T1, Output = O2::Input>,
-    O2: POp<'p, T2>,
+    Op1: POp<'p, O1, Output = Op2::Input>,
+    Op2: POp<'p, O2>,
 {
     /// 먼저 실행될 op. `Pipe` op의 input은 `from` op의 input과 같음
-    from: O1,
+    from: Op1,
 
     /// 다음에 실행될 op. `Pipe` op의 output은 `to` op의 output과 같음
-    to: O2,
+    to: Op2,
 
     /// reset 중인지 나타내는 flag
     resetting: bool,
-    _marker: PhantomData<&'p (T1, T2)>,
+    _marker: PhantomData<&'p (O1, O2)>,
 }
 
-impl<'p, O1, T1, O2, T2> Default for Pipe<'p, O1, T1, O2, T2>
+impl<'p, Op1, O1, Op2, O2> Default for Pipe<'p, Op1, O1, Op2, O2>
 where
-    O1: POp<'p, T1, Output = O2::Input>,
-    O2: POp<'p, T2>,
+    Op1: POp<'p, O1, Output = Op2::Input>,
+    Op2: POp<'p, O2>,
 {
     fn default() -> Self {
         Self {
@@ -37,13 +40,13 @@ where
     }
 }
 
-impl<'p, O1, T1, O2, T2> POp<'p, ()> for Pipe<'p, O1, T1, O2, T2>
+impl<'p, Op1, O1, Op2, O2> POp<'p, ()> for Pipe<'p, Op1, O1, Op2, O2>
 where
-    O1: POp<'p, T1, Output = O2::Input>,
-    O2: POp<'p, T2>,
+    Op1: POp<'p, O1, Output = Op2::Input>,
+    Op2: POp<'p, O2>,
 {
-    type Input = (O1::Input, T1, T2);
-    type Output = O2::Output;
+    type Input = (Op1::Input, O1, O2);
+    type Output = Op2::Output;
 
     fn run(&'p mut self, _: (), (init, from_obj, to_obj): Self::Input) -> Self::Output {
         if self.resetting {

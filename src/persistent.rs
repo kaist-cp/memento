@@ -72,8 +72,11 @@ impl<T> Frozen<T> {
 }
 
 /// op을 exactly-once 실행하기 위한 trait
+///
+/// - `'o`: `POp`, target object, output이 모두 같은 lifetime을 갖게 하기 위함
+/// - `O`: `POp`이 동작할 target object
 // TODO: Pop operation과 헷갈릴 수 있음. 구분 필요하면 "Op"부분을 바꾸기
-pub trait POp<'o, Object: 'o>: Default {
+pub trait POp<'o, O: 'o>: Default {
     /// Persistent op의 input type
     type Input;
 
