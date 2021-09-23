@@ -100,12 +100,12 @@ pub trait POp: Default {
     ///
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
-    fn run<O: POp<()>>(
+    fn run<'o, O: POp>(
         &mut self,
-        object: Object,
+        object: Self::Object<'o>,
         input: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Self::Output;
+    ) -> Self::Output<'o>;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
     ///

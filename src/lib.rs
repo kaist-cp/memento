@@ -32,21 +32,20 @@
 #![feature(generic_associated_types)]
 
 // Persistent objects collection
-// TODO: plocation으로 동작시키며 주석해제
-// pub mod exchanger;
-pub mod list;
-pub mod lock;
+// pub mod exchanger; // TODO: plocation으로 동작시키며 주석해제
+// pub mod list; // TODO: plocation으로 동작시키며 주석해제
+// pub mod lock; // TODO: plocation으로 동작시키며 주석해제
 pub mod persistent;
-// pub mod pipe;
+// pub mod pipe; // TODO: plocation으로 동작시키며 주석해제
 pub mod queue;
-// pub mod stack;
-// pub mod treiber_stack;
+// pub mod stack; // TODO: plocation으로 동작시키며 주석해제
+// pub mod treiber_stack; // TODO: plocation으로 동작시키며 주석해제
 
 // Persistent location
-// pub mod plocation; // TODO: 바뀐 POp 인터페이스 적용
+pub mod plocation; // TODO: 바뀐 POp 인터페이스 적용
 
 // Persistent version of crossbeam_epoch
-// pub mod pepoch; // TODO: 바뀐 POp 인터페이스 적용
+pub mod pepoch; // TODO: 바뀐 POp 인터페이스 적용
 
 // Utility
-// pub mod utils; // TODO: 바뀐 POp 인터페이스 적용
+pub mod utils; // TODO: 바뀐 POp 인터페이스 적용
