@@ -42,10 +42,10 @@ pub mod queue;
 // pub mod treiber_stack; // TODO: plocation으로 동작시키며 주석해제
 
 // Persistent location
-pub mod plocation; // TODO: 바뀐 POp 인터페이스 적용
+pub mod plocation;
 
 // Persistent version of crossbeam_epoch
-pub mod pepoch; // TODO: 바뀐 POp 인터페이스 적용
+pub mod pepoch;
 
 // Utility
-pub mod utils; // TODO: 바뀐 POp 인터페이스 적용
+pub mod utils;

@@ -379,9 +379,9 @@ mod test {
     }
 
     impl POp for RootOp {
-        type Object = ();
+        type Object<'o> = ();
         type Input = ();
-        type Output = Result<(), ()>;
+        type Output<'o> = Result<(), ()>;
 
         /// idempotent push_pop
         fn run<'o, O: POp>(

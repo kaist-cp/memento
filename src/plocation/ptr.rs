@@ -48,7 +48,7 @@ impl<T> PPtr<T> {
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref<'a, O: POp<()>>(&self, pool: &'a PoolHandle<O>) -> &'a T {
+    pub unsafe fn deref<'a, O: POp>(&self, pool: &'a PoolHandle<O>) -> &'a T {
         &*((pool.start() + self.offset) as *const T)
     }
 
@@ -58,7 +58,7 @@ impl<T> PPtr<T> {
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn deref_mut<'a, O: POp<()>>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
+    pub unsafe fn deref_mut<'a, O: POp>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
         &mut *((pool.start() + self.offset) as *mut T)
     }
 }
