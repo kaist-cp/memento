@@ -28,7 +28,7 @@ check:
     - cargo install cargo-audit
   script:
     - cargo check --verbose
-    - cargo fmt -- --check
+    # - cargo fmt -- --check # GAT 사용하면 fmt 수행시 컴파일이 안 됨
     - cargo clippy -- -D warnings
     - cargo audit
 

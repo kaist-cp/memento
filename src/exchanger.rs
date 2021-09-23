@@ -92,12 +92,16 @@ impl<T> ExchangeType<T> for TryExchange<T> {
 
 unsafe impl<T> Send for TryExchange<T> {}
 
-impl<T: Clone> POp for TryExchange<T> {
-    type Object = Exchanger<T>;
+impl<T: 'static + Clone> POp for TryExchange<T> {
+    type Object<'e> = &'e Exchanger<T>;
     type Input = (T, Duration);
-    type Output = Result<T, TryFail>;
+    type Output<'e> = Result<T, TryFail>;
 
-    fn run(&mut self, xchg: &Self::Object, (value, timeout): Self::Input) -> Self::Output {
+    fn run<'o>(
+        &'o mut self,
+        xchg: Self::Object<'o>,
+        (value, timeout): Self::Input,
+    ) -> Self::Output<'o> {
         xchg.exchange(self, value, Timeout::Limited(timeout))
     }
 
@@ -164,12 +168,12 @@ impl<T> ExchangeType<T> for Exchange<T> {
 
 unsafe impl<T> Send for Exchange<T> {}
 
-impl<T: Clone> POp for Exchange<T> {
-    type Object = Exchanger<T>;
+impl<T: 'static + Clone> POp for Exchange<T> {
+    type Object<'e> = &'e Exchanger<T>;
     type Input = T;
-    type Output = T;
+    type Output<'e> = T;
 
-    fn run(&mut self, xchg: &Self::Object, value: Self::Input) -> Self::Output {
+    fn run<'o>(&'o mut self, xchg: Self::Object<'o>, value: Self::Input) -> Self::Output<'o> {
         xchg.exchange(self, value, Timeout::Unlimited).unwrap()
     }
 

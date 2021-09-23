@@ -53,9 +53,10 @@ impl<T: Clone> Default for Push<T> {
     }
 }
 
-impl<'q, T: Clone> POp<'q, &'q Queue<T>> for Push<T> {
+impl<T: 'static + Clone> POp for Push<T> {
+    type Object<'q> = &'q Queue<T>;
     type Input = T;
-    type Output = ();
+    type Output<'q> = ();
 
     fn run<O: POp<()>>(
         &mut self,
@@ -87,9 +88,10 @@ impl<T: Clone> Default for Pop<T> {
     }
 }
 
-impl<'q, T: Clone> POp<'q, &'q Queue<T>> for Pop<T> {
+impl<T: 'static + Clone> POp for Pop<T> {
+    type Object<'q> = &'q Queue<T>;
     type Input = ();
-    type Output = Option<T>;
+    type Output<'q> = Option<T>;
 
     fn run<O: POp<()>>(
         &mut self,

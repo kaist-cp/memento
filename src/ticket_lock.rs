@@ -59,11 +59,12 @@ pub struct Lock {
     register: list::Insert<usize, usize>,
 }
 
-impl<'l> POp<'l, &'l TicketLock> for Lock {
+impl POp for Lock {
+    type Object<'l> = &'l TicketLock;
     type Input = ();
-    type Output = usize;
+    type Output<'l> = usize;
 
-    fn run(&mut self, lock: &'l TicketLock, _: Self::Input) -> Self::Output {
+    fn run<'o>(&'o mut self, lock: Self::Object<'o>, _: Self::Input) -> Self::Output<'o> {
         lock.lock(self)
     }
 
@@ -86,11 +87,12 @@ impl Lock {
 #[derive(Debug, Default)]
 pub struct Unlock;
 
-impl<'l> POp<'l, &'l TicketLock> for Unlock {
+impl POp for Unlock {
+    type Object<'l> = &'l TicketLock;
     type Input = usize;
-    type Output = ();
+    type Output<'l> = ();
 
-    fn run(&mut self, lock: &'l TicketLock, ticket: Self::Input) -> Self::Output {
+    fn run<'o>(&'o mut self, lock: Self::Object<'o>, ticket: Self::Input) -> Self::Output<'o> {
         lock.unlock(ticket)
     }
 

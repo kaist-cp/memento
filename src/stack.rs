@@ -10,21 +10,21 @@ pub struct TryFail;
 pub trait Stack<T> {
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
-    type TryPush: POp<Object = Self, Input = T, Output = Result<(), TryFail>>;
+    type TryPush: for<'s> POp<Object<'s> = &'s Self, Input = T, Output<'s> = Result<(), TryFail>>;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
-    type Push: POp<Object = Self, Input = T, Output = ()>;
+    type Push: for<'s> POp<Object<'s> = &'s Self, Input = T, Output<'s> = ()>;
 
     /// Try pop 연산을 위한 Persistent op.
     /// Try pop의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     /// Try pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type TryPop: POp<Object = Self, Input = (), Output = Result<Option<T>, TryFail>>;
+    type TryPop: for<'s> POp<Object<'s> = &'s Self, Input = (), Output<'s> = Result<Option<T>, TryFail>>;
 
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
     /// pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type Pop: POp<Object = Self, Input = (), Output = Option<T>>;
+    type Pop: for<'s> POp<Object<'s> = &'s Self, Input = (), Output<'s> = Option<T>>;
 }
 
 /// push_pop을 반복하는 Concurrent stack test

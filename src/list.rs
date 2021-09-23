@@ -1,6 +1,6 @@
 //! Persistent list
 
-use std::fmt::Debug;
+use std::marker::PhantomData;
 
 use crossbeam_epoch::{Atomic, Shared};
 
@@ -29,12 +29,13 @@ impl<K, V> Default for Insert<K, V> {
     }
 }
 
-impl<'l, K, V> POp<'l, &'l List<K, V>> for Insert<K, V> {
+impl<K: 'static, V: 'static> POp for Insert<K, V> {
+    type Object<'l> = &'l List<K, V>;
     type Input = (K, V);
-    type Output = bool;
+    type Output<'l> = bool;
 
-    fn run(&mut self, object: &List<K, V>, input: Self::Input) -> Self::Output {
-        let _ = (object, input);
+    fn run<'o>(&'o mut self, list: Self::Object<'o>, input: Self::Input) -> Self::Output<'o> {
+        let _ = (list, input);
         unimplemented!()
     }
 
@@ -45,17 +46,24 @@ impl<'l, K, V> POp<'l, &'l List<K, V>> for Insert<K, V> {
 }
 
 /// TODO: doc
-#[derive(Debug, Default)]
-pub struct Remove {
-    // TODO: 구현
+#[derive(Debug)]
+pub struct Remove<K, V> {
+    _marker: PhantomData<*const (K, V)>, // TODO: 구현
 }
 
-impl<'l, K, V> POp<'l, &'l List<K, V>> for Remove {
-    type Input = usize;
-    type Output = Result<(), ()>; // TODO: return data
+impl<K, V> Default for Remove<K, V> {
+    fn default() -> Self {
+        unimplemented!()
+    }
+}
 
-    fn run(&mut self, object: &List<K, V>, input: Self::Input) -> Self::Output {
-        let _ = (object, input);
+impl<K: 'static, V: 'static> POp for Remove<K, V> {
+    type Object<'l> = &'l List<K, V>;
+    type Input = usize;
+    type Output<'l> = Result<(), ()>; // TODO: return data
+
+    fn run<'o>(&'o mut self, list: Self::Object<'o>, input: Self::Input) -> Self::Output<'o> {
+        let _ = (list, input);
         unimplemented!()
     }
 

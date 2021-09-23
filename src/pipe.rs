@@ -1,7 +1,5 @@
 //! Persistent pipe
 
-use std::marker::PhantomData;
-
 use crate::persistent::POp;
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
@@ -9,10 +7,10 @@ use crate::persistent::POp;
 /// - `'p`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
 /// - `O#`: `Op#`이 실행되는 object
 #[derive(Debug)]
-pub struct Pipe<'p, Op1, O1, Op2, O2>
+pub struct Pipe<Op1, Op2>
 where
-    Op1: POp<'p, O1, Output = Op2::Input>,
-    Op2: POp<'p, O2>,
+    for<'o> Op1: POp<Output<'o> = Op2::Input>,
+    Op2: POp,
 {
     /// 먼저 실행될 op. `Pipe` op의 input은 `from` op의 input과 같음
     from: Op1,
@@ -22,33 +20,36 @@ where
 
     /// reset 중인지 나타내는 flag
     resetting: bool,
-    _marker: PhantomData<&'p (O1, O2)>,
 }
 
-impl<'p, Op1, O1, Op2, O2> Default for Pipe<'p, Op1, O1, Op2, O2>
+impl<Op1, Op2> Default for Pipe<Op1, Op2>
 where
-    Op1: POp<'p, O1, Output = Op2::Input>,
-    Op2: POp<'p, O2>,
+    for<'o> Op1: POp<Output<'o> = Op2::Input>,
+    Op2: POp,
 {
     fn default() -> Self {
         Self {
             from: Default::default(),
             to: Default::default(),
             resetting: false,
-            _marker: Default::default(),
         }
     }
 }
 
-impl<'p, Op1, O1, Op2, O2> POp<'p, ()> for Pipe<'p, Op1, O1, Op2, O2>
+impl<Op1, Op2> POp for Pipe<Op1, Op2>
 where
-    Op1: POp<'p, O1, Output = Op2::Input>,
-    Op2: POp<'p, O2>,
+    for<'o> Op1: POp<Output<'o> = Op2::Input>,
+    Op2: POp,
 {
-    type Input = (Op1::Input, O1, O2);
-    type Output = Op2::Output;
+    type Object<'o> = (Op1::Object<'o>, Op2::Object<'o>);
+    type Input = Op1::Input;
+    type Output<'o> = Op2::Output<'o>;
 
-    fn run(&'p mut self, _: (), (init, from_obj, to_obj): Self::Input) -> Self::Output {
+    fn run<'o>(
+        &'o mut self,
+        (from_obj, to_obj): Self::Object<'o>,
+        init: Self::Input,
+    ) -> Self::Output<'o> {
         if self.resetting {
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
             self.reset(false);
@@ -97,11 +98,12 @@ mod tests {
         }
     }
 
-    impl<'q, T: Clone> POp<'q, &'q Queue<T>> for MustPop<T> {
+    impl<T: 'static + Clone> POp for MustPop<T> {
+        type Object<'q> = &'q Queue<T>;
         type Input = ();
-        type Output = T;
+        type Output<'q> = T;
 
-        fn run(&mut self, queue: &Queue<T>, _: Self::Input) -> Self::Output {
+        fn run<'o>(&'o mut self, queue: Self::Object<'o>, _: Self::Input) -> Self::Output<'o> {
             loop {
                 if let Some(v) = self.pop.run(queue, ()) {
                     return v;
@@ -121,7 +123,7 @@ mod tests {
         let q2 = Queue::<usize>::default(); // TODO(persistent location)
 
         let mut suppliers: Vec<Push<usize>> = (0..COUNT).map(|_| Default::default()).collect(); // TODO(persistent location)
-        let mut pipes: Vec<Pipe<'_, MustPop<usize>, _, Push<usize>, _>> =
+        let mut pipes: Vec<Pipe<MustPop<usize>, Push<usize>>> =
             (0..COUNT).map(|_| Default::default()).collect(); // TODO(persistent location)
         let mut consumers: Vec<Pop<usize>> = (0..COUNT).map(|_| Default::default()).collect(); // TODO(persistent location)
 
@@ -132,7 +134,7 @@ mod tests {
         }
 
         for pipe in pipes.iter_mut() {
-            pipe.run((), ((), &q1, &q2));
+            pipe.run((&q1, &q2), ());
         }
 
         for (i, pop) in consumers.iter_mut().enumerate() {
@@ -148,7 +150,7 @@ mod tests {
         let q2 = Queue::<usize>::default(); // TODO(persistent location)
 
         let mut suppliers: Vec<Push<usize>> = (0..COUNT).map(|_| Default::default()).collect(); // TODO(persistent location)
-        let mut pipes: Vec<Pipe<'_, MustPop<usize>, _, Push<usize>, _>> =
+        let mut pipes: Vec<Pipe<MustPop<usize>, Push<usize>>> =
             (0..COUNT).map(|_| Default::default()).collect(); // TODO(persistent location)
         let mut consumers: Vec<MustPop<usize>> = (0..COUNT).map(|_| Default::default()).collect(); // TODO(persistent location)
 
@@ -168,7 +170,7 @@ mod tests {
 
             let _ = scope.spawn(move |_| {
                 for pipe in pipes.iter_mut() {
-                    pipe.run((), ((), q1, q2));
+                    pipe.run((q1, q2), ());
                 }
             });
 

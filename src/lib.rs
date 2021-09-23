@@ -25,10 +25,11 @@
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
-#![deny(single_use_lifetimes)]
 #![deny(unreachable_pub)]
-#![deny(unstable_features)]
-#![deny(unused_lifetimes)]
+// #![deny(single_use_lifetimes)] // Allowd due to GAT
+// #![deny(unused_lifetimes)] // Allowd due to GAT
+// #![deny(unstable_features)] // Allowd due to GAT
+#![feature(generic_associated_types)]
 
 // Persistent objects collection
 // TODO: plocation으로 동작시키며 주석해제
@@ -42,10 +43,10 @@ pub mod queue;
 // pub mod treiber_stack;
 
 // Persistent location
-// pub mod plocation;
+// pub mod plocation; // TODO: 바뀐 POp 인터페이스 적용
 
 // Persistent version of crossbeam_epoch
-// pub mod pepoch;
+// pub mod pepoch; // TODO: 바뀐 POp 인터페이스 적용
 
 // Utility
-// pub mod utils;
+// pub mod utils; // TODO: 바뀐 POp 인터페이스 적용
