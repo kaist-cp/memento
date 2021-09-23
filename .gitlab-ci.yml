@@ -35,10 +35,11 @@ check:
 debug:
   stage: test
   script:
-    # 테스트시 Op들을 정적할당하기 위해 Stack 크기가 커야함
-    - RUST_MIN_STACK=1073741824 cargo test
+    - rm -f test/* # pool layout 바뀔 때마다 기존 파일을 직접 제거해야하는 불편함 해소
+    - RUST_MIN_STACK=1073741824 cargo test # 테스트시 Op들을 정적할당하기 위해 Stack 크기가 커야함
 
 release:
   stage: test
   script:
-    - RUST_MIN_STACK=1073741824 cargo test --release
+    - rm -f test/* # pool layout 바뀔 때마다 기존 파일을 직접 제거해야하는 불편함 해소
+    - RUST_MIN_STACK=1073741824 cargo test # 테스트시 Op들을 정적할당하기 위해 Stack 크기가 커야함
