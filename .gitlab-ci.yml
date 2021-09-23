@@ -13,13 +13,7 @@ variables:
 image: "rust:latest"
 
 stages:
-- install
 - test
-
-install:
-  stage: install
-  script:
-    - rustup default stable
 
 check:
   stage: test
