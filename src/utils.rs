@@ -23,11 +23,10 @@ pub mod tests {
 
     #[derive(Debug, Default)]
     pub struct TestRootOp {}
-    impl POp for TestRootOp {
-        type Object = ();
+    impl POp<()> for TestRootOp {
         type Input = ();
         type Output = Result<(), ()>;
-        fn run(&mut self, _: &Self::Object, _: Self::Input, _: &PoolHandle) -> Self::Output {
+        fn run<O: POp<()>>(&mut self, _: (), _: Self::Input, _: &PoolHandle<O>) -> Self::Output {
             Ok(())
         }
         fn reset(&mut self, _: bool) {
@@ -36,7 +35,7 @@ pub mod tests {
     }
 
     /// test에 사용하기 위한 더미용 PoolHandle 얻기
-    pub fn get_test_handle(filesize: usize) -> Result<PoolHandle, Error> {
+    pub fn get_test_handle(filesize: usize) -> Result<PoolHandle<TestRootOp>, Error> {
         // 임시파일 경로 얻기. `create`에서 파일이 이미 존재하면 실패하기 때문에 여기선 경로만 얻어야함
         let temp_path = NamedTempFile::new()?.path().to_str().unwrap().to_owned();
         // 풀 생성 및 핸들 반환

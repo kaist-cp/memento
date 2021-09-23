@@ -1,5 +1,6 @@
 //! Persistent Pointer
 use super::pool::PoolHandle;
+use crate::persistent::POp;
 use std::marker::PhantomData;
 
 /// 상대주소의 NULL 식별자
@@ -47,7 +48,7 @@ impl<T> PPtr<T> {
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref<'a>(&self, pool: &'a PoolHandle) -> &'a T {
+    pub unsafe fn deref<'a, O: POp<()>>(&self, pool: &'a PoolHandle<O>) -> &'a T {
         &*((pool.start() + self.offset) as *const T)
     }
 
@@ -57,7 +58,7 @@ impl<T> PPtr<T> {
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn deref_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
+    pub unsafe fn deref_mut<'a, O: POp<()>>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
         &mut *((pool.start() + self.offset) as *mut T)
     }
 }
