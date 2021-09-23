@@ -42,4 +42,4 @@ release:
   stage: test
   script:
     - rm -f test/*
-    - RUST_MIN_STACK=1073741824 cargo test
+    - RUST_MIN_STACK=1073741824 cargo test --release
