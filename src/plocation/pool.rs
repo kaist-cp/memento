@@ -48,6 +48,10 @@ pub struct PoolHandle<O: POp> {
 // Sync인 이유: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러
 unsafe impl<O: POp> Sync for PoolHandle<O> {}
 
+/// Pool 바깥 주소에 대한 요청 에러
+#[derive(Debug)]
+pub struct AddrOutOfRange;
+
 impl<O: POp> PoolHandle<O> {
     /// 풀의 시작주소 반환
     #[inline]
@@ -64,13 +68,25 @@ impl<O: POp> PoolHandle<O> {
     /// 절대주소를 풀의 상대주소로 변환
     ///
     /// - e.g. `Pop` Op의 식별함수 id()가 절대주소로 식별하던 것을 상대주소로 식별하기 위해 필요
-    /// - 풀에 속하지 않은 절대주소이면 None 반환
+    /// - 풀에 속하지 않은 절대주소이면 에러 반환
     #[inline]
-    pub fn get_persistent_addr(&self, raw: usize) -> Option<usize> {
+    pub fn get_paddr(&self, raw: usize) -> Result<usize, AddrOutOfRange> {
         if self.valid(raw) {
-            return Some(raw - self.start());
+            return Ok(unsafe { self.get_paddr_unchecked(raw) });
         }
-        None
+        Err(AddrOutOfRange)
+    }
+
+    /// 절대주소를 풀의 상대주소로 변환 (pool 범위를 체크하지 않음)
+    ///
+    /// - e.g. `Pop` Op의 식별함수 id()가 절대주소로 식별하던 것을 상대주소로 식별하기 위해 필요
+    ///
+    /// # Safety
+    ///
+    /// 요청 주소가 풀 주소 범위에 속하는 절대주소여야 함
+    #[inline]
+    pub unsafe fn get_paddr_unchecked(&self, raw: usize) -> usize {
+        raw - self.start()
     }
 
     /// 풀의 루트 Op을 가리키는 포인터 반환

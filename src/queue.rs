@@ -112,8 +112,7 @@ impl<T: Clone> Pop<T> {
     #[inline]
     fn id<O: POp>(&self, pool: &PoolHandle<O>) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
-        pool.get_persistent_addr(self as *const Self as usize)
-            .unwrap()
+        unsafe { pool.get_paddr_unchecked(self as *const Self as usize) }
     }
 }
 
