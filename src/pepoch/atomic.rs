@@ -234,7 +234,7 @@ impl<T> Pointable for T {
     type Init = T;
 
     unsafe fn init<O: POp>(init: Self::Init, pool: &PoolHandle<O>) -> usize {
-        let mut ptr = pool.alloc::<T>();
+        let ptr = pool.alloc::<T>();
         // TODO(persistent allocator): 여기서 crash 나면 leak남. 해결 필요
         let t = ptr.deref_mut(pool);
         *t = init;
@@ -294,7 +294,7 @@ impl<T> Pointable for [MaybeUninit<T>] {
         let size = mem::size_of::<PArray<T>>() + mem::size_of::<MaybeUninit<T>>() * len;
         let align = mem::align_of::<PArray<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
-        let mut ptr = pool.alloc_layout::<PArray<T>>(layout);
+        let ptr = pool.alloc_layout::<PArray<T>>(layout);
         // TODO(persistent allocator): 여기서 crash나면 할당은 됐지만 len이 초기화안됨. 이러면 재시작 시 len이 초기화 됐는지/안됐는지 구분이 힘듬
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
