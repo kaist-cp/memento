@@ -72,12 +72,12 @@ impl<T: Clone> PushType<T> for TryPush<T> {
 
 unsafe impl<T: Clone> Send for TryPush<T> {}
 
-impl<T: Clone> POp for TryPush<T> {
-    type Object = TreiberStack<T>;
+impl<T: 'static + Clone> POp for TryPush<T> {
+    type Object<'s> = &'s TreiberStack<T>;
     type Input = T;
-    type Output = Result<(), TryFail>;
+    type Output<'s> = Result<(), TryFail>;
 
-    fn run(&mut self, stack: &Self::Object, value: Self::Input) -> Self::Output {
+    fn run<'o>(&'o mut self, stack: Self::Object<'o>, value: Self::Input) -> Self::Output<'o> {
         stack.push(self, value)
     }
 
@@ -138,12 +138,12 @@ impl<T: Clone> PushType<T> for Push<T> {
 
 unsafe impl<T: Clone> Send for Push<T> {}
 
-impl<T: Clone> POp for Push<T> {
-    type Object = TreiberStack<T>;
+impl<T: 'static + Clone> POp for Push<T> {
+    type Object<'s> = &'s TreiberStack<T>;
     type Input = T;
-    type Output = ();
+    type Output<'s> = ();
 
-    fn run(&mut self, stack: &Self::Object, value: Self::Input) -> Self::Output {
+    fn run<'o>(&'o mut self, stack: Self::Object<'o>, value: Self::Input) -> Self::Output<'o> {
         let pushed = stack.push(self, value);
         debug_assert!(pushed.is_ok())
     }
@@ -194,12 +194,12 @@ impl<T: Clone> PopType<T> for TryPop<T> {
 
 unsafe impl<T: Clone> Send for TryPop<T> {}
 
-impl<T: Clone> POp for TryPop<T> {
-    type Object = TreiberStack<T>;
+impl<T: 'static + Clone> POp for TryPop<T> {
+    type Object<'s> = &'s TreiberStack<T>;
     type Input = ();
-    type Output = Result<Option<T>, TryFail>;
+    type Output<'s> = Result<Option<T>, TryFail>;
 
-    fn run(&mut self, stack: &Self::Object, _: Self::Input) -> Self::Output {
+    fn run<'o>(&'o mut self, stack: Self::Object<'o>, _: Self::Input) -> Self::Output<'o> {
         stack.pop(self)
     }
 
@@ -252,12 +252,12 @@ impl<T: Clone> PopType<T> for Pop<T> {
 
 unsafe impl<T: Clone> Send for Pop<T> {}
 
-impl<T: Clone> POp for Pop<T> {
-    type Object = TreiberStack<T>;
+impl<T: 'static + Clone> POp for Pop<T> {
+    type Object<'s> = &'s TreiberStack<T>;
     type Input = ();
-    type Output = Option<T>;
+    type Output<'s> = Option<T>;
 
-    fn run(&mut self, stack: &Self::Object, _: Self::Input) -> Self::Output {
+    fn run<'o>(&'o mut self, stack: Self::Object<'o>, _: Self::Input) -> Self::Output<'o> {
         stack.pop(self).unwrap()
     }
 
@@ -442,7 +442,7 @@ impl<T: Clone> TreiberStack<T> {
 
 unsafe impl<T: Clone> Send for TreiberStack<T> {}
 
-impl<T: Clone> Stack<T> for TreiberStack<T> {
+impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
     type TryPush = TryPush<T>;
     type Push = Push<T>;
     type TryPop = TryPop<T>;

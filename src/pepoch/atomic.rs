@@ -187,7 +187,7 @@ pub trait Pointable {
     /// # Safety
     ///
     /// The result should be a multiple of `ALIGN`.
-    unsafe fn init<O: POp<()>>(init: Self::Init, pool: &PoolHandle<O>) -> usize;
+    unsafe fn init<O: POp>(init: Self::Init, pool: &PoolHandle<O>) -> usize;
 
     /// Dereferences the given offset in the pool.
     ///
@@ -199,7 +199,7 @@ pub trait Pointable {
     /// - `offset` should not be mutably dereferenced by [`Pointable::deref_mut`] concurrently.
     // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
     // crossbeam에선 <'a>를 명시하지만 여기선 &PoolHandle이 추가되니 inference됨
-    unsafe fn deref<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) -> &Self;
+    unsafe fn deref<O: POp>(offset: usize, pool: &PoolHandle<O>) -> &Self;
 
     /// Mutably dereferences the given offset in the pool.
     ///
@@ -213,7 +213,7 @@ pub trait Pointable {
     // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
     // crossbeam에선 <'a>를 명시하지만 여기선 &PoolHandle이 추가되니 inference됨
     #[allow(clippy::mut_from_ref)]
-    unsafe fn deref_mut<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) -> &mut Self;
+    unsafe fn deref_mut<O: POp>(offset: usize, pool: &PoolHandle<O>) -> &mut Self;
 
     /// Drops the object pointed to by the given offset in the pool.
     ///
@@ -225,7 +225,7 @@ pub trait Pointable {
     /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
     // crossbeam에선 절대주소를 받아 drop하니 여기선 상대주소를 받도록 함
-    unsafe fn drop<O: POp<()>>(offset: usize, pool: &PoolHandle<O>);
+    unsafe fn drop<O: POp>(offset: usize, pool: &PoolHandle<O>);
 }
 
 impl<T> Pointable for T {
@@ -233,7 +233,7 @@ impl<T> Pointable for T {
 
     type Init = T;
 
-    unsafe fn init<O: POp<()>>(init: Self::Init, pool: &PoolHandle<O>) -> usize {
+    unsafe fn init<O: POp>(init: Self::Init, pool: &PoolHandle<O>) -> usize {
         let mut ptr = pool.alloc::<T>();
         // TODO(persistent allocator): 여기서 crash 나면 leak남. 해결 필요
         let t = ptr.deref_mut(pool);
@@ -241,15 +241,15 @@ impl<T> Pointable for T {
         ptr.into_offset()
     }
 
-    unsafe fn deref<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) -> &Self {
+    unsafe fn deref<O: POp>(offset: usize, pool: &PoolHandle<O>) -> &Self {
         PPtr::from(offset).deref(pool)
     }
 
-    unsafe fn deref_mut<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) -> &mut Self {
+    unsafe fn deref_mut<O: POp>(offset: usize, pool: &PoolHandle<O>) -> &mut Self {
         PPtr::from(offset).deref_mut(pool)
     }
 
-    unsafe fn drop<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) {
+    unsafe fn drop<O: POp>(offset: usize, pool: &PoolHandle<O>) {
         pool.free(PPtr::<T>::from(offset));
     }
 }
@@ -290,7 +290,7 @@ impl<T> Pointable for [MaybeUninit<T>] {
 
     type Init = usize;
 
-    unsafe fn init<O: POp<()>>(len: Self::Init, pool: &PoolHandle<O>) -> usize {
+    unsafe fn init<O: POp>(len: Self::Init, pool: &PoolHandle<O>) -> usize {
         let size = mem::size_of::<PArray<T>>() + mem::size_of::<MaybeUninit<T>>() * len;
         let align = mem::align_of::<PArray<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
@@ -303,17 +303,17 @@ impl<T> Pointable for [MaybeUninit<T>] {
         ptr.into_offset()
     }
 
-    unsafe fn deref<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) -> &Self {
+    unsafe fn deref<O: POp>(offset: usize, pool: &PoolHandle<O>) -> &Self {
         let array = &*(PPtr::from(offset).deref(pool) as *const PArray<T>);
         slice::from_raw_parts(array.elements.as_ptr() as *const _, array.len)
     }
 
-    unsafe fn deref_mut<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) -> &mut Self {
+    unsafe fn deref_mut<O: POp>(offset: usize, pool: &PoolHandle<O>) -> &mut Self {
         let array = &*(PPtr::from(offset).deref_mut(pool) as *mut PArray<T>);
         slice::from_raw_parts_mut(array.elements.as_ptr() as *mut _, array.len)
     }
 
-    unsafe fn drop<O: POp<()>>(offset: usize, pool: &PoolHandle<O>) {
+    unsafe fn drop<O: POp>(offset: usize, pool: &PoolHandle<O>) {
         let array = &*(PPtr::from(offset).deref_mut(pool) as *mut PArray<T>);
         let size = mem::size_of::<PArray<T>>() + mem::size_of::<MaybeUninit<T>>() * array.len;
         let align = mem::align_of::<PArray<T>>();
@@ -355,7 +355,7 @@ impl<T> PAtomic<T> {
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// ```
-    pub fn new<O: POp<()>>(init: T, pool: &PoolHandle<O>) -> PAtomic<T> {
+    pub fn new<O: POp>(init: T, pool: &PoolHandle<O>) -> PAtomic<T> {
         Self::init(init, pool)
     }
 }
@@ -376,7 +376,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::init(1234, &pool);
     /// ```
-    pub fn init<O: POp<()>>(init: T::Init, pool: &PoolHandle<O>) -> PAtomic<T> {
+    pub fn init<O: POp>(init: T::Init, pool: &PoolHandle<O>) -> PAtomic<T> {
         Self::from(POwned::init(init, pool))
     }
 
@@ -1003,7 +1003,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     }
 
     /// PoolHandle을 받아야하므로 fmt::Pointer trait impl 하던 것을 직접 구현
-    pub fn fmt<O: POp<()>>(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle<O>) -> fmt::Result {
+    pub fn fmt<O: POp>(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle<O>) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
         let (offset, _) = decompose_tag::<T>(data);
         fmt::Pointer::fmt(&(unsafe { T::deref(offset, pool) as *const _ }), f)
@@ -1221,7 +1221,7 @@ impl<T> POwned<T> {
     /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(1234, &pool);
     /// ```
-    pub fn new<O: POp<()>>(init: T, pool: &PoolHandle<O>) -> POwned<T> {
+    pub fn new<O: POp>(init: T, pool: &PoolHandle<O>) -> POwned<T> {
         Self::init(init, pool)
     }
 }
@@ -1242,7 +1242,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::<i32>::init(1234, &pool);
     /// ```
-    pub fn init<O: POp<()>>(init: T::Init, pool: &PoolHandle<O>) -> POwned<T> {
+    pub fn init<O: POp>(init: T::Init, pool: &PoolHandle<O>) -> POwned<T> {
         unsafe { Self::from_usize(T::init(init, pool)) }
     }
 
@@ -1318,7 +1318,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref<'a, O: POp<()>>(&self, pool: &'a PoolHandle<O>) -> &'a T {
+    pub unsafe fn deref<'a, O: POp>(&self, pool: &'a PoolHandle<O>) -> &'a T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
@@ -1330,7 +1330,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn deref_mut<'a, O: POp<()>>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
+    pub unsafe fn deref_mut<'a, O: POp>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
@@ -1341,7 +1341,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn borrow<'a, O: POp<()>>(&self, pool: &'a PoolHandle<O>) -> &'a T {
+    pub unsafe fn borrow<'a, O: POp>(&self, pool: &'a PoolHandle<O>) -> &'a T {
         self.deref(pool)
     }
 
@@ -1352,7 +1352,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn borrow_mut<'a, O: POp<()>>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
+    pub unsafe fn borrow_mut<'a, O: POp>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
         self.deref_mut(pool)
     }
 
@@ -1362,7 +1362,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # Safety
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn as_ref<'a, O: POp<()>>(&self, pool: &'a PoolHandle<O>) -> &'a T {
+    pub unsafe fn as_ref<'a, O: POp>(&self, pool: &'a PoolHandle<O>) -> &'a T {
         self.deref(pool)
     }
 
@@ -1373,7 +1373,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn as_mut<'a, O: POp<()>>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
+    pub unsafe fn as_mut<'a, O: POp>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
         self.deref_mut(pool)
     }
 }
@@ -1398,7 +1398,7 @@ impl<T: ?Sized + Pointable> fmt::Debug for POwned<T> {
 // PoolHandle을 받아야하므로 Clone trait impl 하던 것을 직접 구현
 impl<T: Clone> POwned<T> {
     /// 주어진 pool에 clone
-    pub fn clone<O: POp<()>>(&self, pool: &PoolHandle<O>) -> Self {
+    pub fn clone<O: POp>(&self, pool: &PoolHandle<O>) -> Self {
         POwned::new(unsafe { self.deref(pool) }.clone(), pool).with_tag(self.tag())
     }
 }
@@ -1575,7 +1575,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[allow(clippy::should_implement_trait)]
-    pub unsafe fn deref<O: POp<()>>(&self, pool: &'g PoolHandle<O>) -> &'g T {
+    pub unsafe fn deref<O: POp>(&self, pool: &'g PoolHandle<O>) -> &'g T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
@@ -1624,7 +1624,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::should_implement_trait)]
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn deref_mut<O: POp<()>>(&mut self, pool: &'g PoolHandle<O>) -> &'g mut T {
+    pub unsafe fn deref_mut<O: POp>(&mut self, pool: &'g PoolHandle<O>) -> &'g mut T {
         let (offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
@@ -1667,7 +1667,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// }
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub unsafe fn as_ref<O: POp<()>>(&self, pool: &'g PoolHandle<O>) -> Option<&'g T> {
+    pub unsafe fn as_ref<O: POp>(&self, pool: &'g PoolHandle<O>) -> Option<&'g T> {
         let (null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
         let (my_offset, _) = decompose_tag::<T>(self.data);
         if my_offset == null_offset {
@@ -1768,7 +1768,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
 
     // PoolHandle을 받아야하므로 fmt trait impl 하던 것을 직접 구현
     /// formatting Pointer
-    pub fn fmt<O: POp<()>>(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle<O>) -> fmt::Result {
+    pub fn fmt<O: POp>(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle<O>) -> fmt::Result {
         fmt::Pointer::fmt(&(unsafe { self.deref(pool) as *const _ }), f)
     }
 }

@@ -53,16 +53,17 @@ impl<T: Clone> Default for Push<T> {
     }
 }
 
-impl<T: Clone> POp<&Queue<T>> for Push<T> {
+impl<T: 'static + Clone> POp for Push<T> {
+    type Object<'q> = &'q Queue<T>;
     type Input = T;
-    type Output = ();
+    type Output<'q> = ();
 
-    fn run<O: POp<()>>(
+    fn run<'o, O: POp>(
         &mut self,
-        queue: &Queue<T>,
+        queue: Self::Object<'o>,
         value: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Self::Output {
+    ) -> Self::Output<'o> {
         queue.push(self, value, pool);
     }
 
@@ -87,16 +88,17 @@ impl<T: Clone> Default for Pop<T> {
     }
 }
 
-impl<T: Clone> POp<&Queue<T>> for Pop<T> {
+impl<T: 'static + Clone> POp for Pop<T> {
+    type Object<'q> = &'q Queue<T>;
     type Input = ();
-    type Output = Option<T>;
+    type Output<'q> = Option<T>;
 
-    fn run<O: POp<()>>(
+    fn run<'o, O: POp>(
         &mut self,
-        queue: &Queue<T>,
+        queue: Self::Object<'o>,
         _: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Self::Output {
+    ) -> Self::Output<'o> {
         queue.pop(self, pool)
     }
 
@@ -108,7 +110,7 @@ impl<T: Clone> POp<&Queue<T>> for Pop<T> {
 
 impl<T: Clone> Pop<T> {
     #[inline]
-    fn id<O: POp<()>>(&self, pool: &PoolHandle<O>) -> usize {
+    fn id<O: POp>(&self, pool: &PoolHandle<O>) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         pool.get_persistent_addr(self as *const Self as usize)
             .unwrap()
@@ -124,7 +126,7 @@ pub struct Queue<T: Clone> {
 
 impl<T: Clone> Queue<T> {
     /// new
-    pub fn new<O: POp<()>>(pool: &PoolHandle<O>) -> Self {
+    pub fn new<O: POp>(pool: &PoolHandle<O>) -> Self {
         let sentinel = Node::default();
         unsafe {
             let guard = epoch::unprotected(pool);
@@ -137,14 +139,14 @@ impl<T: Clone> Queue<T> {
     }
 
     // TODO: try mode
-    fn push<O: POp<()>>(&self, client: &mut Push<T>, value: T, pool: &PoolHandle<O>) {
+    fn push<O: POp>(&self, client: &mut Push<T>, value: T, pool: &PoolHandle<O>) {
         let guard = epoch::pin(pool);
         let node = some_or!(self.is_incomplete(client, value, &guard, pool), return);
 
         while self.try_push(node, &guard, pool).is_err() {}
     }
 
-    fn is_incomplete<'g, O: POp<()>>(
+    fn is_incomplete<'g, O: POp>(
         &self,
         client: &Push<T>,
         value: T,
@@ -177,7 +179,7 @@ impl<T: Clone> Queue<T> {
     }
 
     /// tail에 새 `node` 연결을 시도
-    fn try_push<O: POp<()>>(
+    fn try_push<O: POp>(
         &self,
         node: PShared<'_, Node<T>>,
         guard: &Guard<'_>,
@@ -216,7 +218,7 @@ impl<T: Clone> Queue<T> {
     }
 
     /// `node`가 Queue 안에 있는지 head부터 tail까지 순회하며 검색
-    fn search<O: POp<()>>(
+    fn search<O: POp>(
         &self,
         node: PShared<'_, Node<T>>,
         guard: &Guard<'_>,
@@ -240,7 +242,7 @@ impl<T: Clone> Queue<T> {
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 1;
 
-    fn pop<O: POp<()>>(&self, client: &mut Pop<T>, pool: &PoolHandle<O>) -> Option<T> {
+    fn pop<O: POp>(&self, client: &mut Pop<T>, pool: &PoolHandle<O>) -> Option<T> {
         let guard = epoch::pin(pool);
         let target = client.target.load(Ordering::SeqCst, &guard);
 
@@ -267,7 +269,7 @@ impl<T: Clone> Queue<T> {
     }
 
     /// head를 pop 시도
-    fn try_pop<O: POp<()>>(
+    fn try_pop<O: POp>(
         &self,
         client: &mut Pop<T>,
         guard: &Guard<'_>,
@@ -363,7 +365,7 @@ mod test {
     }
 
     impl RootOp {
-        fn init<O: POp<()>>(&self, pool: &PoolHandle<O>) {
+        fn init<O: POp>(&self, pool: &PoolHandle<O>) {
             let guard = unsafe { epoch::unprotected(&pool) };
             let q = self.queue.load(Ordering::SeqCst, guard);
 
@@ -376,12 +378,18 @@ mod test {
         }
     }
 
-    impl POp<()> for RootOp {
+    impl POp for RootOp {
+        type Object<'o> = ();
         type Input = ();
-        type Output = Result<(), ()>;
+        type Output<'o> = Result<(), ()>;
 
         /// idempotent push_pop
-        fn run<O: POp<()>>(&mut self, _: (), _: Self::Input, pool: &PoolHandle<O>) -> Self::Output {
+        fn run<'o, O: POp>(
+            &mut self,
+            _: Self::Object<'o>,
+            _: Self::Input,
+            pool: &PoolHandle<O>,
+        ) -> Self::Output<'o> {
             self.init(pool);
 
             // Alias

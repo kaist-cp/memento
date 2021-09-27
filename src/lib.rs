@@ -25,19 +25,21 @@
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
-#![deny(single_use_lifetimes)]
 #![deny(unreachable_pub)]
-#![deny(unstable_features)]
-#![deny(unused_lifetimes)]
+// #![deny(single_use_lifetimes)] // Allowd due to GAT
+// #![deny(unused_lifetimes)] // Allowd due to GAT
+// #![deny(unstable_features)] // Allowd due to GAT
+#![feature(generic_associated_types)]
 
 // Persistent objects collection
-// TODO: plocation으로 동작시키며 주석해제
-// pub mod exchanger;
+// pub mod exchanger; // TODO: plocation으로 동작시키며 주석해제
+// pub mod list; // TODO: plocation으로 동작시키며 주석해제
+// pub mod lock; // TODO: plocation으로 동작시키며 주석해제
 pub mod persistent;
-// pub mod pipe;
+// pub mod pipe; // TODO: plocation으로 동작시키며 주석해제
 pub mod queue;
-// pub mod stack;
-// pub mod treiber_stack;
+// pub mod stack; // TODO: plocation으로 동작시키며 주석해제
+// pub mod treiber_stack; // TODO: plocation으로 동작시키며 주석해제
 
 // Persistent location
 pub mod plocation;

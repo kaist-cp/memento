@@ -34,7 +34,7 @@ use crate::plocation::ptr::PPtr;
 /// root_op.run((), (), &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
-pub struct PoolHandle<O: POp<()>> {
+pub struct PoolHandle<O: POp> {
     /// 메모리 매핑에 사용한 오브젝트 (drop으로 인해 매핑 해제되지 않게끔 들고 있어야함)
     mmap: MmapMut,
 
@@ -46,9 +46,9 @@ pub struct PoolHandle<O: POp<()>> {
 }
 
 // Sync인 이유: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러
-unsafe impl<O: POp<()>> Sync for PoolHandle<O> {}
+unsafe impl<O: POp> Sync for PoolHandle<O> {}
 
-impl<O: POp<()>> PoolHandle<O> {
+impl<O: POp> PoolHandle<O> {
     /// 풀의 시작주소 반환
     #[inline]
     pub fn start(&self) -> usize {
@@ -158,7 +158,7 @@ impl Pool {
     ///
     /// * `filepath`에 파일이 이미 존재한다면 실패
     // TODO: filepath의 타입이 `P: AsRef<Path>`이면 좋겠다. 그런데 이러면 generic P에 대한 type inference가 안돼서 사용자가 `Pool::create::<RootOp, &str>("foo.pool")`처럼 호출해야함. 이게 괜찮나?
-    pub fn create<O: POp<()>>(filepath: &str, size: usize) -> Result<PoolHandle<O>, Error> {
+    pub fn create<O: POp>(filepath: &str, size: usize) -> Result<PoolHandle<O>, Error> {
         // 초기화 도중의 crash를 고려하여,
         //   1. 임시파일로서 풀을 초기화 한 후
         //   2. 초기화가 완료되면 "filepath"로 옮김
@@ -203,7 +203,7 @@ impl Pool {
     /// # Errors
     ///
     /// * `filepath`에 파일이 존재하지 않는다면 실패
-    pub unsafe fn open<P: AsRef<Path>, O: POp<()>>(filepath: P) -> Result<PoolHandle<O>, Error> {
+    pub unsafe fn open<P: AsRef<Path>, O: POp>(filepath: P) -> Result<PoolHandle<O>, Error> {
         // 파일 열기
         let file = OpenOptions::new().read(true).write(true).open(filepath)?;
 
@@ -261,12 +261,18 @@ mod tests {
         flag: AtomicBool,
     }
 
-    impl POp<()> for RootOp {
+    impl POp for RootOp {
+        type Object<'o> = ();
         type Input = ();
-        type Output = Result<(), ()>;
+        type Output<'o> = Result<(), ()>;
 
         // invariant 검사(flag=1 => value=42)
-        fn run<O: POp<()>>(&mut self, _: (), _: Self::Input, _: &PoolHandle<O>) -> Self::Output {
+        fn run<'o, O: POp>(
+            &mut self,
+            _: Self::Object<'o>,
+            _: Self::Input,
+            _: &PoolHandle<O>,
+        ) -> Self::Output<'o> {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
