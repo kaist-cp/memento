@@ -313,7 +313,18 @@ impl<T: Clone> Queue<T> {
                 );
                 Some(Self::finish_pop(next_ref))
             })
-            .map_err(|_| ())
+            .map_err(|_| {
+                let h = self.head.load(Ordering::SeqCst, guard);
+                if h == head {
+                    let _ = self.head.compare_exchange(
+                        head,
+                        next,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                }
+            })
     }
 
     fn finish_pop(node: &Node<T>) -> T {
