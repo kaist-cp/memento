@@ -7,6 +7,7 @@ use std::{mem::MaybeUninit, ptr};
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::pool::PoolHandle;
+use crate::plocation::ptr::AsPPtr;
 
 struct Node<T: Clone> {
     data: MaybeUninit<T>,
@@ -112,7 +113,7 @@ impl<T: Clone> Pop<T> {
     #[inline]
     fn id<O: POp>(&self, pool: &PoolHandle<O>) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
-        unsafe { pool.get_paddr_unchecked(self as *const Self as usize) }
+        unsafe { self.as_pptr(pool).into_offset() }
     }
 }
 

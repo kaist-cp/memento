@@ -14,15 +14,26 @@ const NULL_OFFSET: usize = usize::MAX;
 #[derive(Debug)]
 pub struct PPtr<T: ?Sized> {
     offset: usize,
-    marker: PhantomData<T>,
+    _marker: PhantomData<*const T>,
 }
+
+impl<T: ?Sized> Clone for PPtr<T> {
+    fn clone(&self) -> Self {
+        Self {
+            offset: self.offset,
+            _marker: PhantomData
+        }
+    }
+}
+
+impl<T: ?Sized> Copy for PPtr<T> {}
 
 impl<T: ?Sized> PPtr<T> {
     /// null 포인터 반환
     pub fn null() -> Self {
         Self {
             offset: NULL_OFFSET,
-            marker: PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -35,20 +46,20 @@ impl<T: ?Sized> PPtr<T> {
     pub fn into_offset(self) -> usize {
         self.offset
     }
+
+    /// null 포인터인지 확인
+    pub fn is_null(self) -> bool {
+        self.offset == NULL_OFFSET
+    }
 }
 
 impl<T> PPtr<T> {
-    /// null 포인터인지 확인
-    pub fn is_null(&self) -> bool {
-        self.offset == NULL_OFFSET
-    }
-
     /// 절대주소 참조
     ///
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref<'a, O: POp>(&self, pool: &'a PoolHandle<O>) -> &'a T {
+    pub unsafe fn deref<O: POp>(self, pool: &PoolHandle<O>) -> &'_ T {
         &*((pool.start() + self.offset) as *const T)
     }
 
@@ -58,8 +69,27 @@ impl<T> PPtr<T> {
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn deref_mut<'a, O: POp>(&mut self, pool: &'a PoolHandle<O>) -> &'a mut T {
+    pub unsafe fn deref_mut<O: POp>(self, pool: &PoolHandle<O>) -> &'_ mut T {
         &mut *((pool.start() + self.offset) as *mut T)
+    }
+}
+
+/// reference를 persistent ptr로 바꿔줌
+pub trait AsPPtr {
+    /// reference를 persistent ptr로 바꿔줌
+    ///
+    /// # Safety
+    ///
+    /// object가 `pool`에 속한 reference여야 함
+    unsafe fn as_pptr<O: POp>(&self, pool: &PoolHandle<O>) -> PPtr<Self>;
+}
+
+impl<T> AsPPtr for T {
+    unsafe fn as_pptr<O: POp>(&self, pool: &PoolHandle<O>) -> PPtr<Self> {
+        PPtr {
+            offset: self as *const T as usize - pool.start(),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -68,7 +98,7 @@ impl<T> From<usize> for PPtr<T> {
     fn from(off: usize) -> Self {
         Self {
             offset: off,
-            marker: PhantomData,
+            _marker: PhantomData,
         }
     }
 }
