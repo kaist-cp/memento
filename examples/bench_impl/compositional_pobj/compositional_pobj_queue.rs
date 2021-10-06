@@ -66,7 +66,7 @@ impl POp for GetOurQueueNOps {
     fn run<'o, O: POp>(
         &mut self,
         _: Self::Object<'o>,
-        (nr_thread, duration, kind): Self::Input, // TODO: generic (remove prob)
+        (nr_thread, duration, kind): Self::Input,
         pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         // Initialize Queue

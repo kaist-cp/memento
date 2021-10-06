@@ -49,9 +49,9 @@ bench friedman_durable_queue pair
 bench friedman_log_queue pair
 
 # 3. Benchmarking pipe performance
-# TODO: test our_pipe
-# TODO: test corundum_pipe
-# TODO: test pmdk_pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
+# TODO: bench our_pipe
+# TODO: bench corundum_pipe
+# TODO: bench pmdk_pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
 
 # 4. Print result
 echo "Test finished! see ${out_path}"
