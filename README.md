@@ -8,12 +8,12 @@
 - [PMEM setup guideline](./document/pmem_setup.md)
 
 ## Performance Evaluation
-Build
+### Build
 ```bash
 build.sh
 ```
 
-Run
+### Run
 ```bash
 # { /mnt/pmem0 }의 풀 파일로 { 5 }초씩 { 10 }번 테스트 진행. enq 확률은 { 50 }%
 run.sh /mnt/pmem0 5 10 50
