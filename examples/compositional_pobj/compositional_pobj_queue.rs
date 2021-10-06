@@ -1,6 +1,6 @@
 use crate::abstract_queue::*;
 use crate::TestNOps;
-use crate::INIT_COUNT;
+use crate::QUEUE_INIT_SIZE;
 use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::pool::*;
@@ -21,12 +21,12 @@ impl<T: 'static + Clone> DurableQueue<T> for Queue<T> {
     }
 }
 
-pub struct GetOurQueueThroughput {
+pub struct GetOurQueueNOps {
     queue: PAtomic<Queue<usize>>,
-    init_pushes: [Push<usize>; INIT_COUNT],
+    init_pushes: [Push<usize>; QUEUE_INIT_SIZE],
 }
 
-impl Default for GetOurQueueThroughput {
+impl Default for GetOurQueueNOps {
     fn default() -> Self {
         Self {
             queue: PAtomic::null(),
@@ -35,34 +35,29 @@ impl Default for GetOurQueueThroughput {
     }
 }
 
-impl GetOurQueueThroughput {
+impl GetOurQueueNOps {
     fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
         let guard = unsafe { epoch::unprotected(&pool) };
         let q = self.queue.load(Ordering::SeqCst, guard);
 
         // Initialize queue
         if q.is_null() {
-            // 큐 생성
             let q = POwned::new(Queue::<usize>::new(pool), pool);
             let q_ref = unsafe { q.deref(pool) };
-            // TODO: 여기서 crash나면 leak남
-
-            // 큐 초기상태 설정: 10^6개 원소 가짐
-            for i in 0..INIT_COUNT {
+            for i in 0..QUEUE_INIT_SIZE {
                 self.init_pushes[i].run(q_ref, i, pool)
             }
-
             self.queue.store(q, Ordering::SeqCst);
         }
     }
 }
 
-impl TestNOps for GetOurQueueThroughput {}
+impl TestNOps for GetOurQueueNOps {}
 
-impl POp for GetOurQueueThroughput {
+impl POp for GetOurQueueNOps {
     type Object<'o> = ();
     type Input = (usize, f64, u32); // (n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq)
-    type Output<'o> = Result<usize, ()>; // 실행한 operation 수
+    type Output<'o> = usize; // 실행한 operation 수
 
     fn run<'o, O: POp>(
         &mut self,
@@ -80,10 +75,10 @@ impl POp for GetOurQueueThroughput {
                 .deref(pool)
         };
 
-        // TODO: refactoring
+        // TODO: 현재는 input `p`로 실행할 테스트를 구분. 더 우아한 방법으로 바꾸기
         if probability != 65535 {
-            // Test: p% 확률로 enq, 100-p% 확률로 deq
-            Ok(self.test_nops(
+            // Test1: p% 확률로 enq 혹은 100-p% 확률로 deq
+            self.test_nops(
                 &|tid| {
                     let mut push = Push::default();
                     let mut pop = Pop::default();
@@ -93,9 +88,10 @@ impl POp for GetOurQueueThroughput {
                 },
                 nr_thread,
                 duration,
-            ))
+            )
         } else {
-            Ok(self.test_nops(
+            // Test2: enq; deq;
+            self.test_nops(
                 &|tid| {
                     let mut push = Push::default();
                     let mut pop = Pop::default();
@@ -105,7 +101,7 @@ impl POp for GetOurQueueThroughput {
                 },
                 nr_thread,
                 duration,
-            ))
+            )
         }
     }
 

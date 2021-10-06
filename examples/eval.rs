@@ -18,12 +18,12 @@ use std::fs::remove_file;
 use std::sync::atomic::*;
 use std::thread::sleep;
 
-const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-const INIT_COUNT: usize = 100; // TODO: 제대로 사용 중인지 확인
-const MAX_THREADS: usize = 3; // TODO: 스크립트의 인자로 넣을 순 없나?
+const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024; // 테스트에 사용할 풀 파일의 크기
+const QUEUE_INIT_SIZE: usize = 100; // 테스트시 Queue의 초기 노드 수
+const MAX_THREADS: usize = 3;
 
 trait TestNOps {
-    // `nr_thread`개 스레드로 `duration`초 동안 `f`가 몇번 실행되는지 계산
+    // `nr_thread`개 스레드로 `duration`초 동안 `op`이 몇번 실행되는지 계산
     fn test_nops<'f, F: Fn(usize)>(&self, op: &'f F, nr_thread: usize, duration: f64) -> usize
     where
         &'f F: Send,
@@ -58,18 +58,11 @@ trait TestNOps {
     }
 }
 
-enum Target {
-    OurQueue,
-    FriedmanDurableQueue,
-    FriedmanLogQueue,
-    DSSQueue,
-    CrndmPipe,
-}
-
-fn get_throughput<
-    'o,
-    O: POp<Object<'o> = (), Input = (usize, f64, u32), Output<'o> = Result<usize, ()>>,
->(
+// - 우리의 pool API로 만든 테스트 로직 실행
+// - root op으로 operation 실행 수를 카운트하는 로직을 가짐
+//      - input: n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq (TODO: 3번째 input은 테스트 종류마다 다름. 어떻게 다룰지 고민 필요)
+//      - output: m초 동안 실행된 operation 수
+fn get_nops<'o, O: POp<Object<'o> = (), Input = (usize, f64, u32), Output<'o> = usize>>(
     filepath: &str,
     nr_thread: usize,
     duration: f64,
@@ -80,7 +73,14 @@ fn get_throughput<
     pool_handle
         .get_root()
         .run((), (nr_thread, duration, enq_probability), &pool_handle)
-        .unwrap()
+}
+
+enum Target {
+    OurQueue,
+    FriedmanDurableQueue,
+    FriedmanLogQueue,
+    DSSQueue,
+    CrndmPipe,
 }
 
 fn main() {
@@ -98,29 +98,30 @@ fn main() {
     let test_duration = args[3].parse::<f64>().unwrap();
     let test_cnt = args[4].parse::<usize>().unwrap();
     let test_enq_probability = args[5].parse::<u32>().unwrap();
-    // let max_thread = num_cpus::get();
 
     let mut res = vec![0.0; MAX_THREADS + 1];
+
+    // 스레드 `nr_thread`개 일때의 처리율 계산하기
     for nr_thread in 1..MAX_THREADS + 1 {
         println!("Test throguhput using {} threads", nr_thread);
         let mut sum = 0;
 
+        // `cnt`번 테스트하여 평균냄
         for cnt in 0..test_cnt {
-            // 스레드 `nr_thread`개 일때 operation 실행한 횟수 계산
             let nops = match test_target {
-                Target::OurQueue => get_throughput::<GetOurQueueThroughput>(
+                Target::OurQueue => get_nops::<GetOurQueueNOps>(
                     filepath,
                     nr_thread,
                     test_duration,
                     test_enq_probability,
                 ),
-                Target::FriedmanDurableQueue => get_throughput::<GetDurableQueueThroughput>(
+                Target::FriedmanDurableQueue => get_nops::<GetDurableQueueNOps>(
                     filepath,
                     nr_thread,
                     test_duration,
                     test_enq_probability,
                 ),
-                Target::FriedmanLogQueue => get_throughput::<GetLogQueueThroughput>(
+                Target::FriedmanLogQueue => get_nops::<GetLogQueueNOps>(
                     filepath,
                     nr_thread,
                     test_duration,
@@ -130,16 +131,19 @@ fn main() {
                 Target::CrndmPipe => todo!(),
             };
             sum += nops;
-
             println!("try #{} : {} operation was executed.", cnt, nops);
         }
-        // 스레드 `nr_thread`개 일때의 평균 op 실행 수 저장
-        res[nr_thread] = sum as f64 / test_cnt as f64;
+
+        // 평균 op/s 계산하여 저장
+        res[nr_thread] = (sum as f64 / test_cnt as f64) / test_duration;
     }
 
-    // Calucatle and print average
+    // 처리율(평균 Mop/s) 출력
     for nr_thread in 1..MAX_THREADS + 1 {
-        let avg_mops = res[nr_thread] / (test_duration * 1_000_000 as f64);
-        println!("avg mops when nr_thread={} : {}", nr_thread, avg_mops);
+        println!(
+            "avg mops when nr_thread={}: {}",
+            nr_thread,
+            res[nr_thread] / 1_000_000 as f64
+        );
     }
 }

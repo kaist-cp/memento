@@ -1,6 +1,6 @@
 use super::*;
 use crate::abstract_queue::{enq_deq_both, enq_deq_either, DeqInput, DurableQueue, EnqInput};
-use crate::{TestNOps, INIT_COUNT, MAX_THREADS};
+use crate::{TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::pool::*;
@@ -231,27 +231,25 @@ impl<T: Default + Clone> DurableQueue<T> for LogQueue<T> {
 }
 
 #[derive(Default)]
-pub struct GetLogQueueThroughput {
+pub struct GetLogQueueNOps {
     queue: LogQueue<usize>,
 }
 
-impl GetLogQueueThroughput {
+impl GetLogQueueNOps {
     fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
         self.queue = LogQueue::new(pool);
-
-        // TODO: 큐 초기상태는 원소 몇개로 설정할 건가?
-        for i in 0..INIT_COUNT {
+        for i in 0..QUEUE_INIT_SIZE {
             self.queue.enqueue(i, 0, 0, pool);
         }
     }
 }
 
-impl TestNOps for GetLogQueueThroughput {}
+impl TestNOps for GetLogQueueNOps {}
 
-impl POp for GetLogQueueThroughput {
+impl POp for GetLogQueueNOps {
     type Object<'o> = ();
     type Input = (usize, f64, u32); // (n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq)
-    type Output<'o> = Result<usize, ()>; // 실행한 operation 수
+    type Output<'o> = usize; // 실행한 operation 수
     fn run<'o, O: POp>(
         &mut self,
         _: Self::Object<'o>,
@@ -261,28 +259,29 @@ impl POp for GetLogQueueThroughput {
         // Initialize Queue
         self.init(pool);
 
-        // TODO: refactoring
+        // TODO: 현재는 input `p`로 실행할 테스트를 구분. 더 우아한 방법으로 바꾸기
         if probability != 65535 {
-            // Test: p% 확률로 enq, 100-p% 확률로 deq
-            Ok(self.test_nops(
+            // Test1: p% 확률로 enq 혹은 100-p% 확률로 deq
+            self.test_nops(
                 &|tid| {
-                    let enq_input = EnqInput::FriedmanLogQ(tid, tid, 0); // op_num=0?
-                    let deq_input = DeqInput::FriedmanLogQ(tid, 0); // op_num=0?
+                    let enq_input = EnqInput::FriedmanLogQ(tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                    let deq_input = DeqInput::FriedmanLogQ(tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
                     enq_deq_either(&self.queue, enq_input, deq_input, probability, pool);
                 },
                 nr_thread,
                 duration,
-            ))
+            )
         } else {
-            Ok(self.test_nops(
+            // Test2: enq; deq;
+            self.test_nops(
                 &|tid| {
-                    let enq_input = EnqInput::FriedmanLogQ(tid, tid, 0); // op_num=0?
-                    let deq_input = DeqInput::FriedmanLogQ(tid, 0); // op_num=0?
+                    let enq_input = EnqInput::FriedmanLogQ(tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                    let deq_input = DeqInput::FriedmanLogQ(tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
                     enq_deq_both(&self.queue, enq_input, deq_input, pool);
                 },
                 nr_thread,
                 duration,
-            ))
+            )
         }
     }
 
