@@ -4,7 +4,7 @@ use rand::Rng;
 
 #[inline]
 fn pick(prob: u32) -> bool {
-    return rand::thread_rng().gen_ratio(prob, 100);
+    rand::thread_rng().gen_ratio(prob, 100)
 }
 
 pub trait TestQueue {

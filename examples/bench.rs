@@ -62,7 +62,7 @@ fn get_nops<'o, O: POp<Object<'o> = (), Input = (usize, f64, u32), Output<'o> = 
     enq_probability: u32,
 ) -> usize {
     let _ = remove_file(filepath);
-    let pool_handle = Pool::create::<O>(&filepath, FILE_SIZE).unwrap();
+    let pool_handle = Pool::create::<O>(filepath, FILE_SIZE).unwrap();
     pool_handle
         .get_root()
         .run((), (nr_thread, duration, enq_probability), &pool_handle)

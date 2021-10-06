@@ -41,7 +41,7 @@ impl Default for GetOurQueueNOps {
 
 impl GetOurQueueNOps {
     fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
-        let guard = unsafe { epoch::unprotected(&pool) };
+        let guard = unsafe { epoch::unprotected(pool) };
         let q = self.queue.load(Ordering::SeqCst, guard);
 
         // Initialize queue
@@ -75,7 +75,7 @@ impl POp for GetOurQueueNOps {
         // Alias
         let q = unsafe {
             self.queue
-                .load(Ordering::SeqCst, epoch::unprotected(&pool))
+                .load(Ordering::SeqCst, epoch::unprotected(pool))
                 .deref(pool)
         };
 
