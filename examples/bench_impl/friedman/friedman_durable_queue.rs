@@ -1,5 +1,5 @@
 use crate::bench_impl::abstract_queue::*;
-use crate::{TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
+use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::pool::*;
@@ -198,33 +198,20 @@ impl TestNOps for GetDurableQueueNOps {}
 
 impl POp for GetDurableQueueNOps {
     type Object<'o> = ();
-    type Input = (usize, f64, u32); // (n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq)
+    type Input = (usize, f64, TestKind); // (n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq)
     type Output<'o> = usize; // 실행한 operation 수
 
     fn run<'o, O: POp>(
         &mut self,
         _: Self::Object<'o>,
-        (nr_thread, duration, probability): Self::Input,
+        (nr_thread, duration, kind): Self::Input,
         pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         // Initialize Queue
         self.init(pool);
 
-        // TODO: 현재는 input `p`로 실행할 테스트를 구분. 더 우아한 방법으로 바꾸기
-        if probability != 65535 {
-            // Test1: p% 확률로 enq 혹은 100-p% 확률로 deq
-            self.test_nops(
-                &|tid| {
-                    let enq_input = tid;
-                    let deq_input = tid;
-                    enq_deq_prob(&self.queue, enq_input, deq_input, probability, pool);
-                },
-                nr_thread,
-                duration,
-            )
-        } else {
-            // Test2: enq; deq;
-            self.test_nops(
+        match kind {
+            TestKind::QueuePair => self.test_nops(
                 &|tid| {
                     let enq_input = tid;
                     let deq_input = tid;
@@ -232,7 +219,17 @@ impl POp for GetDurableQueueNOps {
                 },
                 nr_thread,
                 duration,
-            )
+            ),
+            TestKind::QueueProb(prob) => self.test_nops(
+                &|tid| {
+                    let enq_input = tid;
+                    let deq_input = tid;
+                    enq_deq_prob(&self.queue, enq_input, deq_input, prob, pool);
+                },
+                nr_thread,
+                duration,
+            ),
+            _ => unreachable!("Queue를 위한 테스트만 해야함"),
         }
     }
 

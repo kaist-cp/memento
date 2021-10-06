@@ -58,6 +58,7 @@ dependencies = [
  "log",
  "memmap",
  "rand",
+ "regex",
  "serial_test",
  "tempfile",
 ]

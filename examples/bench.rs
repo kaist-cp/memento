@@ -7,6 +7,7 @@ use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::*;
 use core::time;
 use crossbeam_utils::thread;
+use regex::Regex;
 use std::env;
 use std::fs::remove_file;
 use std::sync::atomic::*;
@@ -55,45 +56,64 @@ trait TestNOps {
 // - root op으로 operation 실행 수를 카운트하는 로직을 가짐
 //      - input: n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq (TODO: 3번째 input은 테스트 종류마다 다름. 어떻게 다룰지 고민 필요)
 //      - output: m초 동안 실행된 operation 수
-fn get_nops<'o, O: POp<Object<'o> = (), Input = (usize, f64, u32), Output<'o> = usize>>(
+fn get_nops<'o, O: POp<Object<'o> = (), Input = (usize, f64, TestKind), Output<'o> = usize>>(
     filepath: &str,
     nr_thread: usize,
     duration: f64,
-    enq_probability: u32,
+    kind: TestKind,
 ) -> usize {
     let _ = remove_file(filepath);
     let pool_handle = Pool::create::<O>(filepath, FILE_SIZE).unwrap();
     pool_handle
         .get_root()
-        .run((), (nr_thread, duration, enq_probability), &pool_handle)
+        .run((), (nr_thread, duration, kind), &pool_handle)
 }
 
-enum Target {
-    OurQueue,
-    FriedmanDurableQueue,
-    FriedmanLogQueue,
-    DSSQueue,
-    CrndmPipe,
+enum TestTarget {
+    OurQueue(TestKind),
+    FriedmanDurableQueue(TestKind),
+    FriedmanLogQueue(TestKind),
+    DSSQueue(TestKind),
+    CrndmPipe(TestKind),
+}
+
+#[derive(Clone, Copy)]
+pub enum TestKind {
+    QueueProb(u32), // { p% 확률로 enq 혹은 deq }를 반복
+    QueuePair,      // { enq; deq; }를 반복
+    Pipe,
+}
+
+fn parse_test_kind(text: &str) -> TestKind {
+    // 앞 4글자는 테스트 종류 구분 역할, 뒤에 더 붙는 글자는 부가 입력 역할
+    // e.g. "prob50"이면 prob 테스트, 확률은 50%으로 설정
+    // e.g. "prob30"이면 prob 테스트, 확률은 30%으로 설정
+    let re = Regex::new(r"(\w{4})(\d*)").unwrap();
+    let cap = re.captures(text).unwrap();
+    let (kind, arg) = (&cap[1], &cap[2]);
+    match kind {
+        "prob" => TestKind::QueueProb(arg.parse::<u32>().unwrap()),
+        "pair" => TestKind::QueuePair,
+        "pipe" => TestKind::Pipe,
+        _ => unreachable!(),
+    }
 }
 
 fn main() {
     let args: Vec<std::string::String> = env::args().collect();
-
     let filepath = &args[1];
-    let test_target = match args[2].as_str() {
-        "our_queue" => Target::OurQueue,
-        "friedman_durable_queue" => Target::FriedmanDurableQueue,
-        "friedman_log_queue" => Target::FriedmanLogQueue,
-        "dss_queue" => Target::DSSQueue,
-        "crndm_pipe" => Target::CrndmPipe,
+    let test_duration = args[2].parse::<f64>().unwrap();
+    let test_cnt = args[3].parse::<usize>().unwrap();
+    let test_target = match args[4].as_str() {
+        "our_queue" => TestTarget::OurQueue(parse_test_kind(&args[5])),
+        "friedman_durable_queue" => TestTarget::FriedmanDurableQueue(parse_test_kind(&args[5])),
+        "friedman_log_queue" => TestTarget::FriedmanLogQueue(parse_test_kind(&args[5])),
+        "dss_queue" => TestTarget::DSSQueue(parse_test_kind(&args[5])),
+        "crndm_pipe" => TestTarget::CrndmPipe(parse_test_kind(&args[5])),
         _ => unreachable!("invalid target"),
     };
-    let test_duration = args[3].parse::<f64>().unwrap();
-    let test_cnt = args[4].parse::<usize>().unwrap();
-    let test_enq_probability = args[5].parse::<u32>().unwrap();
 
     let mut res = vec![0.0; MAX_THREADS + 1];
-
     // 스레드 `nr_thread`개 일때의 처리율 계산하기
     for nr_thread in 1..MAX_THREADS + 1 {
         println!("Test throguhput using {} threads", nr_thread);
@@ -102,26 +122,17 @@ fn main() {
         // `cnt`번 테스트하여 평균냄
         for cnt in 0..test_cnt {
             let nops = match test_target {
-                Target::OurQueue => get_nops::<GetOurQueueNOps>(
-                    filepath,
-                    nr_thread,
-                    test_duration,
-                    test_enq_probability,
-                ),
-                Target::FriedmanDurableQueue => get_nops::<GetDurableQueueNOps>(
-                    filepath,
-                    nr_thread,
-                    test_duration,
-                    test_enq_probability,
-                ),
-                Target::FriedmanLogQueue => get_nops::<GetLogQueueNOps>(
-                    filepath,
-                    nr_thread,
-                    test_duration,
-                    test_enq_probability,
-                ),
-                Target::DSSQueue => todo!(),
-                Target::CrndmPipe => todo!(),
+                TestTarget::OurQueue(kind) => {
+                    get_nops::<GetOurQueueNOps>(filepath, nr_thread, test_duration, kind)
+                }
+                TestTarget::FriedmanDurableQueue(kind) => {
+                    get_nops::<GetDurableQueueNOps>(filepath, nr_thread, test_duration, kind)
+                }
+                TestTarget::FriedmanLogQueue(kind) => {
+                    get_nops::<GetLogQueueNOps>(filepath, nr_thread, test_duration, kind)
+                }
+                TestTarget::DSSQueue(_) => todo!(),
+                TestTarget::CrndmPipe(_) => todo!(),
             };
             sum += nops;
             println!("try #{} : {} operation was executed.", cnt, nops);

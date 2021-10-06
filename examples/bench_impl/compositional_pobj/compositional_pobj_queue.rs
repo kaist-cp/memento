@@ -1,5 +1,5 @@
 use crate::bench_impl::abstract_queue::*;
-use crate::{TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
+use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::pool::*;
@@ -60,13 +60,13 @@ impl TestNOps for GetOurQueueNOps {}
 
 impl POp for GetOurQueueNOps {
     type Object<'o> = ();
-    type Input = (usize, f64, u32); // (n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq)
+    type Input = (usize, f64, TestKind); // (n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq)
     type Output<'o> = usize; // 실행한 operation 수
 
     fn run<'o, O: POp>(
         &mut self,
         _: Self::Object<'o>,
-        (nr_thread, duration, prob): Self::Input, // TODO: generic (remove prob)
+        (nr_thread, duration, kind): Self::Input, // TODO: generic (remove prob)
         pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         // Initialize Queue
@@ -79,26 +79,8 @@ impl POp for GetOurQueueNOps {
                 .deref(pool)
         };
 
-        // TODO: 현재는 input `p`로 실행할 테스트를 구분. 더 우아한 방법으로 바꾸기
-        if prob != 65535 {
-            // Test1: p% 확률로 enq 혹은 100-p% 확률로 deq
-            self.test_nops(
-                &|tid| {
-                    let push =
-                        unsafe { (&self.push[tid] as *const _ as *mut Push<usize>).as_mut() }
-                            .unwrap();
-                    let pop = unsafe { (&self.pop[tid] as *const _ as *mut Pop<usize>).as_mut() }
-                        .unwrap();
-                    let enq_input = (push, tid);
-                    let deq_input = pop;
-                    enq_deq_prob(q, enq_input, deq_input, prob, pool);
-                },
-                nr_thread,
-                duration,
-            )
-        } else {
-            // Test2: enq; deq;
-            self.test_nops(
+        match kind {
+            TestKind::QueuePair => self.test_nops(
                 &|tid| {
                     let push =
                         unsafe { (&self.push[tid] as *const _ as *mut Push<usize>).as_mut() }
@@ -111,7 +93,22 @@ impl POp for GetOurQueueNOps {
                 },
                 nr_thread,
                 duration,
-            )
+            ),
+            TestKind::QueueProb(prob) => self.test_nops(
+                &|tid| {
+                    let push =
+                        unsafe { (&self.push[tid] as *const _ as *mut Push<usize>).as_mut() }
+                            .unwrap();
+                    let pop = unsafe { (&self.pop[tid] as *const _ as *mut Pop<usize>).as_mut() }
+                        .unwrap();
+                    let enq_input = (push, tid);
+                    let deq_input = pop;
+                    enq_deq_prob(q, enq_input, deq_input, prob, pool);
+                },
+                nr_thread,
+                duration,
+            ),
+            _ => unreachable!("Queue를 위한 테스트만 해야함"),
         }
     }
 

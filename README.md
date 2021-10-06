@@ -15,7 +15,6 @@ build.sh
 
 ### Run
 ```bash
-# { /mnt/pmem0 }의 풀 파일로 { 5 }초씩 { 10 }번 테스트 진행. enq 확률은 { 50 }%
-run.sh /mnt/pmem0 5 10 50
+# { /mnt/pmem0 }의 풀 파일로 { 5 }초씩 { 10 }번 테스트 진행
+run.sh /mnt/pmem0 5 10
 ```
-TODO: 현재는 enq-deq pair 테스트를 하려면 enq 확률을 65535로 넣어줘야함. 이렇게 말고 우아하게 구현하기
