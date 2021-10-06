@@ -1,4 +1,4 @@
-use crate::abstract_queue::*;
+use crate::bench_impl::abstract_queue::*;
 use crate::{TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
 use compositional_persistent_object::persistent::*;
@@ -295,9 +295,4 @@ impl POp for GetLogQueueNOps {
     fn reset(&mut self, _: bool) {
         // no-ops
     }
-}
-
-#[allow(warnings)]
-fn main() {
-    // no-op
 }

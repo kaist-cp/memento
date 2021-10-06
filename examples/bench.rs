@@ -1,13 +1,7 @@
 #![feature(generic_associated_types)]
 
-mod abstract_queue;
-mod compositional_pobj;
-mod corundum;
-mod dss;
-mod friedman;
-
-use compositional_pobj::*;
-use friedman::*;
+mod bench_impl;
+use bench_impl::{GetDurableQueueNOps, GetLogQueueNOps, GetOurQueueNOps};
 
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::*;
@@ -61,7 +55,7 @@ trait TestNOps {
 // - root op으로 operation 실행 수를 카운트하는 로직을 가짐
 //      - input: n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq (TODO: 3번째 input은 테스트 종류마다 다름. 어떻게 다룰지 고민 필요)
 //      - output: m초 동안 실행된 operation 수
-fn get_nops<'o, O: POp<Object = (), Input = (usize, f64, u32), Output = usize>>(
+fn get_nops<'o, O: POp<Object<'o> = (), Input = (usize, f64, u32), Output<'o> = usize>>(
     filepath: &str,
     nr_thread: usize,
     duration: f64,

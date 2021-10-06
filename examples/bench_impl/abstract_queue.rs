@@ -37,8 +37,3 @@ pub fn enq_deq_pair<O: POp, Q: TestQueue>(
     q.enqueue(enq, pool);
     q.dequeue(deq, pool);
 }
-
-// TODO: main이 모든 곳에 있다는 것은 조금 이상함
-fn main() {
-    // no-op
-}

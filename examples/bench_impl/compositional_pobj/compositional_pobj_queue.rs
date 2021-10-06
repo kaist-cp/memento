@@ -1,7 +1,5 @@
-use crate::abstract_queue::*;
-use crate::TestNOps;
-use crate::MAX_THREADS;
-use crate::QUEUE_INIT_SIZE;
+use crate::bench_impl::abstract_queue::*;
+use crate::{TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::pool::*;
@@ -121,6 +119,3 @@ impl POp for GetOurQueueNOps {
         // no-op
     }
 }
-
-#[allow(warnings)]
-fn main() {}
