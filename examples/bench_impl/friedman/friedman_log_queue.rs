@@ -255,7 +255,7 @@ impl TestNOps for GetLogQueueNOps {}
 
 impl POp for GetLogQueueNOps {
     type Object<'o> = ();
-    type Input = (usize, f64, TestKind); // (n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq)
+    type Input = (usize, f64, TestKind); // (n개 스레드로 m초 동안 테스트, 테스트 종류)
     type Output<'o> = usize; // 실행한 operation 수
     fn run<'o, O: POp>(
         &mut self,

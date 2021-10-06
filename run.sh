@@ -5,7 +5,6 @@ function show_cfg() {
     echo "[path]"
     echo "PMEM path: $(realpath ${PMEM_PATH})"
     echo "output path: ${out_path}"
-
     echo "[test size]"
     echo "Number of test: ${COUNT}"
     echo "Duration per test: ${DURATION}"
@@ -24,10 +23,9 @@ function test() {
 
 # 1. Setup
 ## test parameters
-PMEM_PATH=$1        # 이곳에 pool 파일을 생성하여 테스트 (e.g. j02 서버에서는 `/mnt/pmem0`)
+PMEM_PATH=$1        # 이곳에 pool 파일을 생성하여 테스트 (e.g. `/mnt/pmem0`)
 DURATION=$2         # 테스트당 지속시간
 COUNT=$3            # 테스트 횟수
-
 ## variable
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))

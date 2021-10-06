@@ -13,7 +13,7 @@ build.sh
 ```
 
 ### Run
+`/mnt/pmem0`에 생성한 풀 파일로 `5`초씩 `10`번 테스트 진행
 ```bash
-# { /mnt/pmem0 }의 풀 파일로 { 5 }초씩 { 10 }번 테스트 진행
 run.sh /mnt/pmem0 5 10
 ```
