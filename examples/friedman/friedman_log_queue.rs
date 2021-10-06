@@ -1,23 +1,22 @@
-use crate::abstract_queue::{enq_deq_pair, enq_deq_prob, TestQueue};
+use crate::abstract_queue::*;
 use crate::{TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::pool::*;
+use std::mem::MaybeUninit;
 use std::sync::atomic::Ordering;
 
-// TODO: `T`에 Default 강제해도 ㄱㅊ?
-#[derive(Default)]
-struct Node<T: Default + Clone> {
-    val: T, // TODO: default 강제하지 말고 MaybeUninit 사용?
+struct Node<T: Clone> {
+    val: MaybeUninit<T>,
     next: PAtomic<Node<T>>,
     log_insert: PAtomic<LogEntry<T>>,
     log_remove: PAtomic<LogEntry<T>>,
 }
 
-impl<T: Default + Clone> Node<T> {
-    fn new(val: T) -> Self {
+impl<T: Clone> Default for Node<T> {
+    fn default() -> Self {
         Self {
-            val,
+            val: MaybeUninit::uninit(),
             next: PAtomic::null(),
             log_insert: PAtomic::null(),
             log_remove: PAtomic::null(),
@@ -25,14 +24,25 @@ impl<T: Default + Clone> Node<T> {
     }
 }
 
-struct LogEntry<T: Default + Clone> {
+impl<T: Clone> Node<T> {
+    fn new(val: T) -> Self {
+        Self {
+            val: MaybeUninit::new(val),
+            next: PAtomic::null(),
+            log_insert: PAtomic::null(),
+            log_remove: PAtomic::null(),
+        }
+    }
+}
+
+struct LogEntry<T: Clone> {
     op_num: usize,
     op: Operation,
     status: bool,
     node: PAtomic<Node<T>>,
 }
 
-impl<T: Default + Clone> LogEntry<T> {
+impl<T: Clone> LogEntry<T> {
     fn new(status: bool, node_with_log: PAtomic<Node<T>>, op: Operation, op_num: usize) -> Self {
         Self {
             op_num,
@@ -49,13 +59,13 @@ enum Operation {
 }
 
 #[derive(Debug, Default)]
-struct LogQueue<T: Default + Clone> {
+struct LogQueue<T: Clone> {
     head: PAtomic<Node<T>>,
     tail: PAtomic<Node<T>>,
     logs: [PAtomic<LogEntry<T>>; MAX_THREADS],
 }
 
-impl<T: Default + Clone> LogQueue<T> {
+impl<T: Clone> LogQueue<T> {
     fn new<O: POp>(pool: &PoolHandle<O>) -> Self {
         let sentinel = Node::default();
         unsafe {
@@ -215,8 +225,7 @@ impl<T: Default + Clone> LogQueue<T> {
     }
 }
 
-// TODO: Default 지우기
-impl<T: Default + Clone> TestQueue for LogQueue<T> {
+impl<T: Clone> TestQueue for LogQueue<T> {
     type EnqInput = (T, usize, usize); // input, tid, op_num
     type DeqInput = (usize, usize); // tid, op_num
 

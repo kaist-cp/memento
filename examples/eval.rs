@@ -61,7 +61,7 @@ trait TestNOps {
 // - root op으로 operation 실행 수를 카운트하는 로직을 가짐
 //      - input: n개 스레드로 m초 동안 테스트, p%/100-p% 확률로 enq/deq (TODO: 3번째 input은 테스트 종류마다 다름. 어떻게 다룰지 고민 필요)
 //      - output: m초 동안 실행된 operation 수
-fn get_nops<'o, O: POp<Object<'o> = (), Input = (usize, f64, u32), Output<'o> = usize>>(
+fn get_nops<'o, O: POp<Object = (), Input = (usize, f64, u32), Output = usize>>(
     filepath: &str,
     nr_thread: usize,
     duration: f64,
@@ -128,7 +128,6 @@ fn main() {
                 ),
                 Target::DSSQueue => todo!(),
                 Target::CrndmPipe => todo!(),
-                _ => unimplemented!(),
             };
             sum += nops;
             println!("try #{} : {} operation was executed.", cnt, nops);
