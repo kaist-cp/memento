@@ -46,7 +46,8 @@ sudo mkfs.ext4 /dev/pmem0 # 파일시스템부터 설정해주고 (안해줬었�
 sudo mount -t ext4 -o dax /dev/pmem0 /mnt/pmem0/ # pm-located 폴더로 mount
 df -h # mount list 확인
 ```
-이제 `/mnt/pmem0/`의 파일은 pm-located 파일   (참고: 부팅시마다 자동 mnt되게끔 `/etc/fstab`에  등록해놓는게 좋음. 커맨드로 mnt하면 재부팅마다 unmnt 됨)
+이제 `/mnt/pmem0/`의 파일은 pm-located 파일  
+(참고: 부팅시마다 자동 mnt되게끔 `/etc/fstab`에  등록해놓는게 좋음. 커맨드로 mnt하면 재부팅마다 unmnt 됨)
 
 ## Reference
 - https://software.intel.com/content/www/us/en/develop/articles/qsg-part2-linux-provisioning-with-optane-pmem.html#inpage-nav-4
