@@ -14,7 +14,7 @@ use std::thread::sleep;
 
 const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024; // 테스트에 사용할 풀 파일의 크기
 const QUEUE_INIT_SIZE: usize = 100; // 테스트시 Queue의 초기 노드 수
-const MAX_THREADS: usize = 3;
+const MAX_THREADS: usize = 32;
 
 trait TestNOps {
     // `nr_thread`개 스레드로 `duration`초 동안 `op`이 몇번 실행되는지 계산
