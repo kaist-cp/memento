@@ -5,26 +5,26 @@ function show_cfg() {
     echo "[path]"
     echo "PMEM path: $(realpath ${PMEM_PATH})"
     echo "output path: ${out_path}"
-    echo "[test size]"
-    echo "Number of test: ${COUNT}"
-    echo "Duration per test: ${DURATION}"
+    echo "[test size for each bench]"
+    echo "테스트 횟수: ${COUNT}"
+    echo -e "테스트당 수행시간: ${DURATION}\n"
 }
 
-function test() {
+function bench() {
     target=$1
     kind=$2
     poolname=${target}_${kind}.pool
     outname=${target}_${kind}.out
     poolpath=$PMEM_PATH/$poolname
-    echo "Running performance test (target: ${target}, test kind: ${kind})"
-    echo -e "Duration: ${DURATION}, Count: ${COUNT}, Test Kind: ${kind}\n" > $out_path/$outname
+    echo "Running performance benchmark (target: ${target}, bench kind: ${kind})"
+    echo -e "Duration: ${DURATION}, Count: ${COUNT}, Kind: ${kind}\n" > $out_path/$outname
     $dir_path/target/release/examples/bench $poolpath $DURATION $COUNT $target $kind >> $out_path/$outname
 }
 
 # 1. Setup
 ## test parameters
 PMEM_PATH=$1        # 이곳에 pool 파일을 생성하여 테스트 (e.g. `/mnt/pmem0`)
-DURATION=$2         # 테스트당 지속시간
+DURATION=$2         # 테스트당 수행시간
 COUNT=$3            # 테스트 횟수
 ## variable
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
@@ -40,15 +40,15 @@ if [ ! -d $out_path ]; then
     mkdir $out_path
 fi
 
-# 2. Test queue performance
-test our_queue prob50
-test friedman_durable_queue prob50
-test friedman_log_queue prob50
-test our_queue pair
-test friedman_durable_queue pair
-test friedman_log_queue pair
+# 2. Benchmarking queue performance
+bench our_queue prob50
+bench friedman_durable_queue prob50
+bench friedman_log_queue prob50
+bench our_queue pair
+bench friedman_durable_queue pair
+bench friedman_log_queue pair
 
-# 3. Test pipe performance
+# 3. Benchmarking pipe performance
 # TODO: test our_pipe
 # TODO: test corundum_pipe
 # TODO: test pmdk_pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
