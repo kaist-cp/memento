@@ -1,5 +1,4 @@
-use super::*;
-use crate::abstract_queue::{enq_deq_both, enq_deq_either, DeqInput, DurableQueue, EnqInput};
+use crate::abstract_queue::*;
 use crate::{TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned};
 use compositional_persistent_object::persistent::*;
@@ -169,17 +168,15 @@ impl<T: Clone> FriedmanDruableQueue<T> {
     }
 }
 
-impl<T: Clone> DurableQueue<T> for FriedmanDruableQueue<T> {
-    fn enqueue<O: POp>(&self, input: EnqInput<T>, pool: &PoolHandle<O>) {
-        if let EnqInput::FriedmanDurableQ(input) = input {
-            self.enqueue(input.clone(), pool);
-        }
-    }
+impl<T: Clone> TestQueue for FriedmanDruableQueue<T> {
+    type EnqInput = T; // input
+    type DeqInput = usize; // tid
 
-    fn dequeue<O: POp>(&self, input: DeqInput<T>, pool: &PoolHandle<O>) {
-        if let DeqInput::FriedmanDurableQ(tid) = input {
-            self.dequeue(tid, pool);
-        }
+    fn enqueue<O: POp>(&self, input: Self::EnqInput, pool: &PoolHandle<O>) {
+        self.enqueue(input, pool);
+    }
+    fn dequeue<O: POp>(&self, tid: Self::DeqInput, pool: &PoolHandle<O>) {
+        self.dequeue(tid, pool);
     }
 }
 
@@ -218,9 +215,9 @@ impl POp for GetDurableQueueNOps {
             // Test1: p% 확률로 enq 혹은 100-p% 확률로 deq
             self.test_nops(
                 &|tid| {
-                    let enq_input = EnqInput::FriedmanDurableQ(tid);
-                    let deq_input = DeqInput::FriedmanDurableQ(tid);
-                    enq_deq_either(&self.queue, enq_input, deq_input, probability, pool);
+                    let enq_input = tid;
+                    let deq_input = tid;
+                    enq_deq_prob(&self.queue, enq_input, deq_input, probability, pool);
                 },
                 nr_thread,
                 duration,
@@ -229,9 +226,9 @@ impl POp for GetDurableQueueNOps {
             // Test2: enq; deq;
             self.test_nops(
                 &|tid| {
-                    let enq_input = EnqInput::FriedmanDurableQ(tid);
-                    let deq_input = DeqInput::FriedmanDurableQ(tid);
-                    enq_deq_both(&self.queue, enq_input, deq_input, pool);
+                    let enq_input = tid;
+                    let deq_input = tid;
+                    enq_deq_pair(&self.queue, enq_input, deq_input, pool);
                 },
                 nr_thread,
                 duration,
