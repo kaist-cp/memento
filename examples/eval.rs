@@ -28,10 +28,9 @@ trait TestNOps {
     where
         &'f F: Send,
     {
-        let (ops, off) = (AtomicUsize::new(0), AtomicBool::new(false));
-        let (ops, off) = (&ops, &off);
+        let (ops, end) = (AtomicUsize::new(0), AtomicBool::new(false));
+        let (ops, end) = (&ops, &end);
 
-        // Test: p% 확률로 enq, 100-p% 확률로 deq
         thread::scope(|scope| {
             for tid in 0..nr_thread {
                 scope.spawn(move |_| {
@@ -41,7 +40,7 @@ trait TestNOps {
 
                         // `duration` 시간 지났으면 break
                         // TODO: off 없애기. 메인 스레드가 직접 kill 하는 게 나을듯
-                        if off.load(Ordering::SeqCst) {
+                        if end.load(Ordering::SeqCst) {
                             break;
                         }
                     }
@@ -50,7 +49,7 @@ trait TestNOps {
             // 메인스레드는 `duration` 시간동안 sleep한 후 "시간 끝났다" 표시
             // TODO: use `chrono` crate?
             sleep(time::Duration::from_secs_f64(duration));
-            off.store(true, Ordering::SeqCst)
+            end.store(true, Ordering::SeqCst)
         })
         .unwrap();
 
@@ -129,6 +128,7 @@ fn main() {
                 ),
                 Target::DSSQueue => todo!(),
                 Target::CrndmPipe => todo!(),
+                _ => unimplemented!(),
             };
             sum += nops;
             println!("try #{} : {} operation was executed.", cnt, nops);
