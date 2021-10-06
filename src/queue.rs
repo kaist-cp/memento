@@ -179,6 +179,7 @@ impl<T: Clone> Queue<T> {
     }
 
     /// tail에 새 `node` 연결을 시도
+    // TODO: msq 본래 논문 로직으로 바꾸기. 현재는 cs431의 최적화된 버전을 따르는 중
     fn try_push<O: POp>(
         &self,
         node: PShared<'_, Node<T>>,
@@ -269,6 +270,7 @@ impl<T: Clone> Queue<T> {
     }
 
     /// head를 pop 시도
+    // TODO: msq 본래 논문 로직으로 바꾸기. 현재는 cs431의 최적화된 로직을 따르는 중
     fn try_pop<O: POp>(
         &self,
         client: &mut Pop<T>,
