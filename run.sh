@@ -52,8 +52,8 @@ test friedman_log_queue
 
 # 3. Test pipe performance
 # TODO: test our_pipe
-# TODO: test pmdk_pipe (eval/pmdk/pmdk_pipe.cpp를 테스트)
 # TODO: test corundum_pipe
+# TODO: test pmdk_pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
 
 # 4. Print result
 echo "Test finished! see ${out_path}"
