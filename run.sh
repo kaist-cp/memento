@@ -6,8 +6,8 @@ function show_cfg() {
     echo "PMEM path: $(realpath ${PMEM_PATH})"
     echo "output path: ${out_path}"
     echo "[test size for each bench]"
-    echo "테스트 횟수: ${COUNT}"
-    echo -e "테스트당 수행시간: ${DURATION}\n"
+    echo "테스트당 수행시간: ${DURATION}초"
+    echo -e "테스트 횟수: ${COUNT}회\n"
 }
 
 function bench() {

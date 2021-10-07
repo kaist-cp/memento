@@ -108,7 +108,7 @@ fn parse_test_kind(text: &str) -> TestKind {
 // bench /mnt/pmem 5 10 our_queue prob30        # 테스트: 우리 큐로 30/70% enq or deq 실행
 // bench /mnt/pmem 5 10 friedman_log_queue pair # 테스트: 로그 큐로 enq-deq pair 실행
 // ```
-// TODO: clap 사용하여 argument parsing  
+// TODO: clap 사용하여 argument parsing
 fn main() {
     let args: Vec<std::string::String> = env::args().collect();
     let filepath = &args[1];
@@ -130,6 +130,7 @@ fn main() {
         let mut sum = 0;
         // `cnt`번 테스트하여 평균냄
         for cnt in 0..test_cnt {
+            println!("test {}/{}...", cnt+1, test_cnt);
             let nops = match test_target {
                 TestTarget::OurQueue(kind) => {
                     get_nops::<GetOurQueueNOps>(filepath, nr_thread, test_duration, kind)
@@ -144,7 +145,6 @@ fn main() {
                 TestTarget::CrndmPipe(_) => todo!(),
             };
             sum += nops;
-            println!("try #{} : {} operation was executed.", cnt, nops);
         }
         // 평균 op/s 계산하여 저장
         res[nr_thread] = (sum as f64 / test_cnt as f64) / test_duration;
