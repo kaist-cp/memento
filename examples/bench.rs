@@ -31,6 +31,7 @@ trait TestNOps {
                 scope.spawn(move |_| {
                     loop {
                         op(tid);
+                        // TODO: 스레드별 ops 계산 후 마지막에 합치기? (pebr 벤치마크 코드 참고)
                         ops.fetch_add(1, Ordering::SeqCst);
 
                         // `duration` 시간 지났으면 break
