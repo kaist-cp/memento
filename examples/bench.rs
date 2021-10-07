@@ -13,9 +13,16 @@ use std::fs::remove_file;
 use std::sync::atomic::*;
 use std::thread::sleep;
 
-const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024; // 테스트에 사용할 풀 파일의 크기
-const QUEUE_INIT_SIZE: usize = 100; // 테스트시 Queue의 초기 노드 수
-const MAX_THREADS: usize = 32;
+// 테스트시 만들 풀 파일의 크기
+const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+// 테스트시 Queue의 초기 노드 수
+const QUEUE_INIT_SIZE: usize = 100;
+
+// 테스트할 수 있는 최대 스레드 수
+// - 우리 큐, 로그 큐 등에서 사물함을 MAX_THREAD만큼 정적할당해야하니 필요
+// - TODO: 이 상수 없앨 수 있는지 고민 (e.g. MAX_THREAD=32 ./run.sh처럼 가능한가?)
+const MAX_THREADS: usize = 256;
 
 trait TestNOps {
     // `nr_thread`개 스레드로 `duration`초 동안 `op`이 몇번 실행되는지 계산

@@ -58,11 +58,21 @@ enum Operation {
     Dequeue,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct LogQueue<T: Clone> {
     head: PAtomic<Node<T>>,
     tail: PAtomic<Node<T>>,
     logs: [PAtomic<LogEntry<T>>; MAX_THREADS],
+}
+
+impl<T: Clone> Default for LogQueue<T> {
+    fn default() -> Self {
+        Self {
+            head: Default::default(),
+            tail: Default::default(),
+            logs: array_init::array_init(|_| PAtomic::null()),
+        }
+    }
 }
 
 impl<T: Clone> LogQueue<T> {
@@ -72,9 +82,9 @@ impl<T: Clone> LogQueue<T> {
             let guard = pepoch::unprotected(pool);
             let sentinel = POwned::new(sentinel, pool).into_shared(guard);
             Self {
-                head: PAtomic::from(sentinel), // TODO: flush
-                tail: PAtomic::from(sentinel), // TODO: flush
-                logs: Default::default(),      // TODO: flush
+                head: PAtomic::from(sentinel),                     // TODO: flush
+                tail: PAtomic::from(sentinel),                     // TODO: flush
+                logs: array_init::array_init(|_| PAtomic::null()), // TODO: flush
             }
         }
     }

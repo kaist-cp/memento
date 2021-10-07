@@ -32,11 +32,21 @@ impl<T: Clone> Node<T> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct FriedmanDruableQueue<T: Clone> {
     head: PAtomic<Node<T>>,
     tail: PAtomic<Node<T>>,
     returned_val: [PAtomic<Option<T>>; MAX_THREADS], // None: "EMPTY"
+}
+
+impl<T: Clone> Default for FriedmanDruableQueue<T> {
+    fn default() -> Self {
+        Self {
+            head: Default::default(),
+            tail: Default::default(),
+            returned_val: array_init::array_init(|_| PAtomic::null()),
+        }
+    }
 }
 
 impl<T: Clone> FriedmanDruableQueue<T> {
@@ -48,7 +58,7 @@ impl<T: Clone> FriedmanDruableQueue<T> {
             Self {
                 head: PAtomic::from(sentinel),
                 tail: PAtomic::from(sentinel),
-                returned_val: Default::default(),
+                returned_val: array_init::array_init(|_| PAtomic::null()),
             }
         }
     }

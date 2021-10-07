@@ -33,8 +33,8 @@ impl Default for GetOurQueueNOps {
         Self {
             queue: PAtomic::null(),
             init_pushes: array_init::array_init(|_| Push::<usize>::default()),
-            push: Default::default(),
-            pop: Default::default(),
+            push: array_init::array_init(|_| Push::<usize>::default()),
+            pop: array_init::array_init(|_| Pop::<usize>::default()),
         }
     }
 }
