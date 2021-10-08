@@ -49,4 +49,6 @@ run.sh
 모든 (`<target>`, `<bench kind>`, `<threads=1~32>`) 쌍에 대하여 처리율 측정
 - 풀 파일: `/mnt/pmem0/{target}.pool`을 새로 생성하여 사용
 - 처리율 측정방법: `5`초동안 op 실행 수를 계산하는 테스트를 `10`번 반복하여 평균 op 실행 수를 계산
-- 결과: `./out/{target}.csv`
+- 결과:
+    - raw: `./out/{obj}.csv` (obj: queue, pipe)
+    - graph: `./out/{obj}-{bench kind}.pdf`

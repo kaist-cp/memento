@@ -48,5 +48,6 @@ bench log_queue pair out/queue.csv
 # TODO: bench corundum_pipe pipe
 # TODO: bench pmdk_pipe pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
 
-# 4. Print result
+# 4. Plot and finish
+python3 plot.py
 echo "Entire benchmarking was done! see result on \".out/\""
