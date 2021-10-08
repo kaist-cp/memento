@@ -7,9 +7,12 @@ use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::*;
 use core::time;
 use crossbeam_utils::thread;
+use csv::Writer;
 use regex::Regex;
-use std::env;
+use std::fs::create_dir_all;
 use std::fs::remove_file;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::sync::atomic::*;
 use std::thread::sleep;
 
@@ -32,7 +35,6 @@ trait TestNOps {
     {
         let (ops, end) = (AtomicUsize::new(0), AtomicBool::new(false));
         let (ops, end) = (&ops, &end);
-
         thread::scope(|scope| {
             for tid in 0..nr_thread {
                 scope.spawn(move |_| {
@@ -55,26 +57,25 @@ trait TestNOps {
             end.store(true, Ordering::SeqCst)
         })
         .unwrap();
-
         ops.load(Ordering::SeqCst)
     }
 }
 
 // - 우리의 pool API로 만든 테스트 로직 실행
 // - root op으로 operation 실행 수를 카운트하는 로직을 가짐
-//      - input: n개 스레드로 m초 동안 테스트, 테스트 종류
+//      - input: 테스트 종류, n개 스레드로 m초 동안 테스트
 //      - output: m초 동안 실행된 operation 수
-fn get_nops<'o, O: POp<Object<'o> = (), Input = (usize, f64, TestKind), Output<'o> = usize>>(
+fn get_nops<'o, O: POp<Object<'o> = (), Input = (TestKind, usize, f64), Output<'o> = usize>>(
     filepath: &str,
+    kind: TestKind,
     nr_thread: usize,
     duration: f64,
-    kind: TestKind,
 ) -> usize {
     let _ = remove_file(filepath);
     let pool_handle = Pool::create::<O>(filepath, FILE_SIZE).unwrap();
     pool_handle
         .get_root()
-        .run((), (nr_thread, duration, kind), &pool_handle)
+        .run((), (kind, nr_thread, duration), &pool_handle)
 }
 
 enum TestTarget {
@@ -92,77 +93,141 @@ pub enum TestKind {
     Pipe,
 }
 
-fn parse_test_kind(text: &str) -> TestKind {
+fn parse_target(target: &str, kind: &str) -> TestTarget {
     // 앞 4글자는 테스트 종류 구분 역할, 뒤에 더 붙는 글자는 부가 입력 역할
     // e.g. "prob50"이면 prob 테스트, 확률은 50%으로 설정
     // e.g. "prob30"이면 prob 테스트, 확률은 30%으로 설정
     let re = Regex::new(r"(\w{4})(\d*)").unwrap();
-    let cap = re.captures(text).unwrap();
+    let cap = re.captures(kind).unwrap();
     let (kind, arg) = (&cap[1], &cap[2]);
-    match kind {
+    let kind = match kind {
         "prob" => TestKind::QueueProb(arg.parse::<u32>().unwrap()),
         "pair" => TestKind::QueuePair,
         "pipe" => TestKind::Pipe,
         _ => unreachable!(),
+    };
+    match target {
+        "our_queue" => TestTarget::OurQueue(kind),
+        "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
+        "log_queue" => TestTarget::FriedmanLogQueue(kind),
+        "dss_queue" => TestTarget::DSSQueue(kind),
+        "crndm_pipe" => TestTarget::CrndmPipe(kind),
+        _ => unreachable!("invalid target"),
     }
 }
 
-// executable 사용예시
-//
-// `/mnt/pmem0`에 생성한 풀 파일로 `5`초씩 `10`번 테스트 진행
-// ```
-// bench /mnt/pmem 5 10 our_queue prob50        # 테스트: 우리 큐로 50/50% enq or deq 실행
-// bench /mnt/pmem 5 10 our_queue prob30        # 테스트: 우리 큐로 30/70% enq or deq 실행
-// bench /mnt/pmem 5 10 friedman_log_queue pair # 테스트: 로그 큐로 enq-deq pair 실행
-// ```
-// TODO: clap 사용하여 argument parsing
-fn main() {
-    let args: Vec<std::string::String> = env::args().collect();
-    let filepath = &args[1];
-    let test_duration = args[2].parse::<f64>().unwrap();
-    let test_cnt = args[3].parse::<usize>().unwrap();
-    let test_target = match args[4].as_str() {
-        "our_queue" => TestTarget::OurQueue(parse_test_kind(&args[5])),
-        "friedman_durable_queue" => TestTarget::FriedmanDurableQueue(parse_test_kind(&args[5])),
-        "friedman_log_queue" => TestTarget::FriedmanLogQueue(parse_test_kind(&args[5])),
-        "dss_queue" => TestTarget::DSSQueue(parse_test_kind(&args[5])),
-        "crndm_pipe" => TestTarget::CrndmPipe(parse_test_kind(&args[5])),
-        _ => unreachable!("invalid target"),
-    };
+use structopt::StructOpt;
+#[derive(StructOpt, Debug)]
+#[structopt(name = "bench")]
+struct Opt {
+    /// PMEM pool로서 사용할 파일 경로
+    #[structopt(short, long)]
+    filepath: String,
 
-    let mut res = vec![0.0; MAX_THREADS + 1];
-    // 스레드 `nr_thread`개 일때의 처리율 계산하기
-    for nr_thread in 1..MAX_THREADS + 1 {
-        println!("Test throguhput using {} threads", nr_thread);
-        let mut sum = 0;
-        // `cnt`번 테스트하여 평균냄
-        for cnt in 0..test_cnt {
-            println!("test {}/{}...", cnt+1, test_cnt);
-            let nops = match test_target {
-                TestTarget::OurQueue(kind) => {
-                    get_nops::<GetOurQueueNOps>(filepath, nr_thread, test_duration, kind)
-                }
-                TestTarget::FriedmanDurableQueue(kind) => {
-                    get_nops::<GetDurableQueueNOps>(filepath, nr_thread, test_duration, kind)
-                }
-                TestTarget::FriedmanLogQueue(kind) => {
-                    get_nops::<GetLogQueueNOps>(filepath, nr_thread, test_duration, kind)
-                }
-                TestTarget::DSSQueue(_) => todo!(),
-                TestTarget::CrndmPipe(_) => todo!(),
-            };
-            sum += nops;
+    /// 처리율 측정대상
+    #[structopt(short = "a", long)]
+    target: String,
+
+    /// 실험종류
+    #[structopt(short, long)]
+    kind: String,
+
+    /// 동작시킬 스레드 수
+    #[structopt(short, long)]
+    threads: usize,
+
+    /// 처리율 1번 측정시 실험 수행시간
+    #[structopt(short, long, default_value = "5")]
+    duration: f64,
+
+    /// 처리율을 `cnt`번 측정하고 평균 처리율을 결과로 냄
+    #[structopt(short, long, default_value = "10")]
+    cnt: usize,
+}
+
+fn setup() -> (Opt, Writer<File>) {
+    let opt = Opt::from_args();
+    create_dir_all("out").unwrap();
+    let output_name = format!("./out/{}.csv", opt.target);
+    let output = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .append(true)
+        .open(&output_name)
+    {
+        Ok(f) => csv::Writer::from_writer(f),
+        Err(_) => {
+            let f = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&output_name)
+                .unwrap();
+            let mut output = csv::Writer::from_writer(f);
+            output
+                .write_record(&[
+                    "target",
+                    "bench kind",
+                    "threads",
+                    "test-dur",
+                    "test-cnt",
+                    "throughput(avg mops)",
+                ])
+                .unwrap();
+            output.flush().unwrap();
+            output
         }
-        // 평균 op/s 계산하여 저장
-        res[nr_thread] = (sum as f64 / test_cnt as f64) / test_duration;
-    }
+    };
+    (opt, output)
+}
 
-    // 처리율(평균 Mop/s) 출력
-    for nr_thread in 1..MAX_THREADS + 1 {
-        println!(
-            "avg mops when nr_thread={}: {}",
-            nr_thread,
-            res[nr_thread] / 1_000_000 as f64
-        );
+// 스레드 `nr_thread`개를 사용할 때의 처리율 계산
+fn bench(opt: &Opt) -> f64 {
+    println!(
+        "bench {}:{} using {} threads",
+        opt.target, opt.kind, opt.threads
+    );
+    let target = parse_target(&opt.target, &opt.kind);
+
+    // `cnt`번 테스트하여 평균냄
+    let mut nops_sum = 0.0;
+    for c in 0..opt.cnt {
+        println!("test {}/{}...", c + 1, opt.cnt);
+        let nops = match target {
+            TestTarget::OurQueue(kind) => {
+                get_nops::<GetOurQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+            }
+            TestTarget::FriedmanDurableQueue(kind) => {
+                get_nops::<GetDurableQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+            }
+            TestTarget::FriedmanLogQueue(kind) => {
+                get_nops::<GetLogQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+            }
+            TestTarget::DSSQueue(_) => todo!(),
+            TestTarget::CrndmPipe(_) => todo!(),
+        };
+        nops_sum += nops as f64;
     }
+    let avg_ops = (nops_sum / opt.cnt as f64) / opt.duration; // 평균 op/s
+    let avg_mops = avg_ops / 1_000_000 as f64; // 평균 Mop/s
+    println!("avg mops: {}", avg_mops);
+    avg_mops
+}
+
+fn main() {
+    let (opt, mut output) = setup();
+    let avg_mops = bench(&opt);
+
+    // Write result
+    output
+        .write_record(&[
+            opt.target,
+            opt.kind,
+            opt.threads.to_string(),
+            opt.duration.to_string(),
+            opt.cnt.to_string(),
+            avg_mops.to_string(),
+        ])
+        .unwrap();
+    output.flush().unwrap();
 }

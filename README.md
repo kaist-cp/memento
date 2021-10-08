@@ -26,7 +26,7 @@ build.sh
 
 ### Run a single benchmark
 ```
-./target/release/examples/bench <pmem-path> <target> <bench kind> <threads> <test-dur> <test-cnt>
+./target/release/examples/bench -f <poolpath> -a <target> -k <bench kind> -t <threads> -c <test-cnt> -d <test-dur>
 ```
 - `<target>`: our_queue, durable_queue, log_queue, dss_queue, our_pipe, pmdk_pipe, crndm_pipe
 - `<bench kind>`
@@ -35,16 +35,18 @@ build.sh
 
 example:
 ```bash
-./target/release/examples/bench /mnt/pmem0 our_queue prob50 16 /mnt/pmem0 5 10
+./target/release/examples/bench -f /mnt/pmem0/our_queue.pool -a our_queue -k prob50 -t 16 -c 10 -d 5
 ```
 `우리 큐`에 `16`개 스레드로 `{ 50% enq or deq }`를 반복할 때의 처리율 측정
-- 처리율 측정에는 `/mnt/pmem0`에 생성한 풀 파일을 사용하고, `5`초씩 `10`번 측정하여 평균을 냄
-- 결과는 `./out/{실행시킨 시간}`에 저장
+- 풀 파일: `/mnt/pmem0/our_queue.pool`을 새로 생성하여 사용
+- 처리율 측정방법: `5`초동안 op 실행 수를 계산하는 테스트를 `10`번 반복하여 평균 op 실행 수를 계산
+- 결과: `./out/our_queue.csv`
 
 ### Run the entire benchmark
 ```bash
-run.sh /mnt/pmem0 5 10
+run.sh
 ```
 모든 (`<target>`, `<bench kind>`, `<threads=1~32>`) 쌍에 대하여 처리율 측정
-- 각 쌍의 처리율 측정에는 `/mnt/pmem0`에 생성한 풀 파일을 사용하고, `5`초씩 `10`번 측정하여 평균을 냄
-- TODO: 결과 요약은 ~~ 여기에 저장
+- 풀 파일: `/mnt/pmem0/{target}.pool`을 새로 생성하여 사용
+- 처리율 측정방법: `5`초동안 op 실행 수를 계산하는 테스트를 `10`번 반복하여 평균 op 실행 수를 계산
+- 결과: `./out/{target}.csv`

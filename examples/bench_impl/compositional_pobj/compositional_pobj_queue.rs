@@ -60,13 +60,13 @@ impl TestNOps for GetOurQueueNOps {}
 
 impl POp for GetOurQueueNOps {
     type Object<'o> = ();
-    type Input = (usize, f64, TestKind); // (n개 스레드로 m초 동안 테스트, 테스트 종류)
+    type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
     type Output<'o> = usize; // 실행한 operation 수
 
     fn run<'o, O: POp>(
         &mut self,
         _: Self::Object<'o>,
-        (nr_thread, duration, kind): Self::Input,
+        (kind, nr_thread, duration): Self::Input,
         pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         // Initialize Queue

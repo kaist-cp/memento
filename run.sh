@@ -1,57 +1,51 @@
 #!/bin/bash
 
 function show_cfg() {
-    echo "<Test Configurations>"
-    echo "[path]"
+    echo "<Configurations>"
     echo "PMEM path: $(realpath ${PMEM_PATH})"
-    echo "output path: ${out_path}"
-    echo "[test size for each bench]"
-    echo "테스트당 수행시간: ${DURATION}초"
-    echo -e "테스트 횟수: ${COUNT}회\n"
+    echo "Test cnt per bench: ${TEST_CNT}"
+    echo "Duration per test: ${TEST_DUR}(s)"
+    echo ""
 }
 
 function bench() {
     target=$1
     kind=$2
-    poolname=${target}_${kind}.pool
-    outname=${target}_${kind}.out
+    poolname=${target}.pool
     poolpath=$PMEM_PATH/$poolname
-    echo "Running performance benchmark (target: ${target}, bench kind: ${kind})"
-    echo -e "Duration: ${DURATION}, Count: ${COUNT}, Kind: ${kind}\n" > $out_path/$outname
-    $dir_path/target/release/examples/bench $poolpath $DURATION $COUNT $target $kind >> $out_path/$outname
+    echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}) >"
+    for t in $( seq 1 $MAX_THREADS )
+    do
+        rm -f $poolpath
+        $dir_path/target/release/examples/bench -f $poolpath -a $target -k $kind -t $t -c $TEST_CNT -d $TEST_DUR
+    done
+    echo "done."
+    echo ""
 }
 
 # 1. Setup
-## test parameters
-PMEM_PATH=$1        # 이곳에 pool 파일을 생성하여 테스트 (e.g. `/mnt/pmem0`)
-DURATION=$2         # 테스트당 수행시간
-COUNT=$3            # 테스트 횟수
-## variable
+PMEM_PATH=/mnt/pmem0  # PMEM_PATH에 풀 파일을 생성하여 사용
+MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
+TEST_CNT=5            # 한 bench당 테스트 횟수
+TEST_DUR=10           # 한 테스트당 지속시간
+
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))
-out_path=$dir_path/out/$time
-## 잡일
-show_cfg
 rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
-if [ ! -d $dir_path/out/ ]; then
-    mkdir $dir_path/out/
-fi
-if [ ! -d $out_path ]; then
-    mkdir $out_path
-fi
+show_cfg
 
 # 2. Benchmarking queue performance
 bench our_queue prob50
-bench friedman_durable_queue prob50
-bench friedman_log_queue prob50
+bench durable_queue prob50
+bench log_queue prob50
 bench our_queue pair
-bench friedman_durable_queue pair
-bench friedman_log_queue pair
+bench durable_queue pair
+bench log_queue pair
 
 # 3. Benchmarking pipe performance
-# TODO: bench our_pipe
-# TODO: bench corundum_pipe
-# TODO: bench pmdk_pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
+# TODO: bench our_pipe pipe
+# TODO: bench corundum_pipe pipe
+# TODO: bench pmdk_pipe pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
 
 # 4. Print result
-echo "Test finished! see ${out_path}"
+echo "Entire benchmarking was done! see result on \".out/\""
