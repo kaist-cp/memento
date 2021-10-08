@@ -6,6 +6,7 @@ use bench_impl::{GetDurableQueueNOps, GetLogQueueNOps, GetOurQueueNOps};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::*;
 use core::time;
+use std::path::Path;
 use crossbeam_utils::thread;
 use csv::Writer;
 use regex::Regex;
@@ -143,12 +144,20 @@ struct Opt {
     /// 처리율을 `cnt`번 측정하고 평균 처리율을 결과로 냄
     #[structopt(short, long, default_value = "10")]
     cnt: usize,
+
+    /// 출력 파일. 주어지지 않으면 ./out/{target}.csv에 저장
+    #[structopt(short, long)]
+    output: Option<String>,
 }
 
 fn setup() -> (Opt, Writer<File>) {
     let opt = Opt::from_args();
-    create_dir_all("out").unwrap();
-    let output_name = format!("./out/{}.csv", opt.target);
+
+    let output_name = match &opt.output {
+        Some(o) => o.clone(),
+        None => format!("./out/{}.csv", opt.target)
+    };
+    create_dir_all(Path::new(&output_name).parent().unwrap()).unwrap();
     let output = match OpenOptions::new()
         .read(true)
         .write(true)
@@ -171,7 +180,7 @@ fn setup() -> (Opt, Writer<File>) {
                     "threads",
                     "test-dur",
                     "test-cnt",
-                    "throughput(avg mops)",
+                    "throughput",
                 ])
                 .unwrap();
             output.flush().unwrap();

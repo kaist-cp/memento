@@ -11,13 +11,14 @@ function show_cfg() {
 function bench() {
     target=$1
     kind=$2
+    out=$3
     poolname=${target}.pool
     poolpath=$PMEM_PATH/$poolname
     echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}) >"
     for t in $( seq 1 $MAX_THREADS )
     do
         rm -f $poolpath
-        $dir_path/target/release/examples/bench -f $poolpath -a $target -k $kind -t $t -c $TEST_CNT -d $TEST_DUR
+        $dir_path/target/release/examples/bench -f $poolpath -a $target -k $kind -t $t -c $TEST_CNT -d $TEST_DUR -o $out
     done
     echo "done."
     echo ""
@@ -35,12 +36,12 @@ rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
-bench our_queue prob50
-bench durable_queue prob50
-bench log_queue prob50
-bench our_queue pair
-bench durable_queue pair
-bench log_queue pair
+bench our_queue prob50 out/queue.csv
+bench durable_queue prob50 out/queue.csv
+bench log_queue prob50 out/queue.csv
+bench our_queue pair out/queue.csv
+bench durable_queue pair out/queue.csv
+bench log_queue pair out/queue.csv
 
 # 3. Benchmarking pipe performance
 # TODO: bench our_pipe pipe

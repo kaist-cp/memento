@@ -26,7 +26,7 @@ build.sh
 
 ### Run a single benchmark
 ```
-./target/release/examples/bench -f <poolpath> -a <target> -k <bench kind> -t <threads> -c <test-cnt> -d <test-dur>
+./target/release/examples/bench -f <poolpath> -a <target> -k <bench kind> -t <threads> -c <test-cnt> -d <test-dur> -o <output>
 ```
 - `<target>`: our_queue, durable_queue, log_queue, dss_queue, our_pipe, pmdk_pipe, crndm_pipe
 - `<bench kind>`
