@@ -1,22 +1,24 @@
 # TODO: 스레드 4개마다 점찍기
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 
 objs = {
     "queue": {
         "targets": {
-            "our_queue": {'line_shape': 'o', 'line_color': 'k', 'line_type': '-'},
-            'durable_queue': {'line_shape': 'x', 'line_color': 'hotpink', 'line_type': '--'},
-            'log_queue': {'line_shape': 'd', 'line_color': 'c', 'line_type': '--'},
+            "our_queue": {'marker': 'o', 'color': 'k', 'style': '-'},
+            'durable_queue': {'marker': 'd', 'color': 'hotpink', 'style': '--'},
+            'log_queue': {'marker': 'x', 'color': 'c', 'style': '--'},
+            # TODO: dss_queue
         },
         'bench_kinds': ['prob50', 'pair'],
-        'plot_lower_ylim': [(2, 10), (1, 5)],
+        'plot_lower_ylim': [(0.5, 3), (0.25, 1.25)],
     },
     "pipe": {
         "targets": {
-            # 'our_pipe': {'line_shape': 'o', 'line_color': 'darkblue'},
-            # 'crndm_pipe': {'line_shape': 'x', 'line_color': 'c'},
-            'pmdk_pipe': {'line_shape': 'd', 'line_color': 'c', 'line_type': '--'},
+            # TODO: 'our_pipe': {'marker': 'o', 'color': 'k', 'style': '-'},
+            # TODO: 'crndm_pipe': {'marker': 'd', 'color': 'hotpink', 'style': '--'},
+            'pmdk_pipe': {'marker': 'x', 'color': 'c', 'style': '--'},
         },
         'bench_kinds': ['pipe'],
         'plot_lower_ylim': [(2, 10)],
@@ -25,11 +27,12 @@ objs = {
     # TODO: other obj..
 }
 
-def draw(title, xlabel, ylabel, datas, output, x_interval=2, split=False, upper_ylim=(0, 0), lower_ylim=(0, 0)):
+def draw(title, xlabel, ylabel, datas, output, x_interval=1, split=False, upper_ylim=(0, 0), lower_ylim=(0, 0)):
     plt.clf()
+    markers_on = (datas[0]['x'] == 1) | (datas[0]['x'] % x_interval == 0)
     if not split:
         for data in datas:
-            plt.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['line_type'])
+            plt.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['style'], marker=data['marker'], markevery=markers_on)
         plt.title(title)
         ax = plt.subplot()
         ax.xaxis.set_major_locator(plt.MultipleLocator(x_interval)) # 눈금선 간격
@@ -37,8 +40,8 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=2, split=False, upper_
     else:
         f, (upper, lower) = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [1, 3]})
         for data in datas:
-            upper.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['line_type'])
-            lower.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['line_type'])
+            upper.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['style'], marker=data['marker'], markevery=markers_on)
+            lower.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['style'], marker=data['marker'], markevery=markers_on)
         upper.set_title(title)
         upper.xaxis.set_major_locator(plt.MultipleLocator(x_interval)) # 눈금선 간격
         upper.set_ylim(upper_ylim[0], upper_ylim[1])  # 위 plot 범위
@@ -53,7 +56,6 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=2, split=False, upper_
         plt.savefig("{}.pdf".format(output))
     else:
         plt.savefig("{}_split.pdf".format(output))
-    plt.show()
 
 for obj in objs:
     data = pd.read_csv("./out/{}.csv".format(obj))
@@ -67,16 +69,17 @@ for obj in objs:
         plot_lines = []
         # Gathering info
         for t in targets:
-            shape = targets[t]['line_shape']
-            color = targets[t]['line_color']
-            line_type = targets[t]['line_type']
+            shape = targets[t]['marker']
+            color = targets[t]['color']
+            style = targets[t]['style']
+            marker = targets[t]['marker']
             throughputs = data[(data['target']==t) & (data['bench kind']==k)]
             if throughputs.empty:
                 continue
             throughputs = list(throughputs['throughput'])[0]
-            plot_lines.append({'x': list(range(1, len(throughputs)+1)), 'y': throughputs, 'label': t, 'marker': shape, 'color': color, 'line_type':line_type})
+            plot_lines.append({'x': np.arange(1, len(throughputs)+1), 'y': throughputs, 'label': t, 'marker': shape, 'color': color, 'style':style})
         # Draw
-        draw(plot_id, 'threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id))
+        draw(plot_id, 'threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 1)
         # Draw split
         th_min, th_max = 65535, -1
         for line in plot_lines:
@@ -84,4 +87,4 @@ for obj in objs:
             th_max = max(th_max, line['y'][0])
         upper_ylim = (th_min-2, th_max+2)
         lower_ylim = objs[obj]['plot_lower_ylim'][ix]
-        draw(plot_id, 'threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 2, True, upper_ylim, lower_ylim)
+        draw(plot_id, 'threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 1, True, upper_ylim, lower_ylim)
