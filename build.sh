@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# TODO? install libndctl-dev?
+dir_path=$(dirname $(realpath $0))
+
 # Install dependency for plot
 sudo apt install build-essential python3-pip
 pip3 install --user pandas matplotlib
@@ -8,4 +11,4 @@ pip3 install --user pandas matplotlib
 cargo build --release --examples;
 
 # Build C++ implementation
-# TODO: pmdk
+$dir_path/examples_cpp/build.sh

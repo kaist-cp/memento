@@ -12,14 +12,15 @@ objs = {
         'bench_kinds': ['prob50', 'pair'],
         'plot_lower_ylim': [(2, 10), (1, 5)],
     },
-    # "pipe": {
-    #     "targets": {
-    #         'our_pipe': {'line_shape': 'o', 'line_color': 'darkblue'},
-    #         'crndm_pipe': {'line_shape': 'x', 'line_color': 'c'},
-    #         'pmdk_pipe': {'line_shape': 'd', 'line_color': 'k'},
-    #     },
-    #     'bench_kinds': ['pipe']
-    # }
+    "pipe": {
+        "targets": {
+            # 'our_pipe': {'line_shape': 'o', 'line_color': 'darkblue'},
+            # 'crndm_pipe': {'line_shape': 'x', 'line_color': 'c'},
+            'pmdk_pipe': {'line_shape': 'd', 'line_color': 'c', 'line_type': '--'},
+        },
+        'bench_kinds': ['pipe'],
+        'plot_lower_ylim': [(2, 10)],
+    }
 
     # TODO: other obj..
 }
@@ -46,8 +47,12 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=2, split=False, upper_
         lower.grid(True)
     plt.legend()
     plt.xlabel(xlabel, size='large')
-    plt.ylabel(ylabel, size='large')    
-    plt.savefig("{}.pdf".format(output))
+    plt.ylabel(ylabel, size='large')
+
+    if not split:
+        plt.savefig("{}.pdf".format(output))
+    else:
+        plt.savefig("{}_split.pdf".format(output))
     plt.show()
 
 for obj in objs:

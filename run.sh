@@ -15,7 +15,7 @@ function bench() {
     poolname=${target}.pool
     poolpath=$PMEM_PATH/$poolname
     echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}) >"
-    
+
     # 스레드 `t`개를 사용할 때의 처리율 계산
     for t in $( seq 1 $MAX_THREADS )
     do
@@ -24,7 +24,11 @@ function bench() {
         do
             echo "test $var/$TEST_CNT...";
             rm -f $poolpath
-            $dir_path/target/release/examples/bench -f $poolpath -a $target -k $kind -t $t -d $TEST_DUR
+            if [ "pmdk_pipe" == "${target}" ]; then
+                $dir_path/examples_cpp/bench $poolpath $target $kind $t $TEST_DUR $out
+            else
+                $dir_path/target/release/examples/bench -f $poolpath -a $target -k $kind -t $t -d $TEST_DUR -o $out
+            fi
         done
     done
     echo "done."
@@ -32,9 +36,9 @@ function bench() {
 }
 
 # 1. Setup
-PMEM_PATH=./pmem   # PMEM_PATH에 풀 파일을 생성하여 사용
+PMEM_PATH=/mnt/pmem0/   # PMEM_PATH에 풀 파일을 생성하여 사용
 MAX_THREADS=4        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
-TEST_CNT=3            # 한 bench당 테스트 횟수 
+TEST_CNT=3            # 한 bench당 테스트 횟수
 TEST_DUR=1           # 한 테스트당 지속시간
 
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
@@ -43,17 +47,17 @@ rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
-bench our_queue prob50 out/queue.csv
-bench durable_queue prob50 out/queue.csv
-bench log_queue prob50 out/queue.csv
-bench our_queue pair out/queue.csv
-bench durable_queue pair out/queue.csv
-bench log_queue pair out/queue.csv
+bench our_queue prob50 $dir_path/out/queue.csv
+bench durable_queue prob50 $dir_path/out/queue.csv
+bench log_queue prob50 $dir_path/out/queue.csv
+bench our_queue pair $dir_path/out/queue.csv
+bench durable_queue pair $dir_path/out/queue.csv
+bench log_queue pair $dir_path/out/queue.csv
 
 # 3. Benchmarking pipe performance
 # TODO: bench our_pipe pipe
 # TODO: bench corundum_pipe pipe
-# TODO: bench pmdk_pipe pipe (examples/bench_impl/pmdk/pmdk_pipe.cpp를 테스트)
+bench pmdk_pipe pipe $dir_path/out/pipe.csv
 
 # 4. Plot and finish
 python3 plot.py
