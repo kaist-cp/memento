@@ -43,21 +43,23 @@ TEST_DUR=1           # 한 테스트당 지속시간
 
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))
+out_path=$dir_path/out
+mkdir -p $outpath
 rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
-bench our_queue prob50 $dir_path/out/queue.csv
-bench durable_queue prob50 $dir_path/out/queue.csv
-bench log_queue prob50 $dir_path/out/queue.csv
-bench our_queue pair $dir_path/out/queue.csv
-bench durable_queue pair $dir_path/out/queue.csv
-bench log_queue pair $dir_path/out/queue.csv
+bench our_queue prob50 $out_path/queue.csv
+bench durable_queue prob50 $out_path/queue.csv
+bench log_queue prob50 $out_path/queue.csv
+bench our_queue pair $out_path/queue.csv
+bench durable_queue pair $out_path/queue.csv
+bench log_queue pair $out_path/queue.csv
 
 # 3. Benchmarking pipe performance
 # TODO: bench our_pipe pipe
 # TODO: bench corundum_pipe pipe
-bench pmdk_pipe pipe $dir_path/out/pipe.csv
+bench pmdk_pipe pipe $out_path/pipe.csv
 
 # 4. Plot and finish
 python3 plot.py
