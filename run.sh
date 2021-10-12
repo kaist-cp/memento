@@ -52,9 +52,11 @@ show_cfg
 bench our_queue prob50 $out_path/queue.csv
 bench durable_queue prob50 $out_path/queue.csv
 bench log_queue prob50 $out_path/queue.csv
+bench dss_queue prob50 $out_path/queue.csv
 bench our_queue pair $out_path/queue.csv
 bench durable_queue pair $out_path/queue.csv
 bench log_queue pair $out_path/queue.csv
+bench dss_queue pair $out_path/queue.csv
 
 # 3. Benchmarking pipe performance
 # TODO: bench our_pipe pipe

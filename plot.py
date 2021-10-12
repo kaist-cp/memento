@@ -6,10 +6,10 @@ import numpy as np
 objs = {
     "queue": {
         "targets": {
-            "our_queue": {'marker': 'o', 'color': 'k', 'style': '-'},
+            "our_queue": {'marker': '.', 'color': 'k', 'style': '-'},
             'durable_queue': {'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'marker': 'x', 'color': 'c', 'style': '--'},
-            # TODO: dss_queue
+            'dss_queue': {'marker': 'v', 'color': 'orange', 'style': '--'},
         },
         'bench_kinds': ['prob50', 'pair'],
         'plot_lower_ylim': [(0.5, 3), (0.25, 1.25)],

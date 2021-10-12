@@ -1,7 +1,7 @@
 #![feature(generic_associated_types)]
 
 mod bench_impl;
-use bench_impl::{GetDurableQueueNOps, GetLogQueueNOps, GetOurQueueNOps};
+use bench_impl::{GetDurableQueueNOps, GetLogQueueNOps, GetOurQueueNOps, GetDSSQueueNOps};
 
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::*;
@@ -202,7 +202,9 @@ fn bench(opt: &Opt) -> f64 {
         TestTarget::FriedmanLogQueue(kind) => {
             get_nops::<GetLogQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
         }
-        TestTarget::DSSQueue(_) => todo!(),
+        TestTarget::DSSQueue(kind) => {
+            get_nops::<GetDSSQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+        },
         TestTarget::CrndmPipe(_) => todo!(),
     };
     let avg_ops = (nops as f64) / opt.duration; // 평균 op/s
