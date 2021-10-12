@@ -109,8 +109,6 @@ impl<T: Clone> FriedmanDruableQueue<T> {
                                                                                 // TODO: flush `new_retunred_val`
         self.returned_val[tid].store(new_returned_val, Ordering::SeqCst);
         // TODO: flush `self.returned_val[tid]`
-
-        let guard = pepoch::pin(pool);
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
             let last = self.tail.load(Ordering::SeqCst, &guard);
@@ -124,7 +122,7 @@ impl<T: Clone> FriedmanDruableQueue<T> {
                         *new_returned_val_ref = None;
                         return;
                     }
-                    // TODO: flush(first_ref.next);
+                    // TODO: flush(&last->next);
                     let _ = self.tail.compare_exchange(
                         last,
                         next,
