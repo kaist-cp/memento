@@ -45,7 +45,7 @@ trait TestNOps {
                         ops.fetch_add(1, Ordering::SeqCst);
 
                         // `duration` 시간 지났으면 break
-                        // TODO: off 없애기. 메인 스레드가 직접 kill 하는 게 나을듯
+                        // TODO: end 없애기. 메인 스레드가 직접 kill 하는 게 나을듯
                         if end.load(Ordering::SeqCst) {
                             break;
                         }
@@ -141,10 +141,6 @@ struct Opt {
     #[structopt(short, long, default_value = "5")]
     duration: f64,
 
-    /// 처리율을 `cnt`번 측정하고 평균 처리율을 결과로 냄
-    #[structopt(short, long, default_value = "10")]
-    cnt: usize,
-
     /// 출력 파일. 주어지지 않으면 ./out/{target}.csv에 저장
     #[structopt(short, long)]
     output: Option<String>,
@@ -155,7 +151,7 @@ fn setup() -> (Opt, Writer<File>) {
 
     let output_name = match &opt.output {
         Some(o) => o.clone(),
-        None => format!("./out/{}.csv", opt.target)
+        None => format!("./out/{}.csv", opt.target.split("_").last().unwrap())
     };
     create_dir_all(Path::new(&output_name).parent().unwrap()).unwrap();
     let output = match OpenOptions::new()
@@ -178,8 +174,7 @@ fn setup() -> (Opt, Writer<File>) {
                     "target",
                     "bench kind",
                     "threads",
-                    "test-dur",
-                    "test-cnt",
+                    "duration",
                     "throughput",
                 ])
                 .unwrap();
@@ -197,30 +192,22 @@ fn bench(opt: &Opt) -> f64 {
         opt.target, opt.kind, opt.threads
     );
     let target = parse_target(&opt.target, &opt.kind);
-
-    // `cnt`번 테스트하여 평균냄
-    let mut nops_sum = 0.0;
-    for c in 0..opt.cnt {
-        println!("test {}/{}...", c + 1, opt.cnt);
-        let nops = match target {
-            TestTarget::OurQueue(kind) => {
-                get_nops::<GetOurQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-            }
-            TestTarget::FriedmanDurableQueue(kind) => {
-                get_nops::<GetDurableQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-            }
-            TestTarget::FriedmanLogQueue(kind) => {
-                get_nops::<GetLogQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-            }
-            TestTarget::DSSQueue(_) => todo!(),
-            TestTarget::CrndmPipe(_) => todo!(),
-        };
-        nops_sum += nops as f64;
-    }
-    let avg_ops = (nops_sum / opt.cnt as f64) / opt.duration; // 평균 op/s
-    let avg_mops = avg_ops / 1_000_000 as f64; // 평균 Mop/s
-    println!("avg mops: {}", avg_mops);
-    avg_mops
+    let nops = match target {
+        TestTarget::OurQueue(kind) => {
+            get_nops::<GetOurQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+        }
+        TestTarget::FriedmanDurableQueue(kind) => {
+            get_nops::<GetDurableQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+        }
+        TestTarget::FriedmanLogQueue(kind) => {
+            get_nops::<GetLogQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+        }
+        TestTarget::DSSQueue(_) => todo!(),
+        TestTarget::CrndmPipe(_) => todo!(),
+    };
+    let avg_ops = (nops as f64) / opt.duration; // 평균 op/s
+    println!("avg ops: {}", avg_ops);
+    avg_ops
 }
 
 fn main() {
@@ -234,7 +221,6 @@ fn main() {
             opt.kind,
             opt.threads.to_string(),
             opt.duration.to_string(),
-            opt.cnt.to_string(),
             avg_mops.to_string(),
         ])
         .unwrap();

@@ -26,7 +26,7 @@ build.sh
 
 ### Run a single benchmark
 ```
-./target/release/examples/bench -f <poolpath> -a <target> -k <bench kind> -t <threads> -c <test-cnt> -d <test-dur> -o <output>
+./target/release/examples/bench -f <poolpath> -a <target> -k <bench kind> -t <threads> -d <test-dur> -o <output>
 ```
 - `<target>`: our_queue, durable_queue, log_queue, dss_queue, our_pipe, pmdk_pipe, crndm_pipe
 - `<bench kind>`
@@ -35,12 +35,12 @@ build.sh
 
 example:
 ```bash
-./target/release/examples/bench -f /mnt/pmem0/our_queue.pool -a our_queue -k prob50 -t 16 -c 10 -d 5
+./target/release/examples/bench -f /mnt/pmem0/our_queue.pool -a our_queue -k prob50 -t 16 -d 5
 ```
 `우리 큐`에 `16`개 스레드로 `{ 50% enq or deq }`를 반복할 때의 처리율 측정
 - 풀 파일: `/mnt/pmem0/our_queue.pool`을 새로 생성하여 사용
-- 처리율 측정방법: `5`초동안 op 실행 수를 계산하는 테스트를 `10`번 반복하여 평균 op 실행 수를 계산
-- 결과: `./out/our_queue.csv`
+- 처리율 측정방법: `5`초동안 op을 반복 실행한 후 평균 op/s를 계산
+- 결과: `./out/{obj}.csv` (obj: queue, pipe)
 
 ### Run the entire benchmark
 ```bash
@@ -48,7 +48,7 @@ run.sh
 ```
 모든 (`<target>`, `<bench kind>`, `<threads=1~32>`) 쌍에 대하여 처리율 측정
 - 풀 파일: `/mnt/pmem0/{target}.pool`을 새로 생성하여 사용
-- 처리율 측정방법: `5`초동안 op 실행 수를 계산하는 테스트를 `10`번 반복하여 평균 op 실행 수를 계산
+- 처리율 측정방법: single bench를 `10`번 반복한 후 평균 M op/s를 계산
 - 결과:
     - raw: `./out/{obj}.csv` (obj: queue, pipe)
     - graph: `./out/{obj}-{bench kind}.pdf`

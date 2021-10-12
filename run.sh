@@ -15,20 +15,27 @@ function bench() {
     poolname=${target}.pool
     poolpath=$PMEM_PATH/$poolname
     echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}) >"
+    
+    # 스레드 `t`개를 사용할 때의 처리율 계산
     for t in $( seq 1 $MAX_THREADS )
     do
-        rm -f $poolpath
-        $dir_path/target/release/examples/bench -f $poolpath -a $target -k $kind -t $t -c $TEST_CNT -d $TEST_DUR -o $out
+        # `TEST_CNT`번 반복
+        for ((var=1; var<=$TEST_CNT; var++));
+        do
+            echo "test $var/$TEST_CNT...";
+            rm -f $poolpath
+            $dir_path/target/release/examples/bench -f $poolpath -a $target -k $kind -t $t -d $TEST_DUR
+        done
     done
     echo "done."
     echo ""
 }
 
 # 1. Setup
-PMEM_PATH=/mnt/pmem0  # PMEM_PATH에 풀 파일을 생성하여 사용
-MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
-TEST_CNT=5            # 한 bench당 테스트 횟수
-TEST_DUR=10           # 한 테스트당 지속시간
+PMEM_PATH=./pmem   # PMEM_PATH에 풀 파일을 생성하여 사용
+MAX_THREADS=4        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
+TEST_CNT=3            # 한 bench당 테스트 횟수 
+TEST_DUR=1           # 한 테스트당 지속시간
 
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))
