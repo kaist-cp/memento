@@ -1,7 +1,7 @@
 #![feature(generic_associated_types)]
 
 mod bench_impl;
-use bench_impl::{GetDurableQueueNOps, GetLogQueueNOps, GetOurQueueNOps, GetDSSQueueNOps};
+use bench_impl::*;
 
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::*;
@@ -17,13 +17,18 @@ use std::fs::OpenOptions;
 use std::sync::atomic::*;
 use std::thread::sleep;
 
-// 테스트시 만들 풀 파일의 크기
-const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+/// 테스트시 만들 풀 파일의 크기
+const FILE_SIZE: usize = 80 * 1024 * 1024 * 1024;
 
-// 테스트시 Queue의 초기 노드 수
+/// Queue 테스트시 초기 노드 수
 const QUEUE_INIT_SIZE: usize = 100;
 
-// 테스트할 수 있는 최대 스레드 수
+/// Pipe 테스트시 Queue 1의 초기 노드 수
+// TODO: cpp의 PIPE_INIT_SIZE는 별도로 있음(examples_cpp/bench.hpp). 이를 하나의 컨픽 파일로 통일하기
+const PIPE_INIT_SIZE: usize = 100 * 1000 * 1000;
+
+
+/// 테스트할 수 있는 최대 스레드 수
 // - 우리 큐, 로그 큐 등에서 사물함을 MAX_THREAD만큼 정적할당해야하니 필요
 // - TODO: 이 상수 없앨 수 있는지 고민 (e.g. MAX_THREAD=32 ./run.sh처럼 가능한가?)
 const MAX_THREADS: usize = 256;
@@ -84,6 +89,7 @@ enum TestTarget {
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
     DSSQueue(TestKind),
+    OurPipe(TestKind),
     CrndmPipe(TestKind),
 }
 
@@ -112,6 +118,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
+        "our_pipe" => TestTarget::OurPipe(kind),
         "crndm_pipe" => TestTarget::CrndmPipe(kind),
         _ => unreachable!("invalid target"),
     }
@@ -204,6 +211,9 @@ fn bench(opt: &Opt) -> f64 {
         }
         TestTarget::DSSQueue(kind) => {
             get_nops::<GetDSSQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+        },
+        TestTarget::OurPipe(kind) => {
+            get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
         },
         TestTarget::CrndmPipe(_) => todo!(),
     };

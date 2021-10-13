@@ -59,7 +59,7 @@ bench log_queue pair $out_path/queue.csv
 bench dss_queue pair $out_path/queue.csv
 
 # 3. Benchmarking pipe performance
-# TODO: bench our_pipe pipe
+bench our_pipe pipe $out_path/pipe.csv
 # TODO: bench corundum_pipe pipe
 bench pmdk_pipe pipe $out_path/pipe.csv
 

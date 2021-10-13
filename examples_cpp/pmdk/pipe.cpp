@@ -40,7 +40,7 @@ int get_pipe_nops(string filepath, int nr_threads, float duration) {
     persistent_ptr<queue> q1 = q_manager->q1;
     persistent_ptr<queue> q2 = q_manager->q2;
     transaction::run(pop, [&] {
-        for (int i=0; i<INIT_NODES; i++) {
+        for (int i=0; i<PIPE_INIT_SIZE; i++) {
             q1->push(pop, i);
         }
     });
