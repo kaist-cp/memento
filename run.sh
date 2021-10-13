@@ -44,6 +44,7 @@ TEST_DUR=1           # 한 테스트당 지속시간
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
+mkdir -p $PMEM_PATH
 mkdir -p $outpath
 rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
 show_cfg
@@ -60,7 +61,7 @@ bench dss_queue pair $out_path/queue.csv
 
 # 3. Benchmarking pipe performance
 bench our_pipe pipe $out_path/pipe.csv
-# TODO: bench corundum_pipe pipe
+bench crndm_pipe pipe $out_path/pipe.csv
 bench pmdk_pipe pipe $out_path/pipe.csv
 
 # 4. Plot and finish

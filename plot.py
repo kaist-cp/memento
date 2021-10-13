@@ -1,4 +1,3 @@
-# TODO: 스레드 4개마다 점찍기
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,8 +15,8 @@ objs = {
     },
     "pipe": {
         "targets": {
-            # TODO: 'our_pipe': {'marker': 'o', 'color': 'k', 'style': '-'},
-            # TODO: 'crndm_pipe': {'marker': 'd', 'color': 'hotpink', 'style': '--'},
+            'our_pipe': {'marker': 'o', 'color': 'k', 'style': '-'},
+            'crndm_pipe': {'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'pmdk_pipe': {'marker': 'x', 'color': 'c', 'style': '--'},
         },
         'bench_kinds': ['pipe'],

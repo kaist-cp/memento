@@ -5,6 +5,8 @@ use bench_impl::*;
 
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::*;
+use corundum::alloc::*;
+use corundum::default::BuddyAlloc;
 use core::time;
 use std::path::Path;
 use crossbeam_utils::thread;
@@ -211,11 +213,14 @@ fn bench(opt: &Opt) -> f64 {
         }
         TestTarget::DSSQueue(kind) => {
             get_nops::<GetDSSQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-        },
+        }
         TestTarget::OurPipe(kind) => {
             get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-        },
-        TestTarget::CrndmPipe(_) => todo!(),
+        }
+        TestTarget::CrndmPipe(kind) => {
+            let root = BuddyAlloc::open::<CrndmPipe>(&opt.filepath, O_16GB | O_CF).unwrap();
+            root.get_nops(kind, opt.threads, opt.duration)
+        }
     };
     let avg_ops = (nops as f64) / opt.duration; // 평균 op/s
     println!("avg ops: {}", avg_ops);
