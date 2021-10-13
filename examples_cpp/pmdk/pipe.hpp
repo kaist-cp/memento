@@ -5,7 +5,6 @@
 using namespace pmem::obj;
 
 struct pipe_root {
-    pmem::obj::mutex pmutex;
    persistent_ptr<queue> q1;
    persistent_ptr<queue> q2;
 
