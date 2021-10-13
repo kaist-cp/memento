@@ -1,7 +1,7 @@
 //! benchmarking을 위한 구현들
 
 mod compositional_pobj;
-mod corundum;
+mod crndm;
 mod dss;
 mod friedman;
 
