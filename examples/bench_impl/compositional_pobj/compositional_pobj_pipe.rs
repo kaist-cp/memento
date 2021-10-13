@@ -1,8 +1,13 @@
+use compositional_persistent_object::{
+    pepoch::{self, PAtomic, POwned},
+    persistent::POp,
+    pipe::Pipe,
+    plocation::PoolHandle,
+    queue::{Pop, Push, Queue},
+};
 use std::sync::atomic::Ordering;
-use compositional_persistent_object::{pepoch::{self, PAtomic, POwned}, persistent::POp, pipe::Pipe, plocation::PoolHandle, queue::{Pop, Push, Queue}};
 
-use crate::{MAX_THREADS, PIPE_INIT_SIZE, TestKind, TestNOps};
-
+use crate::{TestKind, TestNOps, MAX_THREADS, PIPE_INIT_SIZE};
 
 struct MustPop<T: Clone> {
     pop: Pop<T>,
@@ -21,7 +26,12 @@ impl<T: 'static + Clone> POp for MustPop<T> {
     type Input = ();
     type Output<'q> = T;
 
-    fn run<'o, O: POp>(&mut self, queue: Self::Object<'o>, _: Self::Input, pool: &PoolHandle<O>) -> Self::Output<'o> {
+    fn run<'o, O: POp>(
+        &mut self,
+        queue: Self::Object<'o>,
+        _: Self::Input,
+        pool: &PoolHandle<O>,
+    ) -> Self::Output<'o> {
         loop {
             if let Some(v) = self.pop.run(queue, (), pool) {
                 return v;
@@ -94,7 +104,6 @@ impl POp for GetOurPipeNOps {
         println!("initialize..");
         self.init(pool);
 
-
         // Alias
         let guard = unsafe { pepoch::unprotected(pool) };
         let q1 = unsafe { self.q1.load(Ordering::SeqCst, guard).deref(pool) };
@@ -105,9 +114,11 @@ impl POp for GetOurPipeNOps {
         match kind {
             TestKind::Pipe => self.test_nops(
                 &|tid| {
-                    let pipe =
-                        unsafe { (&self.pipes[tid] as *const _ as *mut Pipe<MustPop<usize>, Push<usize>>).as_mut() }
-                            .unwrap();
+                    let pipe = unsafe {
+                        (&self.pipes[tid] as *const _ as *mut Pipe<MustPop<usize>, Push<usize>>)
+                            .as_mut()
+                    }
+                    .unwrap();
 
                     // TODO: add abstract_pipe?
                     pipe.run((q1, q2), (), pool);
@@ -116,7 +127,7 @@ impl POp for GetOurPipeNOps {
                     // pipe.reset(false);
                 },
                 nr_thread,
-                duration
+                duration,
             ),
             _ => unreachable!("Pipe를 위한 테스트만 해야함"),
         }
@@ -126,4 +137,3 @@ impl POp for GetOurPipeNOps {
         // no-op
     }
 }
-

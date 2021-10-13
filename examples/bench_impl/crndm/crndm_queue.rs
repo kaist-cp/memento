@@ -1,8 +1,8 @@
 use std::ops::DerefMut;
 
+use super::P;
 use corundum::boxed::Pbox;
 use corundum::default::*;
-use super::P;
 
 #[derive(Debug, Default)]
 struct Node {
@@ -126,7 +126,6 @@ impl CrndmQueue {
         })
         .unwrap();
     }
-
 }
 
 #[cfg(test)]

@@ -160,7 +160,7 @@ fn setup() -> (Opt, Writer<File>) {
 
     let output_name = match &opt.output {
         Some(o) => o.clone(),
-        None => format!("./out/{}.csv", opt.target.split("_").last().unwrap())
+        None => format!("./out/{}.csv", opt.target.split('_').last().unwrap()),
     };
     create_dir_all(Path::new(&output_name).parent().unwrap()).unwrap();
     let output = match OpenOptions::new()
@@ -179,13 +179,7 @@ fn setup() -> (Opt, Writer<File>) {
                 .unwrap();
             let mut output = csv::Writer::from_writer(f);
             output
-                .write_record(&[
-                    "target",
-                    "bench kind",
-                    "threads",
-                    "duration",
-                    "throughput",
-                ])
+                .write_record(&["target", "bench kind", "threads", "duration", "throughput"])
                 .unwrap();
             output.flush().unwrap();
             output

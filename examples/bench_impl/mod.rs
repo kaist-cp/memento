@@ -6,7 +6,7 @@ mod dss;
 mod friedman;
 
 pub mod abstract_queue;
-pub use compositional_pobj::{GetOurQueueNOps, GetOurPipeNOps};
-pub use friedman::{GetDurableQueueNOps, GetLogQueueNOps};
-pub use dss::GetDSSQueueNOps;
+pub use compositional_pobj::{GetOurPipeNOps, GetOurQueueNOps};
 pub use crndm::CrndmPipe;
+pub use dss::GetDSSQueueNOps;
+pub use friedman::{GetDurableQueueNOps, GetLogQueueNOps};

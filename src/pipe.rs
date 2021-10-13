@@ -49,7 +49,7 @@ where
         &mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input,
-        pool: &PoolHandle<O>
+        pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         if self.resetting {
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
@@ -110,7 +110,12 @@ mod tests {
         type Input = ();
         type Output<'q> = T;
 
-        fn run<'o, O: POp>(&mut self, queue: Self::Object<'o>, _: Self::Input, pool: &PoolHandle<O>) -> Self::Output<'o> {
+        fn run<'o, O: POp>(
+            &mut self,
+            queue: Self::Object<'o>,
+            _: Self::Input,
+            pool: &PoolHandle<O>,
+        ) -> Self::Output<'o> {
             loop {
                 if let Some(v) = self.pop.run(queue, (), pool) {
                     return v;
@@ -173,67 +178,67 @@ mod tests {
         type Output<'o> = Result<(), ()>;
 
         fn run<'o, O: POp>(
-        &mut self,
-        _: Self::Object<'o>,
-        concurrent: Self::Input,
-        pool: &PoolHandle<O>,
-    ) -> Self::Output<'o> {
-        self.init(pool);
+            &mut self,
+            _: Self::Object<'o>,
+            concurrent: Self::Input,
+            pool: &PoolHandle<O>,
+        ) -> Self::Output<'o> {
+            self.init(pool);
 
-        // Alias
-        let guard = unsafe { pepoch::unprotected(pool) };
-        let q1 = unsafe { self.q1.load(Ordering::SeqCst, guard).deref(pool) };
-        let q2 = unsafe { self.q2.load(Ordering::SeqCst, guard).deref(pool) };
-        let pipes = &mut self.pipes;
-        let suppliers = &mut self.suppliers;
-        let consumers = &mut self.consumers;
+            // Alias
+            let guard = unsafe { pepoch::unprotected(pool) };
+            let q1 = unsafe { self.q1.load(Ordering::SeqCst, guard).deref(pool) };
+            let q2 = unsafe { self.q2.load(Ordering::SeqCst, guard).deref(pool) };
+            let pipes = &mut self.pipes;
+            let suppliers = &mut self.suppliers;
+            let consumers = &mut self.consumers;
 
-        if !concurrent {
-            // 1. Supply q1
-            for (i, push) in suppliers.iter_mut().enumerate() {
-                push.run(&q1, i, pool);
+            if !concurrent {
+                // 1. Supply q1
+                for (i, push) in suppliers.iter_mut().enumerate() {
+                    push.run(&q1, i, pool);
+                }
+
+                // 2. Transfer q1->q2
+                for pipe in pipes.iter_mut() {
+                    pipe.run((&q1, &q2), (), pool);
+                }
+
+                // 3. Consume q2
+                for (i, pop) in self.consumers.iter_mut().enumerate() {
+                    let v = pop.run(&q2, (), pool);
+                    assert_eq!(v, i);
+                }
+            } else {
+                #[allow(box_pointers)]
+                thread::scope(|scope| {
+                    // T0: Supply q1
+                    let _ = scope.spawn(move |_| {
+                        for (i, push) in suppliers.iter_mut().enumerate() {
+                            push.run(q1, i, pool);
+                        }
+                    });
+
+                    // T1: Transfer q1->q2
+                    let _ = scope.spawn(move |_| {
+                        for pipe in pipes.iter_mut() {
+                            pipe.run((q1, q2), (), pool);
+                        }
+                    });
+
+                    // T2: Consume q2
+                    let _ = scope.spawn(move |_| {
+                        for (i, pop) in consumers.iter_mut().enumerate() {
+                            let v = pop.run(&q2, (), pool);
+                            assert_eq!(v, i);
+                        }
+                    });
+                })
+                .unwrap();
             }
 
-            // 2. Transfer q1->q2
-            for pipe in pipes.iter_mut() {
-                pipe.run((&q1, &q2), (), pool);
-            }
-
-            // 3. Consume q2
-            for (i, pop) in self.consumers.iter_mut().enumerate() {
-                let v = pop.run(&q2, (), pool);
-                assert_eq!(v, i);
-            }
-        } else {
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
-                // T0: Supply q1
-                let _ = scope.spawn(move |_| {
-                    for (i, push) in suppliers.iter_mut().enumerate() {
-                        push.run(q1, i, pool);
-                    }
-                });
-
-                // T1: Transfer q1->q2
-                let _ = scope.spawn(move |_| {
-                    for pipe in pipes.iter_mut() {
-                        pipe.run((q1, q2), (), pool);
-                    }
-                });
-
-                // T2: Consume q2
-                let _ = scope.spawn(move |_| {
-                    for (i, pop) in consumers.iter_mut().enumerate() {
-                        let v = pop.run(&q2, (), pool);
-                        assert_eq!(v, i);
-                    }
-                });
-            })
-            .unwrap();
+            Ok(())
         }
-
-        Ok(())
-    }
 
         fn reset(&mut self, _nested: bool) {
             // no-op
