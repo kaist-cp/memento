@@ -55,13 +55,13 @@ impl CrndmQueue {
             let node_ptr = unsafe { Ptr::from_raw(Pbox::into_raw(node)) };
 
             // Enqueue
-            if head_ref.is_none() {
+            if head_ref.is_none() && tail_ref.is_none() {
                 *head_ref = Some(node_ptr);
+                *tail_ref = Some(node_ptr);
+            } else {
+                tail_ref.unwrap().next = Some(node_ptr);
+                *tail_ref = Some(node_ptr);
             }
-            if let Some(tail) = tail_ref.as_mut() {
-                tail.next = Some(node_ptr);
-            }
-            *tail_ref = Some(node_ptr); // update tail
         })
         .unwrap();
     }
@@ -83,8 +83,8 @@ impl CrndmQueue {
             let val = head.val;
             let next = head.next;
             *head_ref = next;
-            if head == tail_ref.unwrap() {
-                *tail_ref = next;
+            if head_ref.is_none() {
+                *tail_ref = None;
             }
             drop(unsafe { Pbox::<Node, P>::from_raw(head.deref_mut() as *mut Node) });
             Some(val)

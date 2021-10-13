@@ -25,11 +25,12 @@ public:
             auto n = make_persistent<node>();
             n->value = value;
             n->next = nullptr;
-            if (tail != nullptr)
-                tail->next = n;
-            if (head == nullptr)
-                head = n;
-            tail = n;
+            if (head == nullptr && tail == nullptr) {
+				head = tail = n;
+			} else {
+				tail->next = n;
+				tail = n;
+			}
         }, pmutex);
     }
    std::optional<int> pop(pool_base &pop)
@@ -43,6 +44,8 @@ public:
             auto next = head->next;
             delete_persistent<node>(head);
             head = next;
+			if (head == nullptr)
+				tail = nullptr;
         }, pmutex);
         return value;
    }

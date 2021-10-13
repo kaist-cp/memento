@@ -28,8 +28,12 @@ impl CrndmPipe {
             TestKind::Pipe => self.test_nops(
                 &|tid| {
                     P::transaction(|_| {
-                        q1.enqueue(tid);
-                        q2.dequeue();
+                        let v = loop {
+                            if let Some(v) = q1.dequeue() {
+                                break v
+                            }
+                        };
+                        q2.enqueue(v);
                     })
                     .unwrap();
                 },
