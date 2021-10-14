@@ -140,7 +140,7 @@ impl<T: Clone> LogQueue<T> {
     pub fn dequeue<O: POp>(&self, tid: usize, op_num: usize, pool: &PoolHandle<O>) {
         let guard = pepoch::pin(pool);
 
-        let log = POwned::new(
+        let mut log = POwned::new(
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, op_num),
             pool,
         )
@@ -159,7 +159,6 @@ impl<T: Clone> LogQueue<T> {
             if first == self.head.load(Ordering::SeqCst, &guard) {
                 if first == last {
                     if next.is_null() {
-                        let mut log = self.logs[tid].load(Ordering::SeqCst, &guard);
                         // TODO: atomic data?
                         log_ref.status = true;
                         persist_obj(&log_ref.status, true);
