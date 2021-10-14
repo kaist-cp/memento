@@ -269,7 +269,7 @@ impl<T: Clone> Queue<T> {
 
             // node가 정말 내가 pop한 게 맞는지 확인
             if target_ref.popper.load(Ordering::SeqCst) == client.id(pool) {
-                return Some(Self::finish_pop(target_ref));
+                return Some(unsafe { Self::finish_pop(target_ref) });
             }
         }
 
@@ -339,7 +339,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
-                        Some(Self::finish_pop(next_ref))
+                        Some(unsafe { Self::finish_pop(next_ref) })
                     })
                     .map_err(|_| {
                         let h = self.head.load(Ordering::SeqCst, guard);
@@ -361,8 +361,8 @@ impl<T: Clone> Queue<T> {
     }
 
     #[inline]
-    fn finish_pop(node: &Node<T>) -> T {
-        unsafe { node.data.as_ptr().as_ref().unwrap() }.clone()
+    unsafe fn finish_pop(node: &Node<T>) -> T {
+        (*node.data.as_ptr()).clone()
         // free node
     }
 
@@ -416,7 +416,7 @@ mod test {
 
             // Initialize queue
             if q.is_null() {
-                let q = POwned::new(Queue::<usize>::new(pool), pool);
+                let q = Queue::<usize>::new(pool);
                 // TODO: 여기서 crash나면 leak남
                 self.queue.store(q, Ordering::SeqCst);
             }
