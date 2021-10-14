@@ -30,6 +30,7 @@
 // #![deny(unused_lifetimes)] // Allowd due to GAT
 // #![deny(unstable_features)] // Allowd due to GAT
 #![feature(generic_associated_types)]
+#![feature(asm)]
 
 // Persistent objects collection
 // pub mod exchanger; // TODO: plocation으로 동작시키며 주석해제

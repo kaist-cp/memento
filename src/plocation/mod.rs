@@ -1,6 +1,7 @@
 //! Persistent location
 
 pub mod alloc;
+pub mod ll;
 pub mod pool;
 pub mod ptr;
 
