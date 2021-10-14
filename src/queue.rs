@@ -190,32 +190,39 @@ impl<T: Clone> Queue<T> {
         let tail_ref = unsafe { tail.deref(pool) };
         let next = tail_ref.next.load(Ordering::SeqCst, guard);
 
-        if !next.is_null() {
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-            return Err(());
-        }
-
-        tail_ref
-            .next
-            .compare_exchange(
-                PShared::null(),
-                node,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            )
-            .map(|_| {
+        if tail == self.tail.load(Ordering::SeqCst, guard) {
+            if next.is_null() {
+                return tail_ref
+                    .next
+                    .compare_exchange(
+                        PShared::null(),
+                        node,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    )
+                    .map(|_| {
+                        let _ = self.tail.compare_exchange(
+                            tail,
+                            node,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        );
+                    })
+                    .map_err(|_| ());
+            } else {
                 let _ = self.tail.compare_exchange(
                     tail,
-                    node,
+                    next,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     guard,
                 );
-            })
-            .map_err(|_| ())
+            }
+        }
+
+        Err(())
     }
 
     /// `node`가 Queue 안에 있는지 head부터 tail까지 순회하며 검색
@@ -278,55 +285,68 @@ impl<T: Clone> Queue<T> {
         pool: &PoolHandle<O>,
     ) -> Result<Option<T>, ()> {
         let head = self.head.load(Ordering::SeqCst, guard);
+        let tail = self.tail.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
-        let next_ref = some_or!(unsafe { next.as_ref(pool) }, {
-            client
-                .target
-                .store(PShared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
-            return Ok(None);
-        });
 
-        let tail = self.tail.load(Ordering::SeqCst, guard);
-        if tail == head {
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        }
+        if head == self.head.load(Ordering::SeqCst, &guard) {
+            if head == tail {
+                // empty queue
+                if next.is_null() {
+                    client
+                        .target
+                        .store(PShared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
+                    return Ok(None);
+                }
 
-        // 우선 내가 pop할 node를 가리키고
-        client.target.store(next, Ordering::SeqCst);
-
-        next_ref
-            .popper
-            .compare_exchange(
-                Self::no_popper(),
-                client.id(pool),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .map(|_| {
-                let _ = self.head.compare_exchange(
-                    head,
+                let _ = self.tail.compare_exchange(
+                    tail,
                     next,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
-                    guard,
+                    &guard,
                 );
-                Some(Self::finish_pop(next_ref))
-            })
-            .map_err(|_| {
-                let h = self.head.load(Ordering::SeqCst, guard);
-                if h == head {
-                    let _ = self.head.compare_exchange(
-                        head,
-                        next,
+                return Err(());
+            } else {
+                // 우선 내가 pop할 node를 가리킴
+                client.target.store(next, Ordering::SeqCst);
+
+                // 실제로 pop 함
+                let next_ref = unsafe { next.deref(pool) };
+                return next_ref
+                    .popper
+                    .compare_exchange(
+                        Self::no_popper(),
+                        client.id(pool),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        guard,
-                    );
-                }
-            })
+                    )
+                    .map(|_| {
+                        let _ = self.head.compare_exchange(
+                            head,
+                            next,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        );
+                        Some(Self::finish_pop(next_ref))
+                    })
+                    .map_err(|_| {
+                        let h = self.head.load(Ordering::SeqCst, guard);
+                        if h == head {
+                            let _ = self.head.compare_exchange(
+                                head,
+                                next,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                                guard,
+                            );
+                        }
+                    });
+            }
+        }
+
+        Err(())
     }
 
     fn finish_pop(node: &Node<T>) -> T {

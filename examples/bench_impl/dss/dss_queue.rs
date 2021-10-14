@@ -115,10 +115,9 @@ impl<T: Clone> DSSQueue<T> {
 
             if last == self.tail.load(Ordering::SeqCst, &guard) {
                 if next.is_null() {
-                    // NOTE: DSS 논문의 구현에선 CAS(&last->next, NULL, node)지만 여기 구현은 durable queue와 같이 CAS(&last->next, next, node)로 함. 차이점은 없음
                     if last_ref
                         .next
-                        .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst, &guard)
+                        .compare_exchange(PShared::null(), node, Ordering::SeqCst, Ordering::SeqCst, &guard)
                         .is_ok()
                     {
                         // TODO: flush(&last->next)
