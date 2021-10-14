@@ -293,7 +293,7 @@ impl<T: Clone> Queue<T> {
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
 
-        if head == self.head.load(Ordering::SeqCst, &guard) {
+        if head == self.head.load(Ordering::SeqCst, guard) {
             if head == tail {
                 // empty queue
                 if next.is_null() {
@@ -312,7 +312,7 @@ impl<T: Clone> Queue<T> {
                     next,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
-                    &guard,
+                    guard,
                 );
                 return Err(());
             } else {
