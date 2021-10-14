@@ -2,7 +2,7 @@ use crate::bench_impl::abstract_queue::*;
 use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned};
 use compositional_persistent_object::persistent::*;
-use compositional_persistent_object::plocation::pool::*;
+use compositional_persistent_object::plocation::{ll::*, pool::*};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -33,40 +33,33 @@ impl<T: Clone> Node<T> {
 }
 
 #[derive(Debug)]
-struct FriedmanDruableQueue<T: Clone> {
+struct DurableQueue<T: Clone> {
     head: PAtomic<Node<T>>,
     tail: PAtomic<Node<T>>,
-    returned_val: [PAtomic<Option<T>>; MAX_THREADS], // None: "EMPTY"
+    ret_val: [PAtomic<Option<T>>; MAX_THREADS], // None: "EMPTY"
 }
 
-impl<T: Clone> Default for FriedmanDruableQueue<T> {
-    fn default() -> Self {
-        Self {
-            head: Default::default(),
-            tail: Default::default(),
-            returned_val: array_init::array_init(|_| PAtomic::null()),
-        }
-    }
-}
+impl<T: Clone> DurableQueue<T> {
+    fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+        let guard = unsafe { pepoch::unprotected(pool) };
+        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
+        persist_obj(unsafe { sentinel.deref(pool) }, true);
 
-impl<T: Clone> FriedmanDruableQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle<O>) -> Self {
-        let sentinel = Node::default();
-        unsafe {
-            let guard = pepoch::unprotected(pool);
-            let sentinel = POwned::new(sentinel, pool).into_shared(guard);
-            Self {
-                head: PAtomic::from(sentinel),
-                tail: PAtomic::from(sentinel),
-                returned_val: array_init::array_init(|_| PAtomic::null()),
-            }
-        }
+        let ret = POwned::new(Self {
+            head: PAtomic::from(sentinel),
+            tail: PAtomic::from(sentinel),
+            ret_val: array_init::array_init(|_| PAtomic::null()),
+        }, pool);
+        persist_obj(unsafe { ret.deref(pool) }, true);
+
+        ret
     }
 
     pub fn enqueue<O: POp>(&self, val: T, pool: &PoolHandle<O>) {
         let guard = pepoch::pin(pool);
         let node = POwned::new(Node::new(val), pool).into_shared(&guard);
-        // TODO: flush node
+        persist_obj(unsafe { node.deref(pool) }, true);
+
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -79,7 +72,7 @@ impl<T: Clone> FriedmanDruableQueue<T> {
                         .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst, &guard)
                         .is_ok()
                     {
-                        // TODO: flush(&last->next)
+                        persist_obj(&last_ref.next, true);
                         let _ = self.tail.compare_exchange(
                             last,
                             node,
@@ -90,7 +83,7 @@ impl<T: Clone> FriedmanDruableQueue<T> {
                         return;
                     }
                 } else {
-                    // TODO: flush(&last->next)
+                    persist_obj(&last_ref.next, true);
                     let _ = self.tail.compare_exchange(
                         last,
                         next,
@@ -105,10 +98,15 @@ impl<T: Clone> FriedmanDruableQueue<T> {
 
     pub fn dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
         let guard = pepoch::pin(pool);
-        let mut new_returned_val = POwned::new(None, pool).into_shared(&guard); // TODO: PPtr?
-                                                                                // TODO: flush `new_retunred_val`
-        self.returned_val[tid].store(new_returned_val, Ordering::SeqCst);
-        // TODO: flush `self.returned_val[tid]`
+
+        let mut new_ret_val = POwned::new(None, pool).into_shared(&guard); // TODO: PPtr?
+        let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
+        persist_obj(new_ret_val_ref, true);
+
+        self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
+        persist_obj(&self.ret_val[tid], true);
+
+        let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
             let last = self.tail.load(Ordering::SeqCst, &guard);
@@ -118,11 +116,13 @@ impl<T: Clone> FriedmanDruableQueue<T> {
             if first == self.head.load(Ordering::SeqCst, &guard) {
                 if first == last {
                     if next.is_null() {
-                        let new_returned_val_ref = unsafe { new_returned_val.deref_mut(pool) };
-                        *new_returned_val_ref = None;
+                        // TODO: atomic data?
+                        *new_ret_val_ref = None;
+                        persist_obj(new_ret_val_ref, true);
                         return;
                     }
-                    // TODO: flush(&last->next);
+                    let last_ref = unsafe { last.deref(pool) };
+                    persist_obj(&last_ref.next, true);
                     let _ = self.tail.compare_exchange(
                         last,
                         next,
@@ -139,10 +139,9 @@ impl<T: Clone> FriedmanDruableQueue<T> {
                         .compare_exchange(-1, tid as isize, Ordering::SeqCst, Ordering::SeqCst)
                         .is_ok()
                     {
-                        // TODO: flush(&first->next->deqTid);
-                        let new_returned_val_ref = unsafe { new_returned_val.deref_mut(pool) };
-                        *new_returned_val_ref = val;
-                        // TODO: flush `self.returned_val[tid]`
+                        persist_obj(&next_ref.deq_tid, true);
+                        *new_ret_val_ref = val;
+                        persist_obj(new_ret_val_ref, true);
                         let _ = self.head.compare_exchange(
                             first,
                             next,
@@ -153,14 +152,15 @@ impl<T: Clone> FriedmanDruableQueue<T> {
                         return;
                     } else {
                         let deq_tid = next_ref.deq_tid.load(Ordering::SeqCst);
-                        let mut returned_val =
-                            self.returned_val[deq_tid as usize].load(Ordering::SeqCst, &guard);
+                        let mut addr =
+                            self.ret_val[deq_tid as usize].load(Ordering::SeqCst, &guard);
+
                         // Same context
                         if self.head.load(Ordering::SeqCst, &guard) == first {
-                            // TODO: flush(&first->next->deqTid);
-                            let new_returned_val_ref = unsafe { returned_val.deref_mut(pool) };
-                            *new_returned_val_ref = val;
-                            // TODO: flush `self.returned_val[deq_tid]`
+                            persist_obj(&next_ref.deq_tid, true);
+                            let addr_ref = unsafe { addr.deref_mut(pool) };
+                            *addr_ref = val;
+                            persist_obj(addr_ref, true);
                             let _ = self.head.compare_exchange(
                                 first,
                                 next,
@@ -176,7 +176,7 @@ impl<T: Clone> FriedmanDruableQueue<T> {
     }
 }
 
-impl<T: Clone> TestQueue for FriedmanDruableQueue<T> {
+impl<T: Clone> TestQueue for DurableQueue<T> {
     type EnqInput = T; // input
     type DeqInput = usize; // tid
 
@@ -188,19 +188,9 @@ impl<T: Clone> TestQueue for FriedmanDruableQueue<T> {
     }
 }
 
+// TODO: 모든 큐의 실험 로직이 통합되어야 함
 #[derive(Default)]
-pub struct GetDurableQueueNOps {
-    queue: FriedmanDruableQueue<usize>,
-}
-
-impl GetDurableQueueNOps {
-    fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
-        self.queue = FriedmanDruableQueue::new(pool);
-        for i in 0..QUEUE_INIT_SIZE {
-            self.queue.enqueue(i, pool);
-        }
-    }
-}
+pub struct GetDurableQueueNOps;
 
 impl TestNOps for GetDurableQueueNOps {}
 
@@ -216,14 +206,19 @@ impl POp for GetDurableQueueNOps {
         pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         // Initialize Queue
-        self.init(pool);
+        let q = DurableQueue::<usize>::new(pool);
+        let q_ref = unsafe { q.deref(pool) };
+
+        for i in 0..QUEUE_INIT_SIZE {
+            q_ref.enqueue(i, pool);
+        }
 
         match kind {
             TestKind::QueuePair => self.test_nops(
                 &|tid| {
                     let enq_input = tid;
                     let deq_input = tid;
-                    enq_deq_pair(&self.queue, enq_input, deq_input, pool);
+                    enq_deq_pair(q_ref, enq_input, deq_input, pool);
                 },
                 nr_thread,
                 duration,
@@ -232,7 +227,7 @@ impl POp for GetDurableQueueNOps {
                 &|tid| {
                     let enq_input = tid;
                     let deq_input = tid;
-                    enq_deq_prob(&self.queue, enq_input, deq_input, prob, pool);
+                    enq_deq_prob(q_ref, enq_input, deq_input, prob, pool);
                 },
                 nr_thread,
                 duration,

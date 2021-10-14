@@ -2,7 +2,7 @@ use crate::bench_impl::abstract_queue::*;
 use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
 use compositional_persistent_object::persistent::*;
-use compositional_persistent_object::plocation::pool::*;
+use compositional_persistent_object::plocation::{ll::*, pool::*};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -73,35 +73,27 @@ struct DSSQueue<T: Clone> {
     x: [PAtomic<Node<T>>; MAX_THREADS],
 }
 
-impl<T: Clone> Default for DSSQueue<T> {
-    fn default() -> Self {
-        Self {
-            head: Default::default(),
-            tail: Default::default(),
-            x: array_init::array_init(|_| PAtomic::null()),
-        }
-    }
-}
-
 impl<T: Clone> DSSQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle<O>) -> Self {
-        let sentinel = Node::default();
-        unsafe {
-            let guard = pepoch::unprotected(pool);
-            let sentinel = POwned::new(sentinel, pool).into_shared(guard);
-            Self {
-                head: PAtomic::from(sentinel),
-                tail: PAtomic::from(sentinel),
-                x: array_init::array_init(|_| PAtomic::null()),
-            }
-        }
+    fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+        let guard = unsafe { pepoch::unprotected(pool) };
+        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
+        persist_obj(unsafe { sentinel.deref(pool) }, true);
+
+        let ret = POwned::new(Self {
+            head: PAtomic::from(sentinel),
+            tail: PAtomic::from(sentinel),
+            x: array_init::array_init(|_| PAtomic::null()),
+        }, pool);
+        persist_obj(unsafe { ret.deref(pool) }, true);
+
+        ret
     }
 
     pub fn prep_enqueue<O: POp>(&self, val: T, tid: usize, pool: &PoolHandle<O>) {
         let node = POwned::new(Node::new(val), pool);
-        // TODO: flush node
+        persist_obj(unsafe { node.deref(pool) }, true);
         self.x[tid].store(node.with_tag(ENQ_PREP_TAG), Ordering::SeqCst);
-        // TODO: flush (&x[tid])
+        persist_obj(&self.x[tid], true);
     }
 
     pub fn exec_enqueue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
@@ -120,9 +112,9 @@ impl<T: Clone> DSSQueue<T> {
                         .compare_exchange(PShared::null(), node, Ordering::SeqCst, Ordering::SeqCst, &guard)
                         .is_ok()
                     {
-                        // TODO: flush(&last->next)
+                        persist_obj(&last_ref.next, true);
                         self.x[tid].fetch_or(ENQ_COMPL_TAG, Ordering::SeqCst, &guard);
-                        // TODO: flush(&x[tid]);
+                        persist_obj(&self.x[tid], true);
                         let _ = self.tail.compare_exchange(
                             last,
                             node,
@@ -133,7 +125,7 @@ impl<T: Clone> DSSQueue<T> {
                         return;
                     }
                 } else {
-                    // TODO: flush(&last->next)
+                    persist_obj(&last_ref.next, true);
                     let _ = self.tail.compare_exchange(
                         last,
                         next,
@@ -158,9 +150,9 @@ impl<T: Clone> DSSQueue<T> {
         }
     }
 
-    pub fn prep_dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
+    pub fn prep_dequeue(&self, tid: usize) {
         self.x[tid].store(PShared::null().with_tag(DEQ_PREP_TAG), Ordering::SeqCst);
-        // TODO: flush (&x[tid])
+        persist_obj(&self.x[tid], true);
     }
 
     pub fn exec_dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) -> Option<T> {
@@ -178,10 +170,13 @@ impl<T: Clone> DSSQueue<T> {
                     if next.is_null() {
                         // nothing new appended at tail
                         self.x[tid].fetch_or(EMPTY_TAG, Ordering::SeqCst, &guard);
-                        // TODO: flush &x[tid]
+                        persist_obj(&self.x[tid], true);
                         return None; // EMPTY
                     }
-                    // TODO: flush(&last->next);
+
+                    let last_ref = unsafe { last.deref(pool) };
+                    persist_obj(&last_ref.next, true);
+
                     let _ = self.tail.compare_exchange(
                         last,
                         next,
@@ -192,8 +187,7 @@ impl<T: Clone> DSSQueue<T> {
                 } else {
                     // non-empty queue
                     self.x[tid].store(first.with_tag(DEQ_PREP_TAG), Ordering::SeqCst); // save predecessor of node to be dequeued
-
-                    // TODO: flush (&x[tid])
+                    persist_obj(&self.x[tid], true);
 
                     let next_ref = unsafe { next.deref(pool) };
                     if next_ref
@@ -201,7 +195,7 @@ impl<T: Clone> DSSQueue<T> {
                         .compare_exchange(-1, tid as isize, Ordering::SeqCst, Ordering::SeqCst)
                         .is_ok()
                     {
-                        // TODO: flush(&next->deqTid);
+                        persist_obj(&next_ref.deq_tid, true);
                         let _ = self.head.compare_exchange(
                             first,
                             next,
@@ -212,7 +206,7 @@ impl<T: Clone> DSSQueue<T> {
                         return Some(unsafe { (*next_ref.val.as_ptr()).clone() });
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         // help another dequeueing thread
-                        // TODO: flush(&next->deqTid);
+                        persist_obj(&next_ref.deq_tid, true);
                         let _ = self.head.compare_exchange(
                             first,
                             next,
@@ -272,25 +266,13 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
         self.exec_enqueue(tid, pool);
     }
     fn dequeue<O: POp>(&self, tid: Self::DeqInput, pool: &PoolHandle<O>) {
-        self.prep_dequeue(tid, pool);
+        self.prep_dequeue(tid);
         self.exec_dequeue(tid, pool);
     }
 }
 
 #[derive(Default)]
-pub struct GetDSSQueueNOps {
-    queue: DSSQueue<usize>,
-}
-
-impl GetDSSQueueNOps {
-    fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
-        self.queue = DSSQueue::new(pool);
-        for i in 0..QUEUE_INIT_SIZE {
-            self.queue.prep_enqueue(i, 0, pool);
-            self.queue.exec_enqueue(0, pool);
-        }
-    }
-}
+pub struct GetDSSQueueNOps;
 
 impl TestNOps for GetDSSQueueNOps {}
 
@@ -305,14 +287,20 @@ impl POp for GetDSSQueueNOps {
         pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         // Initialize Queue
-        self.init(pool);
+        let q = DSSQueue::<usize>::new(pool);
+        let q_ref = unsafe { q.deref(pool) };
+
+        for i in 0..QUEUE_INIT_SIZE {
+            q_ref.prep_enqueue(i, 0, pool);
+            q_ref.exec_enqueue(0, pool);
+        }
 
         match kind {
             TestKind::QueuePair => self.test_nops(
                 &|tid| {
                     let enq_input = (tid, tid);
                     let deq_input = tid;
-                    enq_deq_pair(&self.queue, enq_input, deq_input, pool);
+                    enq_deq_pair(q_ref, enq_input, deq_input, pool);
                 },
                 nr_thread,
                 duration,
@@ -321,7 +309,7 @@ impl POp for GetDSSQueueNOps {
                 &|tid| {
                     let enq_input = (tid, tid);
                     let deq_input = tid;
-                    enq_deq_prob(&self.queue, enq_input, deq_input, prob, pool);
+                    enq_deq_prob(q_ref, enq_input, deq_input, prob, pool);
                 },
                 nr_thread,
                 duration,

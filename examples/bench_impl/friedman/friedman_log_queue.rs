@@ -2,7 +2,7 @@ use crate::bench_impl::abstract_queue::*;
 use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
 use compositional_persistent_object::persistent::*;
-use compositional_persistent_object::plocation::pool::*;
+use compositional_persistent_object::plocation::{ll::*, pool::*};
 use std::mem::MaybeUninit;
 use std::sync::atomic::Ordering;
 
@@ -65,28 +65,20 @@ struct LogQueue<T: Clone> {
     logs: [PAtomic<LogEntry<T>>; MAX_THREADS],
 }
 
-impl<T: Clone> Default for LogQueue<T> {
-    fn default() -> Self {
-        Self {
-            head: Default::default(),
-            tail: Default::default(),
-            logs: array_init::array_init(|_| PAtomic::null()),
-        }
-    }
-}
-
 impl<T: Clone> LogQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle<O>) -> Self {
-        let sentinel = Node::default();
-        unsafe {
-            let guard = pepoch::unprotected(pool);
-            let sentinel = POwned::new(sentinel, pool).into_shared(guard);
-            Self {
-                head: PAtomic::from(sentinel),                     // TODO: flush
-                tail: PAtomic::from(sentinel),                     // TODO: flush
-                logs: array_init::array_init(|_| PAtomic::null()), // TODO: flush
-            }
-        }
+    fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+        let guard = unsafe { pepoch::unprotected(pool) };
+        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
+        persist_obj(unsafe { sentinel.deref(pool) }, true);
+
+        let ret = POwned::new(Self {
+            head: PAtomic::from(sentinel),
+            tail: PAtomic::from(sentinel),
+            logs: array_init::array_init(|_| PAtomic::null()),
+        }, pool);
+        persist_obj(unsafe { ret.deref(pool) }, true);
+
+        ret
     }
 
     pub fn enqueue<O: POp>(&self, val: T, tid: usize, op_num: usize, pool: &PoolHandle<O>) {
@@ -103,10 +95,11 @@ impl<T: Clone> LogQueue<T> {
 
         log_ref.node.store(node, Ordering::SeqCst);
         node_ref.log_insert.store(log, Ordering::SeqCst);
-        // TODO: flush node
-        // TODO: flush log;
+        persist_obj(node_ref, true);
+        persist_obj(log_ref, true);
+
         self.logs[tid].store(log, Ordering::SeqCst);
-        // TODO: flush &logs[tid];
+        persist_obj(&self.logs[tid], true);
 
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
@@ -120,7 +113,7 @@ impl<T: Clone> LogQueue<T> {
                         .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst, &guard)
                         .is_ok()
                     {
-                        // TODO: flush(&last->next);
+                        persist_obj(&last_ref.next, true);
                         let _ = self.tail.compare_exchange(
                             last,
                             node,
@@ -131,7 +124,7 @@ impl<T: Clone> LogQueue<T> {
                         return;
                     }
                 } else {
-                    // TODO: flush(&last->next);
+                    persist_obj(&last_ref.next, true);
                     let _ = self.tail.compare_exchange(
                         last,
                         next,
@@ -152,9 +145,10 @@ impl<T: Clone> LogQueue<T> {
             pool,
         )
         .into_shared(&guard);
-        // TODO: flush log;
+        let log_ref = unsafe { log.deref_mut(pool) };
+        persist_obj(log_ref, true);
         self.logs[tid].store(log, Ordering::SeqCst);
-        // TODO: flush &logs[tid];
+        persist_obj(&self.logs[tid], true);
 
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
@@ -166,12 +160,13 @@ impl<T: Clone> LogQueue<T> {
                 if first == last {
                     if next.is_null() {
                         let mut log = self.logs[tid].load(Ordering::SeqCst, &guard);
-                        let log_ref = unsafe { log.deref_mut(pool) };
+                        // TODO: atomic data?
                         log_ref.status = true;
-                        // TODO: flush &log_ref.status
+                        persist_obj(&log_ref.status, true);
                         return;
                     }
-                    // TODO: flush(&last->next);
+                    let last_ref = unsafe { last.deref(pool) };
+                    persist_obj(&last_ref.next, true);
                     let _ = self.tail.compare_exchange(
                         last,
                         next,
@@ -192,14 +187,14 @@ impl<T: Clone> LogQueue<T> {
                         )
                         .is_ok()
                     {
-                        // TODO: flush(&first->next->logRemove);
+                        persist_obj(&next_ref.log_remove, true);
                         let log_remove = next_ref.log_remove.load(Ordering::SeqCst, &guard);
                         let log_remove_ref = unsafe { log_remove.deref(pool) };
                         log_remove_ref.node.store(
                             first_ref.next.load(Ordering::SeqCst, &guard),
                             Ordering::SeqCst,
                         );
-                        // TODO: flush(&first->next->logRemove->node);
+                        persist_obj(&log_remove_ref.node, true);
 
                         let _ = self.head.compare_exchange(
                             first,
@@ -211,14 +206,14 @@ impl<T: Clone> LogQueue<T> {
                         return;
                     } else {
                         if self.head.load(Ordering::SeqCst, &guard) == first {
-                            // TODO: flush(&first->next->logRemove);
+                            persist_obj(&next_ref.log_remove, true);
                             let log_remove = next_ref.log_remove.load(Ordering::SeqCst, &guard);
                             let log_remove_ref = unsafe { log_remove.deref(pool) };
                             log_remove_ref.node.store(
                                 first_ref.next.load(Ordering::SeqCst, &guard),
                                 Ordering::SeqCst,
                             );
-                            // TODO: flush(&first->next->logRemove->node);
+                            persist_obj(&log_remove_ref.node, true);
 
                             let _ = self.head.compare_exchange(
                                 first,
@@ -248,18 +243,7 @@ impl<T: Clone> TestQueue for LogQueue<T> {
 }
 
 #[derive(Default)]
-pub struct GetLogQueueNOps {
-    queue: LogQueue<usize>,
-}
-
-impl GetLogQueueNOps {
-    fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
-        self.queue = LogQueue::new(pool);
-        for i in 0..QUEUE_INIT_SIZE {
-            self.queue.enqueue(i, 0, 0, pool);
-        }
-    }
-}
+pub struct GetLogQueueNOps;
 
 impl TestNOps for GetLogQueueNOps {}
 
@@ -274,7 +258,12 @@ impl POp for GetLogQueueNOps {
         pool: &PoolHandle<O>,
     ) -> Self::Output<'o> {
         // Initialize Queue
-        self.init(pool);
+        let q = LogQueue::<usize>::new(pool);
+        let q_ref = unsafe { q.deref(pool) };
+
+        for i in 0..QUEUE_INIT_SIZE {
+            q_ref.enqueue(i, 0, 0, pool);
+        }
 
         match kind {
             TestKind::QueuePair => {
@@ -282,7 +271,7 @@ impl POp for GetLogQueueNOps {
                     &|tid| {
                         let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
                         let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                        enq_deq_pair(&self.queue, enq_input, deq_input, pool);
+                        enq_deq_pair(q_ref, enq_input, deq_input, pool);
                     },
                     nr_thread,
                     duration,
@@ -293,7 +282,7 @@ impl POp for GetLogQueueNOps {
                     &|tid| {
                         let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
                         let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                        enq_deq_prob(&self.queue, enq_input, deq_input, prob, pool);
+                        enq_deq_prob(q_ref, enq_input, deq_input, prob, pool);
                     },
                     nr_thread,
                     duration,
