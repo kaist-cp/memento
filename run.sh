@@ -39,15 +39,15 @@ set -e
 
 # 1. Setup
 PMEM_PATH=/mnt/pmem0/   # PMEM_PATH에 풀 파일을 생성하여 사용
-MAX_THREADS=4        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
-TEST_CNT=3            # 한 bench당 테스트 횟수
-TEST_DUR=1           # 한 테스트당 지속시간
+MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
+TEST_CNT=10            # 한 bench당 테스트 횟수
+TEST_DUR=5           # 한 테스트당 지속시간
 
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
 mkdir -p $PMEM_PATH
-mkdir -p $outpath
+mkdir -p $out_path
 rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
 show_cfg
 
