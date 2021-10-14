@@ -394,7 +394,7 @@ mod test {
     impl POp for RootOp {
         type Object<'o> = ();
         type Input = ();
-        type Output<'o> = Result<(), ()>;
+        type Output<'o> = ();
 
         /// idempotent push_pop
         fn run<'o, O: POp>(
@@ -450,7 +450,6 @@ mod test {
             }
 
             assert!(results.iter().all(|r| *r == COUNT));
-            Ok(())
         }
 
         fn reset(&mut self, _: bool) {
@@ -479,6 +478,6 @@ mod test {
         let root_op = pool_handle.get_root();
 
         // 루트 op 실행
-        root_op.run((), (), &pool_handle).unwrap();
+        root_op.run((), (), &pool_handle);
     }
 }
