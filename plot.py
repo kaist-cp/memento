@@ -5,22 +5,23 @@ import numpy as np
 objs = {
     "queue": {
         "targets": {
-            "our_queue": {'marker': '.', 'color': 'k', 'style': '-'},
-            'durable_queue': {'marker': 'd', 'color': 'hotpink', 'style': '--'},
-            'log_queue': {'marker': 'x', 'color': 'c', 'style': '--'},
-            'dss_queue': {'marker': 'v', 'color': 'orange', 'style': '--'},
+            "our_queue": {'label': "Memento queue", 'marker': '.', 'color': 'k', 'style': '-'},
+            'durable_queue': {'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
+            'log_queue': {'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
+            'dss_queue': {'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
         },
         'bench_kinds': ['prob50', 'pair'],
-        'plot_lower_ylim': [(0.5, 3), (0.25, 1.25)],
+        'plot_lower_ylim': [(1, 3.5), (0.5, 1.8)],
     },
     "pipe": {
         "targets": {
-            'our_pipe': {'marker': 'o', 'color': 'k', 'style': '-'},
-            'crndm_pipe': {'marker': 'd', 'color': 'hotpink', 'style': '--'},
-            'pmdk_pipe': {'marker': 'x', 'color': 'c', 'style': '--'},
+            'our_pipe': {'label': "Memento pipe", 'marker': 'o', 'color': 'k', 'style': '-'},
+            'crndm_pipe': {'label': "Corundum pipe", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
+            'pmdk_pipe': {'label': "PMDK pipe", 'marker': 'x', 'color': 'c', 'style': '--'},
         },
         'bench_kinds': ['pipe'],
-        'plot_lower_ylim': [(2, 10)],
+        'plot_lower_ylim': [(0, 1.2)],
+        # 'plot_lower_ylim': [(0, 0.2)],
     }
 
     # TODO: other obj..
@@ -68,6 +69,7 @@ for obj in objs:
         plot_lines = []
         # Gathering info
         for t in targets:
+            label = targets[t]['label']
             shape = targets[t]['marker']
             color = targets[t]['color']
             style = targets[t]['style']
@@ -76,9 +78,9 @@ for obj in objs:
             if throughputs.empty:
                 continue
             throughputs = list(throughputs['throughput'])[0]
-            plot_lines.append({'x': np.arange(1, len(throughputs)+1), 'y': throughputs, 'label': t, 'marker': shape, 'color': color, 'style':style})
+            plot_lines.append({'x': np.arange(1, len(throughputs)+1), 'y': throughputs, 'label': label, 'marker': shape, 'color': color, 'style':style})
         # Draw
-        draw(plot_id, 'threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 1)
+        draw(plot_id, 'Threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 4)
         # Draw split
         th_min, th_max = 65535, -1
         for line in plot_lines:
@@ -86,4 +88,4 @@ for obj in objs:
             th_max = max(th_max, line['y'][0])
         upper_ylim = (th_min-2, th_max+2)
         lower_ylim = objs[obj]['plot_lower_ylim'][ix]
-        draw(plot_id, 'threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 1, True, upper_ylim, lower_ylim)
+        draw(plot_id, 'Threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 4, True, upper_ylim, lower_ylim)
