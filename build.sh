@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 # TODO? install libndctl-dev?
 dir_path=$(dirname $(realpath $0))
 

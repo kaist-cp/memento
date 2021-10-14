@@ -35,6 +35,8 @@ function bench() {
     echo ""
 }
 
+set -e
+
 # 1. Setup
 PMEM_PATH=/mnt/pmem0/   # PMEM_PATH에 풀 파일을 생성하여 사용
 MAX_THREADS=4        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
