@@ -69,7 +69,7 @@ impl GetOurPipeNOps {
 
         // Initialize q1
         if q1.is_null() {
-            let q = POwned::new(Queue::<usize>::new(pool), pool);
+            let q = Queue::<usize>::new(pool);
             let q_ref = unsafe { q.deref(pool) };
             let mut push_init = Push::default();
             for i in 0..PIPE_INIT_SIZE {
@@ -81,7 +81,7 @@ impl GetOurPipeNOps {
 
         // Initialize q2
         if q2.is_null() {
-            let q = POwned::new(Queue::<usize>::new(pool), pool);
+            let q = Queue::<usize>::new(pool);
             self.q2.store(q, Ordering::SeqCst);
         }
     }
