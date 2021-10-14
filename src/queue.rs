@@ -6,8 +6,7 @@ use std::{mem::MaybeUninit, ptr};
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::pool::PoolHandle;
-use crate::plocation::ptr::AsPPtr;
+use crate::plocation::{ll::*, pool::*, ptr::*};
 
 struct Node<T: Clone> {
     data: MaybeUninit<T>,
@@ -126,16 +125,18 @@ pub struct Queue<T: Clone> {
 
 impl<T: Clone> Queue<T> {
     /// new
-    pub fn new<O: POp>(pool: &PoolHandle<O>) -> Self {
-        let sentinel = Node::default();
-        unsafe {
-            let guard = epoch::unprotected(pool);
-            let sentinel = POwned::new(sentinel, pool).into_shared(guard);
-            Self {
-                head: PAtomic::from(sentinel),
-                tail: PAtomic::from(sentinel),
-            }
-        }
+    pub fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+        let guard = unsafe { epoch::unprotected(pool) };
+        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
+        persist_obj(unsafe { sentinel.deref(pool) }, true);
+
+        let ret = POwned::new(Self {
+            head: PAtomic::from(sentinel),
+            tail: PAtomic::from(sentinel),
+        }, pool);
+        persist_obj(unsafe { ret.deref(pool) }, true);
+
+        ret
     }
 
     // TODO: try mode
@@ -158,6 +159,7 @@ impl<T: Clone> Queue<T> {
         // (1) 첫 번째 실행
         if mine.is_null() {
             let n = POwned::new(Node::from(value), pool).into_shared(guard);
+            persist_obj(unsafe { n.deref(pool) }, true);
 
             client.mine.store(n, Ordering::SeqCst);
             return Some(n);
@@ -202,6 +204,7 @@ impl<T: Clone> Queue<T> {
                         guard,
                     )
                     .map(|_| {
+                        persist_obj(&tail_ref.next, true);
                         let _ = self.tail.compare_exchange(
                             tail,
                             node,
@@ -212,6 +215,7 @@ impl<T: Clone> Queue<T> {
                     })
                     .map_err(|_| ());
             } else {
+                persist_obj(&tail_ref.next, true);
                 let _ = self.tail.compare_exchange(
                     tail,
                     next,
@@ -296,8 +300,12 @@ impl<T: Clone> Queue<T> {
                     client
                         .target
                         .store(PShared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
+                    persist_obj(&client.target, true);
                     return Ok(None);
                 }
+
+                let tail_ref = unsafe { tail.deref(pool) };
+                persist_obj(&tail_ref.next, true);
 
                 let _ = self.tail.compare_exchange(
                     tail,
@@ -310,6 +318,7 @@ impl<T: Clone> Queue<T> {
             } else {
                 // 우선 내가 pop할 node를 가리킴
                 client.target.store(next, Ordering::SeqCst);
+                persist_obj(&client.target, true);
 
                 // 실제로 pop 함
                 let next_ref = unsafe { next.deref(pool) };
@@ -322,6 +331,7 @@ impl<T: Clone> Queue<T> {
                         Ordering::SeqCst,
                     )
                     .map(|_| {
+                        persist_obj(&next_ref.popper, true);
                         let _ = self.head.compare_exchange(
                             head,
                             next,
@@ -334,6 +344,7 @@ impl<T: Clone> Queue<T> {
                     .map_err(|_| {
                         let h = self.head.load(Ordering::SeqCst, guard);
                         if h == head {
+                            persist_obj(&next_ref.popper, true);
                             let _ = self.head.compare_exchange(
                                 head,
                                 next,
@@ -349,6 +360,7 @@ impl<T: Clone> Queue<T> {
         Err(())
     }
 
+    #[inline]
     fn finish_pop(node: &Node<T>) -> T {
         unsafe { node.data.as_ptr().as_ref().unwrap() }.clone()
         // free node
