@@ -113,7 +113,7 @@ impl<T: Clone> DSSQueue<T> {
                         .is_ok()
                     {
                         persist_obj(&last_ref.next, true);
-                        self.x[tid].fetch_or(ENQ_COMPL_TAG, Ordering::SeqCst, &guard);
+                        let _ = self.x[tid].fetch_or(ENQ_COMPL_TAG, Ordering::SeqCst, &guard);
                         persist_obj(&self.x[tid], true);
                         let _ = self.tail.compare_exchange(
                             last,
@@ -169,7 +169,7 @@ impl<T: Clone> DSSQueue<T> {
                     // empty queue
                     if next.is_null() {
                         // nothing new appended at tail
-                        self.x[tid].fetch_or(EMPTY_TAG, Ordering::SeqCst, &guard);
+                        let _ = self.x[tid].fetch_or(EMPTY_TAG, Ordering::SeqCst, &guard);
                         persist_obj(&self.x[tid], true);
                         return None; // EMPTY
                     }
