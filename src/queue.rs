@@ -68,8 +68,9 @@ impl<T: 'static + Clone> POp for Push<T> {
     }
 
     fn reset(&mut self, _: bool) {
-        // TODO: if not finished -> free node
+        // TODO: if not finished -> free node (+ free가 반영되게끔 flush 해줘야함)
         self.mine.store(PShared::null(), Ordering::SeqCst);
+        persist_obj(&self.mine, true)
     }
 }
 
@@ -105,6 +106,7 @@ impl<T: 'static + Clone> POp for Pop<T> {
     fn reset(&mut self, _: bool) {
         // TODO: if node has not been freed, check if the node is mine and free it
         self.target.store(PShared::null(), Ordering::SeqCst);
+        persist_obj(&self.target, true)
     }
 }
 
@@ -162,6 +164,7 @@ impl<T: Clone> Queue<T> {
             persist_obj(unsafe { n.deref(pool) }, true);
 
             client.mine.store(n, Ordering::SeqCst);
+            persist_obj(&client.mine, true);
             return Some(n);
         }
 
@@ -181,7 +184,6 @@ impl<T: Clone> Queue<T> {
     }
 
     /// tail에 새 `node` 연결을 시도
-    // TODO: msq 본래 논문 로직으로 바꾸기. 현재는 cs431의 최적화된 버전을 따르는 중
     fn try_push<O: POp>(
         &self,
         node: PShared<'_, Node<T>>,
@@ -281,7 +283,6 @@ impl<T: Clone> Queue<T> {
     }
 
     /// head를 pop 시도
-    // TODO: msq 본래 논문 로직으로 바꾸기. 현재는 cs431의 최적화된 로직을 따르는 중
     fn try_pop<O: POp>(
         &self,
         client: &mut Pop<T>,
