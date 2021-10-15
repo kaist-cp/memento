@@ -1,6 +1,6 @@
 //! Persistent pipe
 
-use crate::{persistent::POp, plocation::PoolHandle};
+use crate::{persistent::POp, plocation::{PoolHandle, ll::persist_obj}};
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 ///
@@ -63,6 +63,7 @@ where
     fn reset(&mut self, nested: bool) {
         if !nested {
             self.resetting = true;
+            persist_obj(&self.resetting, true);
         }
 
         self.from.reset(true);
@@ -70,6 +71,7 @@ where
 
         if !nested {
             self.resetting = false;
+            persist_obj(&self.resetting, true);
         }
     }
 }
