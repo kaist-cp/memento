@@ -3,6 +3,7 @@ use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::{ll::*, pool::*};
+use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 use std::sync::atomic::Ordering;
 
@@ -60,9 +61,9 @@ enum Operation {
 
 #[derive(Debug)]
 struct LogQueue<T: Clone> {
-    head: PAtomic<Node<T>>,
-    tail: PAtomic<Node<T>>,
-    logs: [PAtomic<LogEntry<T>>; MAX_THREADS],
+    head: CachePadded<PAtomic<Node<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
+    logs: [CachePadded<PAtomic<LogEntry<T>>>; MAX_THREADS],
 }
 
 impl<T: Clone> LogQueue<T> {
@@ -72,11 +73,14 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         let ret = POwned::new(Self {
-            head: PAtomic::from(sentinel),
-            tail: PAtomic::from(sentinel),
-            logs: array_init::array_init(|_| PAtomic::null()),
+            head: CachePadded::new(PAtomic::null()),
+            tail: CachePadded::new(PAtomic::null()),
+            logs: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
         }, pool);
-        persist_obj(unsafe { ret.deref(pool) }, true);
+        let ret_ref = unsafe { ret.deref(pool) };
+        ret_ref.head.store(sentinel, Ordering::SeqCst);
+        ret_ref.tail.store(sentinel, Ordering::SeqCst);
+        persist_obj(ret_ref, true);
 
         ret
     }

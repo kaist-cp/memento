@@ -1,6 +1,7 @@
 //! Persistent queue
 
 use core::sync::atomic::{AtomicUsize, Ordering};
+use crossbeam_utils::CachePadded;
 use etrace::some_or;
 use std::{mem::MaybeUninit, ptr};
 
@@ -121,8 +122,8 @@ impl<T: Clone> Pop<T> {
 /// Peristent queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
-    head: PAtomic<Node<T>>,
-    tail: PAtomic<Node<T>>,
+    head: CachePadded<PAtomic<Node<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
 }
 
 impl<T: Clone> Queue<T> {
@@ -133,10 +134,13 @@ impl<T: Clone> Queue<T> {
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         let ret = POwned::new(Self {
-            head: PAtomic::from(sentinel),
-            tail: PAtomic::from(sentinel),
+            head: CachePadded::new(PAtomic::null()),
+            tail: CachePadded::new(PAtomic::null()),
         }, pool);
-        persist_obj(unsafe { ret.deref(pool) }, true);
+        let ret_ref = unsafe { ret.deref(pool) };
+        ret_ref.head.store(sentinel, Ordering::SeqCst);
+        ret_ref.tail.store(sentinel, Ordering::SeqCst);
+        persist_obj(ret_ref, true);
 
         ret
     }

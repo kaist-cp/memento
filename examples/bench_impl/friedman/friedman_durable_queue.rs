@@ -3,6 +3,7 @@ use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::{ll::*, pool::*};
+use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -34,9 +35,9 @@ impl<T: Clone> Node<T> {
 
 #[derive(Debug)]
 struct DurableQueue<T: Clone> {
-    head: PAtomic<Node<T>>,
-    tail: PAtomic<Node<T>>,
-    ret_val: [PAtomic<Option<T>>; MAX_THREADS], // None: "EMPTY"
+    head: CachePadded<PAtomic<Node<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
+    ret_val: [CachePadded<PAtomic<Option<T>>>; MAX_THREADS], // None: "EMPTY"
 }
 
 impl<T: Clone> DurableQueue<T> {
@@ -46,11 +47,14 @@ impl<T: Clone> DurableQueue<T> {
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         let ret = POwned::new(Self {
-            head: PAtomic::from(sentinel),
-            tail: PAtomic::from(sentinel),
-            ret_val: array_init::array_init(|_| PAtomic::null()),
+            head: CachePadded::new(PAtomic::null()),
+            tail: CachePadded::new(PAtomic::null()),
+            ret_val: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
         }, pool);
-        persist_obj(unsafe { ret.deref(pool) }, true);
+        let ret_ref = unsafe { ret.deref(pool) };
+        ret_ref.head.store(sentinel, Ordering::SeqCst);
+        ret_ref.tail.store(sentinel, Ordering::SeqCst);
+        persist_obj(ret_ref, true);
 
         ret
     }

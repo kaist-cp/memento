@@ -3,6 +3,7 @@ use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
 use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::{ll::*, pool::*};
+use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -68,9 +69,9 @@ const EMPTY_TAG: usize = 4;
 
 #[derive(Debug)]
 struct DSSQueue<T: Clone> {
-    head: PAtomic<Node<T>>,
-    tail: PAtomic<Node<T>>,
-    x: [PAtomic<Node<T>>; MAX_THREADS],
+    head: CachePadded<PAtomic<Node<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
+    x: [CachePadded<PAtomic<Node<T>>>; MAX_THREADS],
 }
 
 impl<T: Clone> DSSQueue<T> {
@@ -79,12 +80,26 @@ impl<T: Clone> DSSQueue<T> {
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
+        // 안되는 버전
+        // TODO: 왜 안되나 미스테리 풀기. CachePadded의 init은 나중에 해야함. new()안에 넣는다고 안됨.
+        // let ret = POwned::new(Self {
+        //     // head: CachePadded::new(PAtomic::null()),
+        //     // tail: CachePadded::new(PAtomic::null()),
+        //     head: CachePadded::new(PAtomic::from(sentinel)),
+        //     tail: CachePadded::new(PAtomic::from(sentinel)),
+        //     x: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
+        // }, pool);
+
+        // 되는 버전
         let ret = POwned::new(Self {
-            head: PAtomic::from(sentinel),
-            tail: PAtomic::from(sentinel),
-            x: array_init::array_init(|_| PAtomic::null()),
+            head: CachePadded::new(PAtomic::null()),
+            tail: CachePadded::new(PAtomic::null()),
+            x: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
         }, pool);
-        persist_obj(unsafe { ret.deref(pool) }, true);
+        let ret_ref = unsafe { ret.deref(pool) };
+        ret_ref.head.store(sentinel, Ordering::SeqCst);
+        ret_ref.tail.store(sentinel, Ordering::SeqCst);
+        persist_obj(ret_ref, true);
 
         ret
     }

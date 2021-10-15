@@ -1,9 +1,10 @@
 use crate::bench_impl::abstract_queue::*;
 use crate::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
-use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
+use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
 use compositional_persistent_object::persistent::*;
 use compositional_persistent_object::plocation::pool::*;
 use compositional_persistent_object::queue::*;
+use crossbeam_utils::CachePadded;
 use core::sync::atomic::Ordering;
 
 impl<T: 'static + Clone> TestQueue for Queue<T> {
@@ -23,16 +24,16 @@ impl<T: 'static + Clone> TestQueue for Queue<T> {
 
 pub struct GetOurQueueNOps {
     queue: PAtomic<Queue<usize>>,
-    push: [Push<usize>; MAX_THREADS],
-    pop: [Pop<usize>; MAX_THREADS],
+    push: [CachePadded<Push<usize>>; MAX_THREADS],
+    pop: [CachePadded<Pop<usize>>; MAX_THREADS],
 }
 
 impl Default for GetOurQueueNOps {
     fn default() -> Self {
         Self {
             queue: PAtomic::null(),
-            push: array_init::array_init(|_| Push::<usize>::default()),
-            pop: array_init::array_init(|_| Pop::<usize>::default()),
+            push: array_init::array_init(|_| CachePadded::new(Push::<usize>::default())),
+            pop: array_init::array_init(|_| CachePadded::new(Pop::<usize>::default())),
         }
     }
 }
