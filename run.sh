@@ -40,8 +40,8 @@ set -e
 # 1. Setup
 PMEM_PATH=/mnt/pmem0/   # PMEM_PATH에 풀 파일을 생성하여 사용
 MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
-TEST_CNT=10            # 한 bench당 테스트 횟수
-TEST_DUR=5           # 한 테스트당 지속시간
+TEST_CNT=5            # 한 bench당 테스트 횟수
+TEST_DUR=10           # 한 테스트당 지속시간
 
 time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))

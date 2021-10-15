@@ -23,7 +23,7 @@ use std::thread::sleep;
 const FILE_SIZE: usize = 80 * 1024 * 1024 * 1024;
 
 /// Queue 테스트시 초기 노드 수
-const QUEUE_INIT_SIZE: usize = 100;
+const QUEUE_INIT_SIZE: usize = 10;
 
 /// Pipe 테스트시 Queue 1의 초기 노드 수
 // TODO: cpp의 PIPE_INIT_SIZE는 별도로 있음(examples_cpp/bench.hpp). 이를 하나의 컨픽 파일로 통일하기
