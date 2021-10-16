@@ -5,7 +5,7 @@ import numpy as np
 objs = {
     "queue": {
         "targets": {
-            "our_queue": {'label': "Memento queue", 'marker': '.', 'color': 'k', 'style': '-'},
+            "our_queue": {'label': "Memento queue", 'marker': 'o', 'color': 'k', 'style': '-'},
             'durable_queue': {'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
             'dss_queue': {'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
@@ -53,9 +53,9 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=1, split=False, upper_
     plt.ylabel(ylabel, size='large')
 
     if not split:
-        plt.savefig("{}.pdf".format(output))
+        plt.savefig("{}.png".format(output), dpi=300)
     else:
-        plt.savefig("{}_split.pdf".format(output))
+        plt.savefig("{}_split.png".format(output), dpi=300)
 
 for obj in objs:
     data = pd.read_csv("./out/{}.csv".format(obj))
