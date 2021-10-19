@@ -5,6 +5,7 @@ use compositional_persistent_object::{
     plocation::PoolHandle,
     queue::{Pop, Push, Queue},
 };
+use crossbeam_utils::CachePadded;
 use std::sync::atomic::Ordering;
 
 use crate::{TestKind, TestNOps, MAX_THREADS, PIPE_INIT_SIZE};
@@ -48,7 +49,7 @@ impl<T: 'static + Clone> POp for MustPop<T> {
 pub struct GetOurPipeNOps {
     q1: PAtomic<Queue<usize>>,
     q2: PAtomic<Queue<usize>>,
-    pipes: [Pipe<MustPop<usize>, Push<usize>>; MAX_THREADS],
+    pipes: [CachePadded<Pipe<MustPop<usize>, Push<usize>>>; MAX_THREADS],
 }
 
 impl Default for GetOurPipeNOps {
@@ -56,7 +57,7 @@ impl Default for GetOurPipeNOps {
         Self {
             q1: PAtomic::null(),
             q2: PAtomic::null(),
-            pipes: array_init::array_init(|_| Pipe::default()),
+            pipes: array_init::array_init(|_| CachePadded::new(Pipe::default())),
         }
     }
 }

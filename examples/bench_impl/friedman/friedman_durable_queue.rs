@@ -47,15 +47,11 @@ impl<T: Clone> DurableQueue<T> {
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         let ret = POwned::new(Self {
-            head: CachePadded::new(PAtomic::null()),
-            tail: CachePadded::new(PAtomic::null()),
+            head: CachePadded::new(PAtomic::from(sentinel)),
+            tail: CachePadded::new(PAtomic::from(sentinel)),
             ret_val: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
         }, pool);
-        let ret_ref = unsafe { ret.deref(pool) };
-        ret_ref.head.store(sentinel, Ordering::SeqCst);
-        ret_ref.tail.store(sentinel, Ordering::SeqCst);
-        persist_obj(ret_ref, true);
-
+        persist_obj(unsafe { ret.deref(pool) }, true);
         ret
     }
 

@@ -80,27 +80,12 @@ impl<T: Clone> DSSQueue<T> {
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
-        // 안되는 버전
-        // TODO: 왜 안되나 미스테리 풀기. CachePadded의 init은 나중에 해야함. new()안에 넣는다고 안됨.
-        // let ret = POwned::new(Self {
-        //     // head: CachePadded::new(PAtomic::null()),
-        //     // tail: CachePadded::new(PAtomic::null()),
-        //     head: CachePadded::new(PAtomic::from(sentinel)),
-        //     tail: CachePadded::new(PAtomic::from(sentinel)),
-        //     x: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
-        // }, pool);
-
-        // 되는 버전
         let ret = POwned::new(Self {
-            head: CachePadded::new(PAtomic::null()),
-            tail: CachePadded::new(PAtomic::null()),
+            head: CachePadded::new(PAtomic::from(sentinel)),
+            tail: CachePadded::new(PAtomic::from(sentinel)),
             x: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
         }, pool);
-        let ret_ref = unsafe { ret.deref(pool) };
-        ret_ref.head.store(sentinel, Ordering::SeqCst);
-        ret_ref.tail.store(sentinel, Ordering::SeqCst);
-        persist_obj(ret_ref, true);
-
+        persist_obj(unsafe { ret.deref(pool) }, true);
         ret
     }
 
