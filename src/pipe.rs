@@ -80,7 +80,7 @@ where
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use crate::pepoch::{self, PAtomic, POwned};
+    use crate::pepoch::{self, PAtomic};
     use crate::persistent::*;
     use crate::plocation::Pool;
     use crate::queue::*;
@@ -160,14 +160,14 @@ mod tests {
 
             // Initialize q1
             if q1.is_null() {
-                let q = POwned::new(Queue::<usize>::new(pool), pool);
+                let q = Queue::<usize>::new(pool);
                 // TODO: 여기서 crash나면 leak남
                 self.q1.store(q, Ordering::SeqCst);
             }
 
             // Initialize q2
             if q2.is_null() {
-                let q = POwned::new(Queue::<usize>::new(pool), pool);
+                let q = Queue::<usize>::new(pool);
                 // TODO: 여기서 crash나면 leak남
                 self.q2.store(q, Ordering::SeqCst);
             }
