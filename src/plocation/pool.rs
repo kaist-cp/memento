@@ -11,6 +11,7 @@ use std::mem;
 use std::path::Path;
 use tempfile::*;
 
+use super::alloc::align_up;
 use crate::persistent::*;
 use crate::plocation::alloc::Allocator;
 use crate::plocation::ptr::PPtr;
@@ -118,8 +119,8 @@ impl<O: POp> PoolHandle<O> {
 /// # Pool Address Layout
 ///
 /// ```test
-/// [ metadata |     root op           |       동적할당되는 영역        ]
-/// ^ base     ^ base + root offset    ^ base + alloc offset        ^ end
+/// [ metadata |     root op           |       동적할당되는 영역                ]
+/// ^ base     ^ base + offset(root)   ^ base + offset(root) + size(root)    ^ end
 /// ```
 #[derive(Debug)]
 pub struct Pool {
@@ -129,11 +130,6 @@ pub struct Pool {
     /// 메타데이터, 루트를 제외한 공간을 관리할 allocator
     // TODO: allocator를 global obj로 특별취급 하지 않을때 이 필드 삭제
     allocator: Allocator,
-
-    /// 풀의 시작주소로부터 동적할당되는 영역까지의 거리
-    /// - e.g. `allocator` 입장에선 `0x00`에 할당하더라도 실제로는 `alloc_offset+0` 주소에 할당
-    // TODO: allocator를 global obj로 특별취급 하지 않을때 이 필드 삭제
-    alloc_offset: usize,
     // TODO: 풀의 메타데이터는 여기에 필드로 추가
 }
 
@@ -164,13 +160,16 @@ impl Pool {
         let pool = unsafe { &mut *(start as *mut Pool) };
 
         // 메타데이터 초기화
-        pool.root_offset = mem::size_of::<Pool>(); // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
-        pool.allocator = Allocator::default();
-        pool.alloc_offset = mem::size_of::<Pool>() + mem::size_of::<O>(); // e.g. 메타데이터 크기가 16, 루트 크기가 8이라면 alloc되는 영역은 24부터 시작
+        let root_op = O::default();
+        // e.g. 메타데이터 크기(size_of::<Pool>)가 16이라면, 루트는 풀의 시작주소+16에 위치
+        // 이 때 만약 루트의 align이 64라면 루트는 풀의 시작주소+64에 위치
+        pool.root_offset = align_up(mem::size_of::<Pool>(), mem::align_of_val(&root_op));
+        // 루트 이후부터 동적할당되는 영역
+        pool.allocator = Allocator::new(pool.root_offset + mem::size_of_val(&root_op));
 
         // 루트 Op 초기화
-        let root_op = unsafe { &mut *((start + pool.root_offset) as *mut O) };
-        *root_op = O::default();
+        let root_op_ref = unsafe { &mut *((start + pool.root_offset) as *mut O) };
+        *root_op_ref = root_op;
 
         // # 초기화된 임시파일을 "filepath"로 옮기기
         // TODO: filepath에 파일이 이미 존재하면 여기서 실패하는데, 이를 위에서 ealry return할지 고민하기
@@ -205,8 +204,7 @@ impl Pool {
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
     fn alloc<T>(&self) -> PPtr<T> {
-        // TODO: allocator가 start, end 주소를 갖게하고 여기서 alloc_offset 더하는 것 또한 allocator가 하게 하기
-        PPtr::from(self.alloc_offset + self.allocator.alloc(Layout::new::<T>()))
+        PPtr::from(self.allocator.alloc(Layout::new::<T>()))
     }
 
     /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
@@ -214,8 +212,7 @@ impl Pool {
     /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
     /// - e.g. dynamically sized slices
     unsafe fn alloc_layout<T>(&self, layout: Layout) -> PPtr<T> {
-        // TODO: allocator가 start, end 주소를 갖게하고 여기서 alloc_offset 더하는 것 또한 allocator가 하게 하기
-        PPtr::from(self.alloc_offset + self.allocator.alloc(layout))
+        PPtr::from(self.allocator.alloc(layout))
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제

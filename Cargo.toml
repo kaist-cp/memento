@@ -13,7 +13,7 @@ edition = "2018"
 [dependencies]
 crossbeam-epoch = "0.9.5"
 crossbeam-utils = "0.8.5"
-chrono = "0.4"
+# chrono = "0.4" # TODO: chrono crate의 audit 이슈 해결되면 사용 https://github.com/chronotope/chrono/pull/578#issuecomment-945604623
 etrace = "1.1.1"
 memmap = "0.7.0"
 rand = "0.8.4"

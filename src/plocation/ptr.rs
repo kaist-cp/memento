@@ -21,7 +21,7 @@ impl<T: ?Sized> Clone for PPtr<T> {
     fn clone(&self) -> Self {
         Self {
             offset: self.offset,
-            _marker: PhantomData
+            _marker: PhantomData,
         }
     }
 }
