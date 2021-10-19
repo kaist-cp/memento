@@ -1,0 +1,20 @@
+[package]
+name = "evaluation"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+compositional-persistent-object = { path = "../../compositional-persistent-object" }
+crossbeam-utils = "0.8.5"
+rand = "0.8.4"
+array-init = "2.0.0"
+regex = "1.5.4"
+structopt = "0.3"
+csv = "1.1.6"
+corundum = "0.4.0"

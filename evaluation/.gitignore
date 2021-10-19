@@ -1,0 +1,6 @@
+target/
+out/
+
+# PMDK src
+pmdk-*/
+libpmemobj-cpp-*/
