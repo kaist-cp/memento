@@ -34,22 +34,22 @@ TODO: 현재 PMDK만 no_persist 구현 안됨. PMDK도 no_persist 같은 옵션 
 
 example:
 ```bash
-./target/release/bench -f /mnt/pmem0/our_queue.pool -a our_queue -k prob50 -t 16 -d 5
+./target/release/bench -f /mnt/pmem0/our_queue.pool -a our_queue -k prob50 -t 16 -d 10 -o ./out/queue.csv
 ```
 `우리 큐`에 `16`개 스레드로 `{ 50% enq or deq }`를 반복할 때의 처리율 측정
 - 풀 파일: `/mnt/pmem0/our_queue.pool`을 새로 생성하여 사용
-- 처리율 측정방법: `5`초동안 op을 반복 실행한 후 평균 op/s를 계산
-- 결과: `./out/{obj}.csv` (obj: queue, pipe)
+- 처리율 측정방법: `10`초동안 op을 반복 실행한 후 평균 op/s를 계산
+- 결과: `./out/queue.csv`
 
 TODO: cpp bench executable도 사용방법 설명
 
 ## Run the entire benchmark
 ```bash
-run.sh
+run.sh <pmempath>
 ```
 모든 (`<target>`, `<bench kind>`, `<threads=1~32>`) 쌍에 대하여 처리율 측정
-- 풀 파일: `/mnt/pmem0/{target}.pool`을 새로 생성하여 사용
-- 처리율 측정방법: single bench를 `10`번 반복한 후 평균 M op/s를 계산
+- 풀 파일: `{pmempath}/{target}.pool`을 새로 생성하여 사용
+- 처리율 측정방법: single bench를 10초씩 `5`번 반복한 후 평균 M op/s를 계산
 - 결과:
     - raw: `./out/{obj}.csv` (obj: queue, pipe)
-    - graph: `./out/{obj}-{bench kind}.pdf`
+    - graph: `./out/{obj}-{bench kind}.png`

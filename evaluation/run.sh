@@ -37,8 +37,13 @@ function bench() {
 
 set -e
 
+if [ $# -ne 1 ] ; then
+    echo "Usage: run.sh <pmempath>"
+    exit 0
+fi
+
 # 1. Setup
-PMEM_PATH=/mnt/pmem0/   # PMEM_PATH에 풀 파일을 생성하여 사용
+PMEM_PATH=$1   # PMEM_PATH에 풀 파일을 생성하여 사용
 MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
 TEST_CNT=5            # 한 bench당 테스트 횟수
 TEST_DUR=10           # 한 테스트당 지속시간
@@ -56,14 +61,14 @@ show_cfg
 # bench durable_queue prob50 $out_path/queue.csv
 # bench log_queue prob50 $out_path/queue.csv
 # bench dss_queue prob50 $out_path/queue.csv
-bench our_queue pair $out_path/queue.csv
-bench durable_queue pair $out_path/queue.csv
-bench log_queue pair $out_path/queue.csv
-bench dss_queue pair $out_path/queue.csv
+# bench our_queue pair $out_path/queue.csv
+# bench durable_queue pair $out_path/queue.csv
+# bench log_queue pair $out_path/queue.csv
+# bench dss_queue pair $out_path/queue.csv
 
 # 3. Benchmarking pipe performance
-bench our_pipe pipe $out_path/pipe.csv
-bench crndm_pipe pipe $out_path/pipe.csv
+# bench our_pipe pipe $out_path/pipe.csv
+# bench crndm_pipe pipe $out_path/pipe.csv
 bench pmdk_pipe pipe $out_path/pipe.csv
 
 # 4. Plot and finish
