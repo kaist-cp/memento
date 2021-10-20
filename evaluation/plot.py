@@ -11,14 +11,15 @@ objs = {
             'dss_queue': {'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
         },
         # 'bench_kinds': ['prob50', 'pair'],
+        # 'plot_lower_ylim': [(1, 3.5), (0.5, 1.8)],
         'bench_kinds': ['pair'],
-        'plot_lower_ylim': [(1, 3.5), (0.5, 1.8)],
+        'plot_lower_ylim': [(1, 3.5)], # 위 아래 분리해서 그릴 때 아래 plot의 범위 설정: 1 ~ 3.5
     },
     "pipe": {
         "targets": {
             'our_pipe': {'label': "Memento pipe", 'marker': 'o', 'color': 'k', 'style': '-'},
-            # 'crndm_pipe': {'label': "Corundum pipe", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
-            # 'pmdk_pipe': {'label': "PsMDK pipe", 'marker': 'x', 'color': 'c', 'style': '--'},
+            'crndm_pipe': {'label': "Corundum pipe", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
+            'pmdk_pipe': {'label': "PMDK pipe", 'marker': 'x', 'color': 'c', 'style': '--'},
         },
         'bench_kinds': ['pipe'],
         'plot_lower_ylim': [(0, 1.2)],
