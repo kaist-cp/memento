@@ -16,6 +16,12 @@ evaluation을 위한 실험은 (1) queue 처리율 비교, (2) pipe 처리율 �
 build.sh
 ```
 
+persist instruction (e.g. `clflush`) 없이 돌려보고 싶다면,
+```
+build.sh no_persist
+```
+TODO: 현재 PMDK만 no_persist 구현 안됨. PMDK도 no_persist 같은 옵션 있는지 확인하고 있다면 `build.sh`에 적용
+
 ## Run a single benchmark
 
 ```
@@ -35,7 +41,7 @@ example:
 - 처리율 측정방법: `5`초동안 op을 반복 실행한 후 평균 op/s를 계산
 - 결과: `./out/{obj}.csv` (obj: queue, pipe)
 
-TODO: cpp bench executable도 사용방법 설명 
+TODO: cpp bench executable도 사용방법 설명
 
 ## Run the entire benchmark
 ```bash
