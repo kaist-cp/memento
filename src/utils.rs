@@ -26,14 +26,15 @@ pub mod tests {
     impl POp for TestRootOp {
         type Object<'o> = ();
         type Input = ();
-        type Output<'o> = Result<(), ()>;
+        type Output<'o> = ();
+        type Error = !;
 
         fn run<'o, O: POp>(
             &mut self,
             _: Self::Object<'o>,
             _: Self::Input,
             _: &PoolHandle<O>,
-        ) -> Self::Output<'o> {
+        ) -> Result<Self::Output<'o>, Self::Error> {
             Ok(())
         }
         fn reset(&mut self, _: bool) {

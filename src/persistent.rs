@@ -88,15 +88,19 @@ pub trait POp: Default {
     /// Persistent op의 output type
     type Output<'o>: Clone;
 
+    /// Persistent op이 적용되지 않았을 때 발생하는 Error type
+    type Error;
+
     /// Persistent op 동작 함수 (idempotent)
     ///
-    /// - 같은 input에 대해 언제나 같은 Output을 반환
+    /// - `Ok`를 반환한 적이 있는 op은 같은 input에 대해 언제나 같은 Output을 반환
+    /// - `Err`를 반환한 op은 `reset()` 없이 다시 호출 가능
     /// - Input을 매번 인자로 받아 불필요한 백업을 하지 않음
     /// - Pre-crash op이 충분히 진행됐을 경우 Post-crash 재실행시의 input이 op 결과에 영향을 끼치지 않을 수도 있음.
     ///   즉, post-crash의 functional correctness는 보장하지 않음. (이러한 동작이 safety를 해치지 않음.)
     ///
     /// ## Generic
-    /// * `O` - `PoolHandle`이 가진 루트의 타입 (`Sync`: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러)
+    /// * `O` - `PoolHandle`이 가진 루트의 타입
     ///
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
@@ -105,7 +109,7 @@ pub trait POp: Default {
         object: Self::Object<'o>,
         input: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Self::Output<'o>;
+    ) -> Result<Self::Output<'o>, Self::Error>;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
     ///
