@@ -122,8 +122,15 @@ impl<T: Clone> DSSQueue<T> {
                         .is_ok()
                     {
                         persist_obj(&last_ref.next, true);
+
+                        // NOTE:
+                        // DSS 큐가 우리 큐보다 write & persist를 더 하는 부분.
+                        // KSC 실험결과에서 우리 큐가 살짝 더 좋게 나온 이유는 이것 때문일 수도?
+                        // ```
                         let _ = self.x[tid].fetch_or(ENQ_COMPL_TAG, Ordering::SeqCst, &guard);
                         persist_obj(&self.x[tid], true);
+                        // ```
+
                         let _ = self.tail.compare_exchange(
                             last,
                             node,
