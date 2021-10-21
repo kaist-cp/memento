@@ -148,6 +148,7 @@ impl<T: Clone> DurableQueue<T> {
                     //      - if/else문 진입 전에 persist 0번
                     //      - if/else문 진입 후에 각각 persist 2번: "이 노드를 pop해간 스레드는 `deq tid`다, "`deq tid` 스레드가 pop한 값는 이거다"
                     // TODO: 이게 성능 차이에 영향 미칠지?
+                    //      - e.g. KSC 실험은 T를 고작 usize로 했지만, pop value의 사이즈가 커지면 유의미한 차이를 보일 것으로 기대
 
                     let next_ref = unsafe { next.deref(pool) };
                     let val = Some(unsafe { (*next_ref.val.as_ptr()).clone() });
