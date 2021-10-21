@@ -28,6 +28,7 @@ use core::sync::atomic::Ordering;
 
 use crate::pepoch::guard::Guard;
 use crate::persistent::POp;
+use crate::plocation::ll::persist_obj;
 use crate::plocation::pool::PoolHandle;
 use crate::plocation::ptr::PPtr;
 use crossbeam_utils::atomic::AtomicConsume;
@@ -238,6 +239,7 @@ impl<T> Pointable for T {
         // TODO(persistent allocator): 여기서 crash 나면 leak남. 해결 필요
         let t = ptr.deref_mut(pool);
         *t = init;
+        persist_obj(t, true);
         ptr.into_offset()
     }
 
@@ -299,7 +301,10 @@ impl<T> Pointable for [MaybeUninit<T>] {
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
         }
-        (ptr.deref_mut(pool)).len = len;
+        let p = ptr.deref_mut(pool);
+        p.len = len;
+        persist_obj(p, true);
+
         ptr.into_offset()
     }
 
