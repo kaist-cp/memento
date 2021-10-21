@@ -3,6 +3,8 @@
 use std::alloc::Layout;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::ll::persist_obj;
+
 /// size를 align에 맞춤
 #[inline]
 pub fn align_up(size: usize, align: usize) -> usize {
@@ -46,6 +48,7 @@ impl Allocator {
                 .compare_exchange(cur, next, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
+                persist_obj(&self.next, true);
                 return base_aligned;
             }
         }
