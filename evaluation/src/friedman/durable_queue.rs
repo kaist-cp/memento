@@ -141,8 +141,12 @@ impl<T: Clone> DurableQueue<T> {
                     );
                 } else {
                     // NOTE: 여기서 Durable 큐가 우리 큐랑 persist하는 시점은 다르지만 persist하는 총 횟수는 똑같음
-                    // - 우리 큐: if/else문 진입 전에 persist 1번, 진입 후 각각 persist 1번
-                    // - Durable 큐: if/else문 진입 전에 persist 0번, 진입 후 각각 persist 2번
+                    // - 우리 큐:
+                    //      - if/else문 진입 전에 persist 1번: "나는(deq POp) 이 노드를 pop 시도할거다"
+                    //      - if/else문 진입 후에 각각 persist 1번: "이 노드를 pop해간 deq POp은 얘다"
+                    // - Durable 큐:
+                    //      - if/else문 진입 전에 persist 0번
+                    //      - if/else문 진입 후에 각각 persist 2번: "이 노드를 pop해간 스레드는 `deq tid`다, "`deq tid` 스레드가 pop한 값는 이거다"
                     // TODO: 이게 성능 차이에 영향 미칠지?
 
                     let next_ref = unsafe { next.deref(pool) };

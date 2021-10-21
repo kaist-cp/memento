@@ -124,7 +124,10 @@ impl<T: Clone> DSSQueue<T> {
                         persist_obj(&last_ref.next, true);
 
                         // NOTE: DSS 큐의 하자 (1/1)
-                        // 우리 큐의 enq에는 이 write & persist 없음
+                        // - 우리 큐의 enq에는 이 write & persist 없음
+                        // - 차이나는 이유:
+                        //      - 우리 큐: enq 성공여부 구분을 direct tracking으로 함. 따라서 enq 성공이후 따로 write하는 것 없음
+                        //      - DSS 큐: enq 성공여부 구분을 태그로 함(resolve_enq). 따라서 enq 성공이후 "성공했다"라는 태그를 write
                         // TODO: KSC 실험결과에서 우리 큐가 살짝 더 좋게 나온 이유는 이것 때문일 수도?
                         //
                         // ```
