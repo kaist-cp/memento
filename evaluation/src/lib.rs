@@ -1,4 +1,4 @@
-//! Compositional Construction of Failure-Safe Persistent Objects
+//! benchmarking을 위한 구현들
 
 // # Tries to deny all lints (`rustc -W help`).
 #![deny(absolute_paths_not_starting_with_crate)]
@@ -14,7 +14,7 @@
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
 #![deny(unaligned_references)]
-// #![deny(unused_crate_dependencies)] // TODO: newop_pipe 리뷰 후 다른 obj들 고칠 때 주석 해제
+// #![deny(unused_crate_dependencies)] // main에서만 쓰는 crate 때문에 allow 필요 (e.g. regex, csv)
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
@@ -23,7 +23,7 @@
 #![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
-#![deny(missing_docs)]
+// #![deny(missing_docs)] // TODO: evaluation도 doc 필요하면 주석해제
 #![deny(rustdoc::all)]
 #![deny(unreachable_pub)]
 // #![deny(single_use_lifetimes)] // Allowd due to GAT
@@ -32,21 +32,9 @@
 #![feature(generic_associated_types)]
 #![feature(asm)]
 
-// Persistent objects collection
-// pub mod exchanger; // TODO: plocation으로 동작시키며 주석해제
-// pub mod list; // TODO: plocation으로 동작시키며 주석해제
-// pub mod lock; // TODO: plocation으로 동작시키며 주석해제
-pub mod persistent;
-pub mod pipe;
-pub mod queue;
-// pub mod stack; // TODO: plocation으로 동작시키며 주석해제
-// pub mod treiber_stack; // TODO: plocation으로 동작시키며 주석해제
+pub mod compositional_pobj;
+pub mod crndm;
+pub mod dss;
+pub mod friedman;
 
-// Persistent location
-pub mod plocation;
-
-// Persistent version of crossbeam_epoch
-pub mod pepoch;
-
-// Utility
-pub mod utils;
+pub mod common;

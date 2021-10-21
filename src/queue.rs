@@ -1,13 +1,13 @@
 //! Persistent queue
 
 use core::sync::atomic::{AtomicUsize, Ordering};
+use crossbeam_utils::CachePadded;
 use etrace::some_or;
 use std::{mem::MaybeUninit, ptr};
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::pool::PoolHandle;
-use crate::plocation::ptr::AsPPtr;
+use crate::plocation::{ll::*, pool::*, ptr::*};
 
 struct Node<T: Clone> {
     data: MaybeUninit<T>,
@@ -69,8 +69,9 @@ impl<T: 'static + Clone> POp for Push<T> {
     }
 
     fn reset(&mut self, _: bool) {
-        // TODO: if not finished -> free node
+        // TODO: if not finished -> free node (+ free가 반영되게끔 flush 해줘야함)
         self.mine.store(PShared::null(), Ordering::SeqCst);
+        persist_obj(&self.mine, true)
     }
 }
 
@@ -106,6 +107,7 @@ impl<T: 'static + Clone> POp for Pop<T> {
     fn reset(&mut self, _: bool) {
         // TODO: if node has not been freed, check if the node is mine and free it
         self.target.store(PShared::null(), Ordering::SeqCst);
+        persist_obj(&self.target, true)
     }
 }
 
@@ -120,22 +122,23 @@ impl<T: Clone> Pop<T> {
 /// Peristent queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
-    head: PAtomic<Node<T>>,
-    tail: PAtomic<Node<T>>,
+    head: CachePadded<PAtomic<Node<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
 }
 
 impl<T: Clone> Queue<T> {
     /// new
-    pub fn new<O: POp>(pool: &PoolHandle<O>) -> Self {
-        let sentinel = Node::default();
-        unsafe {
-            let guard = epoch::unprotected(pool);
-            let sentinel = POwned::new(sentinel, pool).into_shared(guard);
-            Self {
-                head: PAtomic::from(sentinel),
-                tail: PAtomic::from(sentinel),
-            }
-        }
+    pub fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+        let guard = unsafe { epoch::unprotected(pool) };
+        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
+        persist_obj(unsafe { sentinel.deref(pool) }, true);
+
+        let ret = POwned::new(Self {
+            head: CachePadded::new(PAtomic::from(sentinel)),
+            tail: CachePadded::new(PAtomic::from(sentinel)),
+        }, pool);
+        persist_obj(unsafe { ret.deref(pool) }, true);
+        ret
     }
 
     // TODO: try mode
@@ -158,8 +161,10 @@ impl<T: Clone> Queue<T> {
         // (1) 첫 번째 실행
         if mine.is_null() {
             let n = POwned::new(Node::from(value), pool).into_shared(guard);
+            persist_obj(unsafe { n.deref(pool) }, true);
 
             client.mine.store(n, Ordering::SeqCst);
+            persist_obj(&client.mine, true);
             return Some(n);
         }
 
@@ -189,32 +194,41 @@ impl<T: Clone> Queue<T> {
         let tail_ref = unsafe { tail.deref(pool) };
         let next = tail_ref.next.load(Ordering::SeqCst, guard);
 
-        if !next.is_null() {
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-            return Err(());
-        }
-
-        tail_ref
-            .next
-            .compare_exchange(
-                PShared::null(),
-                node,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            )
-            .map(|_| {
+        if tail == self.tail.load(Ordering::SeqCst, guard) {
+            if next.is_null() {
+                return tail_ref
+                    .next
+                    .compare_exchange(
+                        PShared::null(),
+                        node,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    )
+                    .map(|_| {
+                        persist_obj(&tail_ref.next, true);
+                        let _ = self.tail.compare_exchange(
+                            tail,
+                            node,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        );
+                    })
+                    .map_err(|_| ());
+            } else {
+                persist_obj(&tail_ref.next, true);
                 let _ = self.tail.compare_exchange(
                     tail,
-                    node,
+                    next,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     guard,
                 );
-            })
-            .map_err(|_| ())
+            }
+        }
+
+        Err(())
     }
 
     /// `node`가 Queue 안에 있는지 head부터 tail까지 순회하며 검색
@@ -257,7 +271,7 @@ impl<T: Clone> Queue<T> {
 
             // node가 정말 내가 pop한 게 맞는지 확인
             if target_ref.popper.load(Ordering::SeqCst) == client.id(pool) {
-                return Some(Self::finish_pop(target_ref));
+                return Some(unsafe { Self::finish_pop(target_ref) });
             }
         }
 
@@ -276,59 +290,80 @@ impl<T: Clone> Queue<T> {
         pool: &PoolHandle<O>,
     ) -> Result<Option<T>, ()> {
         let head = self.head.load(Ordering::SeqCst, guard);
+        let tail = self.tail.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
-        let next_ref = some_or!(unsafe { next.as_ref(pool) }, {
-            client
-                .target
-                .store(PShared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
-            return Ok(None);
-        });
 
-        let tail = self.tail.load(Ordering::SeqCst, guard);
-        if tail == head {
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        }
+        if head == self.head.load(Ordering::SeqCst, guard) {
+            if head == tail {
+                // empty queue
+                if next.is_null() {
+                    client
+                        .target
+                        .store(PShared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
+                    persist_obj(&client.target, true);
+                    return Ok(None);
+                }
 
-        // 우선 내가 pop할 node를 가리키고
-        client.target.store(next, Ordering::SeqCst);
+                let tail_ref = unsafe { tail.deref(pool) };
+                persist_obj(&tail_ref.next, true);
 
-        next_ref
-            .popper
-            .compare_exchange(
-                Self::no_popper(),
-                client.id(pool),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .map(|_| {
-                let _ = self.head.compare_exchange(
-                    head,
+                let _ = self.tail.compare_exchange(
+                    tail,
                     next,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     guard,
                 );
-                Some(Self::finish_pop(next_ref))
-            })
-            .map_err(|_| {
-                let h = self.head.load(Ordering::SeqCst, guard);
-                if h == head {
-                    let _ = self.head.compare_exchange(
-                        head,
-                        next,
+                return Err(());
+            } else {
+                // 우선 내가 pop할 node를 가리킴
+                client.target.store(next, Ordering::SeqCst);
+                persist_obj(&client.target, true);
+
+                // 실제로 pop 함
+                let next_ref = unsafe { next.deref(pool) };
+                return next_ref
+                    .popper
+                    .compare_exchange(
+                        Self::no_popper(),
+                        client.id(pool),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        guard,
-                    );
-                }
-            })
+                    )
+                    .map(|_| {
+                        persist_obj(&next_ref.popper, true);
+                        let _ = self.head.compare_exchange(
+                            head,
+                            next,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        );
+                        Some(unsafe { Self::finish_pop(next_ref) })
+                    })
+                    .map_err(|_| {
+                        let h = self.head.load(Ordering::SeqCst, guard);
+                        if h == head {
+                            persist_obj(&next_ref.popper, true);
+                            let _ = self.head.compare_exchange(
+                                head,
+                                next,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                                guard,
+                            );
+                        }
+                    });
+            }
+        }
+
+        Err(())
     }
 
-    fn finish_pop(node: &Node<T>) -> T {
-        unsafe { node.data.as_ptr().as_ref().unwrap() }.clone()
+    #[inline]
+    unsafe fn finish_pop(node: &Node<T>) -> T {
+        (*node.data.as_ptr()).clone()
         // free node
     }
 
@@ -382,7 +417,7 @@ mod test {
 
             // Initialize queue
             if q.is_null() {
-                let q = POwned::new(Queue::<usize>::new(pool), pool);
+                let q = Queue::<usize>::new(pool);
                 // TODO: 여기서 crash나면 leak남
                 self.queue.store(q, Ordering::SeqCst);
             }
@@ -392,7 +427,7 @@ mod test {
     impl POp for RootOp {
         type Object<'o> = ();
         type Input = ();
-        type Output<'o> = Result<(), ()>;
+        type Output<'o> = ();
 
         /// idempotent push_pop
         fn run<'o, O: POp>(
@@ -448,7 +483,6 @@ mod test {
             }
 
             assert!(results.iter().all(|r| *r == COUNT));
-            Ok(())
         }
 
         fn reset(&mut self, _: bool) {
@@ -477,6 +511,6 @@ mod test {
         let root_op = pool_handle.get_root();
 
         // 루트 op 실행
-        root_op.run((), (), &pool_handle).unwrap();
+        root_op.run((), (), &pool_handle);
     }
 }
