@@ -102,12 +102,18 @@ impl<T: Clone> DurableQueue<T> {
     fn dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
         let guard = pepoch::pin(pool);
 
+        // NOTE: Durable 큐의 하자 (1/1)
+        // - 우리 큐: deq에서 새롭게 할당하는 것 없음
+        // - Durable 큐: deq한 값을 가리킬 포인터 할당 및 persist
+        //
+        // ```
         let mut new_ret_val = POwned::new(None, pool).into_shared(&guard);
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
         self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
         persist_obj(&self.ret_val[tid], true);
+        // ```
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         loop {
@@ -134,6 +140,11 @@ impl<T: Clone> DurableQueue<T> {
                         &guard,
                     );
                 } else {
+                    // NOTE: 여기서 Durable 큐가 우리 큐랑 persist하는 시점은 다르지만 persist하는 총 횟수는 똑같음
+                    // - 우리 큐: if/else문 진입 전에 persist 1번, 진입 후 각각 persist 1번
+                    // - Durable 큐: if/else문 진입 전에 persist 0번, 진입 후 각각 persist 2번
+                    // TODO: 이게 성능 차이에 영향 미칠지?
+
                     let next_ref = unsafe { next.deref(pool) };
                     let val = Some(unsafe { (*next_ref.val.as_ptr()).clone() });
 

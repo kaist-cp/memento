@@ -87,6 +87,11 @@ impl<T: Clone> LogQueue<T> {
     fn enqueue<O: POp>(&self, val: T, tid: usize, op_num: usize, pool: &PoolHandle<O>) {
         let guard = pepoch::pin(pool);
 
+        // NOTE: Log 큐의 하자 (1/2)
+        // - 우리 큐: enq할 노드만 새롭게 할당 & persist함
+        // - Log 큐: enq할 노드 뿐 아니라 enq log 또한 할당하고 persist함
+        //
+        // ```
         let log = POwned::new(
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Enqueue, op_num),
             pool,
@@ -103,6 +108,7 @@ impl<T: Clone> LogQueue<T> {
 
         self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&self.logs[tid], true);
+        // ```
 
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
@@ -143,6 +149,11 @@ impl<T: Clone> LogQueue<T> {
     fn dequeue<O: POp>(&self, tid: usize, op_num: usize, pool: &PoolHandle<O>) {
         let guard = pepoch::pin(pool);
 
+        // NOTE: Log 큐의 하자 (2/2)
+        // - 우리 큐: deq에서 새롭게 할당하는 것 없음
+        // - Log 큐: deq 로그 할당 및 persist
+        //
+        // ```
         let mut log = POwned::new(
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, op_num),
             pool,
@@ -152,6 +163,7 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(log_ref, true);
         self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&self.logs[tid], true);
+        // ```
 
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
@@ -177,6 +189,11 @@ impl<T: Clone> LogQueue<T> {
                         &guard,
                     );
                 } else {
+                    // NOTE: 여기서 Log 큐가 우리 큐랑 persist하는 시점은 다르지만 persist하는 총 횟수는 똑같음
+                    // - 우리 큐: if/else문 진입 전에 persist 1번, 진입 후 각각 persist 1번
+                    // - Log 큐: if/else문 진입 전에 persist 0번, 진입 후 각각 persist 2번
+                    // TODO: 이게 성능 차이에 영향 미칠지?
+
                     let next_ref = unsafe { next.deref(pool) };
                     if next_ref
                         .log_remove
