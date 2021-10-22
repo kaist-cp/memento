@@ -98,9 +98,9 @@ mod tests {
     struct TestPipeOp {
         q1: PAtomic<Queue<usize>>,
         q2: PAtomic<Queue<usize>>,
-        pipes: [Pipe<PopSome<usize>, Push<usize>>; COUNT],
-        suppliers: [Push<usize>; COUNT],
-        consumers: [PopSome<usize>; COUNT],
+        pipes: [Pipe<DequeueSome<usize>, Enqueue<usize>>; COUNT],
+        suppliers: [Enqueue<usize>; COUNT],
+        consumers: [DequeueSome<usize>; COUNT],
     }
 
     impl Default for TestPipeOp {
@@ -109,8 +109,8 @@ mod tests {
                 q1: Default::default(),
                 q2: Default::default(),
                 pipes: array_init::array_init(|_| Pipe::default()),
-                suppliers: array_init::array_init(|_| Push::default()),
-                consumers: array_init::array_init(|_| PopSome::default()),
+                suppliers: array_init::array_init(|_| Enqueue::default()),
+                consumers: array_init::array_init(|_| DequeueSome::default()),
             }
         }
     }
@@ -163,8 +163,8 @@ mod tests {
             thread::scope(|scope| {
                 // T0: Supply q1
                 let _ = scope.spawn(move |_| {
-                    for (i, push) in suppliers.iter_mut().enumerate() {
-                        let _ = push.run(q1, i, pool);
+                    for (i, enq) in suppliers.iter_mut().enumerate() {
+                        let _ = enq.run(q1, i, pool);
                     }
                 });
 
@@ -177,8 +177,8 @@ mod tests {
 
                 // T2: Consume q2
                 let _ = scope.spawn(move |_| {
-                    for (i, pop) in consumers.iter_mut().enumerate() {
-                        let v = pop.run(&q2, (), pool).unwrap();
+                    for (i, deq) in consumers.iter_mut().enumerate() {
+                        let v = deq.run(&q2, (), pool).unwrap();
                         assert_eq!(v, i);
                     }
                 });
