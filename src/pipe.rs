@@ -4,7 +4,7 @@ use crate::{persistent::POp, plocation::{PoolHandle, ll::persist_obj}};
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 ///
-/// - `'p`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
+/// - `'o`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
 /// - `O#`: `Op#`이 실행되는 object
 #[derive(Debug)]
 pub struct Pipe<Op1, Op2>
@@ -44,20 +44,21 @@ where
     type Object<'o> = (Op1::Object<'o>, Op2::Object<'o>);
     type Input = Op1::Input;
     type Output<'o> = Op2::Output<'o>;
+    type Error = ();
 
     fn run<'o, O: POp>(
         &mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Self::Output<'o> {
+    ) -> Result<Self::Output<'o>, Self::Error> {
         if self.resetting {
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
             self.reset(false);
         }
 
-        let v = self.from.run(from_obj, init, pool);
-        self.to.run(to_obj, v, pool)
+        let v = self.from.run(from_obj, init, pool).map_err(|_| ())?;
+        self.to.run(to_obj, v, pool).map_err(|_| ())
     }
 
     fn reset(&mut self, nested: bool) {
@@ -94,50 +95,13 @@ mod tests {
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
     const COUNT: usize = 1_000_000;
 
-    /// empty가 아닐 때에*만* return 하는 pop operation
-    struct MustPop<T: Clone> {
-        pop: Pop<T>,
-    }
-
-    impl<T: Clone> Default for MustPop<T> {
-        fn default() -> Self {
-            Self {
-                pop: Default::default(),
-            }
-        }
-    }
-
-    impl<T: 'static + Clone> POp for MustPop<T> {
-        type Object<'q> = &'q Queue<T>;
-        type Input = ();
-        type Output<'q> = T;
-
-        fn run<'o, O: POp>(
-            &mut self,
-            queue: Self::Object<'o>,
-            _: Self::Input,
-            pool: &PoolHandle<O>,
-        ) -> Self::Output<'o> {
-            loop {
-                if let Some(v) = self.pop.run(queue, (), pool) {
-                    return v;
-                }
-                self.pop.reset(false);
-            }
-        }
-
-        fn reset(&mut self, _: bool) {
-            self.pop.reset(true);
-        }
-    }
-
     struct TestPipeOp {
         // TODO
         q1: PAtomic<Queue<usize>>,
         q2: PAtomic<Queue<usize>>,
-        pipes: [Pipe<MustPop<usize>, Push<usize>>; COUNT],
+        pipes: [Pipe<PopSome<usize>, Push<usize>>; COUNT],
         suppliers: [Push<usize>; COUNT],
-        consumers: [MustPop<usize>; COUNT],
+        consumers: [PopSome<usize>; COUNT],
     }
 
     impl Default for TestPipeOp {
@@ -147,7 +111,7 @@ mod tests {
                 q2: Default::default(),
                 pipes: array_init::array_init(|_| Pipe::default()),
                 suppliers: array_init::array_init(|_| Push::default()),
-                consumers: array_init::array_init(|_| MustPop::default()),
+                consumers: array_init::array_init(|_| PopSome::default()),
             }
         }
     }
@@ -176,15 +140,16 @@ mod tests {
 
     impl POp for TestPipeOp {
         type Object<'o> = ();
-        type Input = bool; // false: test sequentially, true: test concurrently
-        type Output<'o> = Result<(), ()>;
+        type Input = ();
+        type Output<'o> = ();
+        type Error = !;
 
         fn run<'o, O: POp>(
             &mut self,
-            _: Self::Object<'o>,
-            concurrent: Self::Input,
+            (): Self::Object<'o>,
+            (): Self::Input,
             pool: &PoolHandle<O>,
-        ) -> Self::Output<'o> {
+        ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);
 
             // Alias
@@ -195,49 +160,31 @@ mod tests {
             let suppliers = &mut self.suppliers;
             let consumers = &mut self.consumers;
 
-            if !concurrent {
-                // 1. Supply q1
-                for (i, push) in suppliers.iter_mut().enumerate() {
-                    push.run(&q1, i, pool);
-                }
+            #[allow(box_pointers)]
+            thread::scope(|scope| {
+                // T0: Supply q1
+                let _ = scope.spawn(move |_| {
+                    for (i, push) in suppliers.iter_mut().enumerate() {
+                        let _ = push.run(q1, i, pool);
+                    }
+                });
 
-                // 2. Transfer q1->q2
-                for pipe in pipes.iter_mut() {
-                    pipe.run((&q1, &q2), (), pool);
-                }
+                // T1: Transfer q1->q2
+                let _ = scope.spawn(move |_| {
+                    for pipe in pipes.iter_mut() {
+                        let _ = pipe.run((q1, q2), (), pool);
+                    }
+                });
 
-                // 3. Consume q2
-                for (i, pop) in self.consumers.iter_mut().enumerate() {
-                    let v = pop.run(&q2, (), pool);
-                    assert_eq!(v, i);
-                }
-            } else {
-                #[allow(box_pointers)]
-                thread::scope(|scope| {
-                    // T0: Supply q1
-                    let _ = scope.spawn(move |_| {
-                        for (i, push) in suppliers.iter_mut().enumerate() {
-                            push.run(q1, i, pool);
-                        }
-                    });
-
-                    // T1: Transfer q1->q2
-                    let _ = scope.spawn(move |_| {
-                        for pipe in pipes.iter_mut() {
-                            pipe.run((q1, q2), (), pool);
-                        }
-                    });
-
-                    // T2: Consume q2
-                    let _ = scope.spawn(move |_| {
-                        for (i, pop) in consumers.iter_mut().enumerate() {
-                            let v = pop.run(&q2, (), pool);
-                            assert_eq!(v, i);
-                        }
-                    });
-                })
-                .unwrap();
-            }
+                // T2: Consume q2
+                let _ = scope.spawn(move |_| {
+                    for (i, pop) in consumers.iter_mut().enumerate() {
+                        let v = pop.run(&q2, (), pool).unwrap();
+                        assert_eq!(v, i);
+                    }
+                });
+            })
+            .unwrap();
 
             Ok(())
         }
@@ -248,24 +195,9 @@ mod tests {
     }
 
     #[test]
-    fn pipe_seq() {
-        let filepath = get_test_path("pipe_seq.pool");
-
-        // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open(&filepath) }
-            .unwrap_or_else(|_| Pool::create::<TestPipeOp>(&filepath, FILE_SIZE).unwrap());
-
-        // 루트 op 가져오기
-        let root_op = pool_handle.get_root();
-
-        // 루트 op 실행
-        root_op.run((), false, &pool_handle).unwrap();
-    }
-
-    #[test]
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn pipe_concur() {
-        let filepath = get_test_path("pipe_concur.pool");
+        let filepath = get_test_path("pipe.pool");
 
         // 풀 열기 (없으면 새로 만듦)
         let pool_handle = unsafe { Pool::open(&filepath) }
@@ -275,6 +207,6 @@ mod tests {
         let root_op = pool_handle.get_root();
 
         // 루트 op 실행
-        root_op.run((), true, &pool_handle).unwrap();
+        root_op.run((), (), &pool_handle).unwrap();
     }
 }

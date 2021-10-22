@@ -55,17 +55,19 @@ impl<T: Clone> Default for Push<T> {
 }
 
 impl<T: 'static + Clone> POp for Push<T> {
-    type Object<'q> = &'q Queue<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input = T;
-    type Output<'q> = ();
+    type Output<'o> = ();
+    type Error = !;
 
     fn run<'o, O: POp>(
         &mut self,
         queue: Self::Object<'o>,
         value: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Self::Output<'o> {
+    ) -> Result<Self::Output<'o>, Self::Error> {
         queue.push(self, value, pool);
+        Ok(())
     }
 
     fn reset(&mut self, _: bool) {
@@ -91,17 +93,18 @@ impl<T: Clone> Default for Pop<T> {
 }
 
 impl<T: 'static + Clone> POp for Pop<T> {
-    type Object<'q> = &'q Queue<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input = ();
-    type Output<'q> = Option<T>;
+    type Output<'o> = Option<T>;
+    type Error = !;
 
     fn run<'o, O: POp>(
         &mut self,
         queue: Self::Object<'o>,
         _: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Self::Output<'o> {
-        queue.pop(self, pool)
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        Ok(queue.pop(self, pool))
     }
 
     fn reset(&mut self, _: bool) {
@@ -119,6 +122,47 @@ impl<T: Clone> Pop<T> {
     }
 }
 
+/// empty가 아닐 때에*만* return 하는 pop operation
+// TODO: 현재는 sub POp으로 Pop을 재사용하도록 구현되어 있음 (EMPTY 기록하는 오버헤드 발생)
+//       필요하다면 빌트인 함수를 만들어서 최적화할 수 있음
+#[derive(Debug)]
+pub struct PopSome<T: Clone> {
+    pop: Pop<T>,
+}
+
+impl<T: Clone> Default for PopSome<T> {
+    fn default() -> Self {
+        Self {
+            pop: Default::default(),
+        }
+    }
+}
+
+impl<T: 'static + Clone> POp for PopSome<T> {
+    type Object<'o> = &'o Queue<T>;
+    type Input = ();
+    type Output<'o> = T;
+    type Error = !;
+
+    fn run<'o, O: POp>(
+        &mut self,
+        queue: Self::Object<'o>,
+        _: Self::Input,
+        pool: &PoolHandle<O>,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        loop {
+            if let Ok(Some(v)) = self.pop.run(queue, (), pool) {
+                return Ok(v);
+            }
+            self.pop.reset(false);
+        }
+    }
+
+    fn reset(&mut self, nested: bool) {
+        self.pop.reset(nested);
+    }
+}
+
 /// Peristent queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
@@ -128,6 +172,7 @@ pub struct Queue<T: Clone> {
 
 impl<T: Clone> Queue<T> {
     /// new
+    // TODO: alloc, init 구상한 후 시그니처 변경
     pub fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
         let guard = unsafe { epoch::unprotected(pool) };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
@@ -141,7 +186,6 @@ impl<T: Clone> Queue<T> {
         ret
     }
 
-    // TODO: try mode
     fn push<O: POp>(&self, client: &mut Push<T>, value: T, pool: &PoolHandle<O>) {
         let guard = epoch::pin(pool);
         let node = some_or!(self.is_incomplete(client, value, &guard, pool), return);
@@ -271,7 +315,7 @@ impl<T: Clone> Queue<T> {
 
             // node가 정말 내가 pop한 게 맞는지 확인
             if target_ref.popper.load(Ordering::SeqCst) == client.id(pool) {
-                return Some(unsafe { Self::finish_pop(target_ref) });
+                return Some(Self::finish_pop(target_ref));
             }
         }
 
@@ -340,7 +384,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
-                        Some(unsafe { Self::finish_pop(next_ref) })
+                        Some(Self::finish_pop(next_ref))
                     })
                     .map_err(|_| {
                         let h = self.head.load(Ordering::SeqCst, guard);
@@ -361,10 +405,9 @@ impl<T: Clone> Queue<T> {
         Err(())
     }
 
-    #[inline]
-    unsafe fn finish_pop(node: &Node<T>) -> T {
-        (*node.data.as_ptr()).clone()
-        // free node
+    fn finish_pop(node: &Node<T>) -> T {
+        unsafe { (*node.data.as_ptr()).clone() }
+        // TODO: free node
     }
 
     #[inline]
@@ -428,6 +471,7 @@ mod test {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
+        type Error = !;
 
         /// idempotent push_pop
         fn run<'o, O: POp>(
@@ -435,7 +479,7 @@ mod test {
             _: Self::Object<'o>,
             _: Self::Input,
             pool: &PoolHandle<O>,
-        ) -> Self::Output<'o> {
+        ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);
 
             // Alias
@@ -462,8 +506,8 @@ mod test {
 
                     let _ = scope.spawn(move |_| {
                         for i in 0..COUNT {
-                            push_arr[i].run(q, tid, pool);
-                            assert!(pop_arr[i].run(q, (), pool).is_some());
+                            let _ = push_arr[i].run(q, tid, pool);
+                            assert!(pop_arr[i].run(q, (), pool).unwrap().is_some());
                         }
                     });
                 }
@@ -477,12 +521,13 @@ mod test {
             let mut results = vec![0_usize; NR_THREAD];
             for pop_arr in pops.iter_mut() {
                 for pop in pop_arr.iter_mut() {
-                    let ret = pop.run(&q, (), pool).unwrap();
+                    let ret = pop.run(&q, (), pool).unwrap().unwrap();
                     results[ret] += 1;
                 }
             }
 
             assert!(results.iter().all(|r| *r == COUNT));
+            Ok(())
         }
 
         fn reset(&mut self, _: bool) {
@@ -511,6 +556,6 @@ mod test {
         let root_op = pool_handle.get_root();
 
         // 루트 op 실행
-        root_op.run((), (), &pool_handle);
+        let _ = root_op.run((), (), &pool_handle);
     }
 }

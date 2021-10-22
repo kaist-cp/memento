@@ -42,6 +42,9 @@ pub struct PoolHandle<O: POp> {
     /// 풀의 길이
     len: usize,
 
+    /// recovery 진행중 여부
+    recovering: bool,
+
     /// Root 타입 marker
     _marker: PhantomData<O>,
 }
@@ -111,6 +114,12 @@ impl<O: POp> PoolHandle<O> {
     #[inline]
     pub fn valid(&self, raw: usize) -> bool {
         raw >= self.start() && raw < self.end()
+    }
+
+    /// 현재 recovery 중인지 여부 확인
+    #[inline]
+    pub fn is_recovering(&self) -> bool {
+        self.recovering
     }
 }
 
@@ -198,6 +207,7 @@ impl Pool {
         Ok(PoolHandle {
             mmap: memmap::MmapOptions::new().map_mut(&file)?,
             len: file.metadata()?.len() as usize,
+            recovering: true,
             _marker: PhantomData,
         })
     }
@@ -249,7 +259,8 @@ mod tests {
     impl POp for RootOp {
         type Object<'o> = ();
         type Input = ();
-        type Output<'o> = Result<(), ()>;
+        type Output<'o> = ();
+        type Error = !;
 
         // invariant 검사(flag=1 => value=42)
         fn run<'o, O: POp>(
@@ -257,7 +268,7 @@ mod tests {
             _: Self::Object<'o>,
             _: Self::Input,
             _: &PoolHandle<O>,
-        ) -> Self::Output<'o> {
+        ) -> Result<Self::Output<'o>, Self::Error> {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
                 assert_eq!(self.value.load(SeqCst), 42);
