@@ -96,7 +96,6 @@ mod tests {
     const COUNT: usize = 1_000_000;
 
     struct TestPipeOp {
-        // TODO
         q1: PAtomic<Queue<usize>>,
         q2: PAtomic<Queue<usize>>,
         pipes: [Pipe<PopSome<usize>, Push<usize>>; COUNT],
