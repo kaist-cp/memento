@@ -55,17 +55,17 @@ impl<T: Clone> Default for Push<T> {
 }
 
 impl<T: 'static + Clone> POp for Push<T> {
-    type Object<'q> = &'q Queue<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input = T;
-    type Output<'q> = ();
+    type Output<'o> = ();
     type Error = !;
 
-    fn run<'q, O: POp>(
+    fn run<'o, O: POp>(
         &mut self,
-        queue: Self::Object<'q>,
+        queue: Self::Object<'o>,
         value: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Result<Self::Output<'q>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error> {
         queue.push(self, value, pool);
         Ok(())
     }
@@ -93,17 +93,17 @@ impl<T: Clone> Default for Pop<T> {
 }
 
 impl<T: 'static + Clone> POp for Pop<T> {
-    type Object<'q> = &'q Queue<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input = ();
-    type Output<'q> = Option<T>;
+    type Output<'o> = Option<T>;
     type Error = !;
 
-    fn run<'q, O: POp>(
+    fn run<'o, O: POp>(
         &mut self,
-        queue: Self::Object<'q>,
+        queue: Self::Object<'o>,
         _: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Result<Self::Output<'q>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(queue.pop(self, pool))
     }
 
@@ -139,17 +139,17 @@ impl<T: Clone> Default for PopSome<T> {
 }
 
 impl<T: 'static + Clone> POp for PopSome<T> {
-    type Object<'q> = &'q Queue<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input = ();
-    type Output<'q> = T;
+    type Output<'o> = T;
     type Error = !;
 
-    fn run<'q, O: POp>(
+    fn run<'o, O: POp>(
         &mut self,
-        queue: Self::Object<'q>,
+        queue: Self::Object<'o>,
         _: Self::Input,
         pool: &PoolHandle<O>,
-    ) -> Result<Self::Output<'q>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
             if let Ok(Some(v)) = self.pop.run(queue, (), pool) {
                 return Ok(v);

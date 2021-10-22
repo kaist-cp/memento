@@ -1,11 +1,10 @@
 //! Persistent pipe
 
 use crate::{persistent::POp, plocation::{PoolHandle, ll::persist_obj}};
-use etrace::ok_or;
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 ///
-/// - `'p`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
+/// - `'o`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
 /// - `O#`: `Op#`이 실행되는 object
 #[derive(Debug)]
 pub struct Pipe<Op1, Op2>
@@ -58,7 +57,7 @@ where
             self.reset(false);
         }
 
-        let v = ok_or!(self.from.run(from_obj, init, pool), return Err(()));
+        let v = self.from.run(from_obj, init, pool).map_err(|_| ())?;
         self.to.run(to_obj, v, pool).map_err(|_| ())
     }
 
@@ -147,8 +146,8 @@ mod tests {
 
         fn run<'o, O: POp>(
             &mut self,
-            _: Self::Object<'o>,
-            _: Self::Input,
+            (): Self::Object<'o>,
+            (): Self::Input,
             pool: &PoolHandle<O>,
         ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);

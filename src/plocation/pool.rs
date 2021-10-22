@@ -118,7 +118,7 @@ impl<O: POp> PoolHandle<O> {
 
     /// 현재 recovery 중인지 여부 확인
     #[inline]
-    pub fn under_recovery(&self) -> bool {
+    pub fn is_recovering(&self) -> bool {
         self.recovering
     }
 }
