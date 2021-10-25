@@ -187,7 +187,7 @@ mod tests {
         }
 
         fn reset(&mut self, _nested: bool) {
-            // no-op
+            unimplemented!()
         }
     }
 

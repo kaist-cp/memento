@@ -177,6 +177,7 @@ impl Pool {
         pool.allocator = Allocator::new(pool.root_offset + mem::size_of_val(&root_op));
 
         // 루트 Op 초기화
+        // TODO: 스택 크기 늘리지 않기 위한 방법을 구상
         let root_op_ref = unsafe { &mut *((start + pool.root_offset) as *mut O) };
         *root_op_ref = root_op;
 

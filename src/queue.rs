@@ -533,7 +533,7 @@ mod test {
         }
 
         fn reset(&mut self, _: bool) {
-            // no-op
+            unimplemented!()
         }
     }
 
