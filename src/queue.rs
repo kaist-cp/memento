@@ -422,10 +422,12 @@ mod test {
     use crossbeam_utils::thread;
     use serial_test::serial;
 
-    use crate::plocation::pool::Pool;
-    use crate::utils::tests::get_test_path;
+    use crate::utils::tests::*;
 
     use super::*;
+
+    const NR_THREAD: usize = 4;
+    const COUNT: usize = 1_000_000;
 
     struct RootOp {
         // PAtomic인 이유
@@ -535,27 +537,16 @@ mod test {
         }
     }
 
+    impl TestRootOp for RootOp {}
+
     const FILE_NAME: &str = "enq_deq.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-    const NR_THREAD: usize = 4;
-    const COUNT: usize = 1_000_000;
 
     // TODO: stack의 enq_deq과 합치기
     // 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn enq_deq() {
-        let filepath = get_test_path(FILE_NAME);
-
-        // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open(&filepath) }
-            .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
-
-        // 루트 op 가져오기
-        let root_op = pool_handle.get_root();
-
-        // 루트 op 실행
-        let _ = root_op.run((), (), &pool_handle);
+        run_test::<RootOp, _>(FILE_NAME, FILE_SIZE)
     }
 }

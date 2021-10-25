@@ -133,7 +133,7 @@ impl CrndmQueue {
 #[cfg(test)]
 mod test {
     use super::CrndmQueue;
-    use compositional_persistent_object::utils::tests::get_test_path;
+    use compositional_persistent_object::utils::tests::get_test_abs_path;
     use corundum::default::*;
     use crossbeam_utils::thread;
 
@@ -142,7 +142,7 @@ mod test {
 
     #[test]
     fn enq_deq() {
-        let filepath = get_test_path(FILE_NAME);
+        let filepath = get_test_abs_path(FILE_NAME);
         let queue = BuddyAlloc::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
 
         for i in 0..COUNT {
@@ -156,7 +156,7 @@ mod test {
 
     #[test]
     fn enq_deq_concur() {
-        let filepath = get_test_path(FILE_NAME);
+        let filepath = get_test_abs_path(FILE_NAME);
         let queue = BuddyAlloc::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
         let q = &*queue;
 

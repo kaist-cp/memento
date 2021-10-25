@@ -5,7 +5,6 @@ use crate::{persistent::POp, plocation::{PoolHandle, ll::persist_obj}};
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 ///
 /// - `'o`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
-/// - `O#`: `Op#`이 실행되는 object
 #[derive(Debug)]
 pub struct Pipe<Op1, Op2>
 where
@@ -83,19 +82,18 @@ mod tests {
 
     use crate::pepoch::{self, PAtomic};
     use crate::persistent::*;
-    use crate::plocation::Pool;
     use crate::queue::*;
-    use crate::utils::tests::get_test_path;
+
+    use crate::utils::tests::*;
 
     use super::*;
 
     use crossbeam_utils::thread;
     use serial_test::serial;
 
-    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
     const COUNT: usize = 1_000_000;
 
-    struct TestPipeOp {
+    struct Transfer {
         q1: PAtomic<Queue<usize>>,
         q2: PAtomic<Queue<usize>>,
         pipes: [Pipe<DequeueSome<usize>, Enqueue<usize>>; COUNT],
@@ -103,7 +101,7 @@ mod tests {
         consumers: [DequeueSome<usize>; COUNT],
     }
 
-    impl Default for TestPipeOp {
+    impl Default for Transfer {
         fn default() -> Self {
             Self {
                 q1: Default::default(),
@@ -115,7 +113,7 @@ mod tests {
         }
     }
 
-    impl TestPipeOp {
+    impl Transfer {
         fn init<O: POp>(&self, pool: &PoolHandle<O>) {
             let guard = unsafe { pepoch::unprotected(&pool) };
             let q1 = self.q1.load(Ordering::SeqCst, guard);
@@ -137,7 +135,7 @@ mod tests {
         }
     }
 
-    impl POp for TestPipeOp {
+    impl POp for Transfer {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
@@ -193,19 +191,14 @@ mod tests {
         }
     }
 
+    impl TestRootOp for Transfer {}
+
+    const FILE_NAME: &str = "pipe_concur.pool";
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
     #[test]
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn pipe_concur() {
-        let filepath = get_test_path("pipe.pool");
-
-        // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open(&filepath) }
-            .unwrap_or_else(|_| Pool::create::<TestPipeOp>(&filepath, FILE_SIZE).unwrap());
-
-        // 루트 op 가져오기
-        let root_op = pool_handle.get_root();
-
-        // 루트 op 실행
-        root_op.run((), (), &pool_handle).unwrap();
+        run_test::<Transfer, _>(FILE_NAME, FILE_SIZE)
     }
 }

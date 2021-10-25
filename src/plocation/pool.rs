@@ -24,7 +24,7 @@ use crate::plocation::ptr::PPtr;
 /// # // "이렇게 사용한다"만 보이기 위해 파일을 실제로 만들진 않고 "no_run"으로 함
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
-/// # use compositional_persistent_object::utils::tests::TestRootOp as MyRootOp;
+/// # use compositional_persistent_object::utils::tests::DummyRootOp as MyRootOp;
 /// // 풀 생성 후 풀의 핸들러 얻기
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
 ///
@@ -293,7 +293,7 @@ mod tests {
     fn check_inv() {
         // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
         env_logger::init();
-        let filepath = get_test_path(FILE_NAME);
+        let filepath = get_test_abs_path(FILE_NAME);
 
         // 풀 열기 (없으면 새로 만듦)
         let pool_handle = unsafe { Pool::open(&filepath) }
