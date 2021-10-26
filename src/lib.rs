@@ -34,7 +34,7 @@
 #![feature(never_type)] // to use `!`
 
 // Persistent objects collection
-// pub mod exchanger; // TODO: plocation으로 동작시키며 주석해제
+pub mod exchanger;
 // pub mod list; // TODO: plocation으로 동작시키며 주석해제
 // pub mod lock; // TODO: plocation으로 동작시키며 주석해제
 pub mod persistent;
