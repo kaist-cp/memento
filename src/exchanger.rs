@@ -171,23 +171,17 @@ pub struct Exchanger<T: Clone> {
     slot: PAtomic<Node<T>>,
 }
 
-impl<T: Clone> Exchanger<T> {
-    /// new
-    // TODO: alloc, init 구상한 후 시그니처 변경
-    pub fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
-        let ret = POwned::new(
-            Self {
-                // 기존 논문에선 시작 slot이 Default Node임
-                // 장황한 구현 및 공간 낭비의 이유로 null로 바꿈
-                slot: PAtomic::null(),
-            },
-            pool,
-        );
-
-        persist_obj(unsafe { ret.deref(pool) }, true);
-        ret
+impl<T: Clone> Default for Exchanger<T> {
+    fn default() -> Self {
+        Self {
+            // 기존 논문에선 시작 slot이 Default Node임
+            // 장황한 구현 및 공간 낭비의 이유로 null로 바꿈
+            slot: PAtomic::null(),
+        }
     }
+}
 
+impl<T: Clone> Exchanger<T> {
     fn exchange<C: ExchangeType<T>, O: POp>(
         &self,
         client: &mut C,
@@ -361,14 +355,14 @@ mod tests {
     use super::*;
 
     struct ExchangeOnce {
-        xchg: PAtomic<Exchanger<usize>>,
+        xchg: Exchanger<usize>,
         exchanges: [Exchange<usize>; 2],
     }
 
     impl Default for ExchangeOnce {
         fn default() -> Self {
             Self {
-                xchg: PAtomic::null(),
+                xchg: Default::default(),
                 exchanges: array_init::array_init(|_| Exchange::<usize>::default()),
             }
         }
@@ -386,29 +380,20 @@ mod tests {
             (): Self::Input,
             pool: &PoolHandle<O>,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let guard = unsafe { epoch::unprotected(pool) };
-            let mut xchg = self.xchg.load(Ordering::SeqCst, &guard);
-
-            // Initialize xchg
-            if xchg.is_null() {
-                xchg = Exchanger::<usize>::new(pool).into_shared(guard);
-                // TODO: 여기서 crash나면 leak남
-                self.xchg.store(xchg, Ordering::SeqCst);
-            }
-
-            let xchg_ref = unsafe { xchg.deref(pool) };
+            let xchg = &self.xchg;
+            let exchanges = &mut self.exchanges;
 
             #[allow(box_pointers)]
             thread::scope(|scope| {
                 for tid in 0..2 {
                     let exchange = unsafe {
-                        (self.exchanges.get_unchecked_mut(tid) as *mut Exchange<usize>)
+                        (exchanges.get_unchecked_mut(tid) as *mut Exchange<usize>)
                             .as_mut()
                             .unwrap()
                     };
                     let _ = scope.spawn(move |_| {
                         // `move` for `tid`
-                        let ret = exchange.run(xchg_ref, tid, pool).unwrap();
+                        let ret = exchange.run(xchg, tid, pool).unwrap();
                         assert_eq!(ret, 1 - tid);
                     });
                 }
@@ -436,8 +421,8 @@ mod tests {
     ///     (exchange0)        (exchange1_0)     (exchange1_2)        (exchange2)
     /// [item0]    <-----lxchg----->       [item1]       <-----rxchg----->    [item2]
     struct RotateLeft {
-        lxchg: PAtomic<Exchanger<usize>>,
-        rxchg: PAtomic<Exchanger<usize>>,
+        lxchg: Exchanger<usize>,
+        rxchg: Exchanger<usize>,
 
         item0: usize,
         item1: usize,
@@ -452,8 +437,8 @@ mod tests {
     impl Default for RotateLeft {
         fn default() -> Self {
             Self {
-                lxchg: PAtomic::null(),
-                rxchg: PAtomic::null(),
+                lxchg: Default::default(),
+                rxchg: Default::default(),
                 item0: 0,
                 item1: 1,
                 item2: 2,
@@ -479,25 +464,8 @@ mod tests {
             (): Self::Input,
             pool: &PoolHandle<O>,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let guard = unsafe { epoch::unprotected(pool) };
-            let mut lxchg = self.lxchg.load(Ordering::SeqCst, &guard);
-            let mut rxchg = self.rxchg.load(Ordering::SeqCst, &guard);
-
-            // Initialize lxchg, rxchg
-            if lxchg.is_null() {
-                lxchg = Exchanger::<usize>::new(pool).into_shared(guard);
-                rxchg = Exchanger::<usize>::new(pool).into_shared(guard);
-                // TODO: 여기서 crash나면 leak남
-                self.lxchg.store(lxchg, Ordering::SeqCst);
-                self.rxchg.store(rxchg, Ordering::SeqCst);
-            } else if rxchg.is_null() {
-                rxchg = Exchanger::<usize>::new(pool).into_shared(guard);
-                // TODO: 여기서 crash나면 leak남
-                self.rxchg.store(rxchg, Ordering::SeqCst);
-            }
-
-            let lxchg_ref = unsafe { lxchg.deref(pool) };
-            let rxchg_ref = unsafe { rxchg.deref(pool) };
+            let lxchg = &self.lxchg;
+            let rxchg = &self.rxchg;
             let exchange0 = &mut self.exchange0;
             let exchange1_0 = &mut self.exchange1_0;
             let exchange1_2 = &mut self.exchange1_2;
@@ -510,23 +478,23 @@ mod tests {
             thread::scope(|scope| {
                 let _ = scope.spawn(|_| {
                     // [0] -> [1]    [2]
-                    *item0 = exchange0.run(lxchg_ref, *item0, pool).unwrap();
+                    *item0 = exchange0.run(lxchg, *item0, pool).unwrap();
                     assert_eq!(*item0, 1);
                 });
 
                 let _ = scope.spawn(|_| {
                     // [0]    [1] <- [2]
-                    *item2 = exchange2.run(rxchg_ref, *item2, pool).unwrap();
+                    *item2 = exchange2.run(rxchg, *item2, pool).unwrap();
                     assert_eq!(*item2, 0);
                 });
 
                 // Composition in the middle
                 // Step1: [0] <- [1]    [2]
-                *item1 = exchange1_0.run(lxchg_ref, *item1, pool).unwrap();
+                *item1 = exchange1_0.run(lxchg, *item1, pool).unwrap();
                 assert_eq!(*item1, 0);
 
                 // Step2: [1]    [0] -> [2]
-                *item1 = exchange1_2.run(rxchg_ref, *item1, pool).unwrap();
+                *item1 = exchange1_2.run(rxchg, *item1, pool).unwrap();
                 assert_eq!(*item1, 2);
             })
             .unwrap();
@@ -554,14 +522,14 @@ mod tests {
     const COUNT: usize = 1_000_000;
 
     struct ExchangeMany {
-        xchg: PAtomic<Exchanger<usize>>,
+        xchg: Exchanger<usize>,
         exchanges: [[TryExchange<usize>; COUNT]; NR_THREAD],
     }
 
     impl Default for ExchangeMany {
         fn default() -> Self {
             Self {
-                xchg: PAtomic::null(),
+                xchg: Default::default(),
                 exchanges: array_init::array_init(|_| {
                     array_init::array_init(|_| TryExchange::<usize>::default())
                 }),
@@ -581,17 +549,7 @@ mod tests {
             (): Self::Input,
             pool: &PoolHandle<O>,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let guard = unsafe { epoch::unprotected(pool) };
-            let mut xchg = self.xchg.load(Ordering::SeqCst, guard);
-
-            // Initialize exchanger
-            if xchg.is_null() {
-                xchg = Exchanger::<usize>::new(pool).into_shared(guard);
-                // TODO: 여기서 crash나면 leak남
-                self.xchg.store(xchg, Ordering::SeqCst);
-            }
-
-            let xchg_ref = unsafe { xchg.deref(pool) };
+            let xchg = &self.xchg;
             let exchanges = &mut self.exchanges;
 
             let unfinished = &Unfinished::default();
@@ -609,7 +567,7 @@ mod tests {
                         // `move` for `tid`
                         for (i, exchange) in exchanges_arr.iter_mut().enumerate() {
                             if let Err(_) =
-                                exchange.run(xchg_ref, (tid, Duration::milliseconds(500)), pool)
+                                exchange.run(xchg, (tid, Duration::milliseconds(500)), pool)
                             {
                                 // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
                                 // => 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
@@ -656,7 +614,7 @@ mod tests {
                         break;
                     }
                     let ret = exchange
-                        .run(xchg_ref, (666, Duration::milliseconds(0)), pool)
+                        .run(xchg, (666, Duration::milliseconds(0)), pool)
                         .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
                     results[ret] += 1;
                 }

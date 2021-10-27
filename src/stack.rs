@@ -7,7 +7,7 @@ use crate::persistent::*;
 pub struct TryFail;
 
 /// Persistent stack trait
-pub trait Stack<T> {
+pub trait Stack<T>: Default {
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     type TryPush: for<'o> POp<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = TryFail>;

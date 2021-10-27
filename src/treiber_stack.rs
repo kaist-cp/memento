@@ -17,7 +17,7 @@ use std::ptr;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::{ll::*, pool::*};
+use crate::plocation::pool::*;
 use crate::stack::*;
 
 struct Node<T: Clone> {
@@ -275,18 +275,15 @@ pub struct TreiberStack<T: Clone> {
     top: PAtomic<Node<T>>,
 }
 
-impl<T: Clone> TreiberStack<T> {
-    /// new
-    // TODO: alloc, init 구상한 후 시그니처 변경
-    pub fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
-        let ret = POwned::new(Self {
-            top: PAtomic::null()
-        }, pool);
-
-        persist_obj(unsafe { ret.deref(pool) }, true);
-        ret
+impl<T: Clone> Default for TreiberStack<T> {
+    fn default() -> Self {
+        Self {
+            top: PAtomic::null(),
+        }
     }
+}
 
+impl<T: Clone> TreiberStack<T> {
     fn push<C: PushType<T>, O: POp>(&self, client: &C, value: T, pool: &PoolHandle<O>) -> Result<(), TryFail> {
         let guard = epoch::pin(pool);
         let mut mine = client.mine().load(Ordering::SeqCst, &guard);
@@ -446,15 +443,14 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::{pepoch::PAtomic, stack::tests::*, utils::tests::*};
+    use crate::{stack::tests::*, utils::tests::*};
 
     const NR_THREAD: usize = 4;
     const COUNT: usize = 1_000_000;
 
     #[derive(Default)]
     struct RootOp {
-        // TODO: PAtomic 쓰지 않게끔
-        stack: PAtomic<TreiberStack<usize>>,
+        stack: TreiberStack<usize>,
         push_pop: PushPop<TreiberStack<usize>, NR_THREAD, COUNT>,
     }
 
@@ -470,18 +466,7 @@ mod tests {
             (): Self::Input,
             pool: &PoolHandle<O>,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let guard = unsafe { epoch::unprotected(pool) };
-            let mut s = self.stack.load(Ordering::SeqCst, guard);
-
-            // Initialize stack
-            if s.is_null() {
-                s = TreiberStack::<usize>::new(pool).into_shared(guard);
-                // TODO: 여기서 crash나면 leak남
-                self.stack.store(s, Ordering::SeqCst);
-            }
-
-            let s_ref = unsafe { s.deref(pool) };
-            self.push_pop.run(s_ref, (), pool)
+            self.push_pop.run(&self.stack, (), pool)
         }
 
         fn reset(&mut self, _: bool) {
