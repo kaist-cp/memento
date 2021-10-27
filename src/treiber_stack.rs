@@ -470,7 +470,7 @@ mod tests {
             (): Self::Input,
             pool: &PoolHandle<O>,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let guard = unsafe { epoch::unprotected(&pool) };
+            let guard = unsafe { epoch::unprotected(pool) };
             let mut s = self.stack.load(Ordering::SeqCst, guard);
 
             // Initialize stack

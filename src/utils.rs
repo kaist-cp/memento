@@ -51,7 +51,6 @@ pub mod tests {
         Pool::create::<DummyRootOp>(&temp_path, filesize)
     }
 
-
     /// test를 위한 root op은 아래 조건을 만족하자
     pub trait TestRootOp: for<'o> POp<Object<'o> = (), Input = ()> {}
 
@@ -67,6 +66,6 @@ pub mod tests {
         let root_op = pool_handle.get_root();
 
         // 루트 op 실행
-        let _ = root_op.run((), (), &pool_handle);
+        while root_op.run((), (), &pool_handle).is_err() {}
     }
 }

@@ -457,7 +457,7 @@ mod test {
 
     impl RootOp {
         fn init<O: POp>(&self, pool: &PoolHandle<O>) {
-            let guard = unsafe { epoch::unprotected(&pool) };
+            let guard = unsafe { epoch::unprotected(pool) };
             let q = self.queue.load(Ordering::SeqCst, guard);
 
             // Initialize queue
@@ -539,14 +539,14 @@ mod test {
 
     impl TestRootOp for RootOp {}
 
-    const FILE_NAME: &str = "enq_deq.pool";
-    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
     // TODO: stack의 enq_deq과 합치기
     // 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     #[serial] // Multi-threaded test의 속도 저하 방지
     fn enq_deq() {
+        const FILE_NAME: &str = "enq_deq.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
         run_test::<RootOp, _>(FILE_NAME, FILE_SIZE)
     }
 }
