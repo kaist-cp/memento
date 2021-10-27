@@ -141,9 +141,9 @@ impl<T> ExchangeType<T> for Exchange<T> {
 unsafe impl<T> Send for Exchange<T> {}
 
 impl<T: 'static + Clone> POp for Exchange<T> {
-    type Object<'e> = &'e Exchanger<T>;
+    type Object<'o> = &'o Exchanger<T>;
     type Input = T;
-    type Output<'e> = T;
+    type Output<'o> = T;
     type Error = !;
 
     fn run<'o, O: POp>(
@@ -167,7 +167,7 @@ impl<T: 'static + Clone> POp for Exchange<T> {
 /// 스레드 간의 exchanger
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
-pub struct Exchanger<T> {
+pub struct Exchanger<T: Clone> {
     slot: PAtomic<Node<T>>,
 }
 
@@ -346,7 +346,7 @@ impl<T: Clone> Exchanger<T> {
     }
 }
 
-unsafe impl<T> Send for Exchanger<T> {}
+unsafe impl<T: Clone> Send for Exchanger<T> {}
 
 #[cfg(test)]
 mod tests {
