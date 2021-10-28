@@ -347,7 +347,6 @@ mod tests {
 
     use chrono::Duration;
     use crossbeam_utils::thread;
-    use serial_test::serial;
 
     use crate::utils::tests::{run_test, TestRootOp};
 
@@ -509,7 +508,6 @@ mod tests {
     impl TestRootOp for RotateLeft {}
 
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지
     fn rotate_left() {
         const FILE_NAME: &str = "rotate_left.pool";
         const FILE_SIZE: usize = 1024;
@@ -645,7 +643,6 @@ mod tests {
 
     /// 스레드 여러 개의 exchange
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지
     fn exchange_many() {
         const FILE_NAME: &str = "exchange_many.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;

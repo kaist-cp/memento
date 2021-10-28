@@ -78,18 +78,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_utils::thread;
     use std::sync::atomic::Ordering;
 
     use crate::pepoch::{self, PAtomic};
     use crate::persistent::*;
     use crate::queue::*;
-
     use crate::utils::tests::*;
 
     use super::*;
-
-    use crossbeam_utils::thread;
-    use serial_test::serial;
 
     const COUNT: usize = 1_000_000;
 
@@ -197,7 +194,6 @@ mod tests {
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지
     fn pipe_concur() {
         run_test::<Transfer, _>(FILE_NAME, FILE_SIZE)
     }

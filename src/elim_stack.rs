@@ -292,8 +292,6 @@ where
 
 #[cfg(test)]
 mod test {
-    use serial_test::serial;
-
     use super::*;
     use crate::stack::tests::*;
     use crate::treiber_stack::TreiberStack;
@@ -340,7 +338,6 @@ mod test {
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지
     fn push_pop() {
         const FILE_NAME: &str = "elim_push_pop.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
@@ -349,7 +346,6 @@ mod test {
     }
 
     #[test]
-    #[serial] // Multi-threaed test의 속도 저하 방지
     fn push_pop_double_elim() {
         const FILE_NAME: &str = "elim_push_pop_double_elim.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;

@@ -440,8 +440,6 @@ impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
-
     use super::*;
     use crate::{stack::tests::*, utils::tests::*};
 
@@ -481,7 +479,6 @@ mod tests {
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지
     fn push_pop() {
         run_test::<RootOp, _>(FILE_NAME, FILE_SIZE)
     }
