@@ -29,12 +29,14 @@
 // #![deny(single_use_lifetimes)] // Allowd due to GAT
 // #![deny(unused_lifetimes)] // Allowd due to GAT
 // #![deny(unstable_features)] // Allowd due to GAT
+#![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
 #![feature(generic_associated_types)] // to define fields of `POp`
 #![feature(asm)]
 #![feature(never_type)] // to use `!`
 
 // Persistent objects collection
 pub mod exchanger;
+pub mod elim_stack;
 // pub mod list; // TODO: plocation으로 동작시키며 주석해제
 // pub mod lock; // TODO: plocation으로 동작시키며 주석해제
 pub mod persistent;

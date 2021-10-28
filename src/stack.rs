@@ -7,14 +7,14 @@ use crate::persistent::*;
 pub struct TryFail;
 
 /// Persistent stack trait
-pub trait Stack<T>: Default {
+pub trait Stack<T: Clone>: 'static + Default {
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     type TryPush: for<'o> POp<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = TryFail>;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
-    type Push: for<'o> POp<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = !>;
+    type Push: for<'o> POp<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = !> = Push<T, Self>;
 
     /// Try pop 연산을 위한 Persistent op.
     /// Try pop의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
@@ -24,8 +24,85 @@ pub trait Stack<T>: Default {
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
     /// pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type Pop: for<'o> POp<Object<'o> = &'o Self, Input = (), Output<'o> = Option<T>, Error = !>;
+    type Pop: for<'o> POp<Object<'o> = &'o Self, Input = (), Output<'o> = Option<T>, Error = !> = Pop<T, Self>;
 }
+
+/// Stack의 try push를 이용하는 push op.
+#[derive(Debug)]
+pub struct Push<T: Clone, S: Stack<T>> {
+    try_push: S::TryPush,
+}
+
+impl<T: Clone, S: Stack<T>> Default for Push<T, S> {
+    fn default() -> Self {
+        Self {
+            try_push: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone, S: Stack<T>> POp for Push<T, S> {
+    type Object<'o> = &'o S;
+    type Input = T;
+    type Output<'o> = ();
+    type Error = !;
+
+    fn run<'o, O: POp>(
+        &mut self,
+        stack: Self::Object<'o>,
+        value: Self::Input,
+        pool: &crate::plocation::PoolHandle<O>,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        while self.try_push.run(stack, value.clone(), pool).is_err() {}
+        Ok(())
+    }
+
+    fn reset(&mut self, _: bool) {
+        self.try_push.reset(true);
+    }
+}
+
+unsafe impl<T: Clone, S: Stack<T>> Send for Push<T, S> {}
+
+/// Stack의 try pop을 이용하는 pop op.
+#[derive(Debug)]
+pub struct Pop<T: Clone, S: Stack<T>> {
+    try_pop: S::TryPop,
+}
+
+impl<T: Clone, S: Stack<T>> Default for Pop<T, S> {
+    fn default() -> Self {
+        Self {
+            try_pop: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone, S: Stack<T>> POp for Pop<T, S> {
+    type Object<'o> = &'o S;
+    type Input = ();
+    type Output<'o> = Option<T>;
+    type Error = !;
+
+    fn run<'o, O: POp>(
+        &mut self,
+        stack: Self::Object<'o>,
+        (): Self::Input,
+        pool: &crate::plocation::PoolHandle<O>,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        loop {
+            if let Ok(v) = self.try_pop.run(stack, (), pool) {
+                return Ok(v);
+            }
+        }
+    }
+
+    fn reset(&mut self, _: bool) {
+        self.try_pop.reset(true);
+    }
+}
+
+unsafe impl<T: Clone, S: Stack<T>> Send for Pop<T, S> {}
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -39,16 +116,12 @@ pub(crate) mod tests {
 
     impl<S, const NR_THREAD: usize, const COUNT: usize> Default for PushPop<S, NR_THREAD, COUNT>
     where
-        S: Stack<usize>
+        S: Stack<usize>,
     {
         fn default() -> Self {
             Self {
-                pushes: array_init::array_init(|_| {
-                    array_init::array_init(|_| S::Push::default())
-                }),
-                pops: array_init::array_init(|_| {
-                    array_init::array_init(|_| S::Pop::default())
-                }),
+                pushes: array_init::array_init(|_| array_init::array_init(|_| S::Push::default())),
+                pops: array_init::array_init(|_| array_init::array_init(|_| S::Pop::default())),
             }
         }
     }

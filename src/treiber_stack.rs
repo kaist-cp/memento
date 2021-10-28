@@ -476,7 +476,7 @@ mod tests {
 
     impl TestRootOp for RootOp {}
 
-    const FILE_NAME: &str = "push_pop.pool";
+    const FILE_NAME: &str = "treiber_push_pop.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)

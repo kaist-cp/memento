@@ -8,7 +8,6 @@
 
 // TODO(pmem 사용(#31, #32)):
 // - persist를 위해 flush/fence 추가
-// - persistent location 위에서 동작
 
 // TODO(Ordering):
 // - Ordering 최적화
@@ -20,7 +19,7 @@ use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::{ll::*, pool::*};
+use crate::plocation::pool::*;
 
 #[derive(Debug)]
 struct Node<T> {
@@ -54,7 +53,7 @@ pub struct TryFail;
 
 /// `Exchanger::exchange()`의 시간 제한
 #[derive(Debug)]
-pub enum Timeout {
+enum Timeout {
     /// `Duration` 만큼 시간 제한
     Limited(Duration),
 
