@@ -1,6 +1,7 @@
 //! Persistent Stack
 
 use crate::persistent::*;
+use crate::plocation::PoolHandle;
 
 /// Stack의 try push/pop 실패
 #[derive(Debug, Clone)]
@@ -51,7 +52,7 @@ impl<T: Clone, S: Stack<T>> POp for Push<T, S> {
         &mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
-        pool: &crate::plocation::PoolHandle<O>,
+        pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
         while self.try_push.run(stack, value.clone(), pool).is_err() {}
         Ok(())
@@ -88,7 +89,7 @@ impl<T: Clone, S: Stack<T>> POp for Pop<T, S> {
         &mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
-        pool: &crate::plocation::PoolHandle<O>,
+        pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
             if let Ok(v) = self.try_pop.run(stack, (), pool) {
@@ -108,6 +109,8 @@ unsafe impl<T: Clone, S: Stack<T>> Send for Pop<T, S> {}
 pub(crate) mod tests {
     use super::*;
     use crossbeam_utils::thread;
+
+    use crate::plocation::PoolHandle;
 
     pub(crate) struct PushPop<S: Stack<usize>, const NR_THREAD: usize, const COUNT: usize> {
         pushes: [[S::Push; COUNT]; NR_THREAD],
@@ -146,7 +149,7 @@ pub(crate) mod tests {
             &mut self,
             s: Self::Object<'o>,
             (): Self::Input,
-            pool: &crate::plocation::PoolHandle<O>,
+            pool: &PoolHandle<O>,
         ) -> Result<Self::Output<'o>, Self::Error> {
             #[allow(box_pointers)]
             thread::scope(|scope| {

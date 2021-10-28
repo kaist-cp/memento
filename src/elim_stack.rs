@@ -218,7 +218,7 @@ where
         let elim_result = client.try_exchange.run(
             &self.slots[client.elim_idx],
             (
-                Request::Push(value.clone()),
+                Request::Push(value),
                 Duration::milliseconds(ELIM_DELAY),
             ),
             pool,
