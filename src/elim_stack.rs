@@ -197,11 +197,6 @@ where
             client.reset(false);
         }
 
-        // let guard = epoch::pin();
-        // let data = Owned::new(value).into_shared(&guard);
-        // client.data.store(data, Ordering::SeqCst);
-        // let data = data.into_usize();
-
         if let State::TryingInner = client.state {
             if client
                 .try_push
@@ -299,7 +294,7 @@ mod test {
     use crate::treiber_stack::TreiberStack;
     use crate::utils::tests::*;
 
-    const NR_THREAD: usize = 4;
+    const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;
 
     struct RootOp<S: Stack<usize>> {

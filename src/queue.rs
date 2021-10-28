@@ -425,7 +425,7 @@ mod test {
 
     use super::*;
 
-    const NR_THREAD: usize = 4;
+    const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;
 
     struct RootOp {

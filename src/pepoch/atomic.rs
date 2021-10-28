@@ -1490,6 +1490,7 @@ impl<T> PShared<'_, T> {
     /// let p = a.load(SeqCst, guard);
     /// assert_eq!(p.as_ptr(), ptr);
     /// ```
+    // TODO: Define as as AsPptr? (using `impl AsPptr for PShared<....`)
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn as_ptr(&self) -> PPtr<T> {
         let (offset, _) = decompose_tag::<T>(self.data);
