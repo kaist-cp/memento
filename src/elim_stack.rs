@@ -1,6 +1,7 @@
 //! Persistent stack based on Elimination backoff stack
 
 // TODO: Add persist instruction
+// TODO: treiber 보다 느림...
 
 use chrono::Duration;
 use rand::{thread_rng, Rng};
@@ -288,6 +289,7 @@ where
 {
     type TryPush = TryPush<T, S>;
     type TryPop = TryPop<T, S>;
+    // TODO: Use built-in Pop, Push?
 }
 
 #[cfg(test)]

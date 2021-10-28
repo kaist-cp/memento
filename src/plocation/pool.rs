@@ -134,6 +134,7 @@ impl<O: POp> PoolHandle<O> {
 #[derive(Debug)]
 pub struct Pool {
     /// 풀의 시작주소로부터 루트 Op까지의 거리
+    // TODO: 아마 쓸모없는 필드일 거임
     root_offset: usize,
 
     /// 메타데이터, 루트를 제외한 공간을 관리할 allocator

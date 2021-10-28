@@ -17,7 +17,7 @@ use std::ptr;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::pool::*;
+use crate::plocation::{AsPPtr, pool::*};
 use crate::stack::*;
 
 struct Node<T: Clone> {
@@ -146,8 +146,13 @@ impl<T: 'static + Clone> POp for Push<T> {
     }
 }
 
-trait PopType<T: Clone> {
-    fn id(&self) -> usize;
+trait PopType<T: Clone>: Sized {
+    #[inline]
+    fn id<O: POp>(&self, pool: &PoolHandle<O>) -> usize {
+        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
+        unsafe { self.as_pptr(pool).into_offset() }
+    }
+
     fn target(&self) -> &PAtomic<Node<T>>;
     fn is_try(&self) -> bool;
 }
@@ -168,11 +173,6 @@ impl<T: Clone> Default for TryPop<T> {
 }
 
 impl<T: Clone> PopType<T> for TryPop<T> {
-    #[inline]
-    fn id(&self) -> usize {
-        self as *const Self as usize
-    }
-
     #[inline]
     fn target(&self) -> &PAtomic<Node<T>> {
         &self.target
@@ -229,11 +229,6 @@ impl<T: Clone> Default for Pop<T> {
 }
 
 impl<T: Clone> PopType<T> for Pop<T> {
-    #[inline]
-    fn id(&self) -> usize {
-        self as *const Self as usize
-    }
-
     #[inline]
     fn target(&self) -> &PAtomic<Node<T>> {
         &self.target
@@ -352,27 +347,26 @@ impl<T: Clone> TreiberStack<T> {
             let target_ref = unsafe { target.deref(pool) };
 
             // target이 내가 pop한 게 맞는지 확인
-            if target_ref.popper.load(Ordering::SeqCst) == client.id() {
+            if target_ref.popper.load(Ordering::SeqCst) == client.id(pool) {
                 return Ok(Some(Self::finish_pop(target_ref)));
-                // TODO: free node
             };
 
             // target이 stack에서 pop되긴 했는지 확인
             if !self.search(target, &guard, pool) {
-                // stack에서 나온 상태에서 crash 난 경우이므로 popper를 마저 기록해줌
-                // cas인 이유: 다른 스레드도 같은 target을 노리던 중이었을 수도 있음
+                // 누군가가 target을 stack에서 빼고 popper 기록 전에 crash가 남
+                // 그러므로 popper를 마저 기록해줌
+                // cas인 이유: 서로 누가 진짜 주인인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
                 if target_ref
                     .popper
                     .compare_exchange(
                         Self::no_popper(),
-                        client.id(),
+                        client.id(pool),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     )
                     .is_ok()
                 {
                     return Ok(Some(Self::finish_pop(target_ref)));
-                    // TODO: free node
                 }
             }
         }
@@ -410,8 +404,7 @@ impl<T: Clone> TreiberStack<T> {
             .compare_exchange(top, next, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| {
                 // top node에 내 이름 새겨넣음
-                top_ref.popper.store(client.id(), Ordering::SeqCst);
-                // TODO: free node
+                top_ref.popper.store(client.id(pool), Ordering::SeqCst);
                 Some(Self::finish_pop(top_ref))
             })
             .map_err(|_| TryFail)
@@ -419,7 +412,6 @@ impl<T: Clone> TreiberStack<T> {
 
     fn finish_pop(node: &Node<T>) -> T {
         node.data.clone()
-        // free node
     }
 
     #[inline]
