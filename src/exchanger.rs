@@ -65,6 +65,8 @@ trait ExchangeType<T> {
     fn node(&self) -> &PAtomic<Node<T>>;
 }
 
+type ExchangeCond<T> = fn(&T) -> bool;
+
 /// Exchanger의 try exchange operation
 ///
 /// `timeout` 시간 내에 교환이 이루어지지 않으면 실패.
@@ -94,17 +96,17 @@ unsafe impl<T> Send for TryExchange<T> {}
 
 impl<T: 'static + Clone> POp for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input = (T, Duration);
+    type Input = (T, Duration, ExchangeCond<T>);
     type Output<'o> = T;
     type Error = TryFail;
 
     fn run<'o, O: POp>(
         &mut self,
         xchg: Self::Object<'o>,
-        (value, timeout): Self::Input,
+        (value, timeout, cond): Self::Input,
         pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        xchg.exchange(self, value, Timeout::Limited(timeout), pool)
+        xchg.exchange(self, value, Timeout::Limited(timeout), cond, pool)
     }
 
     fn reset(&mut self, _: bool) {
@@ -141,18 +143,18 @@ unsafe impl<T> Send for Exchange<T> {}
 
 impl<T: 'static + Clone> POp for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input = T;
+    type Input = (T, ExchangeCond<T>);
     type Output<'o> = T;
     type Error = !;
 
     fn run<'o, O: POp>(
         &mut self,
         xchg: Self::Object<'o>,
-        value: Self::Input,
+        (value, cond): Self::Input,
         pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(xchg
-            .exchange(self, value, Timeout::Unlimited, pool)
+            .exchange(self, value, Timeout::Unlimited, cond, pool)
             .unwrap())
     }
 
@@ -186,6 +188,7 @@ impl<T: Clone> Exchanger<T> {
         client: &mut C,
         value: T,
         timeout: Timeout,
+        cond: ExchangeCond<T>,
         pool: &PoolHandle<O>,
     ) -> Result<T, TryFail> {
         let guard = epoch::pin(pool);
@@ -274,6 +277,12 @@ impl<T: Clone> Exchanger<T> {
                 }
                 WAITING => {
                     // Case 3: slot에서 다른 node가 기다림
+
+                    let yourop_ref = unsafe { yourop.deref(pool) };
+                    if !cond(&yourop_ref.mine) {
+                        // 내가 원하는 짝이 아닐 경우 재시도
+                        continue;
+                    }
 
                     // slot에 있는 node를 짝꿍 삼기 시도
                     myop_ref.partner.store(yourop, Ordering::SeqCst);
@@ -391,7 +400,7 @@ mod tests {
                     };
                     let _ = scope.spawn(move |_| {
                         // `move` for `tid`
-                        let ret = exchange.run(xchg, tid, pool).unwrap();
+                        let ret = exchange.run(xchg, (tid, |_| true), pool).unwrap();
                         assert_eq!(ret, 1 - tid);
                     });
                 }
@@ -476,23 +485,23 @@ mod tests {
             thread::scope(|scope| {
                 let _ = scope.spawn(|_| {
                     // [0] -> [1]    [2]
-                    *item0 = exchange0.run(lxchg, *item0, pool).unwrap();
+                    *item0 = exchange0.run(lxchg, (*item0, |_| true), pool).unwrap();
                     assert_eq!(*item0, 1);
                 });
 
                 let _ = scope.spawn(|_| {
                     // [0]    [1] <- [2]
-                    *item2 = exchange2.run(rxchg, *item2, pool).unwrap();
+                    *item2 = exchange2.run(rxchg, (*item2, |_| true), pool).unwrap();
                     assert_eq!(*item2, 0);
                 });
 
                 // Composition in the middle
                 // Step1: [0] <- [1]    [2]
-                *item1 = exchange1_0.run(lxchg, *item1, pool).unwrap();
+                *item1 = exchange1_0.run(lxchg, (*item1, |_| true), pool).unwrap();
                 assert_eq!(*item1, 0);
 
                 // Step2: [1]    [0] -> [2]
-                *item1 = exchange1_2.run(rxchg, *item1, pool).unwrap();
+                *item1 = exchange1_2.run(rxchg, (*item1, |_| true), pool).unwrap();
                 assert_eq!(*item1, 2);
             })
             .unwrap();
@@ -563,9 +572,11 @@ mod tests {
                     let _ = scope.spawn(move |_| {
                         // `move` for `tid`
                         for (i, exchange) in exchanges_arr.iter_mut().enumerate() {
-                            if let Err(_) =
-                                exchange.run(xchg, (tid, Duration::milliseconds(500)), pool)
-                            {
+                            if let Err(_) = exchange.run(
+                                xchg,
+                                (tid, Duration::milliseconds(500), |_| true),
+                                pool,
+                            ) {
                                 // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
                                 // => 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
                                 if unfinished.flag.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -611,7 +622,7 @@ mod tests {
                         break;
                     }
                     let ret = exchange
-                        .run(xchg, (666, Duration::milliseconds(0)), pool)
+                        .run(xchg, (666, Duration::milliseconds(0), |_| true), pool)
                         .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
                     results[ret] += 1;
                 }
