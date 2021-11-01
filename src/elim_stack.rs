@@ -89,7 +89,6 @@ where
             self.state = State::Resetting;
         }
 
-        // TODO: if not finished -> free data
         self.try_exchange.reset(true);
         self.try_push.reset(true);
 
@@ -150,7 +149,6 @@ where
             self.state = State::Resetting;
         }
 
-        // TODO: if finished -> free data
         self.try_pop.reset(true);
         self.try_exchange.reset(true);
 
@@ -203,7 +201,6 @@ where
                 .run(&self.inner, value.clone(), pool)
                 .is_ok()
             {
-                // TODO: exchange 실패한 xchg 노드가 free 되어야 함
                 return Ok(());
             }
 
@@ -213,20 +210,15 @@ where
 
         let elim_result = client.try_exchange.run(
             &self.slots[client.elim_idx],
-            (
-                Request::Push(value),
-                Duration::milliseconds(ELIM_DELAY),
-            ),
+            (Request::Push(value), Duration::milliseconds(ELIM_DELAY)),
             pool,
         );
 
-        if let Ok(Request::Pop) = elim_result {
-            // TODO: push 실패한 stack 노드가 free 되어야 함
-            return Ok(());
-        }
-
-        if let Ok(Request::Push(_)) = elim_result {
-            client.try_exchange.reset(false);
+        if let Ok(req) = elim_result {
+            match req {
+                Request::Push(_) => client.try_exchange.reset(false),
+                Request::Pop => return Ok(()),
+            }
         }
 
         client.state = State::TryingInner;
@@ -248,7 +240,6 @@ where
 
         if let State::TryingInner = client.state {
             if let Ok(v) = client.try_pop.run(&self.inner, (), pool) {
-                // TODO: exchange 실패한 xchg 노드가 free 되어야 함
                 return Ok(v);
             }
 

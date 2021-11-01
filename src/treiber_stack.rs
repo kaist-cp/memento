@@ -13,11 +13,11 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 use etrace::some_or;
-use std::ptr;
 
+use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::{AsPPtr, pool::*};
+use crate::plocation::{pool::*, AsPPtr};
 use crate::stack::*;
 
 struct Node<T: Clone> {
@@ -279,7 +279,12 @@ impl<T: Clone> Default for TreiberStack<T> {
 }
 
 impl<T: Clone> TreiberStack<T> {
-    fn push<C: PushType<T>, O: POp>(&self, client: &C, value: T, pool: &PoolHandle<O>) -> Result<(), TryFail> {
+    fn push<C: PushType<T>, O: POp>(
+        &self,
+        client: &C,
+        value: T,
+        pool: &PoolHandle<O>,
+    ) -> Result<(), TryFail> {
         let guard = epoch::pin(pool);
         let mut mine = client.mine().load(Ordering::SeqCst, &guard);
 
@@ -306,7 +311,12 @@ impl<T: Clone> TreiberStack<T> {
     }
 
     /// top에 새 `node` 연결을 시도
-    fn try_push<O: POp>(&self, node: PShared<'_, Node<T>>, guard: &Guard<'_>, pool: &PoolHandle<O>) -> Result<(), TryFail> {
+    fn try_push<O: POp>(
+        &self,
+        node: PShared<'_, Node<T>>,
+        guard: &Guard<'_>,
+        pool: &PoolHandle<O>,
+    ) -> Result<(), TryFail> {
         let node_ref = unsafe { node.deref(pool) };
         let top = self.top.load(Ordering::SeqCst, guard);
 
@@ -318,7 +328,12 @@ impl<T: Clone> TreiberStack<T> {
     }
 
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search<O: POp>(&self, node: PShared<'_, Node<T>>, guard: &Guard<'_>, pool: &PoolHandle<O>) -> bool {
+    fn search<O: POp>(
+        &self,
+        node: PShared<'_, Node<T>>,
+        guard: &Guard<'_>,
+        pool: &PoolHandle<O>,
+    ) -> bool {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
@@ -333,7 +348,11 @@ impl<T: Clone> TreiberStack<T> {
         false
     }
 
-    fn pop<C: PopType<T>, O: POp>(&self, client: &mut C, pool: &PoolHandle<O>) -> Result<Option<T>, TryFail> {
+    fn pop<C: PopType<T>, O: POp>(
+        &self,
+        client: &mut C,
+        pool: &PoolHandle<O>,
+    ) -> Result<Option<T>, TryFail> {
         let guard = epoch::pin(pool);
         let target = client.target().load(Ordering::SeqCst, &guard);
 
@@ -353,9 +372,8 @@ impl<T: Clone> TreiberStack<T> {
 
             // target이 stack에서 pop되긴 했는지 확인
             if !self.search(target, &guard, pool) {
-                // 누군가가 target을 stack에서 빼고 popper 기록 전에 crash가 남
-                // 그러므로 popper를 마저 기록해줌
-                // cas인 이유: 서로 누가 진짜 주인인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
+                // 누군가가 target을 stack에서 빼고 popper 기록 전에 crash가 남. 그러므로 popper를 마저 기록해줌
+                // CAS인 이유: 서로 누가 진짜 주인인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
                 if target_ref
                     .popper
                     .compare_exchange(
@@ -384,7 +402,12 @@ impl<T: Clone> TreiberStack<T> {
     }
 
     /// top node를 pop 시도
-    fn try_pop<C: PopType<T>, O: POp>(&self, client: &C, guard: &Guard<'_>, pool: &PoolHandle<O>) -> Result<Option<T>, TryFail> {
+    fn try_pop<C: PopType<T>, O: POp>(
+        &self,
+        client: &C,
+        guard: &Guard<'_>,
+        pool: &PoolHandle<O>,
+    ) -> Result<Option<T>, TryFail> {
         let top = self.top.load(Ordering::SeqCst, guard);
         let top_ref = some_or!(unsafe { top.as_ref(pool) }, {
             // empty
@@ -400,13 +423,25 @@ impl<T: Clone> TreiberStack<T> {
 
         // top node를 next로 바꿈
         let next = top_ref.next.load(Ordering::SeqCst, guard);
-        self.top
+        if self
+            .top
             .compare_exchange(top, next, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| {
-                // top node에 내 이름 새겨넣음
-                top_ref.popper.store(client.id(pool), Ordering::SeqCst);
-                Some(Self::finish_pop(top_ref))
-            })
+            .is_err()
+        {
+            return Err(TryFail);
+        }
+
+        // top node에 내 이름 새겨넣음
+        // CAS인 이유: pop 복구 중인 스레드와 경합이 일어날 수 있음
+        top_ref
+            .popper
+            .compare_exchange(
+                Self::no_popper(),
+                client.id(pool),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map(|_| Some(Self::finish_pop(top_ref)))
             .map_err(|_| TryFail)
     }
 
@@ -416,8 +451,8 @@ impl<T: Clone> TreiberStack<T> {
 
     #[inline]
     fn no_popper() -> usize {
-        let null: *const TryPop<T> = ptr::null();
-        null as usize
+        let null = PShared::<TryPop<T>>::null();
+        null.into_usize()
     }
 }
 
