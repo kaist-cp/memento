@@ -2,6 +2,8 @@
 
 // TODO: Add persist instruction
 // TODO: treiber 보다 느림...
+//       - 느린 이유 의심 1: exchange할 때 상대가 push(혹은 pop)인지 확인 안하고 무조건 바꿈
+//       - 느린 이유 의심 2: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
 
 use chrono::Duration;
 use rand::{thread_rng, Rng};
@@ -195,6 +197,7 @@ where
             client.reset(false);
         }
 
+        // TODO 느린 이유: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
         if let State::TryingInner = client.state {
             if client
                 .try_push
@@ -214,6 +217,7 @@ where
             pool,
         );
 
+        // TODO 느린 이유: exchange할 때 상대가 pop인지 확인 안하고 무조건 바꿈
         if let Ok(req) = elim_result {
             match req {
                 Request::Push(_) => client.try_exchange.reset(false),
@@ -253,6 +257,7 @@ where
             pool,
         );
 
+        // TODO 느린 이유: exchange할 때 상대가 push인지 확인 안하고 무조건 바꿈
         if let Ok(req) = elim_result {
             match req {
                 Request::Push(v) => return Ok(Some(v)),
