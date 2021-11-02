@@ -5,7 +5,6 @@ use crate::{persistent::POp, plocation::{PoolHandle, ll::persist_obj}};
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 ///
 /// - `'o`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
-/// - `O#`: `Op#`이 실행되는 object
 #[derive(Debug)]
 pub struct Pipe<Op1, Op2>
 where
@@ -52,7 +51,7 @@ where
         init: Self::Input,
         pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        if self.resetting {
+        if self.resetting { // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
             self.reset(false);
         }
@@ -79,43 +78,39 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_utils::thread;
     use std::sync::atomic::Ordering;
 
     use crate::pepoch::{self, PAtomic};
     use crate::persistent::*;
-    use crate::plocation::Pool;
     use crate::queue::*;
-    use crate::utils::tests::get_test_path;
+    use crate::utils::tests::*;
 
     use super::*;
 
-    use crossbeam_utils::thread;
-    use serial_test::serial;
-
-    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
     const COUNT: usize = 1_000_000;
 
-    struct TestPipeOp {
+    struct Transfer {
         q1: PAtomic<Queue<usize>>,
         q2: PAtomic<Queue<usize>>,
-        pipes: [Pipe<PopSome<usize>, Push<usize>>; COUNT],
-        suppliers: [Push<usize>; COUNT],
-        consumers: [PopSome<usize>; COUNT],
+        pipes: [Pipe<DequeueSome<usize>, Enqueue<usize>>; COUNT],
+        suppliers: [Enqueue<usize>; COUNT],
+        consumers: [DequeueSome<usize>; COUNT],
     }
 
-    impl Default for TestPipeOp {
+    impl Default for Transfer {
         fn default() -> Self {
             Self {
                 q1: Default::default(),
                 q2: Default::default(),
                 pipes: array_init::array_init(|_| Pipe::default()),
-                suppliers: array_init::array_init(|_| Push::default()),
-                consumers: array_init::array_init(|_| PopSome::default()),
+                suppliers: array_init::array_init(|_| Enqueue::default()),
+                consumers: array_init::array_init(|_| DequeueSome::default()),
             }
         }
     }
 
-    impl TestPipeOp {
+    impl Transfer {
         fn init<O: POp>(&self, pool: &PoolHandle<O>) {
             let guard = unsafe { pepoch::unprotected(&pool) };
             let q1 = self.q1.load(Ordering::SeqCst, guard);
@@ -137,7 +132,7 @@ mod tests {
         }
     }
 
-    impl POp for TestPipeOp {
+    impl POp for Transfer {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
@@ -163,8 +158,8 @@ mod tests {
             thread::scope(|scope| {
                 // T0: Supply q1
                 let _ = scope.spawn(move |_| {
-                    for (i, push) in suppliers.iter_mut().enumerate() {
-                        let _ = push.run(q1, i, pool);
+                    for (i, enq) in suppliers.iter_mut().enumerate() {
+                        let _ = enq.run(q1, i, pool);
                     }
                 });
 
@@ -177,8 +172,8 @@ mod tests {
 
                 // T2: Consume q2
                 let _ = scope.spawn(move |_| {
-                    for (i, pop) in consumers.iter_mut().enumerate() {
-                        let v = pop.run(&q2, (), pool).unwrap();
+                    for (i, deq) in consumers.iter_mut().enumerate() {
+                        let v = deq.run(&q2, (), pool).unwrap();
                         assert_eq!(v, i);
                     }
                 });
@@ -189,23 +184,17 @@ mod tests {
         }
 
         fn reset(&mut self, _nested: bool) {
-            // no-op
+            todo!("reset test")
         }
     }
 
+    impl TestRootOp for Transfer {}
+
+    const FILE_NAME: &str = "pipe_concur.pool";
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지
     fn pipe_concur() {
-        let filepath = get_test_path("pipe.pool");
-
-        // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open(&filepath) }
-            .unwrap_or_else(|_| Pool::create::<TestPipeOp>(&filepath, FILE_SIZE).unwrap());
-
-        // 루트 op 가져오기
-        let root_op = pool_handle.get_root();
-
-        // 루트 op 실행
-        root_op.run((), (), &pool_handle).unwrap();
+        run_test::<Transfer, _>(FILE_NAME, FILE_SIZE)
     }
 }

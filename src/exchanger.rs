@@ -8,7 +8,6 @@
 
 // TODO(pmem 사용(#31, #32)):
 // - persist를 위해 flush/fence 추가
-// - persistent location 위에서 동작
 
 // TODO(Ordering):
 // - Ordering 최적화
@@ -16,10 +15,11 @@
 use chrono::{Duration, Utc};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
-use crossbeam_epoch::{self as epoch, Atomic, Guard, Owned, Shared};
 use std::mem::MaybeUninit;
 
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
+use crate::plocation::pool::*;
 
 #[derive(Debug)]
 struct Node<T> {
@@ -33,16 +33,16 @@ struct Node<T> {
     response: AtomicBool,
 
     /// exchange 할 상대의 포인터 (단방향)
-    partner: Atomic<Node<T>>,
+    partner: PAtomic<Node<T>>,
 }
 
-impl<T> From<T> for Node<T> {
+impl<T: Clone> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             mine: value,
             yours: MaybeUninit::uninit(),
             response: AtomicBool::new(false),
-            partner: Atomic::null(),
+            partner: PAtomic::null(),
         }
     }
 }
@@ -53,7 +53,7 @@ pub struct TryFail;
 
 /// `Exchanger::exchange()`의 시간 제한
 #[derive(Debug)]
-pub enum Timeout {
+enum Timeout {
     /// `Duration` 만큼 시간 제한
     Limited(Duration),
 
@@ -62,8 +62,10 @@ pub enum Timeout {
 }
 
 trait ExchangeType<T> {
-    fn node(&self) -> &Atomic<Node<T>>;
+    fn node(&self) -> &PAtomic<Node<T>>;
 }
+
+type ExchangeCond<T> = fn(&T) -> bool;
 
 /// Exchanger의 try exchange operation
 ///
@@ -72,20 +74,20 @@ trait ExchangeType<T> {
 #[derive(Debug)]
 pub struct TryExchange<T> {
     /// exchange item을 담고 다른 스레드 공유하기 위해 할당된 node
-    node: Atomic<Node<T>>,
+    node: PAtomic<Node<T>>,
 }
 
 impl<T> Default for TryExchange<T> {
     fn default() -> Self {
         Self {
-            node: Atomic::null(),
+            node: PAtomic::null(),
         }
     }
 }
 
 impl<T> ExchangeType<T> for TryExchange<T> {
     #[inline]
-    fn node(&self) -> &Atomic<Node<T>> {
+    fn node(&self) -> &PAtomic<Node<T>> {
         &self.node
     }
 }
@@ -93,53 +95,24 @@ impl<T> ExchangeType<T> for TryExchange<T> {
 unsafe impl<T> Send for TryExchange<T> {}
 
 impl<T: 'static + Clone> POp for TryExchange<T> {
-    type Object<'e> = &'e Exchanger<T>;
-    type Input = (T, Duration);
-    type Output<'e> = Result<T, TryFail>;
+    type Object<'o> = &'o Exchanger<T>;
+    type Input = (T, Duration, ExchangeCond<T>);
+    type Output<'o> = T;
+    type Error = TryFail;
 
-    fn run<'o>(
-        &'o mut self,
+    fn run<'o, O: POp>(
+        &mut self,
         xchg: Self::Object<'o>,
-        (value, timeout): Self::Input,
-    ) -> Self::Output<'o> {
-        xchg.exchange(self, value, Timeout::Limited(timeout))
+        (value, timeout, cond): Self::Input,
+        pool: &PoolHandle<O>,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        xchg.exchange(self, value, Timeout::Limited(timeout), cond, pool)
     }
 
     fn reset(&mut self, _: bool) {
-        self.node.store(Shared::null(), Ordering::SeqCst);
+        self.node.store(PShared::null(), Ordering::SeqCst);
         // TODO: if not finished -> free node
         // TODO: if node has not been freed, free node
-    }
-}
-
-impl<T> TryExchange<T> {
-    /// 기본값 태그
-    const DEFAULT: usize = 0;
-
-    /// Try exchange 결과 실패를 표시하기 위한 태그
-    const FAIL: usize = 1;
-
-    /// exchange 할 input은 남겨두는 reset.
-    /// - 같은 input에 대해 exchange를 재시도하고 싶을 때 사용.
-    ///   예를 들어, elimination stack 구현 시 순서대로 (1) exchange 실패, (2) central stack try push/pop 실패, (3) exchange 재시도 하는 경우가 있음
-    ///   이때 (1)에서 사용된 op을 `reset_weak()` 하여, `node`를 재할당 하지 않고 같은 input에 대해 exchange를 재시도할 수 있음.
-    /// - 만약 exchange가 이미 성공했다면 내가 교환할 값은 남기고 상대에게 받은 값을 삭제. 즉, input만 입력되고 op은 끝까지 실행되지 않은 상태로 돌아감.
-    pub fn reset_weak(&self) {
-        let guard = epoch::pin();
-        let node = self.node.load(Ordering::SeqCst, &guard);
-
-        if node.tag() == Self::FAIL {
-            self.node
-                .store(node.with_tag(Self::DEFAULT), Ordering::SeqCst);
-            return;
-        }
-
-        todo!("try exchange 중인 스레드가 exchanger 안에 있다가 crash 났을 경우 reset_weak과 helping의 race가 있을 수 있음");
-
-        // let node_ref = unsafe { node.deref() };
-        // if node_ref.response.load(Ordering::SeqCst) {
-        //     node_ref.response.store(false, Ordering::SeqCst);
-        // }
     }
 }
 
@@ -148,20 +121,20 @@ impl<T> TryExchange<T> {
 #[derive(Debug)]
 pub struct Exchange<T> {
     /// exchange item을 담고 다른 스레드 공유하기 위해 할당된 node
-    node: Atomic<Node<T>>,
+    node: PAtomic<Node<T>>,
 }
 
 impl<T> Default for Exchange<T> {
     fn default() -> Self {
         Self {
-            node: Atomic::null(),
+            node: PAtomic::null(),
         }
     }
 }
 
 impl<T> ExchangeType<T> for Exchange<T> {
     #[inline]
-    fn node(&self) -> &Atomic<Node<T>> {
+    fn node(&self) -> &PAtomic<Node<T>> {
         &self.node
     }
 }
@@ -169,16 +142,24 @@ impl<T> ExchangeType<T> for Exchange<T> {
 unsafe impl<T> Send for Exchange<T> {}
 
 impl<T: 'static + Clone> POp for Exchange<T> {
-    type Object<'e> = &'e Exchanger<T>;
-    type Input = T;
-    type Output<'e> = T;
+    type Object<'o> = &'o Exchanger<T>;
+    type Input = (T, ExchangeCond<T>);
+    type Output<'o> = T;
+    type Error = !;
 
-    fn run<'o>(&'o mut self, xchg: Self::Object<'o>, value: Self::Input) -> Self::Output<'o> {
-        xchg.exchange(self, value, Timeout::Unlimited).unwrap()
+    fn run<'o, O: POp>(
+        &mut self,
+        xchg: Self::Object<'o>,
+        (value, cond): Self::Input,
+        pool: &PoolHandle<O>,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        Ok(xchg
+            .exchange(self, value, Timeout::Unlimited, cond, pool)
+            .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
     fn reset(&mut self, _: bool) {
-        self.node.store(Shared::null(), Ordering::SeqCst);
+        self.node.store(PShared::null(), Ordering::SeqCst);
         // TODO: if not finished -> free node
         // TODO: if node has not been freed, free node
     }
@@ -187,42 +168,41 @@ impl<T: 'static + Clone> POp for Exchange<T> {
 /// 스레드 간의 exchanger
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
-pub struct Exchanger<T> {
-    slot: Atomic<Node<T>>,
+pub struct Exchanger<T: Clone> {
+    slot: PAtomic<Node<T>>,
 }
 
-impl<T> Default for Exchanger<T> {
+impl<T: Clone> Default for Exchanger<T> {
     fn default() -> Self {
         Self {
             // 기존 논문에선 시작 slot이 Default Node임
             // 장황한 구현 및 공간 낭비의 이유로 null로 바꿈
-            slot: Atomic::null(),
+            slot: PAtomic::null(),
         }
     }
 }
 
-impl<T> Exchanger<T> {
-    fn exchange<C: ExchangeType<T>>(
+impl<T: Clone> Exchanger<T> {
+    fn exchange<C: ExchangeType<T>, O: POp>(
         &self,
         client: &mut C,
         value: T,
         timeout: Timeout,
+        cond: ExchangeCond<T>,
+        pool: &PoolHandle<O>,
     ) -> Result<T, TryFail> {
-        let guard = epoch::pin();
+        let guard = epoch::pin(pool);
 
         let mut myop = client.node().load(Ordering::SeqCst, &guard);
 
         if myop.is_null() {
             // myop이 null이면 node 할당이 안 된 것이다
-            let n = Owned::new(Node::from(value)).into_shared(&guard);
+            let n = POwned::new(Node::from(value), pool).into_shared(&guard);
             client.node().store(n, Ordering::SeqCst);
             myop = n;
-        } else if myop.tag() == TryExchange::<T>::FAIL {
-            // tag가 FAIL이면 try exchange 실패했던 것이다
-            return Err(TryFail);
         }
 
-        let myop_ref = unsafe { myop.deref() };
+        let myop_ref = unsafe { myop.deref(pool) };
 
         let start_time = Utc::now();
         loop {
@@ -238,7 +218,7 @@ impl<T> Exchanger<T> {
 
             // 내 교환이 이미 끝났다면, 상대에게 가져온 값을 반환함
             if myop_ref.response.load(Ordering::SeqCst) {
-                return Ok(unsafe { Self::finish(myop_ref) });
+                return Ok(Self::finish(myop_ref));
             }
 
             // timeout check
@@ -252,7 +232,7 @@ impl<T> Exchanger<T> {
                         .slot
                         .compare_exchange(
                             myop,
-                            Shared::null(),
+                            PShared::null(),
                             Ordering::SeqCst,
                             Ordering::SeqCst,
                             &guard,
@@ -265,12 +245,12 @@ impl<T> Exchanger<T> {
                     // 누군가를 helping 함
                     let yourop = self.slot.load(Ordering::SeqCst, &guard);
                     if yourop.tag() == BUSY {
-                        self.help(yourop, &guard);
+                        self.help(yourop, &guard, pool);
                     }
 
                     // helping 대상이 나일 수도 있으므로 마지막 확인
                     if myop_ref.response.load(Ordering::SeqCst) {
-                        return Ok(unsafe { Self::finish(myop_ref) });
+                        return Ok(Self::finish(myop_ref));
                     }
 
                     return Err(TryFail);
@@ -298,6 +278,12 @@ impl<T> Exchanger<T> {
                 WAITING => {
                     // Case 3: slot에서 다른 node가 기다림
 
+                    let yourop_ref = unsafe { yourop.deref(pool) };
+                    if !cond(&yourop_ref.mine) {
+                        // 내가 원하는 짝이 아닐 경우 재시도
+                        continue;
+                    }
+
                     // slot에 있는 node를 짝꿍 삼기 시도
                     myop_ref.partner.store(yourop, Ordering::SeqCst);
                     if self
@@ -311,13 +297,13 @@ impl<T> Exchanger<T> {
                         )
                         .is_ok()
                     {
-                        self.help(myop, &guard);
-                        return Ok(unsafe { Self::finish(myop_ref) });
+                        self.help(myop, &guard, pool);
+                        return Ok(Self::finish(myop_ref));
                     }
                 }
                 BUSY => {
                     // Case 4: slot에서 누군가가 짝짓기 중 (나일 수도 있음)
-                    self.help(yourop, &guard);
+                    self.help(yourop, &guard, pool);
                 }
                 _ => {
                     unreachable!("Tag is either WAITING or BUSY");
@@ -327,10 +313,10 @@ impl<T> Exchanger<T> {
     }
 
     /// 짝짓기 된 pair를 교환시켜 줌
-    fn help(&self, yourop: Shared<'_, Node<T>>, guard: &Guard) {
-        let yourop_ref = unsafe { yourop.deref() };
+    fn help<O: POp>(&self, yourop: PShared<'_, Node<T>>, guard: &Guard<'_>, pool: &PoolHandle<O>) {
+        let yourop_ref = unsafe { yourop.deref(pool) };
         let partner = yourop_ref.partner.load(Ordering::SeqCst, guard);
-        let partner_ref = unsafe { partner.deref() };
+        let partner_ref = unsafe { partner.deref(pool) };
 
         // 두 node가 교환할 값을 서로에게 복사
         // write-write race가 일어날 수 있음. 그러나 같은 값을 write하게 되므로 상관 없음.
@@ -347,7 +333,7 @@ impl<T> Exchanger<T> {
         // slot 비우기
         let _ = self.slot.compare_exchange(
             yourop,
-            Shared::null(),
+            PShared::null(),
             Ordering::SeqCst,
             Ordering::SeqCst,
             guard,
@@ -355,14 +341,12 @@ impl<T> Exchanger<T> {
     }
 
     /// 상대에게서 받아온 item을 반환
-    // TODO: 이게 unsafe일 이유는 없을 것 같음
-    unsafe fn finish(myop_ref: &Node<T>) -> T {
-        ptr::read(myop_ref.yours.as_ptr())
-        // TODO: free node
+    fn finish(myop_ref: &Node<T>) -> T {
+        unsafe { (*myop_ref.yours.as_ptr()).clone() }
     }
 }
 
-unsafe impl<T> Send for Exchanger<T> {}
+unsafe impl<T: Clone> Send for Exchanger<T> {}
 
 #[cfg(test)]
 mod tests {
@@ -370,76 +354,297 @@ mod tests {
 
     use chrono::Duration;
     use crossbeam_utils::thread;
-    use serial_test::serial;
+
+    use crate::utils::tests::{run_test, TestRootOp};
 
     use super::*;
 
+    /// 두 스레드가 한 exchanger를 두고 잘 교환하는지 (1회) 테스트
+    struct ExchangeOnce {
+        xchg: Exchanger<usize>,
+        exchanges: [Exchange<usize>; 2],
+    }
+
+    impl Default for ExchangeOnce {
+        fn default() -> Self {
+            Self {
+                xchg: Default::default(),
+                exchanges: array_init::array_init(|_| Exchange::<usize>::default()),
+            }
+        }
+    }
+
+    impl POp for ExchangeOnce {
+        type Object<'o> = ();
+        type Input = ();
+        type Output<'o> = ();
+        type Error = !;
+
+        fn run<'o, O: POp>(
+            &mut self,
+            (): Self::Object<'o>,
+            (): Self::Input,
+            pool: &PoolHandle<O>,
+        ) -> Result<Self::Output<'o>, Self::Error> {
+            let xchg = &self.xchg;
+            let exchanges = &mut self.exchanges;
+
+            #[allow(box_pointers)]
+            thread::scope(|scope| {
+                for tid in 0..2 {
+                    let exchange = unsafe {
+                        (exchanges.get_unchecked_mut(tid) as *mut Exchange<usize>)
+                            .as_mut()
+                            .unwrap()
+                    };
+                    let _ = scope.spawn(move |_| {
+                        // `move` for `tid`
+                        let ret = exchange.run(xchg, (tid, |_| true), pool).unwrap();
+                        assert_eq!(ret, 1 - tid);
+                    });
+                }
+            })
+            .unwrap();
+
+            Ok(())
+        }
+
+        fn reset(&mut self, _: bool) {
+            todo!("reset test")
+        }
+    }
+
+    impl TestRootOp for ExchangeOnce {}
+
     #[test]
     fn exchange_once() {
-        let xchg: Exchanger<usize> = Exchanger::default(); // TODO(persistent location)
-        let mut exchanges: Vec<Exchange<usize>> = (0..2).map(|_| Default::default()).collect(); // TODO(persistent location)
+        const FILE_NAME: &str = "exchange_once.pool";
+        const FILE_SIZE: usize = 1024;
 
-        // 아래 로직은 idempotent 함
-        #[allow(box_pointers)]
-        thread::scope(|scope| {
-            let xchg = &xchg;
-            for tid in 0..2 {
-                let exchange = unsafe {
-                    (exchanges.get_unchecked_mut(tid) as *mut Exchange<usize>)
-                        .as_mut()
-                        .unwrap()
-                };
-                let _ = scope.spawn(move |_| {
-                    // `move` for `tid`
-                    let ret = exchange.run(xchg, tid);
-                    assert_eq!(ret, 1 - tid);
-                });
-            }
-        })
-        .unwrap();
+        run_test::<ExchangeOnce, _>(FILE_NAME, FILE_SIZE)
     }
 
-    /// Before rotation : [0]  [1]  [2]
-    /// After rotation  : [1]  [2]  [0]
+    /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
+    ///     (exchange0)        (exchange1_0)     (exchange1_2)        (exchange2)
+    /// [item0]    <-----lxchg----->       [item1]       <-----rxchg----->    [item2]
+    struct RotateLeft {
+        lxchg: Exchanger<usize>,
+        rxchg: Exchanger<usize>,
+
+        item0: usize,
+        item1: usize,
+        item2: usize,
+
+        exchange0: Exchange<usize>,
+        exchange1_0: Exchange<usize>,
+        exchange1_2: Exchange<usize>,
+        exchange2: Exchange<usize>,
+    }
+
+    impl Default for RotateLeft {
+        fn default() -> Self {
+            Self {
+                lxchg: Default::default(),
+                rxchg: Default::default(),
+                item0: 0,
+                item1: 1,
+                item2: 2,
+                exchange0: Default::default(),
+                exchange1_0: Default::default(),
+                exchange1_2: Default::default(),
+                exchange2: Default::default(),
+            }
+        }
+    }
+
+    impl POp for RotateLeft {
+        type Object<'o> = ();
+        type Input = ();
+        type Output<'o> = ();
+        type Error = !;
+
+        /// Before rotation : [0]  [1]  [2]
+        /// After rotation  : [1]  [2]  [0]
+        fn run<'o, O: POp>(
+            &mut self,
+            (): Self::Object<'o>,
+            (): Self::Input,
+            pool: &PoolHandle<O>,
+        ) -> Result<Self::Output<'o>, Self::Error> {
+            let lxchg = &self.lxchg;
+            let rxchg = &self.rxchg;
+            let exchange0 = &mut self.exchange0;
+            let exchange1_0 = &mut self.exchange1_0;
+            let exchange1_2 = &mut self.exchange1_2;
+            let exchange2 = &mut self.exchange2;
+            let item0 = &mut self.item0;
+            let item1 = &mut self.item1;
+            let item2 = &mut self.item2;
+
+            #[allow(box_pointers)]
+            thread::scope(|scope| {
+                let _ = scope.spawn(|_| {
+                    // [0] -> [1]    [2]
+                    *item0 = exchange0.run(lxchg, (*item0, |_| true), pool).unwrap();
+                    assert_eq!(*item0, 1);
+                });
+
+                let _ = scope.spawn(|_| {
+                    // [0]    [1] <- [2]
+                    *item2 = exchange2.run(rxchg, (*item2, |_| true), pool).unwrap();
+                    assert_eq!(*item2, 0);
+                });
+
+                // Composition in the middle
+                // Step1: [0] <- [1]    [2]
+                *item1 = exchange1_0.run(lxchg, (*item1, |_| true), pool).unwrap();
+                assert_eq!(*item1, 0);
+
+                // Step2: [1]    [0] -> [2]
+                *item1 = exchange1_2.run(rxchg, (*item1, |_| true), pool).unwrap();
+                assert_eq!(*item1, 2);
+            })
+            .unwrap();
+
+            Ok(())
+        }
+
+        fn reset(&mut self, _: bool) {
+            todo!("reset test")
+        }
+    }
+
+    impl TestRootOp for RotateLeft {}
+
     #[test]
     fn rotate_left() {
-        let (mut item0, mut item1, mut item2) = (0, 1, 2); // TODO(persistent location)
+        const FILE_NAME: &str = "rotate_left.pool";
+        const FILE_SIZE: usize = 1024;
 
-        let lxhg = Exchanger::<i32>::default(); // TODO(persistent location)
-        let rxhg = Exchanger::<i32>::default(); // TODO(persistent location)
-
-        let mut exchange0 = Exchange::<i32>::default(); // TODO(persistent location)
-        let mut exchange2 = Exchange::<i32>::default(); // TODO(persistent location)
-
-        let mut exchange1_0 = Exchange::<i32>::default(); // TODO(persistent location)
-        let mut exchange1_2 = Exchange::<i32>::default(); // TODO(persistent location)
-
-        // 아래 로직은 idempotent 함
-        #[allow(box_pointers)]
-        thread::scope(|scope| {
-            let _ = scope.spawn(|_| {
-                // [0] -> [1]    [2]
-                item0 = exchange0.run(&lxhg, item0);
-                assert_eq!(item0, 1);
-            });
-
-            let _ = scope.spawn(|_| {
-                // [0]    [1] <- [2]
-                item2 = exchange2.run(&rxhg, item2);
-                assert_eq!(item2, 0);
-            });
-
-            // Composition in the middle
-            // Step1: [0] <- [1]    [2]
-            item1 = exchange1_0.run(&lxhg, item1);
-            assert_eq!(item1, 0);
-
-            // Step2: [1]    [0] -> [2]
-            item1 = exchange1_2.run(&rxhg, item1);
-            assert_eq!(item1, 2);
-        })
-        .unwrap();
+        run_test::<ExchangeOnce, _>(FILE_NAME, FILE_SIZE)
     }
+
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 1_000_000;
+
+    /// 여러 스레드가 하나의 exchanger를 두고 서로 교환하는 테스트
+    /// 마지막에 서로가 교환 후 아이템 별 총 개수가 교환 전 아이템 별 총 개수와 일치하는지 체크
+    struct ExchangeMany {
+        xchg: Exchanger<usize>,
+        exchanges: [[TryExchange<usize>; COUNT]; NR_THREAD],
+    }
+
+    impl Default for ExchangeMany {
+        fn default() -> Self {
+            Self {
+                xchg: Default::default(),
+                exchanges: array_init::array_init(|_| {
+                    array_init::array_init(|_| TryExchange::<usize>::default())
+                }),
+            }
+        }
+    }
+
+    impl POp for ExchangeMany {
+        type Object<'o> = ();
+        type Input = ();
+        type Output<'o> = ();
+        type Error = ();
+
+        fn run<'o, O: POp>(
+            &mut self,
+            (): Self::Object<'o>,
+            (): Self::Input,
+            pool: &PoolHandle<O>,
+        ) -> Result<Self::Output<'o>, Self::Error> {
+            let xchg = &self.xchg;
+            let exchanges = &mut self.exchanges;
+
+            let unfinished = &Unfinished::default();
+
+            #[allow(box_pointers)]
+            thread::scope(|scope| {
+                for tid in 0..NR_THREAD {
+                    let exchanges_arr = unsafe {
+                        (exchanges.get_unchecked_mut(tid) as *mut [TryExchange<usize>])
+                            .as_mut()
+                            .unwrap()
+                    };
+
+                    let _ = scope.spawn(move |_| {
+                        // `move` for `tid`
+                        for (i, exchange) in exchanges_arr.iter_mut().enumerate() {
+                            if let Err(_) = exchange.run(
+                                xchg,
+                                (tid, Duration::milliseconds(500), |_| true),
+                                pool,
+                            ) {
+                                // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
+                                // => 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
+                                if unfinished.flag.fetch_add(1, Ordering::SeqCst) == 0 {
+                                    unfinished.tid.store(tid, Ordering::SeqCst);
+                                    unfinished.cnt.store(i, Ordering::SeqCst);
+                                }
+                                break;
+                            }
+                        }
+                    });
+                }
+            })
+            .unwrap();
+
+            // Validate test
+            let u_flag = unfinished.flag.load(Ordering::SeqCst);
+            let u_tid_cnt = if u_flag == 1 {
+                Some((
+                    unfinished.tid.load(Ordering::SeqCst),
+                    unfinished.cnt.load(Ordering::SeqCst),
+                ))
+            } else if u_flag == 0 {
+                None
+            } else {
+                // 끝까지 하지 못한 스레드가 둘 이상일 경우 무효
+                // 원인: 어떤 스레드가 자기 빼고 다 끝난 줄 알고 (긴 시간 경과) 테스트를 끝냈는데
+                //      알고보니 그러지 않았던 경우 발생
+                return Err(());
+            };
+
+            // Gather results
+            let mut results = vec![0_usize; NR_THREAD];
+            let expected: Vec<usize> = (0..NR_THREAD)
+                .map(|tid| match u_tid_cnt {
+                    Some((u_tid, u_cnt)) if tid == u_tid => u_cnt,
+                    Some(_) | None => COUNT,
+                })
+                .collect();
+
+            for (tid, exchanges) in exchanges.iter_mut().enumerate() {
+                for (i, exchange) in exchanges.iter_mut().enumerate() {
+                    if i == expected[tid] {
+                        break;
+                    }
+                    let ret = exchange
+                        .run(xchg, (666, Duration::milliseconds(0), |_| true), pool)
+                        .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
+                    results[ret] += 1;
+                }
+            }
+
+            // Check results
+            assert!(results
+                .iter()
+                .enumerate()
+                .all(|(tid, r)| *r == expected[tid]));
+
+            Ok(())
+        }
+
+        fn reset(&mut self, _: bool) {
+            todo!("reset test")
+        }
+    }
+
+    impl TestRootOp for ExchangeMany {}
 
     /// 여럿이서 exchange 하다가 혼자만 남은 tid와 exchange한 횟수
     #[derive(Default)]
@@ -451,88 +656,10 @@ mod tests {
 
     /// 스레드 여러 개의 exchange
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지
     fn exchange_many() {
-        const NR_THREAD: usize = 4;
-        const COUNT: usize = 1_000_000;
+        const FILE_NAME: &str = "exchange_many.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        let xchg: Exchanger<usize> = Exchanger::default(); // TODO(persistent location)
-        let mut exchanges: Vec<Vec<TryExchange<usize>>> = (0..NR_THREAD)
-            .map(|_| (0..COUNT).map(|_| Default::default()).collect())
-            .collect(); // TODO(persistent location)
-
-        // 아래 로직은 idempotent 함
-
-        let unfinished = Unfinished::default();
-
-        #[allow(box_pointers)]
-        thread::scope(|scope| {
-            for tid in 0..NR_THREAD {
-                let xchg = &xchg;
-                let unfinished = &unfinished;
-                let exchanges = unsafe {
-                    (exchanges.get_unchecked_mut(tid) as *mut Vec<TryExchange<usize>>)
-                        .as_mut()
-                        .unwrap()
-                };
-
-                let _ = scope.spawn(move |_| {
-                    // `move` for `tid`
-                    for (i, exchange) in exchanges.iter_mut().enumerate() {
-                        if let Err(_) = exchange.run(xchg, (tid, Duration::milliseconds(500))) {
-                            // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
-                            // => 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
-                            if unfinished.flag.fetch_add(1, Ordering::SeqCst) == 0 {
-                                unfinished.tid.store(tid, Ordering::SeqCst);
-                                unfinished.cnt.store(i, Ordering::SeqCst);
-                            }
-                            break;
-                        }
-                    }
-                });
-            }
-        })
-        .unwrap();
-
-        // Validate test
-        let u_flag = unfinished.flag.load(Ordering::SeqCst);
-        let u_tid_cnt = if u_flag == 1 {
-            Some((
-                unfinished.tid.load(Ordering::SeqCst),
-                unfinished.cnt.load(Ordering::SeqCst),
-            ))
-        } else if u_flag == 0 {
-            None
-        } else {
-            // 끝까지 하지 못한 스레드가 둘 이상일 경우 무효
-            return;
-        };
-
-        // Gather results
-        let mut results = vec![0_usize; NR_THREAD];
-        let expected: Vec<usize> = (0..NR_THREAD)
-            .map(|tid| match u_tid_cnt {
-                Some((u_tid, u_cnt)) if tid == u_tid => u_cnt,
-                Some(_) | None => COUNT,
-            })
-            .collect();
-
-        for (tid, exchanges) in exchanges.iter_mut().enumerate() {
-            for (i, exchange) in exchanges.iter_mut().enumerate() {
-                if i == expected[tid] {
-                    break;
-                }
-                let ret = exchange
-                    .run(&xchg, (666, Duration::milliseconds(0)))
-                    .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
-                results[ret] += 1;
-            }
-        }
-
-        // Check results
-        assert!(results
-            .iter()
-            .enumerate()
-            .all(|(tid, r)| *r == expected[tid]));
+        run_test::<ExchangeMany, _>(FILE_NAME, FILE_SIZE);
     }
 }
