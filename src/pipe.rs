@@ -51,7 +51,7 @@ where
         init: Self::Input,
         pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        if self.resetting {
+        if self.resetting { // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
             self.reset(false);
         }

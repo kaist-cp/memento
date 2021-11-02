@@ -194,6 +194,7 @@ where
         pool: &PoolHandle<O>,
     ) -> Result<(), TryFail> {
         if let State::Resetting = client.state {
+            // TODO: recovery 중에만 검사하도록
             client.reset(false);
         }
 
@@ -218,7 +219,7 @@ where
                 (
                     Request::Push(value),
                     Duration::milliseconds(ELIM_DELAY),
-                    |req| if let Request::Pop = req { true } else { false },
+                    |req| matches!(req, Request::Pop),
                 ),
                 pool,
             )
@@ -239,6 +240,7 @@ where
         pool: &PoolHandle<O>,
     ) -> Result<Option<T>, TryFail> {
         if let State::Resetting = client.state {
+            // TODO: recovery 중에만 검사하도록
             client.reset(false);
         }
 
@@ -256,11 +258,7 @@ where
             .run(
                 &self.slots[client.elim_idx],
                 (Request::Pop, Duration::milliseconds(ELIM_DELAY), |req| {
-                    if let Request::Push(_) = req {
-                        true
-                    } else {
-                        false
-                    }
+                    matches!(req, Request::Push(_))
                 }),
                 pool,
             )

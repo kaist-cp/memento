@@ -341,10 +341,8 @@ impl<T: Clone> Exchanger<T> {
     }
 
     /// 상대에게서 받아온 item을 반환
-    // TODO: 이게 unsafe일 이유는 없을 것 같음
     fn finish(myop_ref: &Node<T>) -> T {
         unsafe { (*myop_ref.yours.as_ptr()).clone() }
-        // TODO: free node
     }
 }
 

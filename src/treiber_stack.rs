@@ -297,6 +297,7 @@ impl<T: Clone> TreiberStack<T> {
         } else if self.search(mine, &guard, pool)
             || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
         {
+            // TODO: recovery 중에만 분기 타도록
             // (3) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
             // (4) 이미 pop 되었다면 push된 것이다
             return Ok(());
@@ -371,6 +372,7 @@ impl<T: Clone> TreiberStack<T> {
             };
 
             // target이 stack에서 pop되긴 했는지 확인
+            // TODO: recovery 중에만 분기 타도록
             if !self.search(target, &guard, pool) {
                 // 누군가가 target을 stack에서 빼고 popper 기록 전에 crash가 남. 그러므로 popper를 마저 기록해줌
                 // CAS인 이유: 서로 누가 진짜 주인인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
