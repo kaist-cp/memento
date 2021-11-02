@@ -428,6 +428,7 @@ mod test {
     const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;
 
+    /// 여러 스레드가 각각 enqueue; dequeue 순서로 반복
     struct RootOp {
         // PAtomic인 이유
         // - Queue 초기화시 PoolHandle을 넘겨줘야하는데, Default로는 그게 안됌
@@ -532,7 +533,7 @@ mod test {
         }
 
         fn reset(&mut self, _: bool) {
-            unimplemented!()
+            todo!("reset test")
         }
     }
 

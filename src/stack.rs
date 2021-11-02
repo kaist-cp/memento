@@ -192,7 +192,7 @@ pub(crate) mod tests {
         }
 
         fn reset(&mut self, _: bool) {
-            unimplemented!();
+            todo!("reset test")
         }
     }
 }

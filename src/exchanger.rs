@@ -155,7 +155,7 @@ impl<T: 'static + Clone> POp for Exchange<T> {
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(xchg
             .exchange(self, value, Timeout::Unlimited, cond, pool)
-            .unwrap())
+            .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
     fn reset(&mut self, _: bool) {
@@ -359,6 +359,7 @@ mod tests {
 
     use super::*;
 
+    /// 두 스레드가 한 exchanger를 두고 잘 교환하는지 (1회) 테스트
     struct ExchangeOnce {
         xchg: Exchanger<usize>,
         exchanges: [Exchange<usize>; 2],
@@ -409,7 +410,7 @@ mod tests {
         }
 
         fn reset(&mut self, _: bool) {
-            unimplemented!()
+            todo!("reset test")
         }
     }
 
@@ -423,6 +424,7 @@ mod tests {
         run_test::<ExchangeOnce, _>(FILE_NAME, FILE_SIZE)
     }
 
+    /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
     ///     (exchange0)        (exchange1_0)     (exchange1_2)        (exchange2)
     /// [item0]    <-----lxchg----->       [item1]       <-----rxchg----->    [item2]
     struct RotateLeft {
@@ -508,7 +510,7 @@ mod tests {
         }
 
         fn reset(&mut self, _: bool) {
-            unimplemented!()
+            todo!("reset test")
         }
     }
 
@@ -525,6 +527,8 @@ mod tests {
     const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;
 
+    /// 여러 스레드가 하나의 exchanger를 두고 서로 교환하는 테스트
+    /// 마지막에 서로가 교환 후 아이템 별 총 개수가 교환 전 아이템 별 총 개수와 일치하는지 체크
     struct ExchangeMany {
         xchg: Exchanger<usize>,
         exchanges: [[TryExchange<usize>; COUNT]; NR_THREAD],
@@ -636,7 +640,7 @@ mod tests {
         }
 
         fn reset(&mut self, _: bool) {
-            unimplemented!()
+            todo!("reset test")
         }
     }
 

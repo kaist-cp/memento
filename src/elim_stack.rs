@@ -198,7 +198,7 @@ where
             client.reset(false);
         }
 
-        // TODO 느린 이유: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
+        // TODO 느린 이유 의심: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
         if let State::TryingInner = client.state {
             if client
                 .try_push
@@ -296,7 +296,7 @@ mod test {
     use crate::utils::tests::*;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 1_000_000;
+    const COUNT: usize = 100_000;
 
     struct RootOp<S: Stack<usize>> {
         stack: ElimStack<usize, S>,
@@ -328,12 +328,13 @@ mod test {
         }
 
         fn reset(&mut self, _: bool) {
-            unimplemented!()
+            todo!("reset test")
         }
     }
 
     impl<S: Stack<usize>> TestRootOp for RootOp<S> {}
 
+    /// treiber stack을 inner stack으로 하는 elim stack의 push-pop 테스트
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     fn push_pop() {
@@ -343,6 +344,7 @@ mod test {
         run_test::<RootOp<TreiberStack<usize>>, _>(FILE_NAME, FILE_SIZE)
     }
 
+    /// "treiber stack을 inner stack으로 하는 elim stack"을 inner stack으로 하는 elim stack의 push-pop 테스트
     #[test]
     fn push_pop_double_elim() {
         const FILE_NAME: &str = "elim_push_pop_double_elim.pool";
