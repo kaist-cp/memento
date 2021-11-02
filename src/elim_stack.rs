@@ -2,8 +2,8 @@
 
 // TODO: Add persist instruction
 // TODO: treiber 보다 느림...
-//       - 느린 이유 의심 1: exchange할 때 상대가 push(혹은 pop)인지 확인 안하고 무조건 바꿈
-//       - 느린 이유 의심 2: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
+//       - 느린 이유 의심: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
+//       - 밝혀진 느린 이유: exchange 하게 되면 느려짐. exchager의 helping 메커니즘이 문제일 수도 있음
 
 use chrono::Duration;
 use rand::{thread_rng, Rng};
@@ -211,22 +211,22 @@ where
             client.state = State::Eliminating;
         }
 
-        let elim_result = client.try_exchange.run(
-            &self.slots[client.elim_idx],
-            (Request::Push(value), Duration::milliseconds(ELIM_DELAY)),
-            pool,
-        );
-
-        // TODO 느린 이유: exchange할 때 상대가 pop인지 확인 안하고 무조건 바꿈
-        if let Ok(req) = elim_result {
-            match req {
-                Request::Push(_) => client.try_exchange.reset(false),
-                Request::Pop => return Ok(()),
-            }
-        }
-
-        client.state = State::TryingInner;
-        Err(TryFail)
+        client
+            .try_exchange
+            .run(
+                &self.slots[client.elim_idx],
+                (
+                    Request::Push(value),
+                    Duration::milliseconds(ELIM_DELAY),
+                    |req| if let Request::Pop = req { true } else { false },
+                ),
+                pool,
+            )
+            .map(|_| ())
+            .map_err(|_| {
+                client.state = State::TryingInner;
+                TryFail
+            })
     }
 
     /// elimination stack의 pop를 시도
@@ -251,22 +251,30 @@ where
             client.state = State::Eliminating;
         }
 
-        let elim_result = client.try_exchange.run(
-            &self.slots[client.elim_idx],
-            (Request::Pop, Duration::milliseconds(ELIM_DELAY)),
-            pool,
-        );
-
-        // TODO 느린 이유: exchange할 때 상대가 push인지 확인 안하고 무조건 바꿈
-        if let Ok(req) = elim_result {
-            match req {
-                Request::Push(v) => return Ok(Some(v)),
-                Request::Pop => client.try_exchange.reset(false),
-            }
-        }
-
-        client.state = State::TryingInner;
-        Err(TryFail)
+        client
+            .try_exchange
+            .run(
+                &self.slots[client.elim_idx],
+                (Request::Pop, Duration::milliseconds(ELIM_DELAY), |req| {
+                    if let Request::Push(_) = req {
+                        true
+                    } else {
+                        false
+                    }
+                }),
+                pool,
+            )
+            .map(|req| {
+                if let Request::Push(v) = req {
+                    Some(v)
+                } else {
+                    unreachable!("No exchange between pops")
+                }
+            })
+            .map_err(|_| {
+                client.state = State::TryingInner;
+                TryFail
+            })
     }
 }
 
@@ -280,7 +288,6 @@ where
 {
     type TryPush = TryPush<T, S>;
     type TryPop = TryPop<T, S>;
-    // TODO: Use built-in Pop, Push?
 }
 
 #[cfg(test)]
