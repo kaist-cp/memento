@@ -3,7 +3,7 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use std::alloc::Layout;
-use std::ffi::{CString, c_void};
+use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::marker::PhantomData;
 use std::mem;
@@ -157,7 +157,10 @@ impl Pool {
         // 파일 이미 있으면 에러 반환
         // - Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성하기 때문에, 그 중 하나인 "_basemd"를 붙여 확인
         if Path::new(&(filepath.to_owned() + "_basemd")).exists() {
-            return Err(Error::new(std::io::ErrorKind::AlreadyExists, "File already exist."));
+            return Err(Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "File already exist.",
+            ));
         }
 
         // Create file and initialize it as Pool
@@ -176,7 +179,11 @@ impl Pool {
         let start = unsafe {
             let mut start: *mut i32 = std::ptr::null_mut();
             let mut end: *mut i32 = std::ptr::null_mut();
-            let _ret = RP_region_range(1, &mut start as *mut *mut _ as *mut *mut c_void, &mut end as *mut *mut _ as *mut *mut c_void);
+            let _ret = RP_region_range(
+                1,
+                &mut start as *mut *mut _ as *mut *mut c_void,
+                &mut end as *mut *mut _ as *mut *mut c_void,
+            );
             start as usize
         };
 
@@ -204,7 +211,10 @@ impl Pool {
     // TODO: `size` 안받게 할지 고민
     // - `Pool::create`시 지정한 size랑 실제 생성되는 파일 크기는 다름. 8GB로 create 했어도, 파일 크기는 Ralloc의 로직에 따라 계산된 8GB+a로 됨
     // - 할려면 파일 크기로 `Pool::create`시 지정한 size를 역계산하는 방법뿐인듯. 이걸 하는 게 좋나
-    pub unsafe fn open<P: AsRef<Path>, O: POp>(filepath: P, size: usize) -> Result<PoolHandle<O>, Error> {
+    pub unsafe fn open<P: AsRef<Path>, O: POp>(
+        filepath: P,
+        size: usize,
+    ) -> Result<PoolHandle<O>, Error> {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
         let filepath = filepath.as_ref().to_str().unwrap();
@@ -224,7 +234,11 @@ impl Pool {
         let start = {
             let mut start: *mut i32 = std::ptr::null_mut();
             let mut end: *mut i32 = std::ptr::null_mut();
-            let _ret = RP_region_range(1, &mut start as *mut *mut _ as *mut *mut c_void, &mut end as *mut *mut _ as *mut *mut c_void);
+            let _ret = RP_region_range(
+                1,
+                &mut start as *mut *mut _ as *mut *mut c_void,
+                &mut end as *mut *mut _ as *mut *mut c_void,
+            );
             start as usize
         };
 
@@ -239,7 +253,7 @@ impl Pool {
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
     #[inline]
     fn alloc<T>(&self) -> *mut T {
-        let addr_abs = unsafe { RP_malloc(mem::size_of::<T>() as u64)};
+        let addr_abs = unsafe { RP_malloc(mem::size_of::<T>() as u64) };
         addr_abs as *mut T
     }
 

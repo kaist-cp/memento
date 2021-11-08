@@ -290,11 +290,11 @@ where
 
 #[cfg(test)]
 mod test {
-    use serial_test::serial;
     use super::*;
     use crate::stack::tests::*;
     use crate::treiber_stack::TreiberStack;
     use crate::utils::tests::*;
+    use serial_test::serial;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;

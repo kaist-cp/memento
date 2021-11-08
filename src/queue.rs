@@ -178,10 +178,13 @@ impl<T: Clone> Queue<T> {
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
-        let ret = POwned::new(Self {
-            head: CachePadded::new(PAtomic::from(sentinel)),
-            tail: CachePadded::new(PAtomic::from(sentinel)),
-        }, pool);
+        let ret = POwned::new(
+            Self {
+                head: CachePadded::new(PAtomic::from(sentinel)),
+                tail: CachePadded::new(PAtomic::from(sentinel)),
+            },
+            pool,
+        );
         persist_obj(unsafe { ret.deref(pool) }, true);
         ret
     }

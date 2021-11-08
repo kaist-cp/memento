@@ -6,18 +6,12 @@ const RALLOC_BRANCH: &str = "wo_gc"; // ci 통과를 위해 ci가 사용할 최�
 fn main() {
     // Clone and checkout to latest branch
     Command::new("git")
-        .args(&[
-            "clone",
-            RALLOC_REPO,
-        ])
+        .args(&["clone", RALLOC_REPO])
         .current_dir("./ext")
         .status()
         .expect("failed to git clone!");
     Command::new("git")
-        .args(&[
-            "checkout",
-            RALLOC_BRANCH,
-        ])
+        .args(&["checkout", RALLOC_BRANCH])
         .current_dir("./ext/ralloc")
         .status()
         .expect("failed to git checkout!");

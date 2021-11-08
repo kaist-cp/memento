@@ -1,6 +1,9 @@
 //! Persistent pipe
 
-use crate::{persistent::POp, plocation::{PoolHandle, ll::persist_obj}};
+use crate::{
+    persistent::POp,
+    plocation::{ll::persist_obj, PoolHandle},
+};
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 ///
@@ -51,7 +54,8 @@ where
         init: Self::Input,
         pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        if self.resetting { // TODO: recovery 중에만 검사하도록
+        if self.resetting {
+            // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
             self.reset(false);
         }
@@ -78,8 +82,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
     use crossbeam_utils::thread;
+    use serial_test::serial;
     use std::sync::atomic::Ordering;
 
     use crate::pepoch::{self, PAtomic};

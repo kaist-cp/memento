@@ -1849,8 +1849,8 @@ impl<T: ?Sized + Pointable> Default for PShared<'_, T> {
 
 #[cfg(all(test, not(crossbeam_loom)))]
 mod tests {
-    use serial_test::serial;
     use super::{POwned, PShared};
+    use serial_test::serial;
     use std::mem::MaybeUninit;
 
     use crate::utils::tests::*;
