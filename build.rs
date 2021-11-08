@@ -1,13 +1,14 @@
 use std::process::Command;
 
-const RALLOC_LATEST_BRANCH: &str = "wo_gc";
+const RALLOC_REPO: &str = "ssh://git@cp-git.kaist.ac.kr:9001/persistent-mem/ralloc.git";
+const RALLOC_BRANCH: &str = "wo_gc"; // ci 통과를 위해 ci가 사용할 최신 버전 branch
 
 fn main() {
     // Clone and checkout to latest branch
     Command::new("git")
         .args(&[
             "clone",
-            "ssh://git@cp-git.kaist.ac.kr:9001/persistent-mem/ralloc.git",
+            RALLOC_REPO,
         ])
         .current_dir("./ext")
         .status()
@@ -15,7 +16,7 @@ fn main() {
     Command::new("git")
         .args(&[
             "checkout",
-            RALLOC_LATEST_BRANCH,
+            RALLOC_BRANCH,
         ])
         .current_dir("./ext/ralloc")
         .status()
