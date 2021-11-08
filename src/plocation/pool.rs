@@ -321,6 +321,7 @@ mod tests {
 
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn check_inv() {
         // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
         env_logger::init();

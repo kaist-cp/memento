@@ -78,6 +78,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
     use crossbeam_utils::thread;
     use std::sync::atomic::Ordering;
 
@@ -194,6 +195,7 @@ mod tests {
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn pipe_concur() {
         run_test::<Transfer, _>(FILE_NAME, FILE_SIZE)
     }

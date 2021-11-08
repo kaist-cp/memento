@@ -1387,7 +1387,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
 
 impl<T: ?Sized + Pointable> Drop for POwned<T> {
     fn drop(&mut self) {
-        // TODO: 어느 풀에서 free할지 알아야함 (i.e. PoolHandle을 받아야함)
+        // TODO: 어느 풀에서 free할지 알아야함 (i.e. PoolHandle을 받아야함) (PoolHandle을 Global하게 두지않고 Drop trait로 free하는 게 가능한가?)
     }
 }
 
@@ -1849,6 +1849,7 @@ impl<T: ?Sized + Pointable> Default for PShared<'_, T> {
 
 #[cfg(all(test, not(crossbeam_loom)))]
 mod tests {
+    use serial_test::serial;
     use super::{POwned, PShared};
     use std::mem::MaybeUninit;
 
@@ -1872,8 +1873,9 @@ mod tests {
     }
 
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn array_init() {
-        let pool = get_dummy_handle(8 * 1024).unwrap();
+        let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
         let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
         let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
         assert_eq!(arr.len(), 10);

@@ -59,7 +59,7 @@ pub mod tests {
         let filepath = get_test_abs_path(pool_name);
 
         // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open(&filepath) }
+        let pool_handle = unsafe { Pool::open(&filepath, pool_len) }
             .unwrap_or_else(|_| Pool::create::<O>(&filepath, pool_len).unwrap());
 
         // 루트 op 가져오기

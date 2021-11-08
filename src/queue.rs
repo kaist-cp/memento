@@ -420,6 +420,7 @@ impl<T: Clone> Queue<T> {
 #[cfg(test)]
 mod test {
     use crossbeam_utils::thread;
+    use serial_test::serial;
 
     use crate::utils::tests::*;
 
@@ -542,6 +543,7 @@ mod test {
     // TODO: stack의 enq_deq과 합치기
     // 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn enq_deq() {
         const FILE_NAME: &str = "enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
