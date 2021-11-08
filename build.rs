@@ -4,6 +4,8 @@ const RALLOC_REPO: &str = "ssh://git@cp-git.kaist.ac.kr:9001/persistent-mem/rall
 const RALLOC_BRANCH: &str = "wo_gc"; // ci 통과를 위해 ci가 사용할 최신 버전 branch
 
 fn main() {
+    println!("cargo:rerun-if-changed=ext/");
+
     // Clone and checkout to latest branch
     Command::new("git")
         .args(&["clone", RALLOC_REPO])
