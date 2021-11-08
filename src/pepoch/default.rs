@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 /// # use compositional_persistent_object::pepoch::*;
 /// # use compositional_persistent_object::utils::tests::DummyRootOp;
 /// # use std::sync::atomic::Ordering;
-/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool") }.unwrap();
+/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool", 8 * 1024 * 1024 *1024) }.unwrap();
 ///
 /// // Guard 및 Shared 포인터 얻기
 /// let guard = pin(&pool);
@@ -36,7 +36,7 @@ use std::marker::PhantomData;
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::pepoch::*;
 /// # use compositional_persistent_object::utils::tests::DummyRootOp;
-/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool") }.unwrap();
+/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool", 8 * 1024 * 1024 * 1024) }.unwrap();
 ///
 /// let guard = pin(&pool);
 /// drop(pool);

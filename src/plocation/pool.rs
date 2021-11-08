@@ -27,7 +27,7 @@ use crate::plocation::ralloc::*;
 /// # use compositional_persistent_object::persistent::*;
 /// # use compositional_persistent_object::utils::tests::DummyRootOp as MyRootOp;
 /// // 풀 생성 후 풀의 핸들러 얻기
-/// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024).unwrap();
+/// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024 * 1024 * 1024).unwrap();
 ///
 /// // 핸들러로 풀의 루트 Op 가져오기
 /// let root_op = pool_handle.get_root();

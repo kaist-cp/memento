@@ -171,7 +171,7 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
 /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-/// # let pool = get_dummy_handle(8 * 1024).unwrap();
+/// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
 /// use std::mem::MaybeUninit;
 /// use compositional_persistent_object::pepoch::POwned;
 ///
@@ -356,7 +356,7 @@ impl<T> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PAtomic;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -377,7 +377,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PAtomic;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -426,7 +426,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -458,7 +458,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -482,7 +482,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -508,7 +508,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -550,7 +550,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -612,7 +612,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -697,7 +697,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -763,7 +763,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -827,7 +827,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -890,7 +890,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -919,7 +919,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     /// // Assume there is PoolHandle, `pool`
@@ -947,7 +947,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1056,7 +1056,7 @@ impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{PAtomic, POwned};
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1181,7 +1181,7 @@ impl<T> POwned<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::plocation::ptr::PPtr;
     /// use compositional_persistent_object::pepoch::POwned;
     ///
@@ -1222,7 +1222,7 @@ impl<T> POwned<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1243,7 +1243,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1262,7 +1262,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, POwned};
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1284,7 +1284,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1305,7 +1305,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1476,7 +1476,7 @@ impl<T> PShared<'_, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::plocation::ptr::PPtr;
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
@@ -1526,7 +1526,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1569,7 +1569,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1608,7 +1608,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1662,7 +1662,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1703,7 +1703,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1729,7 +1729,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1755,7 +1755,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
@@ -1795,7 +1795,7 @@ impl<T> From<PPtr<T>> for PShared<'_, T> {
     /// # use compositional_persistent_object::plocation::pool::*;
     /// # use compositional_persistent_object::persistent::*;
     /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
-    /// # let pool = get_dummy_handle(8 * 1024).unwrap();
+    /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use compositional_persistent_object::pepoch::PShared;
     ///
     /// // Assume there is PoolHandle, `pool`
