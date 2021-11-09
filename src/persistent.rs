@@ -99,16 +99,13 @@ pub trait POp: Default + Collectable {
     /// - Pre-crash op이 충분히 진행됐을 경우 Post-crash 재실행시의 input이 op 결과에 영향을 끼치지 않을 수도 있음.
     ///   즉, post-crash의 functional correctness는 보장하지 않음. (이러한 동작이 safety를 해치지 않음.)
     ///
-    /// ## Generic
-    /// * `O` - `PoolHandle`이 가진 루트의 타입
-    ///
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         object: Self::Object<'o>,
         input: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error>;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)

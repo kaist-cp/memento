@@ -1,6 +1,5 @@
 //! Persistent Pointer
 use super::pool::PoolHandle;
-use crate::persistent::POp;
 use std::marker::PhantomData;
 
 /// 상대주소의 NULL 식별자
@@ -59,7 +58,7 @@ impl<T> PPtr<T> {
     /// # Safety
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
-    pub unsafe fn deref<O: POp>(self, pool: &PoolHandle<O>) -> &'_ T {
+    pub unsafe fn deref(self, pool: &PoolHandle) -> &'_ T {
         &*((pool.start() + self.offset) as *const T)
     }
 
@@ -69,7 +68,7 @@ impl<T> PPtr<T> {
     ///
     /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn deref_mut<O: POp>(self, pool: &PoolHandle<O>) -> &'_ mut T {
+    pub unsafe fn deref_mut(self, pool: &PoolHandle) -> &'_ mut T {
         &mut *((pool.start() + self.offset) as *mut T)
     }
 }
@@ -81,11 +80,11 @@ pub trait AsPPtr {
     /// # Safety
     ///
     /// object가 `pool`에 속한 reference여야 함
-    unsafe fn as_pptr<O: POp>(&self, pool: &PoolHandle<O>) -> PPtr<Self>;
+    unsafe fn as_pptr(&self, pool: &PoolHandle) -> PPtr<Self>;
 }
 
 impl<T> AsPPtr for T {
-    unsafe fn as_pptr<O: POp>(&self, pool: &PoolHandle<O>) -> PPtr<Self> {
+    unsafe fn as_pptr(&self, pool: &PoolHandle) -> PPtr<Self> {
         PPtr {
             offset: self as *const T as usize - pool.start(),
             _marker: PhantomData,

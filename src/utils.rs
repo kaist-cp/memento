@@ -37,11 +37,11 @@ pub mod tests {
         type Output<'o> = ();
         type Error = !;
 
-        fn run<'o, O: POp>(
+        fn run<'o>(
             &mut self,
             _: Self::Object<'o>,
             _: Self::Input,
-            _: &PoolHandle<O>,
+            _: &PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             Ok(())
         }
@@ -51,7 +51,7 @@ pub mod tests {
     }
 
     /// test에 사용하기 위한 더미용 PoolHandle 얻기
-    pub fn get_dummy_handle(filesize: usize) -> Result<PoolHandle<DummyRootOp>, Error> {
+    pub fn get_dummy_handle(filesize: usize) -> Result<&'static PoolHandle, Error> {
         // 임시파일 경로 얻기. `create`에서 파일이 이미 존재하면 실패하기 때문에 여기선 경로만 얻어야함
         let temp_path = NamedTempFile::new()?.path().to_str().unwrap().to_owned();
         // 풀 생성 및 핸들 반환
@@ -66,11 +66,11 @@ pub mod tests {
         let filepath = get_test_abs_path(pool_name);
 
         // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open(&filepath, pool_len) }
+        let pool_handle = unsafe { Pool::open::<O>(&filepath, pool_len) }
             .unwrap_or_else(|_| Pool::create::<O>(&filepath, pool_len).unwrap());
 
         // 루트 op 가져오기
-        let root_op = pool_handle.get_root();
+        let root_op = pool_handle.get_root::<O>();
 
         // 루트 op 실행
         while root_op.run((), (), &pool_handle).is_err() {}

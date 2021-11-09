@@ -5,13 +5,13 @@
 use std::alloc::Layout;
 use std::ffi::{c_void, CString};
 use std::io::Error;
-use std::marker::PhantomData;
 use std::mem;
 use std::path::Path;
 
 use crate::persistent::*;
+use crate::plocation::global::global_pool;
 use crate::plocation::ptr::PPtr;
-use crate::plocation::ralloc::*;
+use crate::plocation::{global, ralloc::*};
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
@@ -36,7 +36,7 @@ use crate::plocation::ralloc::*;
 /// root_op.run((), (), &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
-pub struct PoolHandle<O: POp> {
+pub struct PoolHandle {
     /// 풀의 시작주소
     start: usize,
 
@@ -45,15 +45,9 @@ pub struct PoolHandle<O: POp> {
 
     /// recovery 진행중 여부
     recovering: bool,
-
-    /// Root 타입 marker
-    _marker: PhantomData<O>,
 }
 
-// Sync인 이유: 테스트시 `O`가 여러 스레드로 전달되어도 안전함을 명시. 명시안하면 테스트시 에러
-unsafe impl<O: POp> Sync for PoolHandle<O> {}
-
-impl<O: POp> PoolHandle<O> {
+impl PoolHandle {
     /// 풀의 시작주소 반환
     #[inline]
     pub fn start(&self) -> usize {
@@ -69,7 +63,7 @@ impl<O: POp> PoolHandle<O> {
     /// 풀의 루트 Op을 가리키는 포인터 반환
     #[allow(clippy::mut_from_ref)]
     #[inline]
-    pub fn get_root(&self) -> &mut O {
+    pub fn get_root<O: POp>(&self) -> &mut O {
         let root_ptr = unsafe { RP_get_root_c(0) } as *mut O;
         unsafe { &mut *root_ptr }
     }
@@ -129,7 +123,7 @@ impl<O: POp> PoolHandle<O> {
     }
 }
 
-impl<O: POp> Drop for PoolHandle<O> {
+impl Drop for PoolHandle {
     fn drop(&mut self) {
         unsafe { RP_close() }
     }
@@ -151,9 +145,9 @@ impl Pool {
     /// * `filepath`에 파일이 이미 존재한다면 실패
     /// * `size`를 `1GB` 이상, `1TB` 이하로 하지 않는다면 실패 (Ralloc 내부의 assert문에 의해 강제)
     //
-    // TODO: create 도중의 crash도 고려하기
-    // TODO: filepath의 타입이 `P: AsRef<Path>`이면 좋겠다. 그런데 이러면 generic P에 대한 type inference가 안돼서 사용자가 `Pool::create::<RootOp, &str>("foo.pool")`처럼 호출해야함. 이게 괜찮나?
-    pub fn create<O: POp>(filepath: &str, size: usize) -> Result<PoolHandle<O>, Error> {
+    // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
+    // - <O: POp, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
+    pub fn create<O: POp>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
         // 파일 이미 있으면 에러 반환
         // - Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성하기 때문에, 그 중 하나인 "_basemd"를 붙여 확인
         if Path::new(&(filepath.to_owned() + "_basemd")).exists() {
@@ -163,19 +157,19 @@ impl Pool {
             ));
         }
 
-        // Create file and initialize it as Pool
+        // 파일 만들고 Ralloc의 pool format으로 초기화
         let filepath = CString::new(filepath).expect("CString::new failed");
         let is_reopen = unsafe { RP_init(filepath.as_ptr(), size as u64) };
         assert_eq!(is_reopen, 0);
 
-        // Allocate root obj and initialize its contents
+        // root로 쓸 obj 할당 및 초기화
         let root_ptr = unsafe { RP_malloc(mem::size_of::<O>() as u64) as *mut O };
         unsafe { *root_ptr = O::default() };
 
-        // Set root obj of Pool
-        let _prev_root_ptr = unsafe { RP_set_root(root_ptr as *mut c_void, 0) };
+        // root obj 세팅
+        let _prev = unsafe { RP_set_root(root_ptr as *mut c_void, 0) };
 
-        // 매핑된 주소의 시작주소 얻기
+        // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
         let start = unsafe {
             let mut start: *mut i32 = std::ptr::null_mut();
             let mut end: *mut i32 = std::ptr::null_mut();
@@ -186,13 +180,14 @@ impl Pool {
             );
             start as usize
         };
-
-        Ok(PoolHandle {
+        global::init(PoolHandle {
             start,
             len: size,
             recovering: true,
-            _marker: PhantomData,
-        })
+        });
+
+        // 글로벌 풀의 핸들러 반환
+        Ok(global_pool().unwrap())
     }
 
     /// 풀 열기
@@ -208,29 +203,32 @@ impl Pool {
     /// * `filepath`에 파일이 존재하지 않는다면 실패
     /// * `Pool::create`시 지정한 size와 같은 크기로 호출하지 않으면 실패 (Ralloc 내부의 assert문에 의해 강제)
     //
+    // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
+    // - <O: POp, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
     // TODO: `size` 안받게 할지 고민
     // - `Pool::create`시 지정한 size랑 실제 생성되는 파일 크기는 다름. 8GB로 create 했어도, 파일 크기는 Ralloc의 로직에 따라 계산된 8GB+a로 됨
     // - 할려면 파일 크기로 `Pool::create`시 지정한 size를 역계산하는 방법뿐인듯. 이걸 하는 게 좋나
-    pub unsafe fn open<P: AsRef<Path>, O: POp>(
-        filepath: P,
+    pub unsafe fn open<O: POp>(
+        filepath: &str,
         size: usize,
-    ) -> Result<PoolHandle<O>, Error> {
+    ) -> Result<&'static PoolHandle, Error> {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
-        let filepath = filepath.as_ref().to_str().unwrap();
         if !Path::new(&(filepath.to_owned() + "_basemd")).exists() {
             return Err(Error::new(std::io::ErrorKind::NotFound, "File not found."));
         }
 
-        // 파일을 persistent heap으로 매핑
+        // 새로 열기 전에 이전에 열었던 pool을 미리 clear
+        // - RP_init으로 Ralloc에 새로 세팅된 정보가 이전에 사용하던 PoolHandle의 drop으로 RP_close되면 안됨
+        // - 따라서 새로 init하기 전에 이전에 사용하던 것 미리 drop
+        global::clear();
+
+        // pool 파일 열기
         let filepath = CString::new(filepath).expect("CString::new failed");
         let is_reopen = RP_init(filepath.as_ptr(), size as u64);
         assert_eq!(is_reopen, 1);
 
-        // GC 수행
-        // let is_gc_executed = RP_recover();
-
-        // 매핑된 주소의 시작주소 얻기
+        // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
         let start = {
             let mut start: *mut i32 = std::ptr::null_mut();
             let mut end: *mut i32 = std::ptr::null_mut();
@@ -241,13 +239,18 @@ impl Pool {
             );
             start as usize
         };
-
-        Ok(PoolHandle {
+        global::init(PoolHandle {
             start,
             len: size,
             recovering: true,
-            _marker: PhantomData,
-        })
+        });
+        
+        // GC 수행 (그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음)
+        RP_set_root_mark(Some(O::mark), 0);
+        let _is_gc_executed = RP_recover();
+
+        // 글로벌 풀의 핸들러 반환
+        Ok(global_pool().unwrap())
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
@@ -314,11 +317,11 @@ mod tests {
         type Error = !;
 
         // invariant 검사(flag=1 => value=42)
-        fn run<'o, O: POp>(
+        fn run<'o>(
             &mut self,
             _: Self::Object<'o>,
             _: Self::Input,
-            _: &PoolHandle<O>,
+            _: &PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
@@ -348,11 +351,11 @@ mod tests {
         let filepath = get_test_abs_path(FILE_NAME);
 
         // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open(&filepath, FILE_SIZE) }
+        let pool_handle = unsafe { Pool::open::<RootOp>(&filepath, FILE_SIZE) }
             .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
 
         // 루트 Op 가져오기
-        let root_op = pool_handle.get_root();
+        let root_op = pool_handle.get_root::<RootOp>();
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
         root_op.run((), (), &pool_handle).unwrap();
