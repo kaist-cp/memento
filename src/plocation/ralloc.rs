@@ -1,8 +1,6 @@
 #![allow(non_camel_case_types)]
 #![allow(missing_docs)]
 
-use std::any::type_name;
-
 pub type size_t = ::std::os::raw::c_ulong;
 pub type __uint64_t = ::std::os::raw::c_ulong;
 
@@ -53,17 +51,17 @@ extern "C" {
     // Ralloc의 type `GarbageCollection`을 인식
     pub type GarbageCollection;
 
-    pub fn RP_set_root_filter(
-        filter_func: ::std::option::Option<
+    pub fn RP_set_root_mark(
+        mark: ::std::option::Option<
         unsafe extern "C" fn(*mut ::std::os::raw::c_char, *mut GarbageCollection),
         >,
         i: u64,
     );
 
-    #[link_name = "\u{1}_ZN17GarbageCollection11mark_func_cEPvPFvPcRS_E"]
+    #[link_name = "\u{1}_ZN17GarbageCollection11mark_func_cEPcPFvS0_RS_E"]
     pub fn GarbageCollection_mark_func_c(
         this: *mut GarbageCollection,
-        ptr: *mut ::std::os::raw::c_void,
+        ptr: *mut ::std::os::raw::c_char,
         filter_func: ::std::option::Option<
             unsafe extern "C" fn(*mut ::std::os::raw::c_char, *mut GarbageCollection),
         >,
@@ -71,15 +69,42 @@ extern "C" {
 }
 
 /// Trait for Garbage Collection
-pub trait Traced {
-    /// TODO: doc
-    #[no_mangle]
+// TODO: impl 안해도 filter 함수를 볼 수 있는 게 불편함
+pub trait Collectable {
+    /// ptr이 가리키는 주소를 marking하고, filter func으로 다음 marking을 수행
+    ///
+    /// # Safety
+    ///
+    /// * ptr은 자신을 가리키는 raw 포인터여야함
+    // C에서 이 함수의 이름이 아닌 주소로 호출하므로 #[no_mangle] 필요없어보임
     unsafe extern "C" fn mark(ptr: *mut ::std::os::raw::c_char, gc: *mut GarbageCollection) {
-        println!("call mark: {}", type_name::<Self>());
-        GarbageCollection_mark_func_c(gc, ptr as *mut std::os::raw::c_void, Some(Self::filter))
+        GarbageCollection_mark_func_c(gc, ptr, Some(Self::filter));
     }
 
-    /// Filter function for garbage collection
-    #[no_mangle]
+    /// ptr이 가리키는 obj의 필드 중 다음 marking 할 것을 찾아서 marking
+    ///
+    /// # Safety
+    ///
+    /// * 이 함수는 Ralloc에서 호출되게 할 용도로, 유저는 정의만 할 뿐 직접 사용하면 안됨
+    /// * Ralloc에서 넘겨주는 ptr은 자신을 가리키는 raw 포인터를 가리킴 (detail: mark로 넣어준 ptr이, 이 filter의 ptr로 들어옴)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// struct Node {
+    ///     val: usize,
+    ///     next: PPtr<Node>,
+    /// }
+    ///
+    /// impl Collectable for Node {
+    ///     extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut GarbageCollection) {
+    ///         let node = (ptr as *mut Self).as_ref().unwrap();
+    ///         let next = node.next;
+    ///         // ... get absolute address of next node => `addr_next`
+    ///         Node::mark(addr_next, gc);
+    ///     }
+    /// }
+    /// ```
+    // C에서 이 함수의 이름이 아닌 주소로 호출하므로 #[no_mangle] 필요없어보임
     unsafe extern "C" fn filter(ptr: *mut ::std::os::raw::c_char, gc: *mut GarbageCollection);
 }
