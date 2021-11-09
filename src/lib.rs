@@ -33,6 +33,7 @@
 #![feature(generic_associated_types)] // to define fields of `POp`
 #![feature(asm)]
 #![feature(never_type)] // to use `!`
+#![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
 pub mod elim_stack;
