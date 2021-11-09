@@ -9,6 +9,7 @@ pub mod tests {
 
     use crate::persistent::POp;
     use crate::plocation::pool::*;
+    use crate::plocation::ralloc::Collectable;
 
     /// 테스트 파일이 위치할 경로 계산
     ///
@@ -23,6 +24,12 @@ pub mod tests {
 
     #[derive(Debug, Default)]
     pub struct DummyRootOp;
+
+    impl Collectable for DummyRootOp {
+        unsafe extern "C" fn filter(_: *mut std::os::raw::c_char, _: *mut crate::plocation::ralloc::GarbageCollection) {
+            // no-op
+        }
+    }
 
     impl POp for DummyRootOp {
         type Object<'o> = ();

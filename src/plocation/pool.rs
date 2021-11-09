@@ -301,6 +301,12 @@ mod tests {
         flag: AtomicBool,
     }
 
+    impl Collectable for RootOp {
+        unsafe extern "C" fn filter(_: *mut std::os::raw::c_char, _: *mut GarbageCollection) {
+            // no-op
+        }
+    }
+
     impl POp for RootOp {
         type Object<'o> = ();
         type Input = ();
