@@ -108,3 +108,92 @@ pub trait Collectable {
     // C에서 이 함수의 이름이 아닌 주소로 호출하므로 #[no_mangle] 필요없어보임
     unsafe extern "C" fn filter(ptr: *mut ::std::os::raw::c_char, gc: *mut GarbageCollection);
 }
+
+#[cfg(test)]
+mod tests{
+    use std::sync::atomic::Ordering;
+    use crate::{pepoch::{self, PAtomic}, persistent::POp, plocation::{Pool, PoolHandle, global_pool, ralloc::*}, utils::tests::get_test_abs_path};
+    #[derive(Debug)]
+    struct Node {
+        traced: bool,
+    }
+    impl Collectable for Node {
+        unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, _: *mut GarbageCollection) {
+            println!("call node filter");
+            let node = (ptr as *mut Self).as_mut().unwrap();
+            node.traced = true;
+
+            // no more ptr to trace
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RootOp {
+        node1: PAtomic<Node>,
+        node2: PAtomic<Node>,
+        initialized: bool,
+    }
+    impl Collectable for RootOp {
+        unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut GarbageCollection) {
+            let pool = global_pool().unwrap();
+            let guard = pepoch::unprotected(pool);
+
+            // Get Self
+            let root = (ptr as *mut Self).as_ref().unwrap();
+
+            // Get absolute addr of node1, 2
+            let node1_raw = root.node1.load(Ordering::SeqCst, guard).deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+            let node2_raw = root.node2.load(Ordering::SeqCst, guard).deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+
+            // Mark nodes to trace
+            Node::mark(node1_raw, gc);
+            Node::mark(node2_raw, gc);
+        }
+    }
+
+    impl POp for RootOp {
+        type Object<'o> = ();
+        type Input = ();
+        type Output<'o> = ();
+        type Error = !;
+
+        fn run<'o>(
+        &mut self,
+        _: Self::Object<'o>,
+        _: Self::Input,
+        pool: &PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+            if !self.initialized {
+                self.node1 = PAtomic::new(Node { traced: false}, pool);
+                self.node2 = PAtomic::new(Node { traced: false}, pool);
+                self.initialized = true;
+            }
+            Ok(())
+        }
+
+        fn reset(&mut self, _: bool) {
+            // no-op
+        }
+    }
+
+    const FILE_NAME: &str = "gc.pool";
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+    // gc가 root에 딸린 포인터들을 잘 trace하는지 테스트
+    // - 현재는 이 테스트를 2번 실행했을 때 출력문으로 3개 block이(root, root.node1, root.node2) 잘 trace됨을 확인가능
+    // - TODO: 자동화
+    #[test]
+    fn gc() {
+        let filepath = get_test_abs_path(FILE_NAME);
+
+        // 풀 열기 (없으면 새로 만듦)
+        let pool_handle = unsafe { Pool::open::<RootOp>(&filepath, FILE_SIZE) }
+            .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
+
+        // 루트 Op 가져오기
+        let root_op = pool_handle.get_root::<RootOp>();
+
+        // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
+        root_op.run((), (), &pool_handle).unwrap();
+    }
+}
