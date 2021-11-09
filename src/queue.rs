@@ -7,7 +7,8 @@ use std::{mem::MaybeUninit, ptr};
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::{ll::*, pool::*, ptr::*};
+use crate::plocation::ralloc::Collectable;
+use crate::plocation::{global_pool, ll::*, pool::*, ptr::*};
 
 struct Node<T: Clone> {
     data: MaybeUninit<T>,
@@ -39,6 +40,23 @@ impl<T: Clone> From<T> for Node<T> {
     }
 }
 
+impl<T: Clone> Collectable for Node<T> {
+    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+        let pool = global_pool().unwrap();
+        let guard = epoch::unprotected(pool);
+
+        // Get Self
+        let node = (ptr as *mut Self).as_ref().unwrap();
+
+        // Mark valid ptr to trace
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next_raw = next.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+            Node::<T>::mark(next_raw, gc);
+        }
+    }
+}
+
 /// `Queue`의 Enqueue operation
 #[derive(Debug)]
 pub struct Enqueue<T: Clone> {
@@ -54,17 +72,34 @@ impl<T: Clone> Default for Enqueue<T> {
     }
 }
 
+impl<T: Clone> Collectable for Enqueue<T> {
+    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+        let pool = global_pool().unwrap();
+        let guard = epoch::unprotected(pool);
+
+        // Get Self
+        let enq = (ptr as *mut Self).as_ref().unwrap();
+
+        // Mark valid ptr to trace
+        let mut mine = enq.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            let mine_raw = mine.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+            Node::<T>::mark(mine_raw, gc);
+        }
+    }
+}
+
 impl<T: 'static + Clone> POp for Enqueue<T> {
     type Object<'o> = &'o Queue<T>;
     type Input = T;
     type Output<'o> = ();
     type Error = !;
 
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         queue: Self::Object<'o>,
         value: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         queue.enqueue(self, value, pool);
         Ok(())
@@ -92,17 +127,34 @@ impl<T: Clone> Default for Dequeue<T> {
     }
 }
 
+impl<T: Clone> Collectable for Dequeue<T> {
+    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+        let pool = global_pool().unwrap();
+        let guard = epoch::unprotected(pool);
+
+        // Get Self
+        let deq = (ptr as *mut Self).as_ref().unwrap();
+
+        // Mark valid ptr to trace
+        let mut target = deq.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            let target_raw = target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+            Node::<T>::mark(target_raw, gc);
+        }
+    }
+}
+
 impl<T: 'static + Clone> POp for Dequeue<T> {
     type Object<'o> = &'o Queue<T>;
     type Input = ();
     type Output<'o> = Option<T>;
     type Error = !;
 
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         queue: Self::Object<'o>,
         (): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(queue.dequeue(self, pool))
     }
@@ -116,7 +168,7 @@ impl<T: 'static + Clone> POp for Dequeue<T> {
 
 impl<T: Clone> Dequeue<T> {
     #[inline]
-    fn id<O: POp>(&self, pool: &PoolHandle<O>) -> usize {
+    fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         unsafe { self.as_pptr(pool).into_offset() }
     }
@@ -138,17 +190,34 @@ impl<T: Clone> Default for DequeueSome<T> {
     }
 }
 
+impl<T: Clone> Collectable for DequeueSome<T> {
+    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+        let pool = global_pool().unwrap();
+        let guard = epoch::unprotected(pool);
+
+        // Get Self
+        let deqsome = (ptr as *mut Self).as_mut().unwrap();
+
+        // Mark ptr
+        let mut target = deqsome.deq.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            let target_raw = target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+            Node::<usize>::mark(target_raw, gc);
+        }
+    }
+}
+
 impl<T: 'static + Clone> POp for DequeueSome<T> {
     type Object<'o> = &'o Queue<T>;
     type Input = ();
     type Output<'o> = T;
     type Error = !;
 
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         queue: Self::Object<'o>,
         (): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
             if let Ok(Some(v)) = self.deq.run(queue, (), pool) {
@@ -170,10 +239,28 @@ pub struct Queue<T: Clone> {
     tail: CachePadded<PAtomic<Node<T>>>,
 }
 
+impl<T: Clone> Collectable for Queue<T> {
+    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+        let pool = global_pool().unwrap();
+        let guard = epoch::unprotected(pool);
+    
+        // Get Self
+        let queue = (ptr as *mut Self).as_ref().unwrap();
+    
+        // Mark valid ptr to trace
+        let mut head = queue.head.load(Ordering::SeqCst, guard);
+        if !head.is_null() {
+            let head_raw = head.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+            Node::<T>::mark(head_raw, gc);
+        }
+    }
+}
+
+
 impl<T: Clone> Queue<T> {
     /// new
     // TODO: alloc, init 구상한 후 시그니처 변경
-    pub fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+    pub fn new(pool: &PoolHandle) -> POwned<Self> {
         let guard = unsafe { epoch::unprotected(pool) };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
@@ -189,19 +276,19 @@ impl<T: Clone> Queue<T> {
         ret
     }
 
-    fn enqueue<O: POp>(&self, client: &mut Enqueue<T>, value: T, pool: &PoolHandle<O>) {
+    fn enqueue(&self, client: &mut Enqueue<T>, value: T, pool: &PoolHandle) {
         let guard = epoch::pin(pool);
         let node = some_or!(self.is_incomplete(client, value, &guard, pool), return);
 
         while self.try_enqueue(node, &guard, pool).is_err() {}
     }
 
-    fn is_incomplete<'g, O: POp>(
+    fn is_incomplete<'g>(
         &self,
         client: &Enqueue<T>,
         value: T,
         guard: &'g Guard<'_>,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Option<PShared<'g, Node<T>>> {
         let mine = client.mine.load(Ordering::SeqCst, guard);
 
@@ -231,11 +318,11 @@ impl<T: Clone> Queue<T> {
     }
 
     /// tail에 새 `node` 연결을 시도
-    fn try_enqueue<O: POp>(
+    fn try_enqueue(
         &self,
         node: PShared<'_, Node<T>>,
         guard: &Guard<'_>,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<(), ()> {
         let tail = self.tail.load(Ordering::SeqCst, guard);
         let tail_ref = unsafe { tail.deref(pool) };
@@ -279,11 +366,11 @@ impl<T: Clone> Queue<T> {
     }
 
     /// `node`가 Queue 안에 있는지 head부터 tail까지 순회하며 검색
-    fn search<O: POp>(
+    fn search(
         &self,
         node: PShared<'_, Node<T>>,
         guard: &Guard<'_>,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
@@ -303,7 +390,7 @@ impl<T: Clone> Queue<T> {
     /// `dequeue()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 1;
 
-    fn dequeue<O: POp>(&self, client: &mut Dequeue<T>, pool: &PoolHandle<O>) -> Option<T> {
+    fn dequeue(&self, client: &mut Dequeue<T>, pool: &PoolHandle) -> Option<T> {
         let guard = epoch::pin(pool);
         let target = client.target.load(Ordering::SeqCst, &guard);
 
@@ -330,11 +417,11 @@ impl<T: Clone> Queue<T> {
     }
 
     /// head를 dequeue 시도
-    fn try_dequeue<O: POp>(
+    fn try_dequeue(
         &self,
         client: &mut Dequeue<T>,
         guard: &Guard<'_>,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Option<T>, ()> {
         let head = self.head.load(Ordering::SeqCst, guard);
         let tail = self.tail.load(Ordering::SeqCst, guard);
@@ -425,7 +512,7 @@ mod test {
     use crossbeam_utils::thread;
     use serial_test::serial;
 
-    use crate::utils::tests::*;
+    use crate::{plocation::{global_pool, ralloc::Collectable}, utils::tests::*};
 
     use super::*;
 
@@ -460,7 +547,7 @@ mod test {
     }
 
     impl RootOp {
-        fn init<O: POp>(&self, pool: &PoolHandle<O>) {
+        fn init(&self, pool: &PoolHandle) {
             let guard = unsafe { epoch::unprotected(pool) };
             let q = self.queue.load(Ordering::SeqCst, guard);
 
@@ -473,6 +560,48 @@ mod test {
         }
     }
 
+    impl Collectable for RootOp {
+        unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+            let pool = global_pool().unwrap();
+            let guard = epoch::unprotected(pool);
+
+            // Get Self
+            let root = (ptr as *mut Self).as_mut().unwrap();
+
+            // Mark valid ptr to trace
+            //
+            // NOTE: 
+            // Ralloc에 null ptr 걸러내는 로직 있지만, 우리도 체크해야함
+            // 왜냐하면 우리 로직에서 null ptr를 deref_mut하면 절대주소 구할 때 overflow나기때문 
+            let mut queue = root.queue.load(Ordering::SeqCst, guard);
+            if !queue.is_null() {
+                let queue_raw = queue.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+                Queue::<usize>::mark(queue_raw, gc);
+            }
+
+            let pool = global_pool().unwrap();
+            let guard = epoch::unprotected(pool);
+            for enq_arr in root.enqs.as_mut() {
+                for enq in enq_arr {
+                    let mut mine = enq.mine.load(Ordering::SeqCst, guard);
+                    if !mine.is_null() {
+                        let mine_raw = mine.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+                        Node::<usize>::mark(mine_raw, gc);
+                    }
+                }
+            }
+            for deq_arr in root.deqs.as_mut() {
+                for deq in deq_arr {
+                    let mut target = deq.target.load(Ordering::SeqCst, guard);
+                    if !target.is_null() {
+                        let target_raw = target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+                        Node::<usize>::mark(target_raw, gc);
+                    }
+                }
+            }
+        }
+    }
+
     impl POp for RootOp {
         type Object<'o> = ();
         type Input = ();
@@ -480,11 +609,11 @@ mod test {
         type Error = !;
 
         /// idempotent enq_deq
-        fn run<'o, O: POp>(
+        fn run<'o>(
             &mut self,
             (): Self::Object<'o>,
             (): Self::Input,
-            pool: &PoolHandle<O>,
+            pool: &PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);
 
@@ -544,7 +673,10 @@ mod test {
     impl TestRootOp for RootOp {}
 
     // TODO: stack의 enq_deq과 합치기
-    // 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+    // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+    // - pool을 2번째 열 때부터 gc 동작 확인가능: 
+    //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴
+    //      - 여기서 +2는 Root, Queue를 가리키는 포인터
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn enq_deq() {

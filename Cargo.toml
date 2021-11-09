@@ -20,9 +20,9 @@ stat_print_flushes = []
 
 [dependencies]
 crossbeam-utils = "0.8.5"
-chrono = "0.4" # TODO: chrono crate의 audit 이슈 해결되면 사용 https://github.com/chronotope/chrono/pull/578#issuecomment-945604623
+# chrono = "0.4" # TODO: chrono crate의 audit 이슈 해결되면 사용 https://github.com/chronotope/chrono/pull/578#issuecomment-945604623
 etrace = "1.1.1"
-rand = "0.8.4"
+# rand = "0.8.4" # lib.rs에서 주석해제 시켜갈 때 같이 주석해제
 tempfile = "3.2.0"
 array-init = "2.0.0"
 
