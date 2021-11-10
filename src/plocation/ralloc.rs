@@ -53,7 +53,7 @@ extern "C" {
 
     pub fn RP_set_root_mark(
         mark: ::std::option::Option<
-        unsafe extern "C" fn(*mut ::std::os::raw::c_char, *mut GarbageCollection),
+            unsafe extern "C" fn(*mut ::std::os::raw::c_char, *mut GarbageCollection),
         >,
         i: u64,
     );

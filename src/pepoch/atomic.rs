@@ -1389,6 +1389,8 @@ impl<T: ?Sized + Pointable> Drop for POwned<T> {
     fn drop(&mut self) {
         let (offset, _) = decompose_tag::<T>(self.data);
         unsafe {
+            // TODO: application 로직에서는 global pool 접근 막을 수 없을지 고민
+            // - e.g. Pool::free를 호출하면, 그쪽에서 private한 global pool 사용
             T::drop(offset, global_pool().unwrap());
         }
     }
@@ -1875,6 +1877,7 @@ mod tests {
         static _U: PAtomic<u8> = PAtomic::<u8>::null();
     }
 
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn array_init() {

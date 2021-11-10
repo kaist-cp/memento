@@ -26,7 +26,10 @@ pub mod tests {
     pub struct DummyRootOp;
 
     impl Collectable for DummyRootOp {
-        unsafe extern "C" fn filter(_: *mut std::os::raw::c_char, _: *mut crate::plocation::ralloc::GarbageCollection) {
+        unsafe extern "C" fn filter(
+            _: *mut std::os::raw::c_char,
+            _: *mut crate::plocation::ralloc::GarbageCollection,
+        ) {
             // no-op
         }
     }

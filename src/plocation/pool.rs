@@ -202,16 +202,15 @@ impl Pool {
     ///
     /// * `filepath`에 파일이 존재하지 않는다면 실패
     /// * `Pool::create`시 지정한 size와 같은 크기로 호출하지 않으면 실패 (Ralloc 내부의 assert문에 의해 강제)
+    // TODO: `size` 의문. Ralloc의 RP_init은 왜 풀 열 때에도 처음 만들때랑 같은 size로 호출해야하나?
+    //
+    // TODO: `size` 안받게 할지 고민. 파일 크기로 `Pool::create`시 지정한 size를 역계산하여 사용?
+    // - `Pool::create`시 지정한 size랑 실제 생성되는 파일 크기는 다름. 8GB로 create 했어도, 파일 크기는 Ralloc의 로직에 따라 계산된 8GB+a로 됨
+    // - 8GB+a에서 Ralloc의 로직을 역계산하여 8GB를 알아낼 수 있을듯
     //
     // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
     // - <O: POp, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
-    // TODO: `size` 안받게 할지 고민
-    // - `Pool::create`시 지정한 size랑 실제 생성되는 파일 크기는 다름. 8GB로 create 했어도, 파일 크기는 Ralloc의 로직에 따라 계산된 8GB+a로 됨
-    // - 할려면 파일 크기로 `Pool::create`시 지정한 size를 역계산하는 방법뿐인듯. 이걸 하는 게 좋나
-    pub unsafe fn open<O: POp>(
-        filepath: &str,
-        size: usize,
-    ) -> Result<&'static PoolHandle, Error> {
+    pub unsafe fn open<O: POp>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
         if !Path::new(&(filepath.to_owned() + "_basemd")).exists() {
@@ -244,7 +243,7 @@ impl Pool {
             len: size,
             recovering: true,
         });
-        
+
         // GC 수행 (그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음)
         RP_set_root_mark(Some(O::mark), 0);
         let _is_gc_executed = RP_recover();
@@ -343,6 +342,7 @@ mod tests {
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn check_inv() {

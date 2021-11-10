@@ -41,7 +41,10 @@ impl<T: Clone> From<T> for Node<T> {
 }
 
 impl<T: Clone> Collectable for Node<T> {
-    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+    unsafe extern "C" fn filter(
+        ptr: *mut std::os::raw::c_char,
+        gc: *mut crate::plocation::ralloc::GarbageCollection,
+    ) {
         let pool = global_pool().unwrap();
         let guard = epoch::unprotected(pool);
 
@@ -73,7 +76,10 @@ impl<T: Clone> Default for Enqueue<T> {
 }
 
 impl<T: Clone> Collectable for Enqueue<T> {
-    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+    unsafe extern "C" fn filter(
+        ptr: *mut std::os::raw::c_char,
+        gc: *mut crate::plocation::ralloc::GarbageCollection,
+    ) {
         let pool = global_pool().unwrap();
         let guard = epoch::unprotected(pool);
 
@@ -128,7 +134,10 @@ impl<T: Clone> Default for Dequeue<T> {
 }
 
 impl<T: Clone> Collectable for Dequeue<T> {
-    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+    unsafe extern "C" fn filter(
+        ptr: *mut std::os::raw::c_char,
+        gc: *mut crate::plocation::ralloc::GarbageCollection,
+    ) {
         let pool = global_pool().unwrap();
         let guard = epoch::unprotected(pool);
 
@@ -191,7 +200,10 @@ impl<T: Clone> Default for DequeueSome<T> {
 }
 
 impl<T: Clone> Collectable for DequeueSome<T> {
-    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+    unsafe extern "C" fn filter(
+        ptr: *mut std::os::raw::c_char,
+        gc: *mut crate::plocation::ralloc::GarbageCollection,
+    ) {
         let pool = global_pool().unwrap();
         let guard = epoch::unprotected(pool);
 
@@ -240,13 +252,16 @@ pub struct Queue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for Queue<T> {
-    unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+    unsafe extern "C" fn filter(
+        ptr: *mut std::os::raw::c_char,
+        gc: *mut crate::plocation::ralloc::GarbageCollection,
+    ) {
         let pool = global_pool().unwrap();
         let guard = epoch::unprotected(pool);
-    
+
         // Get Self
         let queue = (ptr as *mut Self).as_ref().unwrap();
-    
+
         // Mark valid ptr to trace
         let mut head = queue.head.load(Ordering::SeqCst, guard);
         if !head.is_null() {
@@ -255,7 +270,6 @@ impl<T: Clone> Collectable for Queue<T> {
         }
     }
 }
-
 
 impl<T: Clone> Queue<T> {
     /// new
@@ -366,12 +380,7 @@ impl<T: Clone> Queue<T> {
     }
 
     /// `node`가 Queue 안에 있는지 head부터 tail까지 순회하며 검색
-    fn search(
-        &self,
-        node: PShared<'_, Node<T>>,
-        guard: &Guard<'_>,
-        pool: &PoolHandle,
-    ) -> bool {
+    fn search(&self, node: PShared<'_, Node<T>>, guard: &Guard<'_>, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
         // TODO: null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
@@ -512,7 +521,10 @@ mod test {
     use crossbeam_utils::thread;
     use serial_test::serial;
 
-    use crate::{plocation::{global_pool, ralloc::Collectable}, utils::tests::*};
+    use crate::{
+        plocation::{global_pool, ralloc::Collectable},
+        utils::tests::*,
+    };
 
     use super::*;
 
@@ -561,7 +573,10 @@ mod test {
     }
 
     impl Collectable for RootOp {
-        unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut crate::plocation::ralloc::GarbageCollection) {
+        unsafe extern "C" fn filter(
+            ptr: *mut std::os::raw::c_char,
+            gc: *mut crate::plocation::ralloc::GarbageCollection,
+        ) {
             let pool = global_pool().unwrap();
             let guard = epoch::unprotected(pool);
 
@@ -570,9 +585,8 @@ mod test {
 
             // Mark valid ptr to trace
             //
-            // NOTE: 
-            // Ralloc에 null ptr 걸러내는 로직 있지만, 우리도 체크해야함
-            // 왜냐하면 우리 로직에서 null ptr를 deref_mut하면 절대주소 구할 때 overflow나기때문 
+            // Ralloc에 null ptr 걸러내는 로직 있지만, 우리도 체크해야함. 왜냐하면 우리 로직에서 null ptr를 deref_mut하면 절대주소 구할 때 overflow나기때문
+            // TODO: 우리는 null 검사 안해도 되게하기. Ralloc에서 null ptr 거르는데 우리도 null 검사하는 게 불편함
             let mut queue = root.queue.load(Ordering::SeqCst, guard);
             if !queue.is_null() {
                 let queue_raw = queue.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
@@ -594,7 +608,8 @@ mod test {
                 for deq in deq_arr {
                     let mut target = deq.target.load(Ordering::SeqCst, guard);
                     if !target.is_null() {
-                        let target_raw = target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
+                        let target_raw =
+                            target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
                         Node::<usize>::mark(target_raw, gc);
                     }
                 }
@@ -674,9 +689,11 @@ mod test {
 
     // TODO: stack의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
-    // - pool을 2번째 열 때부터 gc 동작 확인가능: 
+    // - pool을 2번째 열 때부터 gc 동작 확인가능:
     //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
+    //
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn enq_deq() {

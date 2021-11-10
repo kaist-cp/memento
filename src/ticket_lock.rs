@@ -252,6 +252,7 @@ mod tests {
     const NR_THREAD: usize = 4;
     const COUNT: usize = 1_000_000;
 
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
     #[serial] // Multi-threaded test의 속도 저하 방지 + Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn push_pop_queue() {
