@@ -46,7 +46,7 @@ impl<T: Clone> Collectable for Node<T> {
         gc: *mut crate::plocation::ralloc::GarbageCollection,
     ) {
         let pool = global_pool().unwrap();
-        let guard = epoch::unprotected(pool);
+        let guard = epoch::unprotected();
 
         // Get Self
         let node = (ptr as *mut Self).as_ref().unwrap();
@@ -81,7 +81,7 @@ impl<T: Clone> Collectable for Enqueue<T> {
         gc: *mut crate::plocation::ralloc::GarbageCollection,
     ) {
         let pool = global_pool().unwrap();
-        let guard = epoch::unprotected(pool);
+        let guard = epoch::unprotected();
 
         // Get Self
         let enq = (ptr as *mut Self).as_ref().unwrap();
@@ -139,7 +139,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
         gc: *mut crate::plocation::ralloc::GarbageCollection,
     ) {
         let pool = global_pool().unwrap();
-        let guard = epoch::unprotected(pool);
+        let guard = epoch::unprotected();
 
         // Get Self
         let deq = (ptr as *mut Self).as_ref().unwrap();
@@ -205,7 +205,7 @@ impl<T: Clone> Collectable for DequeueSome<T> {
         gc: *mut crate::plocation::ralloc::GarbageCollection,
     ) {
         let pool = global_pool().unwrap();
-        let guard = epoch::unprotected(pool);
+        let guard = epoch::unprotected();
 
         // Get Self
         let deqsome = (ptr as *mut Self).as_mut().unwrap();
@@ -257,7 +257,7 @@ impl<T: Clone> Collectable for Queue<T> {
         gc: *mut crate::plocation::ralloc::GarbageCollection,
     ) {
         let pool = global_pool().unwrap();
-        let guard = epoch::unprotected(pool);
+        let guard = epoch::unprotected();
 
         // Get Self
         let queue = (ptr as *mut Self).as_ref().unwrap();
@@ -275,7 +275,7 @@ impl<T: Clone> Queue<T> {
     /// new
     // TODO: alloc, init 구상한 후 시그니처 변경
     pub fn new(pool: &PoolHandle) -> POwned<Self> {
-        let guard = unsafe { epoch::unprotected(pool) };
+        let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
@@ -291,7 +291,7 @@ impl<T: Clone> Queue<T> {
     }
 
     fn enqueue(&self, client: &mut Enqueue<T>, value: T, pool: &PoolHandle) {
-        let guard = epoch::pin(pool);
+        let guard = epoch::pin();
         let node = some_or!(self.is_incomplete(client, value, &guard, pool), return);
 
         while self.try_enqueue(node, &guard, pool).is_err() {}
@@ -301,7 +301,7 @@ impl<T: Clone> Queue<T> {
         &self,
         client: &Enqueue<T>,
         value: T,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Option<PShared<'g, Node<T>>> {
         let mine = client.mine.load(Ordering::SeqCst, guard);
@@ -335,7 +335,7 @@ impl<T: Clone> Queue<T> {
     fn try_enqueue(
         &self,
         node: PShared<'_, Node<T>>,
-        guard: &Guard<'_>,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
         let tail = self.tail.load(Ordering::SeqCst, guard);
@@ -380,7 +380,7 @@ impl<T: Clone> Queue<T> {
     }
 
     /// `node`가 Queue 안에 있는지 head부터 tail까지 순회하며 검색
-    fn search(&self, node: PShared<'_, Node<T>>, guard: &Guard<'_>, pool: &PoolHandle) -> bool {
+    fn search(&self, node: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
         // TODO: null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
@@ -400,7 +400,7 @@ impl<T: Clone> Queue<T> {
     const EMPTY: usize = 1;
 
     fn dequeue(&self, client: &mut Dequeue<T>, pool: &PoolHandle) -> Option<T> {
-        let guard = epoch::pin(pool);
+        let guard = epoch::pin();
         let target = client.target.load(Ordering::SeqCst, &guard);
 
         if target.tag() == Self::EMPTY {
@@ -429,7 +429,7 @@ impl<T: Clone> Queue<T> {
     fn try_dequeue(
         &self,
         client: &mut Dequeue<T>,
-        guard: &Guard<'_>,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, ()> {
         let head = self.head.load(Ordering::SeqCst, guard);
@@ -560,7 +560,7 @@ mod test {
 
     impl RootOp {
         fn init(&self, pool: &PoolHandle) {
-            let guard = unsafe { epoch::unprotected(pool) };
+            let guard = unsafe { epoch::unprotected() };
             let q = self.queue.load(Ordering::SeqCst, guard);
 
             // Initialize queue
@@ -578,7 +578,7 @@ mod test {
             gc: *mut crate::plocation::ralloc::GarbageCollection,
         ) {
             let pool = global_pool().unwrap();
-            let guard = epoch::unprotected(pool);
+            let guard = epoch::unprotected();
 
             // Get Self
             let root = (ptr as *mut Self).as_mut().unwrap();
@@ -594,7 +594,7 @@ mod test {
             }
 
             let pool = global_pool().unwrap();
-            let guard = epoch::unprotected(pool);
+            let guard = epoch::unprotected();
             for enq_arr in root.enqs.as_mut() {
                 for enq in enq_arr {
                     let mut mine = enq.mine.load(Ordering::SeqCst, guard);
@@ -633,7 +633,7 @@ mod test {
             self.init(pool);
 
             // Alias
-            let guard = unsafe { epoch::unprotected(&pool) };
+            let guard = unsafe { epoch::unprotected() };
             let (q, enqs, deqs) = (
                 unsafe { self.queue.load(Ordering::SeqCst, guard).deref(pool) },
                 &mut self.enqs,
