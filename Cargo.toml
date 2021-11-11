@@ -24,7 +24,7 @@ crossbeam-utils = "0.8.5"
 etrace = "1.1.1"
 # rand = "0.8.4" # lib.rs에서 주석해제 시켜갈 때 같이 주석해제
 tempfile = "3.2.0"
-array-init = "2.0.0"
+# array-init = "2.0.0" # lib.rs에서 주석해제 시켜갈 때 같이 주석해제
 
 [dev-dependencies]
 log = "0.4.14"

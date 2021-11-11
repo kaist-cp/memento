@@ -76,6 +76,6 @@ pub mod tests {
         let root_op = pool_handle.get_root::<O>();
 
         // 루트 op 실행
-        while root_op.run((), (), &pool_handle).is_err() {}
+        while root_op.run((), (), pool_handle).is_err() {}
     }
 }
