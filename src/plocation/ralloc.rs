@@ -91,16 +91,20 @@ pub trait Collectable {
     /// # Example
     ///
     /// ```no_run
+    /// # use compositional_persistent_object::plocation::ralloc::GarbageCollection;
+    /// # use compositional_persistent_object::plocation::ralloc::Collectable;
+    /// # use compositional_persistent_object::plocation::ptr::PPtr;
     /// struct Node {
     ///     val: usize,
     ///     next: PPtr<Node>,
     /// }
     ///
     /// impl Collectable for Node {
-    ///     extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut GarbageCollection) {
+    ///     unsafe extern "C" fn filter(ptr: *mut std::os::raw::c_char, gc: *mut GarbageCollection) {
     ///         let node = (ptr as *mut Self).as_ref().unwrap();
     ///         let next = node.next;
     ///         // ... get absolute address of next node => `addr_next`
+    ///         # let addr_next = &next as *const _ as *mut std::os::raw::c_char;
     ///         Node::mark(addr_next, gc);
     ///     }
     /// }

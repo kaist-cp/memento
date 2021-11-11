@@ -30,7 +30,7 @@ use crate::plocation::{global, ralloc::*};
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024 * 1024 * 1024).unwrap();
 ///
 /// // 핸들러로 풀의 루트 Op 가져오기
-/// let root_op = pool_handle.get_root();
+/// let root_op = pool_handle.get_root::<MyRootOp>();
 ///
 /// // 루트 Op 실행
 /// root_op.run((), (), &pool_handle).unwrap();
