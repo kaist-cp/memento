@@ -159,6 +159,11 @@ impl Pool {
             ));
         }
 
+        // 새로 init하기 전에 이전에 열었던 pool을 미리 clear
+        // - RP_init으로 Ralloc에 새로 세팅된 정보가 이전에 사용하던 PoolHandle의 drop으로 RP_close되면 안됨
+        // - 따라서 이전에 사용하던 것 미리 drop
+        global::clear();
+
         // 파일 만들고 Ralloc의 pool format으로 초기화
         let filepath = CString::new(filepath).expect("CString::new failed");
         let is_reopen = unsafe { RP_init(filepath.as_ptr(), size as u64) };
@@ -221,7 +226,7 @@ impl Pool {
 
         // 새로 열기 전에 이전에 열었던 pool을 미리 clear
         // - RP_init으로 Ralloc에 새로 세팅된 정보가 이전에 사용하던 PoolHandle의 drop으로 RP_close되면 안됨
-        // - 따라서 새로 init하기 전에 이전에 사용하던 것 미리 drop
+        // - 따라서 이전에 사용하던 것 미리 drop
         global::clear();
 
         // pool 파일 열기
