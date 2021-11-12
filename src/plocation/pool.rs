@@ -5,7 +5,7 @@
 use std::alloc::Layout;
 use std::ffi::{c_void, CString};
 use std::io::Error;
-use std::mem;
+use std::{fs, mem};
 use std::path::Path;
 
 use crate::persistent::*;
@@ -158,6 +158,7 @@ impl Pool {
                 "File already exist.",
             ));
         }
+        fs::create_dir_all(Path::new(filepath).parent().unwrap())?;
 
         // 새로 init하기 전에 이전에 열었던 pool을 미리 clear
         // - RP_init으로 Ralloc에 새로 세팅된 정보가 이전에 사용하던 PoolHandle의 drop으로 RP_close되면 안됨
