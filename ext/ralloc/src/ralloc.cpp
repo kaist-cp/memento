@@ -87,18 +87,19 @@ struct RallocHolder{
  * if such a heap doesn't exist, create one. aka start.
  * id is the distinguishable identity of applications.
  */
+static RallocHolder* _holder;
 int RP_init(const char* _id, uint64_t size){
-    static RallocHolder _holder(_id,size);
-    return _holder.init_ret_val;
+    _holder = new RallocHolder(_id, size);
+    return _holder->init_ret_val;
 }
 
 int RP_recover(){
     return (int) base_md->restart();
 }
 
-// we assume RP_close is called by the last exiting thread.
+// @seungminjeon: 사용자가 RP_close로 persistent heap을 닫을 수 있도록 함 (기존의 Ralloc 구현은 한 번 열면 프로그램 끝날때까지 닫지 못함)
 void RP_close(){
-    // Wentao: this is a noop as the real function body is now i ~RallocHolder
+    delete _holder;
 }
 
 void* RP_malloc(size_t sz){
@@ -167,4 +168,12 @@ int RP_region_range(int idx, void** start_addr, void** end_addr){
     *start_addr = (void*)_rgs->regions_address[idx];
     *end_addr = (void*) ((uint64_t)_rgs->regions_address[idx] + _rgs->regions[idx]->FILESIZE);
     return 0;
+}
+
+void RP_set_root_mark(void (*mark)(char*, GarbageCollection&), uint64_t i) {
+    assert(i<MAX_ROOTS);
+    // @seungminjeon: 
+    // - Ralloc 원래 로직은 roots_filter_func[i]에 root의 mark를 호출하는 filter_func를 넣지만, 여기서는 root의 mark를 직접 넣음
+    // - 이유: Rust에서 root type `O`의 mark를 호출하는 filter func을 만드는 게 잘 안됨
+    ralloc::roots_filter_func[i] = mark;
 }

@@ -12,6 +12,10 @@ WARNING_FLAGS:=-ftrapv -Wreturn-type -W -Wall \
 -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-parameter
 
 FLAGS = -O3 -g -fpermissive $(WARNING_FLAGS) -fno-omit-frame-pointer -fPIC #-DSHM_SIMULATING #-DDESTROY -DMEM_CONSUME_TEST
+# @seungminjeon: makefile시 arg로 persist/no-persist 버전 선택 가능케함
+ifeq ($(FEATURE),no_persist)
+	FLAGS = -O3 -g -fpermissive $(WARNING_FLAGS) -fno-omit-frame-pointer -fPIC -DSHM_SIMULATING
+endif
 RALLOC_FLAGS = $(FLAGS) -DRALLOC -L.
 MAKALU_FLAGS = $(FLAGS) -I../ext/makalu_alloc/include -DMAKALU -L../ext/makalu_alloc/lib -lmakalu 
 PMDK_FLAGS = $(FLAGS) -DPMDK -lpmemobj 

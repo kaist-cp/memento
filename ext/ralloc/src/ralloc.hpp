@@ -19,6 +19,8 @@ namespace ralloc{
     /* persistent metadata and their layout */
     extern BaseMeta* base_md;
 };
+
+// @seungminjeon: template은 Rust에 linking 불가
 template<class T>
 T* RP_get_root(uint64_t i){
     assert(ralloc::initialized);
@@ -38,6 +40,7 @@ void RP_close();
 void* RP_malloc(size_t sz);
 void RP_free(void* ptr);
 void* RP_set_root(void* ptr, uint64_t i);
+void* RP_get_root_c(uint64_t i); // @seungminjeon: Rust에서 RP_get_root를 사용하기 위해 c 버전 노출
 size_t RP_malloc_size(void* ptr);
 void* RP_calloc(size_t num, size_t size);
 void* RP_realloc(void* ptr, size_t new_size);
@@ -45,6 +48,7 @@ void* RP_realloc(void* ptr, size_t new_size);
 int RP_in_prange(void* ptr);
 /* return 1 if the query is invalid, otherwise 0 and write start and end addr to the parameter. */
 int RP_region_range(int idx, void** start_addr, void** end_addr);
+void RP_set_root_mark(void (*mark)(char*, GarbageCollection&), uint64_t i); // @seungminjeon: GC시 trace 시작지점인 mark 함수 등록
 #ifdef __cplusplus
 }
 #endif

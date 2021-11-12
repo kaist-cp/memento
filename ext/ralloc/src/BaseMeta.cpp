@@ -894,3 +894,19 @@ void GarbageCollection::operator() () {
     FLUSHFENCE;
     printf("Garbage collection Completed!\n");
 }
+
+void GarbageCollection::mark_func_c(char* ptr, void (*filter_func)(char*, GarbageCollection&)) {
+    void* addr = reinterpret_cast<void*>(ptr);
+    // Step 1: check if it's a valid pptr
+    if(UNLIKELY(!ralloc::_rgs->in_range(SB_IDX, addr))) 
+        return; // return if not in range
+    auto res = marked_blk.find(reinterpret_cast<char*>(addr));
+    if(res == marked_blk.end()){
+        // Step 2: mark potential pptr
+        marked_blk.insert(reinterpret_cast<char*>(addr));
+        // Step 3: push ptr to stack
+        to_filter_node.push(reinterpret_cast<char*>(addr));
+        to_filter_func.push(filter_func);
+    }
+    return;
+}

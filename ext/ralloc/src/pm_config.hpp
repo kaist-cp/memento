@@ -54,11 +54,12 @@ enum RegionIndex : int {
 #endif
 
 /* SHM_SIMULATING switches to compatible mode for machines without real persistent memory. */
+// @seungminjeon: filepath는 사용자가 전부 지정하도록 함. 고정 prefix 사용 X
 #ifdef SHM_SIMULATING
-  #define HEAPFILE_PREFIX "/dev/shm/"
+  #define HEAPFILE_PREFIX ""
   #define MMAP_FLAG MAP_SHARED
 #else
-  #define HEAPFILE_PREFIX "/mnt/pmem/"
+  #define HEAPFILE_PREFIX ""
   #define MMAP_FLAG 0x80003/*MAP_SHARED_VALIDATE | MAP_SYNC*/
 #endif
 // #define DEBUG 1
