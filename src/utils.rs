@@ -38,7 +38,7 @@ pub mod tests {
         type Error = !;
 
         fn run<'o>(
-            &mut self,
+            &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input,
             _: &PoolHandle,

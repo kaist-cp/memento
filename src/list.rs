@@ -1,13 +1,19 @@
 //! Persistent list
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    os::raw::c_char,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use etrace::some_or;
 
 use crate::{
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
     persistent::POp,
-    plocation::{AsPPtr, PoolHandle},
+    plocation::{
+        ralloc::{Collectable, GarbageCollection},
+        AsPPtr, PoolHandle,
+    },
 };
 
 /// TODO: doc
@@ -48,6 +54,12 @@ impl<K, V> Default for InsertFront<K, V> {
     }
 }
 
+impl<K: 'static, V: 'static> Collectable for InsertFront<K, V> {
+    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+        todo!()
+    }
+}
+
 impl<K: 'static, V: 'static> POp for InsertFront<K, V>
 where
     K: Eq,
@@ -57,11 +69,11 @@ where
     type Output<'o> = ();
     type Error = ();
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         list: Self::Object<'o>,
         (key, value): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let guard = epoch::pin(pool);
         list.insert_front(self, key, value, &guard, pool)
@@ -89,9 +101,15 @@ impl<K, V> Default for Remove<K, V> {
 
 impl<K, V> Remove<K, V> {
     #[inline]
-    fn id<O: POp>(&self, pool: &PoolHandle<O>) -> usize {
+    fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         unsafe { self.as_pptr(pool).into_offset() }
+    }
+}
+
+impl<K: 'static, V: 'static> Collectable for Remove<K, V> {
+    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+        todo!()
     }
 }
 
@@ -104,11 +122,11 @@ where
     type Output<'o> = bool; // TODO: PoolHandle에 관한 디자인 합의 이후 Option<&'g V>로 바꾸기 (lifetime issue)
     type Error = !;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         list: Self::Object<'o>,
         key: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let guard = epoch::pin(pool);
         Ok(list.remove(self, &key, &guard, pool))
@@ -152,12 +170,7 @@ where
 
     /// Based on Harris-Michael.
     #[inline]
-    fn find<O: POp>(
-        &mut self,
-        key: &K,
-        guard: &'g Guard<'_>,
-        pool: &'g PoolHandle<O>,
-    ) -> Result<bool, ()> {
+    fn find(&mut self, key: &K, guard: &'g Guard<'_>, pool: &'g PoolHandle) -> Result<bool, ()> {
         loop {
             debug_assert_eq!(self.curr.tag(), Self::NOT_DELETED);
 
@@ -185,17 +198,17 @@ where
 
     /// Lookups the value.
     #[inline]
-    fn lookup<O: POp>(&self, pool: &'g PoolHandle<O>) -> Option<&'g V> {
-        unsafe { self.curr.as_ref(pool).map(|n| &n.value) }
+    pub fn lookup(&self, pool: &'g PoolHandle) -> Option<(&'g K, &'g V)> {
+        unsafe { self.curr.as_ref(pool).map(|n| (&n.key, &n.value)) }
     }
 
     /// Inserts a value.
     #[inline]
-    fn insert<O: POp>(
+    fn insert(
         &mut self,
         node: PShared<'g, Node<K, V>>,
         guard: &'g Guard<'_>,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<(), ()> {
         let node_ref = unsafe { node.deref(pool) };
         node_ref.next.store(self.curr, Ordering::SeqCst);
@@ -210,11 +223,11 @@ where
 
     /// Deletes the current node.
     #[inline]
-    fn remove<O: POp>(
+    fn remove(
         self,
         client: &Remove<K, V>,
         guard: &'g Guard<'_>,
-        pool: &'g PoolHandle<O>,
+        pool: &'g PoolHandle,
     ) -> Result<&'g V, ()> {
         // 우선 내가 지우려는 node를 가리키고
         client.target.store(self.curr, Ordering::SeqCst);
@@ -248,6 +261,38 @@ where
                 .compare_exchange(self.curr, next, Ordering::SeqCst, Ordering::SeqCst, guard);
 
         Ok(&curr_node.value)
+    }
+
+    /// TODO: doc
+    #[inline]
+    pub fn next(
+        &mut self,
+        guard: &'g Guard<'_>,
+        pool: &'g PoolHandle,
+    ) -> Result<Option<(&K, &V)>, ()> {
+        debug_assert_eq!(self.curr.tag(), Self::NOT_DELETED);
+
+        let curr_node = some_or!(unsafe { self.curr.as_ref(pool) }, return Ok(None));
+        let next = curr_node.next.load(Ordering::SeqCst, guard);
+
+        self.prev = &curr_node.next;
+        self.curr = next;
+
+        loop {
+            let curr_node = some_or!(unsafe { self.curr.as_ref(pool) }, return Ok(None));
+            let mut next = curr_node.next.load(Ordering::SeqCst, guard);
+
+            if next.tag() != Self::DELETED {
+                return Ok(Some((&curr_node.key, &curr_node.value)));
+            }
+
+            next = next.with_tag(Self::NOT_DELETED);
+            let _ = self
+                .prev
+                .compare_exchange(self.curr, next, Ordering::SeqCst, Ordering::SeqCst, guard)
+                .map_err(|_| ())?;
+            self.curr = next;
+        }
     }
 }
 
@@ -285,11 +330,11 @@ where
 
     /// Finds a key using the given find strategy.
     #[inline]
-    pub fn find<'g, O: POp>(
+    pub fn find<'g>(
         &'g self,
         key: &K,
         guard: &'g Guard<'_>,
-        pool: &'g PoolHandle<O>,
+        pool: &'g PoolHandle,
     ) -> (bool, Cursor<'g, K, V>) {
         loop {
             let mut cursor = self.head(guard);
@@ -301,15 +346,15 @@ where
 
     /// TODO: doc
     #[inline]
-    pub fn lookup<'g, O: POp>(
+    pub fn lookup<'g>(
         &'g self,
         key: &K,
         guard: &'g Guard<'_>,
-        pool: &'g PoolHandle<O>,
+        pool: &'g PoolHandle,
     ) -> Option<&'g V> {
         let (found, cursor) = self.find(key, guard, pool);
         if found {
-            cursor.lookup(pool)
+            cursor.lookup(pool).map(|(_, v)| v)
         } else {
             None
         }
@@ -317,13 +362,13 @@ where
 
     /// TODO: doc
     #[inline]
-    fn insert_front<'g, O: POp>(
+    fn insert_front<'g>(
         &'g self,
         client: &InsertFront<K, V>,
         key: K,
         value: V,
         guard: &'g Guard<'_>,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<(), ()> {
         let mut node = client.node.load(Ordering::SeqCst, guard);
 
@@ -362,12 +407,12 @@ where
 
     /// TODO: doc
     #[inline]
-    fn remove<'g, O: POp>(
+    fn remove<'g>(
         &'g self,
         client: &Remove<K, V>,
         key: &K,
         guard: &'g Guard<'_>,
-        pool: &'g PoolHandle<O>,
+        pool: &'g PoolHandle,
     ) -> bool {
         // TODO: PoolHandle에 관한 디자인 합의 이후 Option<&'g V>로 바꾸기 (lifetime issue)
         const NOT_FOUND: usize = 1;
@@ -422,11 +467,11 @@ where
 
     /// `node`가 List 안에 있는지 head부터 끝까지 순회하며 검색
     /// `find()`와의 차이: `find()`는 key를 찾음(public). 이건 특정 node를 찾음(private).
-    fn search_node<O: POp>(
+    fn search_node(
         &self,
         node: PShared<'_, Node<K, V>>,
         guard: &Guard<'_>,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 

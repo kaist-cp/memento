@@ -4,9 +4,16 @@ use std::{
     cell::UnsafeCell,
     marker::PhantomData,
     ops::{Deref, DerefMut},
+    os::raw::c_char,
 };
 
-use crate::persistent::*;
+use crate::{
+    persistent::*,
+    plocation::{
+        ralloc::{Collectable, GarbageCollection},
+        PoolHandle,
+    },
+};
 
 /// Persistent raw lock
 pub trait RawLock: Default + Send + Sync {
@@ -14,13 +21,13 @@ pub trait RawLock: Default + Send + Sync {
     type Token: Clone;
 
     /// Lock operation을 수행하는 POp
-    type Lock: for<'l> POp<Object<'l> = &'l Self, Input = (), Output<'l> = Self::Token>;
+    type Lock: for<'l> POp<Object<'l> = &'l Self, Input = (), Output<'l> = Self::Token, Error = !>;
 
     /// Unlock operation을 수행하는 POp
     ///
     /// 실제 token이 아닌 값으로 unlock 호출시 panic
     // TODO: Output에 Frozen을 강제해야 할 수도 있음. MutexGuard 인터페이스 없이 RawLock만으로는 critical section의 mutex 보장 못함.
-    type Unlock: for<'l> POp<Object<'l> = &'l Self, Input = Self::Token, Output<'l> = ()>;
+    type Unlock: for<'l> POp<Object<'l> = &'l Self, Input = Self::Token, Output<'l> = (), Error = !>;
 }
 
 /// TODO: doc
@@ -71,19 +78,32 @@ impl<L: RawLock, T> Default for Lock<L, T> {
     }
 }
 
-impl<L: 'static + RawLock, T: 'static> POp for Lock<L, T> {
-    type Object<'l> = &'l Mutex<L, T>;
-    type Input = ();
-    type Output<'l> = Frozen<MutexGuard<'l, L, T>>;
+impl<L: RawLock, T> Collectable for Lock<L, T> {
+    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+        todo!()
+    }
+}
 
-    fn run<'l>(&'l mut self, mtx: Self::Object<'l>, _: Self::Input) -> Self::Output<'l> {
-        let token = self.lock.run(&mtx.lock, ());
-        Frozen::from(MutexGuard {
+impl<L: 'static + RawLock, T: 'static> POp for Lock<L, T> {
+    type Object<'o> = &'o Mutex<L, T>;
+    type Input = ();
+    type Output<'o> = Frozen<MutexGuard<'o, L, T>>;
+    type Error = !;
+
+    fn run<'o>(
+        &'o mut self,
+        mtx: Self::Object<'o>,
+        input: Self::Input,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        let token = self.lock.run(&mtx.lock, (), pool).unwrap();
+        Ok(Frozen::from(MutexGuard {
             mtx,
             unlock: &mut self.unlock,
             token,
+            pool,
             _marker: Default::default(),
-        })
+        }))
     }
 
     fn reset(&mut self, nested: bool) {
@@ -100,12 +120,15 @@ pub struct MutexGuard<'l, L: RawLock, T> {
     mtx: &'l Mutex<L, T>,
     unlock: &'l mut L::Unlock,
     token: L::Token,
+    pool: &'static PoolHandle,
     _marker: PhantomData<*const ()>, // !Send + !Sync
 }
 
 impl<L: RawLock, T> Drop for MutexGuard<'_, L, T> {
     fn drop(&mut self) {
-        let _ = self.unlock.run(&self.mtx.lock, self.token.clone());
+        let _ = self
+            .unlock
+            .run(&self.mtx.lock, self.token.clone(), self.pool);
     }
 }
 
@@ -128,7 +151,7 @@ impl<'l, L: RawLock, T> MutexGuard<'l, L, T> {
     ///
     /// # Safety
     ///
-    /// `LockBased`에 대한 `POp`들은 `Lock`보다 나중에 reset 되어야 함.
+    /// `Mutex::data`에 대한 `POp`들은 `Lock`보다 나중에 reset 되어야 함.
     /// 이유: 그렇지 않으면, 서로 다른 스레드가 `MutexGuard`를 각각 가지고 있을 때 모두 fresh `POp`을 수행할 수 있으므로 mutex가 깨짐.
     pub unsafe fn defer_unlock(guard: Frozen<MutexGuard<'l, L, T>>) -> Self {
         guard.own()
@@ -139,8 +162,10 @@ impl<'l, L: RawLock, T> MutexGuard<'l, L, T> {
 pub(crate) mod tests {
     use crossbeam_utils::thread;
 
+    use crate::plocation::{ralloc::GarbageCollection, PoolHandle};
+
     use super::*;
-    use std::{collections::VecDeque, marker::PhantomData};
+    use std::{collections::VecDeque, marker::PhantomData, os::raw::c_char};
 
     type Queue<T> = VecDeque<T>;
 
@@ -160,29 +185,41 @@ pub(crate) mod tests {
         }
     }
 
+    impl<L: RawLock, T> Collectable for PushPop<L, T> {
+        unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+            todo!()
+        }
+    }
+
     impl<L, T> POp for PushPop<L, T>
     where
         L: 'static + RawLock,
         T: 'static + Clone,
     {
-        type Object<'m> = &'m Mutex<L, Queue<T>>;
+        type Object<'o> = &'o Mutex<L, Queue<T>>;
         type Input = T;
-        type Output<'m> = Option<T>;
+        type Output<'o> = Option<T>;
+        type Error = !;
 
-        // TODO: 쓰임새를 보이는 용도로 VecDequeue의 push_back(), pop_back()를 사용.
+        // TODO: 쓰임새를 보이는 용도로 VecDequeue의 push_back(), pop_front()를 사용.
         //       이들은 PersistentOp이 아니므로 이 run()은 지금은 idempotent 하지 않음.
-        fn run<'o>(&'o mut self, queue: Self::Object<'o>, input: Self::Input) -> Self::Output<'o> {
+        fn run<'o>(
+            &'o mut self,
+            queue: Self::Object<'o>,
+            input: Self::Input,
+            pool: &'static PoolHandle,
+        ) -> Result<Self::Output<'o>, Self::Error> {
             if self.resetting {
                 self.reset(false);
             }
 
             // Lock the object
-            let guard = self.lock.run(queue, ());
+            let guard = self.lock.run(queue, (), pool).unwrap();
             let mut q = unsafe { MutexGuard::defer_unlock(guard) };
 
             // Push & Pop
             q.push_back(input);
-            q.pop_front()
+            Ok(q.pop_front())
         } // Unlock when `q` is dropped
 
         fn reset(&mut self, nested: bool) {
@@ -203,7 +240,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// Lock-based queue에 push/pop 연산하는 테스트
+    /// Mutex queue에 push/pop 연산하는 테스트
+    /// 한 스레드가 lock을 잡고 value를 queue에 넣었다 빼므로
+    /// 반드시 같은 값이 나와야 함
     pub(crate) fn test_push_pop_queue<L: 'static + RawLock>(nr_thread: usize, cnt: usize) {
         let q = Mutex::<L, Queue<usize>>::from(Queue::<_>::default()); // TODO(persistent location)
         let mut push_pops: Vec<Vec<PushPop<L, usize>>> = (0..nr_thread)

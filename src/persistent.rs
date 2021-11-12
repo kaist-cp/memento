@@ -102,10 +102,10 @@ pub trait POp: Default + Collectable {
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
     fn run<'o>(
-        &mut self,
+        &'o mut self,
         object: Self::Object<'o>,
         input: Self::Input,
-        pool: &PoolHandle,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error>;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
