@@ -1,22 +1,7 @@
 use std::process::Command;
 
-const RALLOC_REPO: &str = "ssh://git@cp-git.kaist.ac.kr:9001/persistent-mem/ralloc.git";
-const RALLOC_BRANCH: &str = "gc"; // ci 통과를 위해 ci가 사용할 최신 버전 branch
-
 fn main() {
     println!("cargo:rerun-if-changed=ext/");
-
-    // Clone and checkout to latest branch
-    Command::new("git")
-        .args(&["clone", RALLOC_REPO])
-        .current_dir("./ext")
-        .status()
-        .expect("failed to git clone!");
-    Command::new("git")
-        .args(&["checkout", RALLOC_BRANCH])
-        .current_dir("./ext/ralloc")
-        .status()
-        .expect("failed to git checkout!");
 
     // Build libralloc.a
     let args = {
