@@ -1,7 +1,6 @@
 //! Default function of pepoch module
 
 use crate::pepoch::guard::Guard;
-use crate::persistent::POp;
 use crate::plocation::pool::PoolHandle;
 use std::marker::PhantomData;
 
@@ -16,7 +15,7 @@ use std::marker::PhantomData;
 /// # use compositional_persistent_object::pepoch::*;
 /// # use compositional_persistent_object::utils::tests::DummyRootOp;
 /// # use std::sync::atomic::Ordering;
-/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool") }.unwrap();
+/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool", 8 * 1024 * 1024 *1024) }.unwrap();
 ///
 /// // Guard 및 Shared 포인터 얻기
 /// let guard = pin(&pool);
@@ -36,7 +35,7 @@ use std::marker::PhantomData;
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::pepoch::*;
 /// # use compositional_persistent_object::utils::tests::DummyRootOp;
-/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool") }.unwrap();
+/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool", 8 * 1024 * 1024 * 1024) }.unwrap();
 ///
 /// let guard = pin(&pool);
 /// drop(pool);
@@ -44,7 +43,7 @@ use std::marker::PhantomData;
 /// // PoolHandle이 drop되었으니 guard도 사용불가
 /// let guard = &guard; // compile error
 /// ```
-pub fn pin<O: POp>(_: &PoolHandle<O>) -> Guard<'_> {
+pub fn pin(_: &PoolHandle) -> Guard<'_> {
     Guard {
         _marker: PhantomData,
     }
@@ -55,7 +54,7 @@ pub fn pin<O: POp>(_: &PoolHandle<O>) -> Guard<'_> {
 /// # Safety
 ///
 /// TODO
-pub unsafe fn unprotected<O: POp>(_: &PoolHandle<O>) -> &Guard<'_> {
+pub unsafe fn unprotected(_: &PoolHandle) -> &Guard<'_> {
     static UNPROTECTED: Guard<'_> = Guard {
         _marker: PhantomData,
     };

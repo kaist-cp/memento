@@ -1,6 +1,9 @@
 //! Persistent pipe
 
-use crate::{persistent::POp, plocation::{PoolHandle, ll::persist_obj}};
+use crate::{
+    persistent::POp,
+    plocation::{ll::persist_obj, PoolHandle},
+};
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
 ///
@@ -51,7 +54,8 @@ where
         init: Self::Input,
         pool: &PoolHandle<O>,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        if self.resetting { // TODO: recovery 중에만 검사하도록
+        if self.resetting {
+            // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
             self.reset(false);
         }
@@ -79,6 +83,7 @@ where
 #[cfg(test)]
 mod tests {
     use crossbeam_utils::thread;
+    use serial_test::serial;
     use std::sync::atomic::Ordering;
 
     use crate::pepoch::{self, PAtomic};
@@ -193,7 +198,9 @@ mod tests {
     const FILE_NAME: &str = "pipe_concur.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn pipe_concur() {
         run_test::<Transfer, _>(FILE_NAME, FILE_SIZE)
     }

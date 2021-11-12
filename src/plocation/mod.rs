@@ -1,10 +1,11 @@
 //! Persistent location
 
-pub mod alloc;
+pub mod global;
 pub mod ll;
 pub mod pool;
 pub mod ptr;
+pub mod ralloc;
 
-pub use alloc::*;
+pub use global::*;
 pub use pool::*;
 pub use ptr::*;

@@ -354,6 +354,7 @@ mod tests {
 
     use chrono::Duration;
     use crossbeam_utils::thread;
+    use serial_test::serial;
 
     use crate::utils::tests::{run_test, TestRootOp};
 
@@ -416,10 +417,12 @@ mod tests {
 
     impl TestRootOp for ExchangeOnce {}
 
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn exchange_once() {
         const FILE_NAME: &str = "exchange_once.pool";
-        const FILE_SIZE: usize = 1024;
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<ExchangeOnce, _>(FILE_NAME, FILE_SIZE)
     }
@@ -516,10 +519,12 @@ mod tests {
 
     impl TestRootOp for RotateLeft {}
 
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn rotate_left() {
         const FILE_NAME: &str = "rotate_left.pool";
-        const FILE_SIZE: usize = 1024;
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<ExchangeOnce, _>(FILE_NAME, FILE_SIZE)
     }
@@ -655,7 +660,9 @@ mod tests {
     }
 
     /// 스레드 여러 개의 exchange
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn exchange_many() {
         const FILE_NAME: &str = "exchange_many.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
