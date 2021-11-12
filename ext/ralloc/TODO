@@ -1,0 +1,59 @@
+TODO
+
+
+~instantiate BaseMeta
+	~create desc space and sb space
+
+~implement persistent region manager
+~constructor for initializing data structures
+~how to expand heap (adding more spaces for desc or sb)?
+	~make __nvm_region_allocator parallel (nonblocking)
+	~make new_*_space parallel (nonblocking)
+~flush volatile things back
+	!assume during the exit they will be flushed automatically and all we need to persist is only the entry (like the ptr partial_desc_queue)
+~adapt functions to cpp
+	~declare function in correct place
+	~finish the definitions of functions
+~set root and get root
+~malloc and free
+sb allocation/deallocation (management)
+	maybe put large allocation and small in different region
+		~small sb and freelist of it
+		~use FILO instead MSQ for sb freelist
+		easiest way to do large sb allocation:
+			allocate a new space and get multiple of SBSIZE for the large allocation, and rest for future large allocation. Once it's freed, the large sb will be divided to several sb and put to free_sb for small allocation
+		when create a large sb space, we treat the whole space as a free sb and extract to use. the size of space is max(desired size, large_sb_space_size)
+	how to deallocate a region in nonblocking way
+mmap multiple regions and represent them by ids, and introduce smart ptrs using id and offset to dereference.
+~allocate transient data into a fixed region to allow sharing among applications
+	~fix inputs for ArrayQueue constructor and enqueue/dequeue in BaseMeta
+	~fix inputs for ArrayStack constructor and enqueue/dequeue in BaseMeta
+	~add destroy functions for array queue and stack
+		~fix segfault after destroying
+~change var names in doc.
+~thread id lookup
+～redesign the number of sizeclasses in BaseMeta
+～use one desc pointer per sb (currently it's one per block)
+
+
+~change layout to the one we discussed in the meeting
+	~free block list and cache are in-place linked list using pptr
+	~free superblock list and partial superblock list are linked list whose nodes are descriptors, where the head is AtomicCrossPtrCnt<Descriptor,DESC_IDX> and each node is atomic_pptr<Descriptor>.
+~separate things in different region and implement a constant address map for each region
+~clean up things during exit
+	~put blocks in caches back to superblocks
+	~flush desc and sb section
+	~flush freelists (desc region)
+garbage collection
+	~remove RP_collect function() to disallow manual GC during online phase
+	~filter function
+	parallel
+	overload new and delete for string
+	run different applications on the same heap (intmain and main)
+	design IBR test for different size of memory consumption
+benchmark
+	Intruder
+	Memcached
+	Prod-con
+		~check mmap_cnt and munmap_cnt in lrmalloc when #thd goes high (they are good)
+	Redis with multiple instances

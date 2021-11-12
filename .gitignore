@@ -2,4 +2,4 @@ target/
 .vscode/
 test/
 
-ext/ralloc/
+!ext/ralloc/test
