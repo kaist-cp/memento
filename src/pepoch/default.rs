@@ -15,7 +15,7 @@ use std::marker::PhantomData;
 /// # use compositional_persistent_object::pepoch::*;
 /// # use compositional_persistent_object::utils::tests::DummyRootOp;
 /// # use std::sync::atomic::Ordering;
-/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool", 8 * 1024 * 1024 *1024) }.unwrap();
+/// # let pool: &PoolHandle = unsafe { Pool::open::<DummyRootOp>("foo.pool", 8 * 1024 * 1024 *1024) }.unwrap();
 ///
 /// // Guard 및 Shared 포인터 얻기
 /// let guard = pin(&pool);
@@ -29,20 +29,7 @@ use std::marker::PhantomData;
 /// let val = *val_ref; // compile error
 /// ```
 ///
-/// lifetime: Guard < PoolHandle
-///
-/// ```compile_fail
-/// # use compositional_persistent_object::plocation::pool::*;
-/// # use compositional_persistent_object::pepoch::*;
-/// # use compositional_persistent_object::utils::tests::DummyRootOp;
-/// # let pool: PoolHandle<DummyRootOp> = unsafe { Pool::open("foo.pool", 8 * 1024 * 1024 * 1024) }.unwrap();
-///
-/// let guard = pin(&pool);
-/// drop(pool);
-///
-/// // PoolHandle이 drop되었으니 guard도 사용불가
-/// let guard = &guard; // compile error
-/// ```
+/// PoolHandle이 global하기 때문에 lifetime Guard < PoolHandle은 강제 못함.
 pub fn pin(_: &PoolHandle) -> Guard<'_> {
     Guard {
         _marker: PhantomData,
