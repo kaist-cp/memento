@@ -7,8 +7,8 @@ use std::{mem::MaybeUninit, ptr};
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::ralloc::Collectable;
-use crate::plocation::{global_pool, ll::*, pool::*, ptr::*};
+use crate::plocation::ralloc::{Collectable, GarbageCollection};
+use crate::plocation::{ll::*, pool::*, ptr::*};
 
 struct Node<T: Clone> {
     data: MaybeUninit<T>,
@@ -41,21 +41,14 @@ impl<T: Clone> From<T> for Node<T> {
 }
 
 impl<T: Clone> Collectable for Node<T> {
-    unsafe extern "C" fn filter(
-        ptr: *mut std::os::raw::c_char,
-        gc: *mut crate::plocation::ralloc::GarbageCollection,
-    ) {
-        let pool = global_pool().unwrap();
-        let guard = epoch::unprotected();
-
-        // Get Self
-        let node = (ptr as *mut Self).as_ref().unwrap();
+    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
 
         // Mark valid ptr to trace
         let mut next = node.next.load(Ordering::SeqCst, guard);
         if !next.is_null() {
-            let next_raw = next.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-            Node::<T>::mark(next_raw, gc);
+            let next = unsafe { next.deref_mut(pool) };
+            Node::<T>::mark(next, gc);
         }
     }
 }
@@ -76,21 +69,14 @@ impl<T: Clone> Default for Enqueue<T> {
 }
 
 impl<T: Clone> Collectable for Enqueue<T> {
-    unsafe extern "C" fn filter(
-        ptr: *mut std::os::raw::c_char,
-        gc: *mut crate::plocation::ralloc::GarbageCollection,
-    ) {
-        let pool = global_pool().unwrap();
-        let guard = epoch::unprotected();
+    fn filter(enq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
 
-        // Get Self
-        let enq = (ptr as *mut Self).as_ref().unwrap();
-
-        // Mark valid ptr to trace
+        // Mark ptr if valid
         let mut mine = enq.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
-            let mine_raw = mine.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-            Node::<T>::mark(mine_raw, gc);
+            let mine = unsafe { mine.deref_mut(pool) };
+            Node::<T>::mark(mine, gc);
         }
     }
 }
@@ -134,21 +120,14 @@ impl<T: Clone> Default for Dequeue<T> {
 }
 
 impl<T: Clone> Collectable for Dequeue<T> {
-    unsafe extern "C" fn filter(
-        ptr: *mut std::os::raw::c_char,
-        gc: *mut crate::plocation::ralloc::GarbageCollection,
-    ) {
-        let pool = global_pool().unwrap();
-        let guard = epoch::unprotected();
-
-        // Get Self
-        let deq = (ptr as *mut Self).as_ref().unwrap();
+    fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
 
         // Mark valid ptr to trace
         let mut target = deq.target.load(Ordering::SeqCst, guard);
         if !target.is_null() {
-            let target_raw = target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-            Node::<T>::mark(target_raw, gc);
+            let target = unsafe { target.deref_mut(pool) };
+            Node::<T>::mark(target, gc);
         }
     }
 }
@@ -200,21 +179,14 @@ impl<T: Clone> Default for DequeueSome<T> {
 }
 
 impl<T: Clone> Collectable for DequeueSome<T> {
-    unsafe extern "C" fn filter(
-        ptr: *mut std::os::raw::c_char,
-        gc: *mut crate::plocation::ralloc::GarbageCollection,
-    ) {
-        let pool = global_pool().unwrap();
-        let guard = epoch::unprotected();
-
-        // Get Self
-        let deqsome = (ptr as *mut Self).as_mut().unwrap();
+    fn filter(deqsome: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
 
         // Mark ptr
         let mut target = deqsome.deq.target.load(Ordering::SeqCst, guard);
         if !target.is_null() {
-            let target_raw = target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-            Node::<usize>::mark(target_raw, gc);
+            let target = unsafe { target.deref_mut(pool) };
+            Node::<T>::mark(target, gc);
         }
     }
 }
@@ -252,21 +224,14 @@ pub struct Queue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for Queue<T> {
-    unsafe extern "C" fn filter(
-        ptr: *mut std::os::raw::c_char,
-        gc: *mut crate::plocation::ralloc::GarbageCollection,
-    ) {
-        let pool = global_pool().unwrap();
-        let guard = epoch::unprotected();
-
-        // Get Self
-        let queue = (ptr as *mut Self).as_ref().unwrap();
+    fn filter(queue: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
 
         // Mark valid ptr to trace
         let mut head = queue.head.load(Ordering::SeqCst, guard);
         if !head.is_null() {
-            let head_raw = head.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-            Node::<T>::mark(head_raw, gc);
+            let head = unsafe { head.deref_mut(pool) };
+            Node::<T>::mark(head, gc);
         }
     }
 }
@@ -521,10 +486,7 @@ mod test {
     use crossbeam_utils::thread;
     use serial_test::serial;
 
-    use crate::{
-        plocation::{global_pool, ralloc::Collectable},
-        utils::tests::*,
-    };
+    use crate::{plocation::ralloc::Collectable, utils::tests::*};
 
     use super::*;
 
@@ -573,15 +535,8 @@ mod test {
     }
 
     impl Collectable for RootOp {
-        unsafe extern "C" fn filter(
-            ptr: *mut std::os::raw::c_char,
-            gc: *mut crate::plocation::ralloc::GarbageCollection,
-        ) {
-            let pool = global_pool().unwrap();
-            let guard = epoch::unprotected();
-
-            // Get Self
-            let root = (ptr as *mut Self).as_mut().unwrap();
+        fn filter(root: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            let guard = unsafe { epoch::unprotected() };
 
             // Mark valid ptr to trace
             //
@@ -589,29 +544,17 @@ mod test {
             // TODO: 우리는 null 검사 안해도 되게하기. Ralloc에서 null ptr 거르는데 우리도 null 검사하는 게 불편함
             let mut queue = root.queue.load(Ordering::SeqCst, guard);
             if !queue.is_null() {
-                let queue_raw = queue.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-                Queue::<usize>::mark(queue_raw, gc);
+                let queue = unsafe { queue.deref_mut(pool) };
+                Queue::mark(queue, gc);
             }
-
-            let pool = global_pool().unwrap();
-            let guard = epoch::unprotected();
             for enq_arr in root.enqs.as_mut() {
                 for enq in enq_arr {
-                    let mut mine = enq.mine.load(Ordering::SeqCst, guard);
-                    if !mine.is_null() {
-                        let mine_raw = mine.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-                        Node::<usize>::mark(mine_raw, gc);
-                    }
+                    Enqueue::filter(enq, gc, pool);
                 }
             }
             for deq_arr in root.deqs.as_mut() {
                 for deq in deq_arr {
-                    let mut target = deq.target.load(Ordering::SeqCst, guard);
-                    if !target.is_null() {
-                        let target_raw =
-                            target.deref_mut(pool) as *mut _ as *mut std::os::raw::c_char;
-                        Node::<usize>::mark(target_raw, gc);
-                    }
+                    Dequeue::filter(deq, gc, pool);
                 }
             }
         }

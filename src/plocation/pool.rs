@@ -64,6 +64,7 @@ impl PoolHandle {
     #[allow(clippy::mut_from_ref)]
     #[inline]
     pub fn get_root<O: POp>(&self) -> &mut O {
+        // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
         let root_ptr = unsafe { RP_get_root_c(0) } as *mut O;
         unsafe { &mut *root_ptr }
     }
@@ -174,11 +175,10 @@ impl Pool {
         let is_reopen = unsafe { RP_init(filepath.as_ptr(), size as u64) };
         assert_eq!(is_reopen, 0);
 
-        // root로 쓸 obj 할당 및 초기화
+        // root로 사용할 obj를 만든 후 root로 세팅
+        // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
         let root_ptr = unsafe { RP_malloc(mem::size_of::<O>() as u64) as *mut O };
         unsafe { *root_ptr = O::default() };
-
-        // root obj 세팅
         let _prev = unsafe { RP_set_root(root_ptr as *mut c_void, 0) };
 
         // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
@@ -256,8 +256,15 @@ impl Pool {
             recovering: true,
         });
 
-        // GC 수행 (그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음)
-        RP_set_root_mark(Some(O::mark), 0);
+        // GC의 시작점을 등록하고 GC 수행
+        // - 그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음
+        unsafe extern "C" fn root_filter<O: POp>(
+            ptr: *mut ::std::os::raw::c_char,
+            gc: &mut GarbageCollection,
+        ) {
+            RP_mark(gc, ptr, Some(O::filter_inner));
+        }
+        RP_set_root_filter(Some(root_filter::<O>), 0);
         let _is_gc_executed = RP_recover();
 
         // 글로벌 풀의 핸들러 반환
@@ -297,7 +304,7 @@ mod tests {
     }
 
     impl Collectable for RootOp {
-        unsafe extern "C" fn filter(_: *mut std::os::raw::c_char, _: *mut GarbageCollection) {
+        fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
             // no-op
         }
     }
