@@ -71,40 +71,44 @@ impl PoolHandle {
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     #[inline]
     pub fn alloc<T>(&self) -> PPtr<T> {
-        let addr_abs = self.pool().alloc::<T>() as usize;
-        let addr_rel = addr_abs - self.start();
-        PPtr::from(addr_rel)
+        let ptr = self.pool().alloc(mem::size_of::<T>());
+        PPtr::from(ptr as usize - self.start())
     }
 
     /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
+    ///
+    /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
+    /// - e.g. dynamically sized slices
     ///
     /// # Safety
     ///
     /// TODO
     #[inline]
     pub unsafe fn alloc_layout<T>(&self, layout: Layout) -> PPtr<T> {
-        let addr_abs = self.pool().alloc_layout::<T>(layout) as usize;
-        let addr_rel = addr_abs - self.start();
-        PPtr::from(addr_rel)
+        let ptr = self.pool().alloc(layout.size());
+        PPtr::from(ptr as usize - self.start())
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     #[inline]
     pub fn free<T>(&self, pptr: PPtr<T>) {
         let addr_abs = self.start() + pptr.into_offset();
-        self.pool().free(addr_abs as *mut T);
+        self.pool().free(addr_abs as *mut u8);
     }
 
     /// offset 주소부터 Layout 크기만큼 할당 해제
+    ///
+    /// - `PersistentPtr<T>`가 가리키는 데이터의 크기를 정적으로 알 수 없을때, 할당 해제할 크기(`Layout`)를 직접 지정하기 위해 필요
+    /// - e.g. dynamically sized slices
     ///
     /// # Safety
     ///
     /// TODO
     #[inline]
     pub unsafe fn free_layout(&self, offset: usize, _layout: Layout) {
-        let addr_abs = self.start() + offset;
         // NOTE: Ralloc의 free는 size를 받지 않지 않으므로 할당해제할 주소만 잘 넘겨주면 됨
-        self.pool().free(addr_abs as *mut c_void);
+        let addr_abs = self.start() + offset;
+        self.pool().free(addr_abs as *mut u8);
     }
 
     #[inline]
@@ -260,36 +264,17 @@ impl Pool {
         Ok(global_pool().unwrap())
     }
 
-    /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
+    /// 풀에 size만큼 할당 후 이를 가리키는 포인터 반환
     #[inline]
-    fn alloc<T>(&self) -> *mut T {
-        let addr_abs = unsafe { RP_malloc(mem::size_of::<T>() as u64) };
-        addr_abs as *mut T
+    fn alloc(&self, size: usize) -> *mut u8 {
+        let addr_abs = unsafe { RP_malloc(size as u64) };
+        addr_abs as *mut u8
     }
 
-    /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
-    ///
-    /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
-    /// - e.g. dynamically sized slices
+    /// ptr이 가리키는 풀의 메모리 블록 할당해제
     #[inline]
-    unsafe fn alloc_layout<T>(&self, layout: Layout) -> *mut T {
-        let addr_abs = RP_malloc(layout.size() as u64);
-        addr_abs as *mut T
-    }
-
-    /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
-    #[inline]
-    fn free<T>(&self, ptr: *mut T) {
+    fn free(&self, ptr: *mut u8) {
         unsafe { RP_free(ptr as *mut c_void) }
-    }
-
-    /// offset 주소부터 Layout 크기만큼 할당 해제
-    ///
-    /// - `PersistentPtr<T>`가 가리키는 데이터의 크기를 정적으로 알 수 없을때, 할당 해제할 크기(`Layout`)를 직접 지정하기 위해 필요
-    /// - e.g. dynamically sized slices
-    #[inline]
-    unsafe fn _free_layout(&self, _offset: usize, _layout: Layout) {
-        todo!()
     }
 }
 
