@@ -45,7 +45,7 @@ pub mod tests {
         ) -> Result<Self::Output<'o>, Self::Error> {
             Ok(())
         }
-        fn reset(&mut self, _: bool) {
+        fn reset(&mut self, _: bool, _: &'static PoolHandle) {
             // no-op
         }
     }

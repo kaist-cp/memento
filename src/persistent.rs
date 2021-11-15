@@ -86,7 +86,9 @@ pub trait POp: Default + Collectable {
     type Input;
 
     /// Persistent op의 output type
-    type Output<'o>: Clone;
+    type Output<'o>: Clone
+    where
+        Self: 'o;
 
     /// Persistent op이 적용되지 않았을 때 발생하는 Error type
     type Error;
@@ -118,5 +120,5 @@ pub trait POp: Default + Collectable {
     /// 나타내는 flag가 켜져있으므로 하위 op의 reset이 따로 reset flag를 설정할 필요가 없다. 이를 위해 하위
     /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
     /// 알려줄 수 있다.
-    fn reset(&mut self, nested: bool);
+    fn reset(&mut self, nested: bool, pool: &'static PoolHandle);
 }

@@ -7,6 +7,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use crossbeam_utils::Backoff;
 use etrace::some_or;
 
 use crate::{
@@ -88,8 +89,16 @@ impl POp for Lock {
 
     // TODO: reset을 해도 membership까지 reset 되거나 할당 해제되진 않을 것임 (state->Ready, ticket->NO_TICKET)
     //       이것이 디자인의 일관성을 깨진 않는지?
-    fn reset(&mut self, _nested: bool) {
-        unimplemented!()
+    fn reset(&mut self, _: bool, pool: &PoolHandle) {
+        let guard = epoch::pin(pool);
+
+        let mut m = self.membership.load(Ordering::SeqCst, &guard);
+        if m.is_null() {
+            return;
+        }
+
+        let m_ref = unsafe { m.deref_mut(pool) };
+        m_ref.state = State::Ready;
     }
 }
 
@@ -105,7 +114,7 @@ impl Lock {
 pub struct Unlock;
 
 impl Collectable for Unlock {
-    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+    unsafe extern "C" fn filter(_: *mut c_char, _: *mut GarbageCollection) {
         todo!()
     }
 }
@@ -120,12 +129,13 @@ impl POp for Unlock {
         &'o mut self,
         lock: Self::Object<'o>,
         ticket: Self::Input,
-        pool: &PoolHandle,
+        _: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        Ok(lock.unlock(ticket))
+        lock.unlock(ticket);
+        Ok(())
     }
 
-    fn reset(&mut self, _nested: bool) {}
+    fn reset(&mut self, _: bool, _: &PoolHandle) {}
 }
 
 /// IMPORTANT: ticket의 overflow는 없다고 가정
@@ -150,7 +160,7 @@ impl TicketLock {
     fn lock(&self, client: &mut Lock, guard: &Guard<'_>, pool: &'static PoolHandle) -> usize {
         let mut m = client.membership.load(Ordering::SeqCst, &guard);
 
-        if client.registered {
+        if !client.registered {
             if m.is_null() {
                 // membership 생성
                 let n = POwned::new(Membership::default(), pool).into_shared(&guard);
@@ -161,39 +171,48 @@ impl TicketLock {
             // membership 등록: "(key: id, value: membership 포인터)"를 멤버리스트에 삽입
             if client
                 .register
-                .run(&self.members, (client.id(), m.into_usize()), pool).is_err() {
-                    unreachable!("Unique client ID as a key")
-                }
+                .run(&self.members, (client.id(), m.into_usize()), pool)
+                .is_err()
+            {
+                unreachable!("Unique client ID as a key")
+            }
+
+            client.registered = true; // TODO: list insert에서 "recovery할 때만 해야할지 생각하기" 해결 후 지워도 되는지 확인
         }
 
-        let membership = unsafe { m.deref_mut(pool) };
+        let m_ref = unsafe { m.deref_mut(pool) };
         loop {
-            match membership.state {
+            match m_ref.state {
                 State::Ready => {
-                    debug_assert_eq!(membership.ticket, NO_TICKET);
-                    membership.state = State::Trying;
-                    membership.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
+                    if m_ref.ticket != NO_TICKET {
+                        m_ref.ticket = NO_TICKET;
+                    }
+                    m_ref.state = State::Trying;
+                    m_ref.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
                     break;
                 }
                 State::Trying => {
-                    if membership.ticket != NO_TICKET {
+                    if m_ref.ticket != NO_TICKET {
                         break;
                     }
 
-                    membership.state = State::Recovering;
+                    m_ref.state = State::Recovering;
                 }
                 State::Recovering => {
                     self.recover(guard, pool);
-                    membership.state = State::Ready;
+                    m_ref.state = State::Ready;
                 }
             };
         }
 
-        while membership.ticket < self.curr.load(Ordering::SeqCst) {
-            // TODO: Back-off 할지 말지 퍼포먼스 보고 선택
+        let backoff = Backoff::default();
+        // let a = self.curr.load(Ordering::SeqCst);
+        while self.curr.load(Ordering::SeqCst) < m_ref.ticket {
+            // println!("{} < {}", membership.ticket, a);
+            backoff.snooze();
         }
 
-        membership.ticket
+        m_ref.ticket
     }
 
     fn recover(&self, guard: &Guard<'_>, pool: &PoolHandle) {
@@ -208,7 +227,7 @@ impl TicketLock {
 
             let mut n = cursor.lookup(pool);
             while let Some((_, m_raw)) = n {
-                let m: PShared<Membership> = unsafe { PShared::from_usize(*m_raw) };
+                let m: PShared<'_, Membership> = unsafe { PShared::from_usize(*m_raw) };
                 let m_ref = unsafe { m.deref(pool) };
 
                 // 현재 티켓 뽑고 있는 애는 기다려야 함
@@ -288,16 +307,23 @@ impl RawLock for TicketLock {
 mod tests {
     use serial_test::serial;
 
-    use super::*;
-    use crate::lock::tests::*;
+    use crate::{
+        lock::{tests::ConcurAdd, Mutex},
+        utils::tests::{run_test, TestRootOp},
+    };
 
-    const NR_THREAD: usize = 4;
-    const COUNT: usize = 1_000_000;
+    use super::*;
+
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 100_000;
+
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
-    #[serial] // Multi-threaded test의 속도 저하 방지 + Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn push_pop_queue() {
-        test_push_pop_queue::<TicketLock>(NR_THREAD, COUNT);
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
+    fn concur_add() {
+        const FILE_NAME: &str = "ticket_concur_add.pool";
+        run_test::<ConcurAdd<TicketLock, NR_THREAD, COUNT>, _>(FILE_NAME, FILE_SIZE)
     }
 }

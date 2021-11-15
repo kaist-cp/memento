@@ -79,7 +79,7 @@ where
         list.insert_front(self, key, value, &guard, pool)
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         // TODO: if not finished -> free node
         self.node.store(PShared::null(), Ordering::SeqCst);
     }
@@ -132,7 +132,7 @@ where
         Ok(list.remove(self, &key, &guard, pool))
     }
 
-    fn reset(&mut self, nested: bool) {
+    fn reset(&mut self, nested: bool, _: &PoolHandle) {
         let _ = nested;
         unimplemented!()
     }
@@ -383,6 +383,7 @@ where
         let node_ref = unsafe { node.deref(pool) };
         let (found, cursor) = self.find(&node_ref.key, guard, pool);
 
+        // TODO: recovery할 때만 해야할지 생각하기
         if found {
             if node.as_ptr() == cursor.curr().as_ptr() {
                 return Ok(()); // 내가 넣은 것
@@ -493,3 +494,120 @@ where
         null.into_usize()
     }
 }
+
+// #[cfg(test)]
+// mod test {
+//     use crossbeam_utils::thread;
+//     use serial_test::serial;
+
+//     use crate::{
+//         plocation::{global_pool, ralloc::Collectable},
+//         utils::tests::*,
+//     };
+
+//     use super::*;
+
+//     const NR_KEY: usize = 20;
+//     const NR_THREAD: usize = 12;
+//     const COUNT: usize = 1_000_000;
+
+//     struct RootOp {
+//         list: List<usize, usize>,
+
+//         inserts: [[InsertFront<usize, usize>; NR_KEY]; NR_THREAD],
+//         removes: [Remove<usize, usize>; NR_THREAD],
+//     }
+
+//     impl Default for RootOp {
+//         fn default() -> Self {
+//             Self {
+//                 list: List::default(),
+//                 inserts: array_init::array_init(|_| {
+//                     array_init::array_init(|_| InsertFront::<usize, usize>::default())
+//                 }),
+//                 removes: array_init::array_init(|_| Remove::<usize, usize>::default()),
+//             }
+//         }
+//     }
+
+//     impl Collectable for RootOp {
+//         unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+//             todo!()
+//         }
+//     }
+
+//     impl POp for RootOp {
+//         type Object<'o> = ();
+//         type Input = ();
+//         type Output<'o> = ();
+//         type Error = !;
+
+//         /// idempotent enq_deq
+//         fn run<'o>(
+//             &'o mut self,
+//             (): Self::Object<'o>,
+//             (): Self::Input,
+//             pool: &PoolHandle,
+//         ) -> Result<Self::Output<'o>, Self::Error> {
+//             // Alias
+//             let guard = unsafe { epoch::unprotected(&pool) };
+//             let (l, inserts, removes) = (&mut self.list, &mut self.inserts, &mut self.removes);
+
+//             #[allow(box_pointers)]
+//             thread::scope(|scope| {
+//                 for tid in 0..NR_THREAD {
+//                     let insert_arr = unsafe {
+//                         (inserts.get_unchecked_mut(tid) as *mut [InsertFront<usize, usize>])
+//                             .as_mut()
+//                             .unwrap()
+//                     };
+//                     let remove_arr = unsafe {
+//                         (removes.get_unchecked_mut(tid) as *mut Remove<usize, usize>)
+//                             .as_mut()
+//                             .unwrap()
+//                     };
+
+//                     let _ = scope.spawn(move |_| {
+//                         for i in 0..COUNT {
+//                             let _ = insert_arr[i].run(l, tid, pool);
+//                             assert!(remove_arr[i].run(l, (), pool).unwrap().is_some());
+//                         }
+//                     });
+//                 }
+//             })
+//             .unwrap();
+
+//             // Check empty
+//             assert!(l.dequeue(&mut Dequeue::default(), pool).is_none());
+
+//             // Check results
+//             let mut results = vec![0_usize; NR_THREAD];
+//             for deq_arr in removes.iter_mut() {
+//                 for deq in deq_arr.iter_mut() {
+//                     let ret = deq.run(&l, (), pool).unwrap().unwrap();
+//                     results[ret] += 1;
+//                 }
+//             }
+
+//             assert!(results.iter().all(|r| *r == COUNT));
+//             Ok(())
+//         }
+
+//         fn reset(&mut self, _: bool) {
+//             todo!("reset test")
+//         }
+//     }
+
+//     impl TestRootOp for RootOp {}
+
+//     // 테스트시 Insert/Remove 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+//     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+//     #[test]
+//     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
+//     fn enq_deq() {
+//         const FILE_NAME: &str = "enq_deq.pool";
+//         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+//         run_test::<RootOp, _>(FILE_NAME, FILE_SIZE)
+//     }
+// }
