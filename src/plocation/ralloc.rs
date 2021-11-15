@@ -72,7 +72,21 @@ extern "C" {
 
 /// Trait for Garbage Collection
 ///
-/// Persistent obj가 GC에 의해 collect 되기 위해선 이 trait을 impl해야함
+/// Persistent obj가 Ralloc GC에 의해 mark되기 위해선 이 trait을 impl해야함
+///
+/// 유저는 safe fn만 impl하면 내부에서 unsafe로 Ralloc과 상호작용
+///
+/// ```text
+///             ----------- Black box ------------------      Ralloc
+///            |                                        |
+/// fn mark  ---> unsafe RP_mark (Rust에서 C 함수를 호출) --->    ...
+///     ^      |                                        |       |
+///     |      |                                        |       |
+///     |      |                                        |       v
+/// fn filter <--- unsafe filter_inner (C에서 Rust함수를 호출)  <---
+///            |                                        |
+///             ----------------------------------------
+/// ```
 pub trait Collectable: Sized {
     /// 자신을 marking하고, 자신의 filter func으로 다음 marking을 예약
     fn mark(s: &mut Self, gc: &mut GarbageCollection) {
@@ -115,7 +129,7 @@ pub trait Collectable: Sized {
     /// #    }
     /// # }
     /// struct Node {
-    ///     inner: Inner,
+    ///     inner: Inner, // Assume `Inner` impl Collectable
     ///     next: PPtr<Node>,
     /// }
     ///
