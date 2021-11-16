@@ -1,7 +1,7 @@
 //! Persistent pipe
 
 use crate::{
-    persistent::POp,
+    persistent::Memento,
     plocation::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -15,8 +15,8 @@ use crate::{
 #[derive(Debug)]
 pub struct Pipe<Op1, Op2>
 where
-    for<'o> Op1: 'static + POp<Output<'o> = Op2::Input>,
-    Op2: POp,
+    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input>,
+    Op2: Memento,
 {
     /// 먼저 실행될 op. `Pipe` op의 input은 `from` op의 input과 같음
     from: Op1,
@@ -30,8 +30,8 @@ where
 
 impl<Op1, Op2> Default for Pipe<Op1, Op2>
 where
-    for<'o> Op1: 'static + POp<Output<'o> = Op2::Input>,
-    Op2: POp,
+    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input>,
+    Op2: Memento,
 {
     fn default() -> Self {
         Self {
@@ -44,18 +44,18 @@ where
 
 impl<Op1, Op2> Collectable for Pipe<Op1, Op2>
 where
-    for<'o> Op1: 'static + POp<Output<'o> = Op2::Input>,
-    Op2: POp,
+    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input>,
+    Op2: Memento,
 {
     fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
 
-impl<Op1, Op2> POp for Pipe<Op1, Op2>
+impl<Op1, Op2> Memento for Pipe<Op1, Op2>
 where
-    for<'o> Op1: POp<Output<'o> = Op2::Input>,
-    Op2: POp,
+    for<'o> Op1: Memento<Output<'o> = Op2::Input>,
+    Op2: Memento,
 {
     type Object<'o> = (Op1::Object<'o>, Op2::Object<'o>);
     type Input = Op1::Input;
@@ -155,7 +155,7 @@ mod tests {
         }
     }
 
-    impl POp for Transfer {
+    impl Memento for Transfer {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();

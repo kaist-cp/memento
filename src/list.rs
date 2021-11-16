@@ -6,7 +6,7 @@ use etrace::some_or;
 
 use crate::{
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
-    persistent::POp,
+    persistent::Memento,
     plocation::{
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,
@@ -57,7 +57,7 @@ impl<K: 'static, V: 'static> Collectable for InsertFront<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> POp for InsertFront<K, V>
+impl<K: 'static, V: 'static> Memento for InsertFront<K, V>
 where
     K: Eq,
 {
@@ -110,7 +110,7 @@ impl<K: 'static, V: 'static> Collectable for Remove<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> POp for Remove<K, V>
+impl<K: 'static, V: 'static> Memento for Remove<K, V>
 where
     K: Eq,
 {

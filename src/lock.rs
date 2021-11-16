@@ -19,14 +19,14 @@ pub trait RawLock: Default + Send + Sync {
     /// lock 잡았음을 증명하는 토큰
     type Token: Clone;
 
-    /// Lock operation을 수행하는 POp
-    type Lock: for<'o> POp<Object<'o> = &'o Self, Input = (), Output<'o> = Self::Token, Error = !>;
+    /// Lock operation을 수행하는 Memento
+    type Lock: for<'o> Memento<Object<'o> = &'o Self, Input = (), Output<'o> = Self::Token, Error = !>;
 
-    /// Unlock operation을 수행하는 POp
+    /// Unlock operation을 수행하는 Memento
     ///
     /// 실제 token이 아닌 값으로 unlock 호출시 panic
     // TODO: Output에 Frozen을 강제해야 할 수도 있음. MutexGuard 인터페이스 없이 RawLock만으로는 critical section의 mutex 보장 못함.
-    type Unlock: for<'o> POp<Object<'o> = &'o Self, Input = Self::Token, Output<'o> = (), Error = !>;
+    type Unlock: for<'o> Memento<Object<'o> = &'o Self, Input = Self::Token, Output<'o> = (), Error = !>;
 }
 
 /// TODO: doc
@@ -95,7 +95,7 @@ impl<L: RawLock, T> Collectable for Lock<L, T> {
     }
 }
 
-impl<L: 'static + RawLock, T: 'static> POp for Lock<L, T> {
+impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
     type Object<'o> = &'o Mutex<L, T>;
     type Input = ();
     type Output<'o> = Frozen<MutexGuard<'o, L, T>>;
@@ -167,8 +167,8 @@ impl<'l, L: RawLock, T> MutexGuard<'l, L, T> {
     ///
     /// # Safety
     ///
-    /// `Mutex::data`에 대한 `POp`들은 `Lock`보다 나중에 reset 되어야 함.
-    /// 이유: 그렇지 않으면, 서로 다른 스레드가 `MutexGuard`를 각각 가지고 있을 때 모두 fresh `POp`을 수행할 수 있으므로 mutex가 깨짐.
+    /// `Mutex::data`에 대한 `Memento`들은 `Lock`보다 나중에 reset 되어야 함.
+    /// 이유: 그렇지 않으면, 서로 다른 스레드가 `MutexGuard`를 각각 가지고 있을 때 모두 fresh `Memento`을 수행할 수 있으므로 mutex가 깨짐.
     pub unsafe fn defer_unlock(guard: Frozen<MutexGuard<'l, L, T>>) -> Self {
         guard.own()
     }
@@ -214,7 +214,7 @@ pub(crate) mod tests {
         }
     }
 
-    impl<L> POp for FetchAdd<L>
+    impl<L> Memento for FetchAdd<L>
     where
         L: 'static + RawLock,
     {
@@ -294,7 +294,7 @@ pub(crate) mod tests {
         }
     }
 
-    impl<L: 'static + RawLock, const NR_THREAD: usize, const COUNT: usize> POp
+    impl<L: 'static + RawLock, const NR_THREAD: usize, const COUNT: usize> Memento
         for ConcurAdd<L, NR_THREAD, COUNT>
     where
         L::Lock: Send,

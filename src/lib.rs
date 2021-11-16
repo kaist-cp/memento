@@ -30,7 +30,7 @@
 // #![deny(unused_lifetimes)] // Allowd due to GAT
 // #![deny(unstable_features)] // Allowd due to GAT
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
-#![feature(generic_associated_types)] // to define fields of `POp`
+#![feature(generic_associated_types)] // to define fields of `Memento`
 #![feature(asm)]
 #![feature(never_type)] // to use `!`
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)

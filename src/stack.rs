@@ -12,17 +12,17 @@ pub struct TryFail;
 pub trait Stack<T: 'static + Clone>: 'static + Default {
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
-    type TryPush: for<'o> POp<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = TryFail>;
+    type TryPush: for<'o> Memento<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = TryFail>;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
-    type Push: for<'o> POp<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = !> =
+    type Push: for<'o> Memento<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = !> =
         Push<T, Self>;
 
     /// Try pop 연산을 위한 Persistent op.
     /// Try pop의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     /// Try pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type TryPop: for<'o> POp<
+    type TryPop: for<'o> Memento<
         Object<'o> = &'o Self,
         Input = (),
         Output<'o> = Option<T>,
@@ -32,7 +32,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default {
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
     /// pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type Pop: for<'o> POp<Object<'o> = &'o Self, Input = (), Output<'o> = Option<T>, Error = !> =
+    type Pop: for<'o> Memento<Object<'o> = &'o Self, Input = (), Output<'o> = Option<T>, Error = !> =
         Pop<T, Self>;
 }
 
@@ -56,7 +56,7 @@ impl<T: Clone, S: Stack<T>> Collectable for Push<T, S> {
     }
 }
 
-impl<T: Clone, S: Stack<T>> POp for Push<T, S> {
+impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     type Object<'o> = &'o S;
     type Input = T;
     type Output<'o>
@@ -102,7 +102,7 @@ impl<T: Clone, S: Stack<T>> Collectable for Pop<T, S> {
     }
 }
 
-impl<T: Clone, S: Stack<T>> POp for Pop<T, S> {
+impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
     type Object<'o> = &'o S;
     type Input = ();
     type Output<'o>
@@ -168,7 +168,7 @@ pub(crate) mod tests {
         }
     }
 
-    impl<S, const NR_THREAD: usize, const COUNT: usize> POp for PushPop<S, NR_THREAD, COUNT>
+    impl<S, const NR_THREAD: usize, const COUNT: usize> Memento for PushPop<S, NR_THREAD, COUNT>
     where
         S: Stack<usize> + Sync + 'static,
         S::Push: Send,

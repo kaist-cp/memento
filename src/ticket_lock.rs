@@ -70,7 +70,7 @@ impl Collectable for Lock {
     }
 }
 
-impl POp for Lock {
+impl Memento for Lock {
     type Object<'o> = &'o TicketLock;
     type Input = ();
     type Output<'o> = usize; // ticket
@@ -118,7 +118,7 @@ impl Collectable for Unlock {
     }
 }
 
-impl POp for Unlock {
+impl Memento for Unlock {
     type Object<'l> = &'l TicketLock;
     type Input = usize;
     type Output<'l> = ();

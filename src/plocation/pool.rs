@@ -63,7 +63,7 @@ impl PoolHandle {
     /// 풀의 루트 Op을 가리키는 포인터 반환
     #[allow(clippy::mut_from_ref)]
     #[inline]
-    pub fn get_root<O: POp>(&self) -> &mut O {
+    pub fn get_root<O: Memento>(&self) -> &mut O {
         // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
         let root_ptr = unsafe { RP_get_root_c(0) } as *mut O;
         unsafe { &mut *root_ptr }
@@ -153,8 +153,8 @@ impl Pool {
     /// * `size`를 `1GB` 이상, `1TB` 이하로 하지 않는다면 실패 (Ralloc 내부의 assert문에 의해 강제)
     //
     // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
-    // - <O: POp, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
-    pub fn create<O: POp>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
+    // - <O: Memento, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
+    pub fn create<O: Memento>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
         // 파일 이미 있으면 에러 반환
         // - Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성하기 때문에, 그 중 하나인 "_basemd"를 붙여 확인
         if Path::new(&(filepath.to_owned() + "_basemd")).exists() {
@@ -221,8 +221,8 @@ impl Pool {
     // - 8GB+a에서 Ralloc의 로직을 역계산하여 8GB를 알아낼 수 있을듯
     //
     // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
-    // - <O: POp, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
-    pub unsafe fn open<O: POp>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
+    // - <O: Memento, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
+    pub unsafe fn open<O: Memento>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
         if !Path::new(&(filepath.to_owned() + "_basemd")).exists() {
@@ -258,7 +258,7 @@ impl Pool {
 
         // GC의 시작점을 등록하고 GC 수행
         // - 그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음
-        unsafe extern "C" fn root_filter<O: POp>(
+        unsafe extern "C" fn root_filter<O: Memento>(
             ptr: *mut ::std::os::raw::c_char,
             gc: &mut GarbageCollection,
         ) {
@@ -292,7 +292,7 @@ mod tests {
     use serial_test::serial;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
-    use crate::persistent::POp;
+    use crate::persistent::Memento;
     use crate::plocation::pool::*;
     use crate::utils::tests::*;
 
@@ -309,7 +309,7 @@ mod tests {
         }
     }
 
-    impl POp for RootOp {
+    impl Memento for RootOp {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
