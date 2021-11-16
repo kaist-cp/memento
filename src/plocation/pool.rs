@@ -64,6 +64,7 @@ impl PoolHandle {
     #[allow(clippy::mut_from_ref)]
     #[inline]
     pub fn get_root<O: POp>(&self) -> &mut O {
+        // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
         let root_ptr = unsafe { RP_get_root_c(0) } as *mut O;
         unsafe { &mut *root_ptr }
     }
@@ -71,40 +72,44 @@ impl PoolHandle {
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
     #[inline]
     pub fn alloc<T>(&self) -> PPtr<T> {
-        let addr_abs = self.pool().alloc::<T>() as usize;
-        let addr_rel = addr_abs - self.start();
-        PPtr::from(addr_rel)
+        let ptr = self.pool().alloc(mem::size_of::<T>());
+        PPtr::from(ptr as usize - self.start())
     }
 
     /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
+    ///
+    /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
+    /// - e.g. dynamically sized slices
     ///
     /// # Safety
     ///
     /// TODO
     #[inline]
     pub unsafe fn alloc_layout<T>(&self, layout: Layout) -> PPtr<T> {
-        let addr_abs = self.pool().alloc_layout::<T>(layout) as usize;
-        let addr_rel = addr_abs - self.start();
-        PPtr::from(addr_rel)
+        let ptr = self.pool().alloc(layout.size());
+        PPtr::from(ptr as usize - self.start())
     }
 
     /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
     #[inline]
     pub fn free<T>(&self, pptr: PPtr<T>) {
         let addr_abs = self.start() + pptr.into_offset();
-        self.pool().free(addr_abs as *mut T);
+        self.pool().free(addr_abs as *mut u8);
     }
 
     /// offset 주소부터 Layout 크기만큼 할당 해제
+    ///
+    /// - `PersistentPtr<T>`가 가리키는 데이터의 크기를 정적으로 알 수 없을때, 할당 해제할 크기(`Layout`)를 직접 지정하기 위해 필요
+    /// - e.g. dynamically sized slices
     ///
     /// # Safety
     ///
     /// TODO
     #[inline]
     pub unsafe fn free_layout(&self, offset: usize, _layout: Layout) {
-        let addr_abs = self.start() + offset;
         // NOTE: Ralloc의 free는 size를 받지 않지 않으므로 할당해제할 주소만 잘 넘겨주면 됨
-        self.pool().free(addr_abs as *mut c_void);
+        let addr_abs = self.start() + offset;
+        self.pool().free(addr_abs as *mut u8);
     }
 
     #[inline]
@@ -170,11 +175,10 @@ impl Pool {
         let is_reopen = unsafe { RP_init(filepath.as_ptr(), size as u64) };
         assert_eq!(is_reopen, 0);
 
-        // root로 쓸 obj 할당 및 초기화
+        // root로 사용할 obj를 만든 후 root로 세팅
+        // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
         let root_ptr = unsafe { RP_malloc(mem::size_of::<O>() as u64) as *mut O };
         unsafe { *root_ptr = O::default() };
-
-        // root obj 세팅
         let _prev = unsafe { RP_set_root(root_ptr as *mut c_void, 0) };
 
         // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
@@ -252,44 +256,32 @@ impl Pool {
             recovering: true,
         });
 
-        // GC 수행 (그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음)
-        RP_set_root_mark(Some(O::mark), 0);
+        // GC의 시작점을 등록하고 GC 수행
+        // - 그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음
+        unsafe extern "C" fn root_filter<O: POp>(
+            ptr: *mut ::std::os::raw::c_char,
+            gc: &mut GarbageCollection,
+        ) {
+            RP_mark(gc, ptr, Some(O::filter_inner));
+        }
+        RP_set_root_filter(Some(root_filter::<O>), 0);
         let _is_gc_executed = RP_recover();
 
         // 글로벌 풀의 핸들러 반환
         Ok(global_pool().unwrap())
     }
 
-    /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 반환
+    /// 풀에 size만큼 할당 후 이를 가리키는 포인터 반환
     #[inline]
-    fn alloc<T>(&self) -> *mut T {
-        let addr_abs = unsafe { RP_malloc(mem::size_of::<T>() as u64) };
-        addr_abs as *mut T
+    fn alloc(&self, size: usize) -> *mut u8 {
+        let addr_abs = unsafe { RP_malloc(size as u64) };
+        addr_abs as *mut u8
     }
 
-    /// 풀에 Layout에 맞게 할당 후 이를 T로 가리키는 포인터 반환
-    ///
-    /// - `PersistentPtr<T>`가 가리킬 데이터의 크기를 정적으로 알 수 없을 때, 할당할 크기(`Layout`)를 직접 지정하기 위해 필요
-    /// - e.g. dynamically sized slices
+    /// ptr이 가리키는 풀의 메모리 블록 할당해제
     #[inline]
-    unsafe fn alloc_layout<T>(&self, layout: Layout) -> *mut T {
-        let addr_abs = RP_malloc(layout.size() as u64);
-        addr_abs as *mut T
-    }
-
-    /// persistent pointer가 가리키는 풀 내부의 메모리 블록 할당해제
-    #[inline]
-    fn free<T>(&self, ptr: *mut T) {
+    fn free(&self, ptr: *mut u8) {
         unsafe { RP_free(ptr as *mut c_void) }
-    }
-
-    /// offset 주소부터 Layout 크기만큼 할당 해제
-    ///
-    /// - `PersistentPtr<T>`가 가리키는 데이터의 크기를 정적으로 알 수 없을때, 할당 해제할 크기(`Layout`)를 직접 지정하기 위해 필요
-    /// - e.g. dynamically sized slices
-    #[inline]
-    unsafe fn _free_layout(&self, _offset: usize, _layout: Layout) {
-        todo!()
     }
 }
 
@@ -312,7 +304,7 @@ mod tests {
     }
 
     impl Collectable for RootOp {
-        unsafe extern "C" fn filter(_: *mut std::os::raw::c_char, _: *mut GarbageCollection) {
+        fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
             // no-op
         }
     }

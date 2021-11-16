@@ -48,7 +48,7 @@ void* RP_realloc(void* ptr, size_t new_size);
 int RP_in_prange(void* ptr);
 /* return 1 if the query is invalid, otherwise 0 and write start and end addr to the parameter. */
 int RP_region_range(int idx, void** start_addr, void** end_addr);
-void RP_set_root_mark(void (*mark)(char*, GarbageCollection&), uint64_t i); // @seungminjeon: GC시 trace 시작지점인 mark 함수 등록
+void RP_set_root_filter(void (*filter_func)(char*, GarbageCollection&), uint64_t i); // @seungminjeon: GC시 trace 시작지점인 filter 함수 등록
 #ifdef __cplusplus
 }
 #endif

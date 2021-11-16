@@ -170,10 +170,7 @@ int RP_region_range(int idx, void** start_addr, void** end_addr){
     return 0;
 }
 
-void RP_set_root_mark(void (*mark)(char*, GarbageCollection&), uint64_t i) {
+void RP_set_root_filter(void (*filter_func)(char*, GarbageCollection&), uint64_t i) {
     assert(i<MAX_ROOTS);
-    // @seungminjeon: 
-    // - Ralloc 원래 로직은 roots_filter_func[i]에 root의 mark를 호출하는 filter_func를 넣지만, 여기서는 root의 mark를 직접 넣음
-    // - 이유: Rust에서 root type `O`의 mark를 호출하는 filter func을 만드는 게 잘 안됨
-    ralloc::roots_filter_func[i] = mark;
+    ralloc::roots_filter_func[i] = filter_func;
 }
