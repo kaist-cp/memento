@@ -5,8 +5,8 @@
 use std::alloc::Layout;
 use std::ffi::{c_void, CString};
 use std::io::Error;
-use std::{fs, mem};
 use std::path::Path;
+use std::{fs, mem};
 
 use crate::persistent::*;
 use crate::plocation::global::global_pool;
@@ -102,7 +102,7 @@ impl PoolHandle {
     /// TODO
     #[inline]
     pub unsafe fn free_layout(&self, offset: usize, _layout: Layout) {
-        let addr_abs =  self.start() + offset;
+        let addr_abs = self.start() + offset;
         // NOTE: Ralloc의 free는 size를 받지 않지 않으므로 할당해제할 주소만 잘 넘겨주면 됨
         self.pool().free(addr_abs as *mut c_void);
     }

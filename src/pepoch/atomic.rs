@@ -28,7 +28,7 @@ use core::mem::{self, MaybeUninit};
 use core::slice;
 use core::sync::atomic::Ordering;
 
-use crate::pepoch::guard::Guard;
+use super::Guard;
 use crate::plocation::global_pool;
 use crate::plocation::ll::persist_obj;
 use crate::plocation::pool::PoolHandle;
@@ -432,10 +432,10 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// ```
-    pub fn load<'g>(&self, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+    pub fn load<'g>(&self, ord: Ordering, _: &'g Guard) -> PShared<'g, T> {
         unsafe { PShared::from_usize(self.data.load(ord)) }
     }
 
@@ -463,10 +463,10 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = a.load_consume(guard);
     /// ```
-    pub fn load_consume<'g>(&self, _: &'g Guard<'_>) -> PShared<'g, T> {
+    pub fn load_consume<'g>(&self, _: &'g Guard) -> PShared<'g, T> {
         unsafe { PShared::from_usize(self.data.load_consume()) }
     }
 
@@ -514,15 +514,10 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = a.swap(PShared::null(), SeqCst, guard);
     /// ```
-    pub fn swap<'g, P: Pointer<T>>(
-        &self,
-        new: P,
-        ord: Ordering,
-        _: &'g Guard<'_>,
-    ) -> PShared<'g, T> {
+    pub fn swap<'g, P: Pointer<T>>(&self, new: P, ord: Ordering, _: &'g Guard) -> PShared<'g, T> {
         unsafe { PShared::from_usize(self.data.swap(new.into_usize(), ord)) }
     }
 
@@ -557,7 +552,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     ///
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let curr = a.load(SeqCst, guard);
     /// let res1 = a.compare_exchange(curr, PShared::null(), SeqCst, SeqCst, guard);
     /// let res2 = a.compare_exchange(curr, POwned::new(5678, &pool), SeqCst, SeqCst, guard);
@@ -568,7 +563,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
         new: P,
         success: Ordering,
         failure: Ordering,
-        _: &'g Guard<'_>,
+        _: &'g Guard,
     ) -> Result<PShared<'g, T>, CompareExchangeError<'g, T, P>>
     where
         P: Pointer<T>,
@@ -618,7 +613,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     ///
     /// let mut new = POwned::new(5678, &pool);
     /// let mut ptr = a.load(SeqCst, guard);
@@ -649,7 +644,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
         new: P,
         success: Ordering,
         failure: Ordering,
-        _: &'g Guard<'_>,
+        _: &'g Guard,
     ) -> Result<PShared<'g, T>, CompareExchangeError<'g, T, P>>
     where
         P: Pointer<T>,
@@ -703,7 +698,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     ///
     /// let res1 = a.fetch_update(SeqCst, SeqCst, guard, |x| Some(x.with_tag(1)));
     /// assert!(res1.is_ok());
@@ -715,7 +710,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
         &self,
         set_order: Ordering,
         fail_order: Ordering,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         mut func: F,
     ) -> Result<PShared<'g, T>, PShared<'g, T>>
     where
@@ -770,7 +765,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     ///
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let curr = a.load(SeqCst, guard);
     /// let res1 = a.compare_and_set(curr, PShared::null(), SeqCst, guard);
     /// let res2 = a.compare_and_set(curr, POwned::new(5678, &pool), SeqCst, guard);
@@ -783,7 +778,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
         current: PShared<'_, T>,
         new: P,
         ord: O,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
     ) -> Result<PShared<'g, T>, CompareAndSetError<'g, T, P>>
     where
         O: CompareAndSetOrdering,
@@ -833,7 +828,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     ///
     /// let mut new = POwned::new(5678, &pool);
     /// let mut ptr = a.load(SeqCst, guard);
@@ -866,7 +861,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
         current: PShared<'_, T>,
         new: P,
         ord: O,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
     ) -> Result<PShared<'g, T>, CompareAndSetError<'g, T, P>>
     where
         O: CompareAndSetOrdering,
@@ -896,11 +891,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(3));
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// assert_eq!(a.fetch_and(2, SeqCst, guard).tag(), 3);
     /// assert_eq!(a.load(SeqCst, guard).tag(), 2);
     /// ```
-    pub fn fetch_and<'g>(&self, val: usize, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+    pub fn fetch_and<'g>(&self, val: usize, ord: Ordering, _: &'g Guard) -> PShared<'g, T> {
         unsafe { PShared::from_usize(self.data.fetch_and(val | !low_bits::<T>(), ord)) }
     }
 
@@ -924,11 +919,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// use std::sync::atomic::Ordering::SeqCst;
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// assert_eq!(a.fetch_or(2, SeqCst, guard).tag(), 1);
     /// assert_eq!(a.load(SeqCst, guard).tag(), 3);
     /// ```
-    pub fn fetch_or<'g>(&self, val: usize, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+    pub fn fetch_or<'g>(&self, val: usize, ord: Ordering, _: &'g Guard) -> PShared<'g, T> {
         unsafe { PShared::from_usize(self.data.fetch_or(val & low_bits::<T>(), ord)) }
     }
 
@@ -953,11 +948,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// assert_eq!(a.fetch_xor(3, SeqCst, guard).tag(), 1);
     /// assert_eq!(a.load(SeqCst, guard).tag(), 2);
     /// ```
-    pub fn fetch_xor<'g>(&self, val: usize, ord: Ordering, _: &'g Guard<'_>) -> PShared<'g, T> {
+    pub fn fetch_xor<'g>(&self, val: usize, ord: Ordering, _: &'g Guard) -> PShared<'g, T> {
         unsafe { PShared::from_usize(self.data.fetch_xor(val & low_bits::<T>(), ord)) }
     }
 
@@ -1267,11 +1262,11 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = o.into_shared(guard);
     /// ```
     #[allow(clippy::needless_lifetimes)]
-    pub fn into_shared<'g>(self, _: &'g Guard<'_>) -> PShared<'g, T> {
+    pub fn into_shared<'g>(self, _: &'g Guard) -> PShared<'g, T> {
         unsafe { PShared::from_usize(self.into_usize()) }
     }
 
@@ -1491,7 +1486,7 @@ impl<T> PShared<'_, T> {
     /// let ptr = PPtr::from(unsafe { o.deref(&pool) as *const _ as usize } - pool.start());
     /// let a = PAtomic::from(o);
     ///
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// assert_eq!(p.as_ptr(), ptr);
     /// ```
@@ -1537,7 +1532,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::null();
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// assert!(a.load(SeqCst, guard).is_null());
     /// a.store(POwned::new(1234, &pool), SeqCst);
     /// assert!(!a.load(SeqCst, guard).is_null());
@@ -1580,7 +1575,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// unsafe {
     ///     assert_eq!(p.deref(&pool), &1234);
@@ -1619,7 +1614,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(vec![1, 2, 3, 4], &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     ///
     /// let mut p = a.load(SeqCst, guard);
     /// unsafe {
@@ -1673,7 +1668,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// unsafe {
     ///     assert_eq!(p.as_ref(&pool), Some(&1234));
@@ -1715,7 +1710,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
     /// unsafe {
-    ///     let guard = &epoch::unprotected(&pool);
+    ///     let guard = &epoch::unprotected();
     ///     let p = a.load(SeqCst, guard);
     ///     drop(p.into_owned());
     /// }
@@ -1740,7 +1735,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<u64>::from(POwned::new(0u64, &pool).with_tag(2));
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p = a.load(SeqCst, guard);
     /// assert_eq!(p.tag(), 2);
     /// ```
@@ -1766,7 +1761,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(0u64, &pool);
-    /// let guard = &epoch::pin(&pool);
+    /// let guard = &epoch::pin();
     /// let p1 = a.load(SeqCst, guard);
     /// let p2 = p1.with_tag(2);
     ///
