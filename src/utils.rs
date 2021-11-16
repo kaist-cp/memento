@@ -7,7 +7,7 @@ pub mod tests {
     use std::path::Path;
     use tempfile::NamedTempFile;
 
-    use crate::persistent::POp;
+    use crate::persistent::Memento;
     use crate::plocation::pool::*;
     use crate::plocation::ralloc::{Collectable, GarbageCollection};
 
@@ -31,7 +31,7 @@ pub mod tests {
         }
     }
 
-    impl POp for DummyRootOp {
+    impl Memento for DummyRootOp {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
@@ -59,7 +59,7 @@ pub mod tests {
     }
 
     /// test를 위한 root op은 아래 조건을 만족하자
-    pub trait TestRootOp: for<'o> POp<Object<'o> = (), Input = ()> {}
+    pub trait TestRootOp: for<'o> Memento<Object<'o> = (), Input = ()> {}
 
     /// test op 돌리기
     pub fn run_test<O: TestRootOp, P: AsRef<Path>>(pool_name: P, pool_len: usize) {

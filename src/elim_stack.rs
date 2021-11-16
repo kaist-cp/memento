@@ -76,7 +76,7 @@ impl<T: Clone, S: Stack<T>> Collectable for TryPush<T, S> {
     }
 }
 
-impl<T, S> POp for TryPush<T, S>
+impl<T, S> Memento for TryPush<T, S>
 where
     T: 'static + Clone,
     S: 'static + Stack<T>,
@@ -142,7 +142,7 @@ impl<T: Clone, S: Stack<T>> Collectable for TryPop<T, S> {
     }
 }
 
-impl<T, S> POp for TryPop<T, S>
+impl<T, S> Memento for TryPop<T, S>
 where
     T: 'static + Clone,
     S: 'static + Stack<T>,

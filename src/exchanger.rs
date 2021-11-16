@@ -101,7 +101,7 @@ impl<T: Clone> Collectable for TryExchange<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for TryExchange<T> {
+impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input = (T, Duration, ExchangeCond<T>);
     type Output<'o> = T;
@@ -156,7 +156,7 @@ impl<T: Clone> Collectable for Exchange<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for Exchange<T> {
+impl<T: 'static + Clone> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input = (T, ExchangeCond<T>);
     type Output<'o> = T;
@@ -400,7 +400,7 @@ mod tests {
         }
     }
 
-    impl POp for ExchangeOnce {
+    impl Memento for ExchangeOnce {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
@@ -491,7 +491,7 @@ mod tests {
         }
     }
 
-    impl POp for RotateLeft {
+    impl Memento for RotateLeft {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
@@ -587,7 +587,7 @@ mod tests {
         }
     }
 
-    impl POp for ExchangeMany {
+    impl Memento for ExchangeMany {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();

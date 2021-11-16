@@ -82,7 +82,7 @@ impl<T: Clone> Collectable for TryPush<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for TryPush<T> {
+impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'s> = &'s TreiberStack<T>;
     type Input = T;
     type Output<'s> = ();
@@ -139,7 +139,7 @@ impl<T: Clone> Collectable for Push<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for Push<T> {
+impl<T: 'static + Clone> Memento for Push<T> {
     type Object<'s> = &'s TreiberStack<T>;
     type Input = T;
     type Output<'s> = ();
@@ -209,7 +209,7 @@ impl<T: Clone> Collectable for TryPop<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for TryPop<T> {
+impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'s> = &'s TreiberStack<T>;
     type Input = ();
     type Output<'s> = Option<T>;
@@ -272,7 +272,7 @@ impl<T: Clone> Collectable for Pop<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for Pop<T> {
+impl<T: 'static + Clone> Memento for Pop<T> {
     type Object<'s> = &'s TreiberStack<T>;
     type Input = ();
     type Output<'s> = Option<T>;

@@ -81,7 +81,7 @@ impl<T: Clone> Collectable for Enqueue<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for Enqueue<T> {
+impl<T: 'static + Clone> Memento for Enqueue<T> {
     type Object<'o> = &'o Queue<T>;
     type Input = T;
     type Output<'o> = ();
@@ -134,7 +134,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for Dequeue<T> {
+impl<T: 'static + Clone> Memento for Dequeue<T> {
     type Object<'o> = &'o Queue<T>;
     type Input = ();
     type Output<'o> = Option<T>;
@@ -167,7 +167,7 @@ impl<T: Clone> Dequeue<T> {
 }
 
 /// empty가 아닐 때에*만* return 하는 dequeue operation
-// TODO: 현재는 sub POp으로 Dequeue을 재사용하도록 구현되어 있음 (EMPTY 기록하는 오버헤드 발생)
+// TODO: 현재는 sub Memento으로 Dequeue을 재사용하도록 구현되어 있음 (EMPTY 기록하는 오버헤드 발생)
 //       필요하다면 빌트인 함수를 만들어서 최적화할 수 있음
 #[derive(Debug)]
 pub struct DequeueSome<T: Clone> {
@@ -195,7 +195,7 @@ impl<T: Clone> Collectable for DequeueSome<T> {
     }
 }
 
-impl<T: 'static + Clone> POp for DequeueSome<T> {
+impl<T: 'static + Clone> Memento for DequeueSome<T> {
     type Object<'o> = &'o Queue<T>;
     type Input = ();
     type Output<'o> = T;
@@ -562,7 +562,7 @@ mod test {
         }
     }
 
-    impl POp for RootOp {
+    impl Memento for RootOp {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
