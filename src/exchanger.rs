@@ -110,12 +110,6 @@ impl<T> ExchangeType<T> for TryExchange<T> {
 unsafe impl<T: Send + Sync> Send for TryExchange<T> {}
 
 impl<T: Clone> Collectable for TryExchange<T> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
-    }
-}
-
-impl<T: 'static + Clone> Collectable for TryExchange<T> {
     fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
