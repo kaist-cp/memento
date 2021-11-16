@@ -49,6 +49,19 @@ impl<T: Clone> From<T> for Node<T> {
     }
 }
 
+impl<T: Clone> Collectable for Node<T> {
+    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut partner = node.partner.load(Ordering::SeqCst, guard);
+        if !partner.is_null() {
+            let partner_ref = unsafe { partner.deref_mut(pool) };
+            Node::<T>::mark(partner_ref, gc);
+        }
+    }
+}
+
 /// Exchanger의 try exchange 실패
 #[derive(Debug, Clone)]
 pub struct TryFail;
@@ -102,6 +115,19 @@ impl<T: Clone> Collectable for TryExchange<T> {
     }
 }
 
+impl<T: 'static + Clone> Collectable for TryExchange<T> {
+    fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = xchg.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::mark(node_ref, gc);
+        }
+    }
+}
+
 impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input = (T, Duration, ExchangeCond<T>);
@@ -152,8 +178,15 @@ impl<T> ExchangeType<T> for Exchange<T> {
 unsafe impl<T: Send + Sync> Send for Exchange<T> {}
 
 impl<T: Clone> Collectable for Exchange<T> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = xchg.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<T>::mark(node_ref, gc);
+        }
     }
 }
 
@@ -196,6 +229,19 @@ impl<T: Clone> Default for Exchanger<T> {
             // 기존 논문에선 시작 slot이 Default Node임
             // 장황한 구현 및 공간 낭비의 이유로 null로 바꿈
             slot: PAtomic::null(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for Exchanger<T> {
+    fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut slot = xchg.slot.load(Ordering::SeqCst, guard);
+        if !slot.is_null() {
+            let slot_ref = unsafe { slot.deref_mut(pool) };
+            Node::mark(slot_ref, gc);
         }
     }
 }
@@ -396,8 +442,10 @@ mod tests {
     }
 
     impl Collectable for ExchangeOnce {
-        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(xchg_once: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchanger::filter(&mut xchg_once.xchg, gc, pool);
+            Exchange::filter(&mut xchg_once.exchanges[0], gc, pool);
+            Exchange::filter(&mut xchg_once.exchanges[1], gc, pool);
         }
     }
 
@@ -487,8 +535,13 @@ mod tests {
     }
 
     impl Collectable for RotateLeft {
-        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(rleft: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchanger::filter(&mut rleft.lxchg, gc, pool);
+            Exchanger::filter(&mut rleft.rxchg, gc, pool);
+            Exchange::filter(&mut rleft.exchange0, gc, pool);
+            Exchange::filter(&mut rleft.exchange1_0, gc, pool);
+            Exchange::filter(&mut rleft.exchange1_2, gc, pool);
+            Exchange::filter(&mut rleft.exchange2, gc, pool);
         }
     }
 
@@ -583,8 +636,14 @@ mod tests {
     }
 
     impl Collectable for ExchangeMany {
-        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(xchg_many: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchanger::filter(&mut xchg_many.xchg, gc, pool);
+
+            for try_xchgs in xchg_many.exchanges.as_mut() {
+                for try_xchg in try_xchgs {
+                    TryExchange::filter(try_xchg, gc, pool);
+                }
+            }
         }
     }
 
@@ -699,6 +758,7 @@ mod tests {
 
     /// 스레드 여러 개의 exchange
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+    // TODO: gc시 mark된 block이 11632046개라는 데 맞나?
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn exchange_many() {
