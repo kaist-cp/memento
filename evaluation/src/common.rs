@@ -84,8 +84,8 @@ pub mod queue {
         type EnqInput;
         type DeqInput;
 
-        fn enqueue<O: POp>(&self, input: Self::EnqInput, pool: &PoolHandle<O>);
-        fn dequeue<O: POp>(&self, input: Self::DeqInput, pool: &PoolHandle<O>);
+        fn enqueue<O: POp>(&self, input: Self::EnqInput, pool: &PoolHandle);
+        fn dequeue<O: POp>(&self, input: Self::DeqInput, pool: &PoolHandle);
     }
 
     pub fn enq_deq_prob<O: POp, Q: TestQueue>(
@@ -93,7 +93,7 @@ pub mod queue {
         enq: Q::EnqInput,
         deq: Q::DeqInput,
         prob: u32,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) {
         if pick(prob) {
             q.enqueue(enq, pool);
@@ -106,7 +106,7 @@ pub mod queue {
         q: &Q,
         enq: Q::EnqInput,
         deq: Q::DeqInput,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) {
         q.enqueue(enq, pool);
         q.dequeue(deq, pool);

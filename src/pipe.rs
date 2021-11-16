@@ -2,7 +2,11 @@
 
 use crate::{
     persistent::POp,
-    plocation::{ll::persist_obj, PoolHandle},
+    plocation::{
+        ll::persist_obj,
+        ralloc::{Collectable, GarbageCollection},
+        PoolHandle,
+    },
 };
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
@@ -11,7 +15,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Pipe<Op1, Op2>
 where
-    for<'o> Op1: POp<Output<'o> = Op2::Input>,
+    for<'o> Op1: 'static + POp<Output<'o> = Op2::Input>,
     Op2: POp,
 {
     /// 먼저 실행될 op. `Pipe` op의 input은 `from` op의 input과 같음
@@ -26,7 +30,7 @@ where
 
 impl<Op1, Op2> Default for Pipe<Op1, Op2>
 where
-    for<'o> Op1: POp<Output<'o> = Op2::Input>,
+    for<'o> Op1: 'static + POp<Output<'o> = Op2::Input>,
     Op2: POp,
 {
     fn default() -> Self {
@@ -38,6 +42,16 @@ where
     }
 }
 
+impl<Op1, Op2> Collectable for Pipe<Op1, Op2>
+where
+    for<'o> Op1: 'static + POp<Output<'o> = Op2::Input>,
+    Op2: POp,
+{
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
+
 impl<Op1, Op2> POp for Pipe<Op1, Op2>
 where
     for<'o> Op1: POp<Output<'o> = Op2::Input>,
@@ -45,33 +59,36 @@ where
 {
     type Object<'o> = (Op1::Object<'o>, Op2::Object<'o>);
     type Input = Op1::Input;
-    type Output<'o> = Op2::Output<'o>;
+    type Output<'o>
+    where
+        Op2: 'o,
+    = Op2::Output<'o>;
     type Error = ();
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         if self.resetting {
             // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
-            self.reset(false);
+            self.reset(false, pool);
         }
 
         let v = self.from.run(from_obj, init, pool).map_err(|_| ())?;
         self.to.run(to_obj, v, pool).map_err(|_| ())
     }
 
-    fn reset(&mut self, nested: bool) {
+    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
         if !nested {
             self.resetting = true;
             persist_obj(&self.resetting, true);
         }
 
-        self.from.reset(true);
-        self.to.reset(true);
+        self.from.reset(true, pool);
+        self.to.reset(true, pool);
 
         if !nested {
             self.resetting = false;
@@ -88,6 +105,7 @@ mod tests {
 
     use crate::pepoch::{self, PAtomic};
     use crate::persistent::*;
+    use crate::plocation::ralloc::{Collectable, GarbageCollection};
     use crate::queue::*;
     use crate::utils::tests::*;
 
@@ -116,8 +134,8 @@ mod tests {
     }
 
     impl Transfer {
-        fn init<O: POp>(&self, pool: &PoolHandle<O>) {
-            let guard = unsafe { pepoch::unprotected(&pool) };
+        fn init(&self, pool: &PoolHandle) {
+            let guard = unsafe { pepoch::unprotected() };
             let q1 = self.q1.load(Ordering::SeqCst, guard);
             let q2 = self.q2.load(Ordering::SeqCst, guard);
 
@@ -143,16 +161,16 @@ mod tests {
         type Output<'o> = ();
         type Error = !;
 
-        fn run<'o, O: POp>(
-            &mut self,
+        fn run<'o>(
+            &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
-            pool: &PoolHandle<O>,
+            pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);
 
             // Alias
-            let guard = unsafe { pepoch::unprotected(pool) };
+            let guard = unsafe { pepoch::unprotected() };
             let q1 = unsafe { self.q1.load(Ordering::SeqCst, guard).deref(pool) };
             let q2 = unsafe { self.q2.load(Ordering::SeqCst, guard).deref(pool) };
             let pipes = &mut self.pipes;
@@ -188,8 +206,14 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool) {
+        fn reset(&mut self, _nested: bool, _: &PoolHandle) {
             todo!("reset test")
+        }
+    }
+
+    impl Collectable for Transfer {
+        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+            todo!()
         }
     }
 

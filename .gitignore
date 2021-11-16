@@ -2,4 +2,4 @@ target/
 .vscode/
 test/
 
-!ext/ralloc/test
+!ext/ralloc/test/^liballoc.a

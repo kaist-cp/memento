@@ -27,11 +27,11 @@ impl<T: 'static + Clone> POp for MustPop<T> {
     type Input = ();
     type Output<'q> = T;
 
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         queue: Self::Object<'o>,
         _: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Self::Output<'o> {
         loop {
             if let Some(v) = self.pop.run(queue, (), pool) {
@@ -64,7 +64,7 @@ impl Default for GetOurPipeNOps {
 }
 
 impl GetOurPipeNOps {
-    fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
+    fn init<O: POp>(&mut self, pool: &PoolHandle) {
         let guard = unsafe { pepoch::unprotected(pool) };
         let q1 = self.q1.load(Ordering::SeqCst, guard);
         let q2 = self.q2.load(Ordering::SeqCst, guard);
@@ -96,11 +96,11 @@ impl POp for GetOurPipeNOps {
     type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
     type Output<'o> = usize; // 실행한 operation 수
 
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         _: Self::Object<'o>,
         (kind, nr_thread, duration): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Self::Output<'o> {
         // Initialize
         println!("initialize..");

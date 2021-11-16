@@ -41,7 +41,7 @@ struct DurableQueue<T: Clone> {
 }
 
 impl<T: Clone> DurableQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+    fn new<O: POp>(pool: &PoolHandle) -> POwned<Self> {
         let guard = unsafe { pepoch::unprotected(pool) };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
@@ -58,7 +58,7 @@ impl<T: Clone> DurableQueue<T> {
         ret
     }
 
-    fn enqueue<O: POp>(&self, val: T, pool: &PoolHandle<O>) {
+    fn enqueue<O: POp>(&self, val: T, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
         let node = POwned::new(Node::new(val), pool).into_shared(&guard);
         persist_obj(unsafe { node.deref(pool) }, true);
@@ -99,7 +99,7 @@ impl<T: Clone> DurableQueue<T> {
         }
     }
 
-    fn dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
+    fn dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
 
         // NOTE: Durable 큐의 하자 (1/1)
@@ -199,10 +199,10 @@ impl<T: Clone> TestQueue for DurableQueue<T> {
     type EnqInput = T; // input
     type DeqInput = usize; // tid
 
-    fn enqueue<O: POp>(&self, input: Self::EnqInput, pool: &PoolHandle<O>) {
+    fn enqueue<O: POp>(&self, input: Self::EnqInput, pool: &PoolHandle) {
         self.enqueue(input, pool);
     }
-    fn dequeue<O: POp>(&self, tid: Self::DeqInput, pool: &PoolHandle<O>) {
+    fn dequeue<O: POp>(&self, tid: Self::DeqInput, pool: &PoolHandle) {
         self.dequeue(tid, pool);
     }
 }
@@ -218,11 +218,11 @@ impl POp for GetDurableQueueNOps {
     type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
     type Output<'o> = usize; // 실행한 operation 수
 
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         _: Self::Object<'o>,
         (kind, nr_thread, duration): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Self::Output<'o> {
         // Initialize Queue
         let q = DurableQueue::<usize>::new(pool);

@@ -36,15 +36,16 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
-// pub mod elim_stack; // TODO: Ralloc gc 적용시키며 주석해제
-// pub mod exchanger; // TODO: Ralloc gc 적용시키며 주석해제
-// pub mod list; // TODO: plocation으로 동작시키며 주석해제
-// pub mod lock; // TODO: plocation으로 동작시키며 주석해제
+pub mod elim_stack;
+pub mod exchanger;
+pub mod list;
+pub mod lock;
 pub mod persistent;
-// pub mod pipe; // TODO: Ralloc gc 적용시키며 주석해제
+pub mod pipe;
 pub mod queue;
-// pub mod stack; // TODO: Ralloc gc 적용시키며 주석해제
-// pub mod treiber_stack; // TODO: Ralloc gc 적용시키며 주석해제
+pub mod stack;
+pub mod ticket_lock;
+pub mod treiber_stack;
 
 // Persistent location
 pub mod plocation;

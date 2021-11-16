@@ -38,14 +38,14 @@ pub mod tests {
         type Error = !;
 
         fn run<'o>(
-            &mut self,
+            &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input,
             _: &PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             Ok(())
         }
-        fn reset(&mut self, _: bool) {
+        fn reset(&mut self, _: bool, _: &'static PoolHandle) {
             // no-op
         }
     }

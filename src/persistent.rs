@@ -86,7 +86,9 @@ pub trait POp: Default + Collectable {
     type Input;
 
     /// Persistent op의 output type
-    type Output<'o>: Clone;
+    type Output<'o>: Clone
+    where
+        Self: 'o;
 
     /// Persistent op이 적용되지 않았을 때 발생하는 Error type
     type Error;
@@ -102,10 +104,10 @@ pub trait POp: Default + Collectable {
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
     fn run<'o>(
-        &mut self,
+        &'o mut self,
         object: Self::Object<'o>,
         input: Self::Input,
-        pool: &PoolHandle,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error>;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
@@ -118,5 +120,5 @@ pub trait POp: Default + Collectable {
     /// 나타내는 flag가 켜져있으므로 하위 op의 reset이 따로 reset flag를 설정할 필요가 없다. 이를 위해 하위
     /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
     /// 알려줄 수 있다.
-    fn reset(&mut self, nested: bool);
+    fn reset(&mut self, nested: bool, pool: &'static PoolHandle);
 }

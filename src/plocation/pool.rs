@@ -317,7 +317,7 @@ mod tests {
 
         // invariant 검사(flag=1 => value=42)
         fn run<'o>(
-            &mut self,
+            &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input,
             _: &PoolHandle,
@@ -333,7 +333,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool) {
+        fn reset(&mut self, _: bool, _: &PoolHandle) {
             // no-op
         }
     }

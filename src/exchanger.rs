@@ -20,6 +20,7 @@ use std::mem::MaybeUninit;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::pool::*;
+use crate::plocation::ralloc::{Collectable, GarbageCollection};
 
 #[derive(Debug)]
 struct Node<T> {
@@ -92,7 +93,13 @@ impl<T> ExchangeType<T> for TryExchange<T> {
     }
 }
 
-unsafe impl<T> Send for TryExchange<T> {}
+unsafe impl<T: Send + Sync> Send for TryExchange<T> {}
+
+impl<T: Clone> Collectable for TryExchange<T> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
 
 impl<T: 'static + Clone> POp for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
@@ -100,16 +107,18 @@ impl<T: 'static + Clone> POp for TryExchange<T> {
     type Output<'o> = T;
     type Error = TryFail;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         xchg: Self::Object<'o>,
         (value, timeout, cond): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        xchg.exchange(self, value, Timeout::Limited(timeout), cond, pool)
+        let guard = epoch::pin();
+
+        xchg.exchange(self, value, Timeout::Limited(timeout), cond, &guard, pool)
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         self.node.store(PShared::null(), Ordering::SeqCst);
         // TODO: if not finished -> free node
         // TODO: if node has not been freed, free node
@@ -139,7 +148,13 @@ impl<T> ExchangeType<T> for Exchange<T> {
     }
 }
 
-unsafe impl<T> Send for Exchange<T> {}
+unsafe impl<T: Send + Sync> Send for Exchange<T> {}
+
+impl<T: Clone> Collectable for Exchange<T> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
 
 impl<T: 'static + Clone> POp for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
@@ -147,18 +162,20 @@ impl<T: 'static + Clone> POp for Exchange<T> {
     type Output<'o> = T;
     type Error = !;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         xchg: Self::Object<'o>,
         (value, cond): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
+        let guard = epoch::pin();
+
         Ok(xchg
-            .exchange(self, value, Timeout::Unlimited, cond, pool)
+            .exchange(self, value, Timeout::Unlimited, cond, &guard, pool)
             .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         self.node.store(PShared::null(), Ordering::SeqCst);
         // TODO: if not finished -> free node
         // TODO: if node has not been freed, free node
@@ -183,21 +200,20 @@ impl<T: Clone> Default for Exchanger<T> {
 }
 
 impl<T: Clone> Exchanger<T> {
-    fn exchange<C: ExchangeType<T>, O: POp>(
+    fn exchange<C: ExchangeType<T>>(
         &self,
         client: &mut C,
         value: T,
         timeout: Timeout,
         cond: ExchangeCond<T>,
-        pool: &PoolHandle<O>,
+        guard: &Guard,
+        pool: &PoolHandle,
     ) -> Result<T, TryFail> {
-        let guard = epoch::pin(pool);
-
-        let mut myop = client.node().load(Ordering::SeqCst, &guard);
+        let mut myop = client.node().load(Ordering::SeqCst, guard);
 
         if myop.is_null() {
             // myop이 null이면 node 할당이 안 된 것이다
-            let n = POwned::new(Node::from(value), pool).into_shared(&guard);
+            let n = POwned::new(Node::from(value), pool).into_shared(guard);
             client.node().store(n, Ordering::SeqCst);
             myop = n;
         }
@@ -214,7 +230,7 @@ impl<T: Clone> Exchanger<T> {
             // - Case 2 (WAITING) : slot에서 내 node가 기다림
             // - Case 3 (WAITING) : slot에서 다른 node가 기다림
             // - Case 4 (BUSY)    : slot에서 누군가가 짝짓기 중 (나일 수도 있음)
-            let yourop = self.slot.load(Ordering::SeqCst, &guard);
+            let yourop = self.slot.load(Ordering::SeqCst, guard);
 
             // 내 교환이 이미 끝났다면, 상대에게 가져온 값을 반환함
             if myop_ref.response.load(Ordering::SeqCst) {
@@ -235,7 +251,7 @@ impl<T: Clone> Exchanger<T> {
                             PShared::null(),
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         )
                         .is_ok()
                     {
@@ -243,9 +259,9 @@ impl<T: Clone> Exchanger<T> {
                     }
 
                     // 누군가를 helping 함
-                    let yourop = self.slot.load(Ordering::SeqCst, &guard);
+                    let yourop = self.slot.load(Ordering::SeqCst, guard);
                     if yourop.tag() == BUSY {
-                        self.help(yourop, &guard, pool);
+                        self.help(yourop, guard, pool);
                     }
 
                     // helping 대상이 나일 수도 있으므로 마지막 확인
@@ -266,7 +282,7 @@ impl<T: Clone> Exchanger<T> {
                     myop,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
-                    &guard,
+                    guard,
                 );
                 continue;
             }
@@ -293,17 +309,17 @@ impl<T: Clone> Exchanger<T> {
                             myop.with_tag(BUSY), // "짝짓기 중"으로 표시
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         )
                         .is_ok()
                     {
-                        self.help(myop, &guard, pool);
+                        self.help(myop, guard, pool);
                         return Ok(Self::finish(myop_ref));
                     }
                 }
                 BUSY => {
                     // Case 4: slot에서 누군가가 짝짓기 중 (나일 수도 있음)
-                    self.help(yourop, &guard, pool);
+                    self.help(yourop, guard, pool);
                 }
                 _ => {
                     unreachable!("Tag is either WAITING or BUSY");
@@ -313,7 +329,7 @@ impl<T: Clone> Exchanger<T> {
     }
 
     /// 짝짓기 된 pair를 교환시켜 줌
-    fn help<O: POp>(&self, yourop: PShared<'_, Node<T>>, guard: &Guard<'_>, pool: &PoolHandle<O>) {
+    fn help(&self, yourop: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
         let yourop_ref = unsafe { yourop.deref(pool) };
         let partner = yourop_ref.partner.load(Ordering::SeqCst, guard);
         let partner_ref = unsafe { partner.deref(pool) };
@@ -346,7 +362,7 @@ impl<T: Clone> Exchanger<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for Exchanger<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for Exchanger<T> {}
 
 #[cfg(test)]
 mod tests {
@@ -356,7 +372,10 @@ mod tests {
     use crossbeam_utils::thread;
     use serial_test::serial;
 
-    use crate::utils::tests::{run_test, TestRootOp};
+    use crate::{
+        plocation::ralloc::{Collectable, GarbageCollection},
+        utils::tests::{run_test, TestRootOp},
+    };
 
     use super::*;
 
@@ -375,17 +394,23 @@ mod tests {
         }
     }
 
+    impl Collectable for ExchangeOnce {
+        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+            todo!()
+        }
+    }
+
     impl POp for ExchangeOnce {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
         type Error = !;
 
-        fn run<'o, O: POp>(
-            &mut self,
+        fn run<'o>(
+            &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
-            pool: &PoolHandle<O>,
+            pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let xchg = &self.xchg;
             let exchanges = &mut self.exchanges;
@@ -410,7 +435,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool) {
+        fn reset(&mut self, _: bool, _: &PoolHandle) {
             todo!("reset test")
         }
     }
@@ -460,6 +485,12 @@ mod tests {
         }
     }
 
+    impl Collectable for RotateLeft {
+        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+            todo!()
+        }
+    }
+
     impl POp for RotateLeft {
         type Object<'o> = ();
         type Input = ();
@@ -468,11 +499,11 @@ mod tests {
 
         /// Before rotation : [0]  [1]  [2]
         /// After rotation  : [1]  [2]  [0]
-        fn run<'o, O: POp>(
-            &mut self,
+        fn run<'o>(
+            &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
-            pool: &PoolHandle<O>,
+            pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let lxchg = &self.lxchg;
             let rxchg = &self.rxchg;
@@ -512,7 +543,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool) {
+        fn reset(&mut self, _: bool, _: &PoolHandle) {
             todo!("reset test")
         }
     }
@@ -526,7 +557,7 @@ mod tests {
         const FILE_NAME: &str = "rotate_left.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<ExchangeOnce, _>(FILE_NAME, FILE_SIZE)
+        run_test::<RotateLeft, _>(FILE_NAME, FILE_SIZE)
     }
 
     const NR_THREAD: usize = 12;
@@ -550,17 +581,23 @@ mod tests {
         }
     }
 
+    impl Collectable for ExchangeMany {
+        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+            todo!()
+        }
+    }
+
     impl POp for ExchangeMany {
         type Object<'o> = ();
         type Input = ();
         type Output<'o> = ();
         type Error = ();
 
-        fn run<'o, O: POp>(
-            &mut self,
+        fn run<'o>(
+            &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
-            pool: &PoolHandle<O>,
+            pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let xchg = &self.xchg;
             let exchanges = &mut self.exchanges;
@@ -644,7 +681,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool) {
+        fn reset(&mut self, _: bool, _: &PoolHandle) {
             todo!("reset test")
         }
     }
