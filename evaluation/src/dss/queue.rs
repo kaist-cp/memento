@@ -75,7 +75,7 @@ struct DSSQueue<T: Clone> {
 }
 
 impl<T: Clone> DSSQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+    fn new<O: POp>(pool: &PoolHandle) -> POwned<Self> {
         let guard = unsafe { pepoch::unprotected(pool) };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
@@ -92,14 +92,14 @@ impl<T: Clone> DSSQueue<T> {
         ret
     }
 
-    fn prep_enqueue<O: POp>(&self, val: T, tid: usize, pool: &PoolHandle<O>) {
+    fn prep_enqueue<O: POp>(&self, val: T, tid: usize, pool: &PoolHandle) {
         let node = POwned::new(Node::new(val), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
         self.x[tid].store(node.with_tag(ENQ_PREP_TAG), Ordering::SeqCst);
         persist_obj(&self.x[tid], true);
     }
 
-    fn exec_enqueue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
+    fn exec_enqueue<O: POp>(&self, tid: usize, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
         let node = self.x[tid].load(Ordering::SeqCst, &guard);
 
@@ -158,7 +158,7 @@ impl<T: Clone> DSSQueue<T> {
         }
     }
 
-    fn _resolve_enqueue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
+    fn _resolve_enqueue<O: POp>(&self, tid: usize, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
         let x_tid = self.x[tid].load(Ordering::SeqCst, &guard);
         if (x_tid.tag() & ENQ_COMPL_TAG) != 0 {
@@ -175,7 +175,7 @@ impl<T: Clone> DSSQueue<T> {
         persist_obj(&self.x[tid], true);
     }
 
-    fn exec_dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) -> Option<T> {
+    fn exec_dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle) -> Option<T> {
         let guard = pepoch::pin(pool);
 
         loop {
@@ -240,7 +240,7 @@ impl<T: Clone> DSSQueue<T> {
         }
     }
 
-    fn _resolve_dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
+    fn _resolve_dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
         let x_tid = self.x[tid].load(Ordering::SeqCst, &guard);
         if x_tid == PShared::null().with_tag(DEQ_PREP_TAG) {
@@ -263,7 +263,7 @@ impl<T: Clone> DSSQueue<T> {
         }
     }
 
-    fn _resolve<O: POp>(&self, tid: usize, pool: &PoolHandle<O>) {
+    fn _resolve<O: POp>(&self, tid: usize, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
         let x_tid = self.x[tid].load(Ordering::SeqCst, &guard);
         if (x_tid.tag() & ENQ_PREP_TAG) != 0 {
@@ -281,11 +281,11 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     type EnqInput = (T, usize); // input, tid
     type DeqInput = usize; // tid
 
-    fn enqueue<O: POp>(&self, (input, tid): Self::EnqInput, pool: &PoolHandle<O>) {
+    fn enqueue<O: POp>(&self, (input, tid): Self::EnqInput, pool: &PoolHandle) {
         self.prep_enqueue(input, tid, pool);
         self.exec_enqueue(tid, pool);
     }
-    fn dequeue<O: POp>(&self, tid: Self::DeqInput, pool: &PoolHandle<O>) {
+    fn dequeue<O: POp>(&self, tid: Self::DeqInput, pool: &PoolHandle) {
         self.prep_dequeue(tid);
         let _ = self.exec_dequeue(tid, pool);
     }
@@ -300,11 +300,11 @@ impl POp for GetDSSQueueNOps {
     type Object<'o> = ();
     type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
     type Output<'o> = usize; // 실행한 operation 수
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         _: Self::Object<'o>,
         (kind, nr_thread, duration): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Self::Output<'o> {
         // Initialize Queue
         let q = DSSQueue::<usize>::new(pool);

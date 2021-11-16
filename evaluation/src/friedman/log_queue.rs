@@ -67,7 +67,7 @@ struct LogQueue<T: Clone> {
 }
 
 impl<T: Clone> LogQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle<O>) -> POwned<Self> {
+    fn new<O: POp>(pool: &PoolHandle) -> POwned<Self> {
         let guard = unsafe { pepoch::unprotected(pool) };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
@@ -84,7 +84,7 @@ impl<T: Clone> LogQueue<T> {
         ret
     }
 
-    fn enqueue<O: POp>(&self, val: T, tid: usize, op_num: usize, pool: &PoolHandle<O>) {
+    fn enqueue<O: POp>(&self, val: T, tid: usize, op_num: usize, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
 
         // NOTE: Log 큐의 하자 (1/2)
@@ -146,7 +146,7 @@ impl<T: Clone> LogQueue<T> {
         }
     }
 
-    fn dequeue<O: POp>(&self, tid: usize, op_num: usize, pool: &PoolHandle<O>) {
+    fn dequeue<O: POp>(&self, tid: usize, op_num: usize, pool: &PoolHandle) {
         let guard = pepoch::pin(pool);
 
         // NOTE: Log 큐의 하자 (2/2)
@@ -255,10 +255,10 @@ impl<T: Clone> TestQueue for LogQueue<T> {
     type EnqInput = (T, usize, usize); // input, tid, op_num
     type DeqInput = (usize, usize); // tid, op_num
 
-    fn enqueue<O: POp>(&self, (input, tid, op_num): Self::EnqInput, pool: &PoolHandle<O>) {
+    fn enqueue<O: POp>(&self, (input, tid, op_num): Self::EnqInput, pool: &PoolHandle) {
         self.enqueue(input, tid, op_num, pool);
     }
-    fn dequeue<O: POp>(&self, (tid, op_num): Self::DeqInput, pool: &PoolHandle<O>) {
+    fn dequeue<O: POp>(&self, (tid, op_num): Self::DeqInput, pool: &PoolHandle) {
         self.dequeue(tid, op_num, pool);
     }
 }
@@ -273,11 +273,11 @@ impl POp for GetLogQueueNOps {
     type Object<'o> = ();
     type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
     type Output<'o> = usize; // 실행한 operation 수
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         _: Self::Object<'o>,
         (kind, nr_thread, duration): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Self::Output<'o> {
         // Initialize Queue
         let q = LogQueue::<usize>::new(pool);

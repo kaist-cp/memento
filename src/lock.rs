@@ -4,7 +4,6 @@ use std::{
     cell::UnsafeCell,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    os::raw::c_char,
 };
 
 use crate::{
@@ -54,15 +53,23 @@ unsafe impl<T: Send, L: RawLock> Sync for Mutex<L, T> {}
 /// # Examples
 ///
 /// ```rust
-/// // Assume these are on persistent location:
-/// let x = Mutex<i32, TicketLock>::default();
-/// let lock = Lock;
+/// # use compositional_persistent_object::{
+/// #   plocation::pool::*,
+/// #   persistent::*,
+/// #   utils::tests::get_dummy_handle
+/// # };
+/// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
+/// use compositional_persistent_object::ticket_lock::TicketLock;
+/// use compositional_persistent_object::lock::{Mutex, Lock, MutexGuard};
+///
+/// let x = Mutex::<TicketLock, i32>::from(0);
+/// let mut lock = Lock::default();
 ///
 /// {
-///     let guard = lock.run(&x, ());
+///     let guard = lock.run(&x, (), pool).unwrap();
 ///     let v = unsafe { MutexGuard::defer_unlock(guard) };
 ///
-///     ... // Critical section
+///     // ... Critical section
 /// } // Unlock when `v` is dropped
 /// ```
 #[derive(Debug)]
@@ -83,7 +90,7 @@ impl<L: RawLock, T> Default for Lock<L, T> {
 }
 
 impl<L: RawLock, T> Collectable for Lock<L, T> {
-    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -116,7 +123,12 @@ impl<L: 'static + RawLock, T: 'static> POp for Lock<L, T> {
     }
 }
 
-unsafe impl<L: RawLock, T> Send for Lock<L, T> {}
+unsafe impl<L: RawLock, T> Send for Lock<L, T>
+where
+    L::Lock: Send,
+    L::Unlock: Send,
+{
+}
 
 /// TODO: doc
 #[derive(Debug)]
@@ -172,7 +184,6 @@ pub(crate) mod tests {
     };
 
     use super::*;
-    use std::os::raw::c_char;
 
     struct FetchAdd<L: RawLock> {
         lock: Lock<L, usize>,
@@ -198,7 +209,7 @@ pub(crate) mod tests {
     }
 
     impl<L: RawLock> Collectable for FetchAdd<L> {
-        unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
             todo!()
         }
     }
@@ -278,13 +289,16 @@ pub(crate) mod tests {
     impl<L: RawLock, const NR_THREAD: usize, const COUNT: usize> Collectable
         for ConcurAdd<L, NR_THREAD, COUNT>
     {
-        unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
             todo!()
         }
     }
 
     impl<L: 'static + RawLock, const NR_THREAD: usize, const COUNT: usize> POp
         for ConcurAdd<L, NR_THREAD, COUNT>
+    where
+        L::Lock: Send,
+        L::Unlock: Send,
     {
         type Object<'o> = ();
         type Input = ();
@@ -313,7 +327,7 @@ pub(crate) mod tests {
                     };
 
                     let _ = scope.spawn(move |_| {
-                        for i in 0..COUNT {
+                        for _ in 0..COUNT {
                             let _ = faa.run(x, tid + 1, pool);
                             faa.reset(false, pool);
                         }
@@ -329,13 +343,16 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, nested: bool, _: &PoolHandle) {
+        fn reset(&mut self, _: bool, _: &PoolHandle) {
             todo!()
         }
     }
 
     impl<L: 'static + RawLock, const NR_THREAD: usize, const COUNT: usize> TestRootOp
         for ConcurAdd<L, NR_THREAD, COUNT>
+    where
+        L::Lock: Send,
+        L::Unlock: Send,
     {
     }
 }

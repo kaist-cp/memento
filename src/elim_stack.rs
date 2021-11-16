@@ -11,6 +11,7 @@ use rand::{thread_rng, Rng};
 use crate::exchanger::{Exchanger, TryExchange};
 use crate::persistent::*;
 use crate::plocation::pool::*;
+use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::stack::*;
 
 const ELIM_SIZE: usize = 16;
@@ -27,6 +28,8 @@ enum Request<T> {
     Pop,
 }
 
+unsafe impl<T: Send> Send for Request<T> {}
+
 /// ElimStack op의 상태를 나타냄
 #[derive(Debug, Clone)]
 enum State {
@@ -42,7 +45,7 @@ enum State {
 
 /// ElimStack의 push operation
 #[derive(Debug)]
-pub struct TryPush<T: Clone, S: Stack<T>> {
+pub struct TryPush<T: 'static + Clone, S: Stack<T>> {
     /// client의 push 시도 상태
     state: State,
 
@@ -67,6 +70,12 @@ impl<T: Clone, S: Stack<T>> Default for TryPush<T, S> {
     }
 }
 
+impl<T: Clone, S: Stack<T>> Collectable for TryPush<T, S> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
+
 impl<T, S> POp for TryPush<T, S>
 where
     T: 'static + Clone,
@@ -77,22 +86,22 @@ where
     type Output<'o> = ();
     type Error = TryFail;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         stack.try_push(self, value, pool)
     }
 
-    fn reset(&mut self, nested: bool) {
+    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
         }
 
-        self.try_exchange.reset(true);
-        self.try_push.reset(true);
+        self.try_exchange.reset(true, pool);
+        self.try_push.reset(true, pool);
 
         if nested {
             self.state = State::TryingInner;
@@ -102,7 +111,7 @@ where
 
 /// `ElimStack::pop()`를 호출할 때 쓰일 client
 #[derive(Debug)]
-pub struct TryPop<T: Clone, S: Stack<T>> {
+pub struct TryPop<T: 'static + Clone, S: Stack<T>> {
     /// client의 pop 시도 상태
     state: State,
 
@@ -116,7 +125,7 @@ pub struct TryPop<T: Clone, S: Stack<T>> {
     try_exchange: TryExchange<Request<T>>,
 }
 
-impl<T: Clone, S: Stack<T>> Default for TryPop<T, S> {
+impl<T: 'static + Clone, S: Stack<T>> Default for TryPop<T, S> {
     fn default() -> Self {
         Self {
             state: State::TryingInner,
@@ -124,6 +133,12 @@ impl<T: Clone, S: Stack<T>> Default for TryPop<T, S> {
             elim_idx: get_random_elim_index(), // TODO: Fixed index vs online random index 성능 비교
             try_exchange: TryExchange::default(),
         }
+    }
+}
+
+impl<T: Clone, S: Stack<T>> Collectable for TryPop<T, S> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
     }
 }
 
@@ -137,22 +152,22 @@ where
     type Output<'o> = Option<T>;
     type Error = TryFail;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         stack.try_pop(self, pool)
     }
 
-    fn reset(&mut self, nested: bool) {
+    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
         }
 
-        self.try_pop.reset(true);
-        self.try_exchange.reset(true);
+        self.try_pop.reset(true, pool);
+        self.try_exchange.reset(true, pool);
 
         if nested {
             self.state = State::TryingInner;
@@ -164,7 +179,7 @@ where
 /// - ELIM_SIZE: size of elimination array
 /// - ELIM_DELAY: elimination waiting time (milliseconds)
 #[derive(Debug)]
-pub struct ElimStack<T: Clone, S: Stack<T>> {
+pub struct ElimStack<T: 'static + Clone, S: Stack<T>> {
     inner: S,
     slots: [Exchanger<Request<T>>; ELIM_SIZE],
 }
@@ -187,15 +202,15 @@ where
     ///
     /// 1. inner stack에 push를 시도
     /// 2. 실패시 elimination exchanger에서 pop request와 exchange 시도
-    fn try_push<O: POp>(
+    fn try_push(
         &self,
         client: &mut TryPush<T, S>,
         value: T,
-        pool: &PoolHandle<O>,
+        pool: &'static PoolHandle,
     ) -> Result<(), TryFail> {
         if let State::Resetting = client.state {
             // TODO: recovery 중에만 검사하도록
-            client.reset(false);
+            client.reset(false, pool);
         }
 
         // TODO 느린 이유 의심: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
@@ -234,14 +249,14 @@ where
     ///
     /// 1. inner stack에 pop를 시도
     /// 2. 실패시 elimination exchanger에서 push request와 exchange 시도
-    fn try_pop<O: POp>(
+    fn try_pop(
         &self,
         client: &mut TryPop<T, S>,
-        pool: &PoolHandle<O>,
+        pool: &'static PoolHandle,
     ) -> Result<Option<T>, TryFail> {
         if let State::Resetting = client.state {
             // TODO: recovery 중에만 검사하도록
-            client.reset(false);
+            client.reset(false, pool);
         }
 
         if let State::TryingInner = client.state {
@@ -276,7 +291,7 @@ where
     }
 }
 
-unsafe impl<T: Clone, S: Stack<T>> Send for ElimStack<T, S> {}
+unsafe impl<T: Clone + Send + Sync, S: Send + Stack<T>> Send for ElimStack<T, S> {}
 unsafe impl<T: Clone, S: Stack<T>> Sync for ElimStack<T, S> {}
 
 impl<T, S> Stack<T> for ElimStack<T, S>
@@ -299,41 +314,7 @@ mod test {
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
 
-    struct RootOp<S: Stack<usize>> {
-        stack: ElimStack<usize, S>,
-        push_pop: PushPop<ElimStack<usize, S>, NR_THREAD, COUNT>,
-    }
-
-    impl<S: Stack<usize>> Default for RootOp<S> {
-        fn default() -> Self {
-            Self {
-                stack: Default::default(),
-                push_pop: Default::default(),
-            }
-        }
-    }
-
-    impl<S: Stack<usize>> POp for RootOp<S> {
-        type Object<'o> = ();
-        type Input = ();
-        type Output<'o> = ();
-        type Error = !;
-
-        fn run<'o, O: POp>(
-            &mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
-            pool: &PoolHandle<O>,
-        ) -> Result<Self::Output<'o>, Self::Error> {
-            self.push_pop.run(&self.stack, (), pool)
-        }
-
-        fn reset(&mut self, _: bool) {
-            todo!("reset test")
-        }
-    }
-
-    impl<S: Stack<usize>> TestRootOp for RootOp<S> {}
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     /// treiber stack을 inner stack으로 하는 elim stack의 push-pop 테스트
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -342,19 +323,21 @@ mod test {
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn push_pop() {
         const FILE_NAME: &str = "elim_push_pop.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-        run_test::<RootOp<TreiberStack<usize>>, _>(FILE_NAME, FILE_SIZE)
+        run_test::<PushPop<ElimStack<usize, TreiberStack<usize>>, NR_THREAD, COUNT>, _>(
+            FILE_NAME, FILE_SIZE,
+        )
     }
 
     /// "treiber stack을 inner stack으로 하는 elim stack"을 inner stack으로 하는 elim stack의 push-pop 테스트
+    // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn push_pop_double_elim() {
-        const FILE_NAME: &str = "elim_push_pop_double_elim.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-        run_test::<RootOp<ElimStack<usize, TreiberStack<usize>>>, _>(FILE_NAME, FILE_SIZE)
+    fn push_pop_double() {
+        const FILE_NAME: &str = "elim_push_pop_double.pool";
+        run_test::<
+            PushPop<ElimStack<usize, ElimStack<usize, TreiberStack<usize>>>, NR_THREAD, COUNT>,
+            _,
+        >(FILE_NAME, FILE_SIZE)
     }
 }

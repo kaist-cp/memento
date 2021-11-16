@@ -3,7 +3,6 @@
 use std::{
     collections::BinaryHeap,
     fmt::Debug,
-    os::raw::c_char,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -66,7 +65,7 @@ pub struct Lock {
 }
 
 impl Collectable for Lock {
-    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -83,14 +82,14 @@ impl POp for Lock {
         _: Self::Input,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin(pool);
+        let guard = epoch::pin();
         Ok(lock.lock(self, &guard, pool))
     }
 
     // TODO: reset을 해도 membership까지 reset 되거나 할당 해제되진 않을 것임 (state->Ready, ticket->NO_TICKET)
     //       이것이 디자인의 일관성을 깨진 않는지?
     fn reset(&mut self, _: bool, pool: &PoolHandle) {
-        let guard = epoch::pin(pool);
+        let guard = epoch::pin();
 
         let mut m = self.membership.load(Ordering::SeqCst, &guard);
         if m.is_null() {
@@ -114,7 +113,7 @@ impl Lock {
 pub struct Unlock;
 
 impl Collectable for Unlock {
-    unsafe extern "C" fn filter(_: *mut c_char, _: *mut GarbageCollection) {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -157,13 +156,13 @@ impl Default for TicketLock {
 }
 
 impl TicketLock {
-    fn lock(&self, client: &mut Lock, guard: &Guard<'_>, pool: &'static PoolHandle) -> usize {
-        let mut m = client.membership.load(Ordering::SeqCst, &guard);
+    fn lock(&self, client: &mut Lock, guard: &Guard, pool: &'static PoolHandle) -> usize {
+        let mut m = client.membership.load(Ordering::SeqCst, guard);
 
         if !client.registered {
             if m.is_null() {
                 // membership 생성
-                let n = POwned::new(Membership::default(), pool).into_shared(&guard);
+                let n = POwned::new(Membership::default(), pool).into_shared(guard);
                 client.membership.store(n, Ordering::SeqCst);
                 m = n;
             }
@@ -215,7 +214,7 @@ impl TicketLock {
         m_ref.ticket
     }
 
-    fn recover(&self, guard: &Guard<'_>, pool: &PoolHandle) {
+    fn recover(&self, guard: &Guard, pool: &PoolHandle) {
         // 현재 next와 curr를 캡처
         let end = self.next.load(Ordering::SeqCst);
         let mut start = self.curr.load(Ordering::SeqCst);
@@ -307,10 +306,7 @@ impl RawLock for TicketLock {
 mod tests {
     use serial_test::serial;
 
-    use crate::{
-        lock::{tests::ConcurAdd, Mutex},
-        utils::tests::{run_test, TestRootOp},
-    };
+    use crate::{lock::tests::ConcurAdd, utils::tests::run_test};
 
     use super::*;
 

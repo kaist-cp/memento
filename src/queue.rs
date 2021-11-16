@@ -88,16 +88,18 @@ impl<T: 'static + Clone> POp for Enqueue<T> {
     type Error = !;
 
     fn run<'o>(
-        &mut self,
+        &'o mut self,
         queue: Self::Object<'o>,
         value: Self::Input,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        queue.enqueue(self, value, pool);
+        let guard = epoch::pin();
+
+        queue.enqueue(self, value, &guard, pool);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         // TODO: if not finished -> free node (+ free가 반영되게끔 flush 해줘야함)
         self.mine.store(PShared::null(), Ordering::SeqCst);
         persist_obj(&self.mine, true)
@@ -139,15 +141,17 @@ impl<T: 'static + Clone> POp for Dequeue<T> {
     type Error = !;
 
     fn run<'o>(
-        &mut self,
+        &'o mut self,
         queue: Self::Object<'o>,
         (): Self::Input,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        Ok(queue.dequeue(self, pool))
+        let guard = epoch::pin();
+
+        Ok(queue.dequeue(self, &guard, pool))
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         // TODO: if node has not been freed, check if the node is mine and free it
         self.target.store(PShared::null(), Ordering::SeqCst);
         persist_obj(&self.target, true)
@@ -198,21 +202,21 @@ impl<T: 'static + Clone> POp for DequeueSome<T> {
     type Error = !;
 
     fn run<'o>(
-        &mut self,
+        &'o mut self,
         queue: Self::Object<'o>,
         (): Self::Input,
-        pool: &PoolHandle,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
             if let Ok(Some(v)) = self.deq.run(queue, (), pool) {
                 return Ok(v);
             }
-            self.deq.reset(false);
+            self.deq.reset(false, pool);
         }
     }
 
-    fn reset(&mut self, nested: bool) {
-        self.deq.reset(nested);
+    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
+        self.deq.reset(nested, pool);
     }
 }
 
@@ -255,11 +259,10 @@ impl<T: Clone> Queue<T> {
         ret
     }
 
-    fn enqueue(&self, client: &mut Enqueue<T>, value: T, pool: &PoolHandle) {
-        let guard = epoch::pin();
-        let node = some_or!(self.is_incomplete(client, value, &guard, pool), return);
+    fn enqueue(&self, client: &mut Enqueue<T>, value: T, guard: &Guard, pool: &PoolHandle) {
+        let node = some_or!(self.is_incomplete(client, value, guard, pool), return);
 
-        while self.try_enqueue(node, &guard, pool).is_err() {}
+        while self.try_enqueue(node, guard, pool).is_err() {}
     }
 
     fn is_incomplete<'g>(
@@ -364,9 +367,8 @@ impl<T: Clone> Queue<T> {
     /// `dequeue()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 1;
 
-    fn dequeue(&self, client: &mut Dequeue<T>, pool: &PoolHandle) -> Option<T> {
-        let guard = epoch::pin();
-        let target = client.target.load(Ordering::SeqCst, &guard);
+    fn dequeue(&self, client: &mut Dequeue<T>, guard: &Guard, pool: &PoolHandle) -> Option<T> {
+        let target = client.target.load(Ordering::SeqCst, guard);
 
         if target.tag() == Self::EMPTY {
             // post-crash execution (empty)
@@ -384,7 +386,7 @@ impl<T: Clone> Queue<T> {
         }
 
         loop {
-            if let Ok(v) = self.try_dequeue(client, &guard, pool) {
+            if let Ok(v) = self.try_dequeue(client, guard, pool) {
                 return v;
             }
         }
@@ -568,10 +570,10 @@ mod test {
 
         /// idempotent enq_deq
         fn run<'o>(
-            &mut self,
+            &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
-            pool: &PoolHandle,
+            pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);
 
@@ -608,7 +610,10 @@ mod test {
             .unwrap();
 
             // Check empty
-            assert!(q.dequeue(&mut Dequeue::default(), pool).is_none());
+            assert!(Dequeue::<usize>::default()
+                .run(q, (), pool)
+                .unwrap()
+                .is_none());
 
             // Check results
             let mut results = vec![0_usize; NR_THREAD];
@@ -623,7 +628,7 @@ mod test {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool) {
+        fn reset(&mut self, _: bool, _: &PoolHandle) {
             todo!("reset test")
         }
     }

@@ -1,9 +1,6 @@
 //! Persistent list
 
-use std::{
-    os::raw::c_char,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use etrace::some_or;
 
@@ -55,7 +52,7 @@ impl<K, V> Default for InsertFront<K, V> {
 }
 
 impl<K: 'static, V: 'static> Collectable for InsertFront<K, V> {
-    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -75,7 +72,7 @@ where
         (key, value): Self::Input,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin(pool);
+        let guard = epoch::pin();
         list.insert_front(self, key, value, &guard, pool)
     }
 
@@ -108,7 +105,7 @@ impl<K, V> Remove<K, V> {
 }
 
 impl<K: 'static, V: 'static> Collectable for Remove<K, V> {
-    unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -128,7 +125,7 @@ where
         key: Self::Input,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin(pool);
+        let guard = epoch::pin();
         Ok(list.remove(self, &key, &guard, pool))
     }
 
@@ -137,6 +134,10 @@ where
         unimplemented!()
     }
 }
+
+/// TODO: doc
+#[derive(Debug)]
+pub struct Deprecated;
 
 /// TODO: doc
 #[derive(Debug)]
@@ -170,7 +171,7 @@ where
 
     /// Based on Harris-Michael.
     #[inline]
-    fn find(&mut self, key: &K, guard: &'g Guard<'_>, pool: &'g PoolHandle) -> Result<bool, ()> {
+    fn find(&mut self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Result<bool, ()> {
         loop {
             debug_assert_eq!(self.curr.tag(), Self::NOT_DELETED);
 
@@ -207,7 +208,7 @@ where
     fn insert(
         &mut self,
         node: PShared<'g, Node<K, V>>,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
         let node_ref = unsafe { node.deref(pool) };
@@ -226,7 +227,7 @@ where
     fn remove(
         self,
         client: &Remove<K, V>,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<&'g V, ()> {
         // 우선 내가 지우려는 node를 가리키고
@@ -267,9 +268,9 @@ where
     #[inline]
     pub fn next(
         &mut self,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> Result<Option<(&K, &V)>, ()> {
+    ) -> Result<Option<(&K, &V)>, Deprecated> {
         debug_assert_eq!(self.curr.tag(), Self::NOT_DELETED);
 
         let curr_node = some_or!(unsafe { self.curr.as_ref(pool) }, return Ok(None));
@@ -287,10 +288,13 @@ where
             }
 
             next = next.with_tag(Self::NOT_DELETED);
-            let _ = self
+            if self
                 .prev
                 .compare_exchange(self.curr, next, Ordering::SeqCst, Ordering::SeqCst, guard)
-                .map_err(|_| ())?;
+                .is_err()
+            {
+                return Err(Deprecated);
+            }
             self.curr = next;
         }
     }
@@ -321,7 +325,7 @@ where
     K: Eq,
 {
     /// TODO: doc
-    pub fn head<'g>(&'g self, guard: &'g Guard<'_>) -> Cursor<'g, K, V> {
+    pub fn head<'g>(&'g self, guard: &'g Guard) -> Cursor<'g, K, V> {
         Cursor {
             prev: &self.head,
             curr: self.head.load(Ordering::SeqCst, guard),
@@ -333,7 +337,7 @@ where
     pub fn find<'g>(
         &'g self,
         key: &K,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (bool, Cursor<'g, K, V>) {
         loop {
@@ -346,12 +350,7 @@ where
 
     /// TODO: doc
     #[inline]
-    pub fn lookup<'g>(
-        &'g self,
-        key: &K,
-        guard: &'g Guard<'_>,
-        pool: &'g PoolHandle,
-    ) -> Option<&'g V> {
+    pub fn lookup<'g>(&'g self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Option<&'g V> {
         let (found, cursor) = self.find(key, guard, pool);
         if found {
             cursor.lookup(pool).map(|(_, v)| v)
@@ -367,7 +366,7 @@ where
         client: &InsertFront<K, V>,
         key: K,
         value: V,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
         let mut node = client.node.load(Ordering::SeqCst, guard);
@@ -412,7 +411,7 @@ where
         &'g self,
         client: &Remove<K, V>,
         key: &K,
-        guard: &'g Guard<'_>,
+        guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> bool {
         // TODO: PoolHandle에 관한 디자인 합의 이후 Option<&'g V>로 바꾸기 (lifetime issue)
@@ -468,12 +467,7 @@ where
 
     /// `node`가 List 안에 있는지 head부터 끝까지 순회하며 검색
     /// `find()`와의 차이: `find()`는 key를 찾음(public). 이건 특정 node를 찾음(private).
-    fn search_node(
-        &self,
-        node: PShared<'_, Node<K, V>>,
-        guard: &Guard<'_>,
-        pool: &PoolHandle,
-    ) -> bool {
+    fn search_node(&self, node: PShared<'_, Node<K, V>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
@@ -494,120 +488,3 @@ where
         null.into_usize()
     }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use crossbeam_utils::thread;
-//     use serial_test::serial;
-
-//     use crate::{
-//         plocation::{global_pool, ralloc::Collectable},
-//         utils::tests::*,
-//     };
-
-//     use super::*;
-
-//     const NR_KEY: usize = 20;
-//     const NR_THREAD: usize = 12;
-//     const COUNT: usize = 1_000_000;
-
-//     struct RootOp {
-//         list: List<usize, usize>,
-
-//         inserts: [[InsertFront<usize, usize>; NR_KEY]; NR_THREAD],
-//         removes: [Remove<usize, usize>; NR_THREAD],
-//     }
-
-//     impl Default for RootOp {
-//         fn default() -> Self {
-//             Self {
-//                 list: List::default(),
-//                 inserts: array_init::array_init(|_| {
-//                     array_init::array_init(|_| InsertFront::<usize, usize>::default())
-//                 }),
-//                 removes: array_init::array_init(|_| Remove::<usize, usize>::default()),
-//             }
-//         }
-//     }
-
-//     impl Collectable for RootOp {
-//         unsafe extern "C" fn filter(ptr: *mut c_char, gc: *mut GarbageCollection) {
-//             todo!()
-//         }
-//     }
-
-//     impl POp for RootOp {
-//         type Object<'o> = ();
-//         type Input = ();
-//         type Output<'o> = ();
-//         type Error = !;
-
-//         /// idempotent enq_deq
-//         fn run<'o>(
-//             &'o mut self,
-//             (): Self::Object<'o>,
-//             (): Self::Input,
-//             pool: &PoolHandle,
-//         ) -> Result<Self::Output<'o>, Self::Error> {
-//             // Alias
-//             let guard = unsafe { epoch::unprotected(&pool) };
-//             let (l, inserts, removes) = (&mut self.list, &mut self.inserts, &mut self.removes);
-
-//             #[allow(box_pointers)]
-//             thread::scope(|scope| {
-//                 for tid in 0..NR_THREAD {
-//                     let insert_arr = unsafe {
-//                         (inserts.get_unchecked_mut(tid) as *mut [InsertFront<usize, usize>])
-//                             .as_mut()
-//                             .unwrap()
-//                     };
-//                     let remove_arr = unsafe {
-//                         (removes.get_unchecked_mut(tid) as *mut Remove<usize, usize>)
-//                             .as_mut()
-//                             .unwrap()
-//                     };
-
-//                     let _ = scope.spawn(move |_| {
-//                         for i in 0..COUNT {
-//                             let _ = insert_arr[i].run(l, tid, pool);
-//                             assert!(remove_arr[i].run(l, (), pool).unwrap().is_some());
-//                         }
-//                     });
-//                 }
-//             })
-//             .unwrap();
-
-//             // Check empty
-//             assert!(l.dequeue(&mut Dequeue::default(), pool).is_none());
-
-//             // Check results
-//             let mut results = vec![0_usize; NR_THREAD];
-//             for deq_arr in removes.iter_mut() {
-//                 for deq in deq_arr.iter_mut() {
-//                     let ret = deq.run(&l, (), pool).unwrap().unwrap();
-//                     results[ret] += 1;
-//                 }
-//             }
-
-//             assert!(results.iter().all(|r| *r == COUNT));
-//             Ok(())
-//         }
-
-//         fn reset(&mut self, _: bool) {
-//             todo!("reset test")
-//         }
-//     }
-
-//     impl TestRootOp for RootOp {}
-
-//     // 테스트시 Insert/Remove 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
-//     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-//     #[test]
-//     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-//     fn enq_deq() {
-//         const FILE_NAME: &str = "enq_deq.pool";
-//         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-//         run_test::<RootOp, _>(FILE_NAME, FILE_SIZE)
-//     }
-// }

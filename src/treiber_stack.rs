@@ -17,6 +17,7 @@ use etrace::some_or;
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
+use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{pool::*, AsPPtr};
 use crate::stack::*;
 
@@ -38,6 +39,8 @@ impl<T: Clone> From<T> for Node<T> {
         }
     }
 }
+
+unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}
 
 trait PushType<T: Clone> {
     fn mine(&self) -> &PAtomic<Node<T>>;
@@ -71,7 +74,13 @@ impl<T: Clone> PushType<T> for TryPush<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for TryPush<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for TryPush<T> {}
+
+impl<T: Clone> Collectable for TryPush<T> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
 
 impl<T: 'static + Clone> POp for TryPush<T> {
     type Object<'s> = &'s TreiberStack<T>;
@@ -79,16 +88,17 @@ impl<T: 'static + Clone> POp for TryPush<T> {
     type Output<'s> = ();
     type Error = TryFail;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        stack.push(self, value, pool)
+        let guard = epoch::pin();
+        stack.push(self, value, &guard, pool)
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         // TODO: if not finished -> free node
         self.mine.store(PShared::null(), Ordering::SeqCst);
     }
@@ -121,7 +131,13 @@ impl<T: Clone> PushType<T> for Push<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for Push<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for Push<T> {}
+
+impl<T: Clone> Collectable for Push<T> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
 
 impl<T: 'static + Clone> POp for Push<T> {
     type Object<'s> = &'s TreiberStack<T>;
@@ -129,18 +145,19 @@ impl<T: 'static + Clone> POp for Push<T> {
     type Output<'s> = ();
     type Error = !;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let pushed = stack.push(self, value, pool);
+        let guard = epoch::pin();
+        let pushed = stack.push(self, value, &guard, pool);
         debug_assert!(pushed.is_ok());
         Ok(())
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         // TODO: if not finished -> free node
         self.mine.store(PShared::null(), Ordering::SeqCst);
     }
@@ -148,7 +165,7 @@ impl<T: 'static + Clone> POp for Push<T> {
 
 trait PopType<T: Clone>: Sized {
     #[inline]
-    fn id<O: POp>(&self, pool: &PoolHandle<O>) -> usize {
+    fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         unsafe { self.as_pptr(pool).into_offset() }
     }
@@ -184,7 +201,13 @@ impl<T: Clone> PopType<T> for TryPop<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for TryPop<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
+
+impl<T: Clone> Collectable for TryPop<T> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
 
 impl<T: 'static + Clone> POp for TryPop<T> {
     type Object<'s> = &'s TreiberStack<T>;
@@ -192,16 +215,17 @@ impl<T: 'static + Clone> POp for TryPop<T> {
     type Output<'s> = Option<T>;
     type Error = TryFail;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        stack.pop(self, pool)
+        let guard = epoch::pin();
+        stack.pop(self, &guard, pool)
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         // TODO: if node has not been freed, check if the node is mine and free it
         // TODO: null이 아닐 때에만 store하는 게 더 빠를까?
         self.target.store(PShared::null(), Ordering::SeqCst);
@@ -240,7 +264,13 @@ impl<T: Clone> PopType<T> for Pop<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for Pop<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for Pop<T> {}
+
+impl<T: Clone> Collectable for Pop<T> {
+    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
 
 impl<T: 'static + Clone> POp for Pop<T> {
     type Object<'s> = &'s TreiberStack<T>;
@@ -248,16 +278,17 @@ impl<T: 'static + Clone> POp for Pop<T> {
     type Output<'s> = Option<T>;
     type Error = !;
 
-    fn run<'o, O: POp>(
-        &mut self,
+    fn run<'o>(
+        &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        Ok(stack.pop(self, pool).unwrap())
+        let guard = epoch::pin();
+        Ok(stack.pop(self, &guard, pool).unwrap())
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &PoolHandle) {
         // TODO: if node has not been freed, check if the node is mine and free it
         self.target.store(PShared::null(), Ordering::SeqCst);
     }
@@ -279,22 +310,22 @@ impl<T: Clone> Default for TreiberStack<T> {
 }
 
 impl<T: Clone> TreiberStack<T> {
-    fn push<C: PushType<T>, O: POp>(
+    fn push<C: PushType<T>>(
         &self,
         client: &C,
         value: T,
-        pool: &PoolHandle<O>,
+        guard: &Guard,
+        pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let guard = epoch::pin(pool);
-        let mut mine = client.mine().load(Ordering::SeqCst, &guard);
+        let mut mine = client.mine().load(Ordering::SeqCst, guard);
 
         if mine.is_null() {
             // (1) mine이 null이면 node 할당이 안 된 것이다
-            let n = POwned::new(Node::from(value), pool).into_shared(&guard);
+            let n = POwned::new(Node::from(value), pool).into_shared(guard);
 
             client.mine().store(n, Ordering::SeqCst);
             mine = n;
-        } else if self.search(mine, &guard, pool)
+        } else if self.search(mine, guard, pool)
             || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
         {
             // TODO: recovery 중에만 분기 타도록
@@ -304,19 +335,19 @@ impl<T: Clone> TreiberStack<T> {
         }
 
         if client.is_try() {
-            self.try_push(mine, &guard, pool)
+            self.try_push(mine, guard, pool)
         } else {
-            while self.try_push(mine, &guard, pool).is_err() {}
+            while self.try_push(mine, guard, pool).is_err() {}
             Ok(())
         }
     }
 
     /// top에 새 `node` 연결을 시도
-    fn try_push<O: POp>(
+    fn try_push(
         &self,
         node: PShared<'_, Node<T>>,
-        guard: &Guard<'_>,
-        pool: &PoolHandle<O>,
+        guard: &Guard,
+        pool: &PoolHandle,
     ) -> Result<(), TryFail> {
         let node_ref = unsafe { node.deref(pool) };
         let top = self.top.load(Ordering::SeqCst, guard);
@@ -329,12 +360,7 @@ impl<T: Clone> TreiberStack<T> {
     }
 
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search<O: POp>(
-        &self,
-        node: PShared<'_, Node<T>>,
-        guard: &Guard<'_>,
-        pool: &PoolHandle<O>,
-    ) -> bool {
+    fn search(&self, node: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
@@ -349,13 +375,13 @@ impl<T: Clone> TreiberStack<T> {
         false
     }
 
-    fn pop<C: PopType<T>, O: POp>(
+    fn pop<C: PopType<T>>(
         &self,
         client: &mut C,
-        pool: &PoolHandle<O>,
+        guard: &Guard,
+        pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let guard = epoch::pin(pool);
-        let target = client.target().load(Ordering::SeqCst, &guard);
+        let target = client.target().load(Ordering::SeqCst, guard);
 
         if target.tag() == TryPop::<T>::EMPTY {
             // post-crash execution (empty)
@@ -373,7 +399,7 @@ impl<T: Clone> TreiberStack<T> {
 
             // target이 stack에서 pop되긴 했는지 확인
             // TODO: recovery 중에만 분기 타도록
-            if !self.search(target, &guard, pool) {
+            if !self.search(target, guard, pool) {
                 // 누군가가 target을 stack에서 빼고 popper 기록 전에 crash가 남. 그러므로 popper를 마저 기록해줌
                 // CAS인 이유: 서로 누가 진짜 주인인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
                 if target_ref
@@ -392,11 +418,11 @@ impl<T: Clone> TreiberStack<T> {
         }
 
         if client.is_try() {
-            return self.try_pop(client, &guard, pool);
+            return self.try_pop(client, guard, pool);
         }
 
         loop {
-            let result = self.try_pop(client, &guard, pool);
+            let result = self.try_pop(client, guard, pool);
             if result.is_ok() {
                 return result;
             }
@@ -404,11 +430,11 @@ impl<T: Clone> TreiberStack<T> {
     }
 
     /// top node를 pop 시도
-    fn try_pop<C: PopType<T>, O: POp>(
+    fn try_pop<C: PopType<T>>(
         &self,
         client: &C,
-        guard: &Guard<'_>,
-        pool: &PoolHandle<O>,
+        guard: &Guard,
+        pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
         let top = self.top.load(Ordering::SeqCst, guard);
         let top_ref = some_or!(unsafe { top.as_ref(pool) }, {
@@ -458,7 +484,7 @@ impl<T: Clone> TreiberStack<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for TreiberStack<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for TreiberStack<T> {}
 
 impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
     type TryPush = TryPush<T>;
@@ -477,35 +503,6 @@ mod tests {
     const NR_THREAD: usize = 4;
     const COUNT: usize = 1_000_000;
 
-    #[derive(Default)]
-    struct RootOp {
-        stack: TreiberStack<usize>,
-        push_pop: PushPop<TreiberStack<usize>, NR_THREAD, COUNT>,
-    }
-
-    impl POp for RootOp {
-        type Object<'o> = ();
-        type Input = ();
-        type Output<'o> = ();
-        type Error = !;
-
-        fn run<'o, O: POp>(
-            &mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
-            pool: &PoolHandle<O>,
-        ) -> Result<Self::Output<'o>, Self::Error> {
-            self.push_pop.run(&self.stack, (), pool)
-        }
-
-        fn reset(&mut self, _: bool) {
-            unimplemented!()
-        }
-    }
-
-    impl TestRootOp for RootOp {}
-
-    const FILE_NAME: &str = "treiber_push_pop.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -513,6 +510,7 @@ mod tests {
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn push_pop() {
-        run_test::<RootOp, _>(FILE_NAME, FILE_SIZE)
+        const FILE_NAME: &str = "treiber_push_pop.pool";
+        run_test::<PushPop<TreiberStack<usize>, NR_THREAD, COUNT>, _>(FILE_NAME, FILE_SIZE)
     }
 }

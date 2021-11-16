@@ -12,12 +12,12 @@ impl<T: 'static + Clone> TestQueue for Queue<T> {
     type EnqInput = (&'static mut Push<T>, T); // POp, input
     type DeqInput = &'static mut Pop<T>; // POp
 
-    fn enqueue<O: POp>(&self, (push, input): Self::EnqInput, pool: &PoolHandle<O>) {
+    fn enqueue<O: POp>(&self, (push, input): Self::EnqInput, pool: &PoolHandle) {
         push.run(self, input, pool);
         push.reset(false);
     }
 
-    fn dequeue<O: POp>(&self, pop: Self::DeqInput, pool: &PoolHandle<O>) {
+    fn dequeue<O: POp>(&self, pop: Self::DeqInput, pool: &PoolHandle) {
         let _ = pop.run(self, (), pool);
         pop.reset(false);
     }
@@ -41,7 +41,7 @@ impl Default for GetOurQueueNOps {
 }
 
 impl GetOurQueueNOps {
-    fn init<O: POp>(&mut self, pool: &PoolHandle<O>) {
+    fn init<O: POp>(&mut self, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected(pool) };
         let q = self.queue.load(Ordering::SeqCst, guard);
 
@@ -66,11 +66,11 @@ impl POp for GetOurQueueNOps {
     type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
     type Output<'o> = usize; // 실행한 operation 수
 
-    fn run<'o, O: POp>(
+    fn run<'o>(
         &mut self,
         _: Self::Object<'o>,
         (kind, nr_thread, duration): Self::Input,
-        pool: &PoolHandle<O>,
+        pool: &PoolHandle,
     ) -> Self::Output<'o> {
         // Initialize Queue
         self.init(pool);
