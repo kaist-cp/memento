@@ -22,6 +22,7 @@ use crate::persistent::*;
 use crate::plocation::pool::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 
+// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
 #[derive(Debug)]
 struct Node<T> {
     /// 내가 줄 item

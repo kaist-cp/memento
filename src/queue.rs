@@ -10,6 +10,13 @@ use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*, ptr::*};
 
+// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
+// - 문제: data가 uninit인지 init인지 구분불가
+//      - uninit인데 init된 T로 취급하고 T::mark를 호출하면 leak 유발 (쓰레기 값을 mark하며 사용중이지 않은 블록도 mark될 수 있음)
+// - 해결방안
+//      1. data 타입을 Option<T>로 바꾸기
+//      2. mark() 함수 인자에 flag를 추가하여, false면 Ralloc에게 넘기는 filter function을 no-op으로 넘기기
+//          Queue::filter에서 head==tail이면(i.e. sentinel 노드만 있다면) false로 노드 mark
 struct Node<T: Clone> {
     data: MaybeUninit<T>,
     next: PAtomic<Node<T>>,

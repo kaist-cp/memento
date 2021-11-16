@@ -21,6 +21,7 @@ use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{pool::*, AsPPtr};
 use crate::stack::*;
 
+// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
 struct Node<T: Clone> {
     data: T,
     next: PAtomic<Node<T>>,

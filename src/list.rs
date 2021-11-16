@@ -14,6 +14,7 @@ use crate::{
 };
 
 /// TODO: doc
+// TODO: V가 포인터일 수 있으니 V도 Collectable이여야함
 #[derive(Debug)]
 pub struct Node<K, V> {
     key: K,
