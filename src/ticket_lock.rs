@@ -48,6 +48,12 @@ impl Default for Membership {
     }
 }
 
+impl Collectable for Membership {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        // no-op
+    }
+}
+
 impl Membership {
     #[inline]
     fn is_ticketing(&self) -> bool {
@@ -65,8 +71,18 @@ pub struct Lock {
 }
 
 impl Collectable for Lock {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(lock: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut membership = lock.membership.load(Ordering::SeqCst, guard);
+        if !membership.is_null() {
+            let membership_ref = unsafe { membership.deref_mut(pool) };
+            Membership::mark(membership_ref, gc);
+        }
+
+        // Call filter func of inner struct
+        list::InsertFront::filter(&mut lock.register, gc, pool);
     }
 }
 
@@ -113,8 +129,8 @@ impl Lock {
 pub struct Unlock;
 
 impl Collectable for Unlock {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        // no-op
     }
 }
 
@@ -293,6 +309,12 @@ impl TicketLock {
         if curr == ticket {
             self.curr.store(ticket.wrapping_add(1), Ordering::SeqCst);
         }
+    }
+}
+
+impl Collectable for TicketLock {
+    fn filter(tlock: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        List::filter(&mut tlock.members, gc, pool);
     }
 }
 
