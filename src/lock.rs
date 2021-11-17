@@ -273,6 +273,7 @@ pub(crate) mod tests {
     pub(crate) struct ConcurAdd<L: RawLock, const NR_THREAD: usize, const COUNT: usize> {
         x: Mutex<L, usize>,
         faas: [FetchAdd<L>; NR_THREAD],
+        cnts: [usize; NR_THREAD],
     }
 
     impl<L: RawLock, const NR_THREAD: usize, const COUNT: usize> Default
@@ -282,6 +283,7 @@ pub(crate) mod tests {
             Self {
                 x: Mutex::from(0),
                 faas: array_init::array_init(|_| FetchAdd::<L>::default()),
+                cnts: array_init::array_init(|_| 0),
             }
         }
     }
@@ -314,22 +316,32 @@ pub(crate) mod tests {
             (): Self::Input,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            // Alias
-            let (x, faas) = (&self.x, &mut self.faas);
-
             #[allow(box_pointers)]
             thread::scope(|scope| {
+                let x = &self.x;
+
                 for tid in 0..NR_THREAD {
                     let faa = unsafe {
-                        (faas.get_unchecked_mut(tid) as *mut FetchAdd<L>)
+                        (self.faas.get_unchecked_mut(tid) as *mut FetchAdd<L>)
+                            .as_mut()
+                            .unwrap()
+                    };
+                    let cnt = unsafe {
+                        (self.cnts.get_unchecked_mut(tid) as *mut usize)
                             .as_mut()
                             .unwrap()
                     };
 
+                    assert!(*cnt <= 2 * COUNT);
+
                     let _ = scope.spawn(move |_| {
-                        for _ in 0..COUNT {
-                            let _ = faa.run(x, tid + 1, pool);
+                        while *cnt < 2 * COUNT {
+                            if *cnt & 1 == 0 {
+                                let _ = faa.run(x, tid + 1, pool);
+                                *cnt += 1;
+                            }
                             faa.reset(false, pool);
+                            *cnt += 1;
                         }
                     });
                 }
@@ -337,7 +349,7 @@ pub(crate) mod tests {
             .unwrap();
 
             let mut tmp_lock = Lock::default();
-            let mtx = tmp_lock.run(x, (), pool).unwrap();
+            let mtx = tmp_lock.run(&self.x, (), pool).unwrap();
             let final_x = unsafe { MutexGuard::defer_unlock(mtx) };
             assert_eq!(*final_x, (NR_THREAD * (NR_THREAD + 1) / 2) * COUNT);
             Ok(())
