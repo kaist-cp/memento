@@ -12,7 +12,12 @@ pub struct TryFail;
 pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
-    type TryPush: for<'o> Memento<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = TryFail>;
+    type TryPush: for<'o> Memento<
+        Object<'o> = &'o Self,
+        Input = T,
+        Output<'o> = (),
+        Error = TryFail,
+    >;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.

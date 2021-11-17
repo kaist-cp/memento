@@ -222,7 +222,10 @@ impl Pool {
     //
     // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
     // - <O: Memento, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
-    pub unsafe fn open<O: Memento>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
+    pub unsafe fn open<O: Memento>(
+        filepath: &str,
+        size: usize,
+    ) -> Result<&'static PoolHandle, Error> {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
         if !Path::new(&(filepath.to_owned() + "_basemd")).exists() {
