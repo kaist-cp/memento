@@ -71,8 +71,9 @@ impl<T: Clone, S: Stack<T>> Default for TryPush<T, S> {
 }
 
 impl<T: Clone, S: Stack<T>> Collectable for TryPush<T, S> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        S::TryPush::filter(&mut try_push.try_push, gc, pool);
+        TryExchange::filter(&mut try_push.try_exchange, gc, pool);
     }
 }
 
@@ -137,8 +138,9 @@ impl<T: 'static + Clone, S: Stack<T>> Default for TryPop<T, S> {
 }
 
 impl<T: Clone, S: Stack<T>> Collectable for TryPop<T, S> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        S::TryPop::filter(&mut try_pop.try_pop, gc, pool);
+        TryExchange::filter(&mut try_pop.try_exchange, gc, pool);
     }
 }
 
@@ -189,6 +191,15 @@ impl<T: Clone, S: Stack<T>> Default for ElimStack<T, S> {
         Self {
             inner: Default::default(),
             slots: array_init::array_init(|_| Exchanger::<Request<T>>::default()),
+        }
+    }
+}
+
+impl<T: Clone, S: Stack<T>> Collectable for ElimStack<T, S> {
+    fn filter(elim_stack: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        S::filter(&mut elim_stack.inner, gc, pool);
+        for slot in elim_stack.slots.as_mut() {
+            Exchanger::filter(slot, gc, pool);
         }
     }
 }

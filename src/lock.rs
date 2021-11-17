@@ -15,18 +15,28 @@ use crate::{
 };
 
 /// Persistent raw lock
-pub trait RawLock: Default + Send + Sync {
+pub trait RawLock: Default + Send + Sync + Collectable {
     /// lock 잡았음을 증명하는 토큰
     type Token: Clone;
 
     /// Lock operation을 수행하는 Memento
-    type Lock: for<'o> Memento<Object<'o> = &'o Self, Input = (), Output<'o> = Self::Token, Error = !>;
+    type Lock: for<'o> Memento<
+        Object<'o> = &'o Self,
+        Input = (),
+        Output<'o> = Self::Token,
+        Error = !,
+    >;
 
     /// Unlock operation을 수행하는 Memento
     ///
     /// 실제 token이 아닌 값으로 unlock 호출시 panic
     // TODO: Output에 Frozen을 강제해야 할 수도 있음. MutexGuard 인터페이스 없이 RawLock만으로는 critical section의 mutex 보장 못함.
-    type Unlock: for<'o> Memento<Object<'o> = &'o Self, Input = Self::Token, Output<'o> = (), Error = !>;
+    type Unlock: for<'o> Memento<
+        Object<'o> = &'o Self,
+        Input = Self::Token,
+        Output<'o> = (),
+        Error = !,
+    >;
 }
 
 /// TODO: doc
@@ -47,6 +57,12 @@ impl<L: RawLock, T> From<T> for Mutex<L, T> {
 
 unsafe impl<T: Send, L: RawLock> Send for Mutex<L, T> {}
 unsafe impl<T: Send, L: RawLock> Sync for Mutex<L, T> {}
+
+impl<L: RawLock, T> Collectable for Mutex<L, T> {
+    fn filter(mtx: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        L::filter(&mut mtx.lock, gc, pool);
+    }
+}
 
 /// MutexGuard를 얼려서 반환하므로 사용하기 위해선 Guard::defer_unlock()을 호출해야 함.
 ///
@@ -90,8 +106,9 @@ impl<L: RawLock, T> Default for Lock<L, T> {
 }
 
 impl<L: RawLock, T> Collectable for Lock<L, T> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(lock: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        L::Lock::filter(&mut lock.lock, gc, pool);
+        L::Unlock::filter(&mut lock.unlock, gc, pool);
     }
 }
 
@@ -209,8 +226,8 @@ pub(crate) mod tests {
     }
 
     impl<L: RawLock> Collectable for FetchAdd<L> {
-        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(faa: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Lock::filter(&mut faa.lock, gc, pool);
         }
     }
 
@@ -274,6 +291,9 @@ pub(crate) mod tests {
         x: Mutex<L, usize>,
         faas: [FetchAdd<L>; NR_THREAD],
         cnts: [usize; NR_THREAD],
+
+        // 결과를 확인하기 위한 lock
+        check_res: Lock<L, usize>,
     }
 
     impl<L: RawLock, const NR_THREAD: usize, const COUNT: usize> Default
@@ -284,6 +304,7 @@ pub(crate) mod tests {
                 x: Mutex::from(0),
                 faas: array_init::array_init(|_| FetchAdd::<L>::default()),
                 cnts: array_init::array_init(|_| 0),
+                check_res: Lock::default(),
             }
         }
     }
@@ -291,8 +312,12 @@ pub(crate) mod tests {
     impl<L: RawLock, const NR_THREAD: usize, const COUNT: usize> Collectable
         for ConcurAdd<L, NR_THREAD, COUNT>
     {
-        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(concur_add: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Mutex::filter(&mut concur_add.x, gc, pool);
+            for faa in concur_add.faas.as_mut() {
+                FetchAdd::filter(faa, gc, pool);
+            }
+            Lock::filter(&mut concur_add.check_res, gc, pool);
         }
     }
 
@@ -348,8 +373,9 @@ pub(crate) mod tests {
             })
             .unwrap();
 
-            let mut tmp_lock = Lock::default();
-            let mtx = tmp_lock.run(&self.x, (), pool).unwrap();
+            // Check result
+            self.check_res.reset(false, pool);
+            let mtx = self.check_res.run(&self.x, (), pool).unwrap();
             let final_x = unsafe { MutexGuard::defer_unlock(mtx) };
             assert_eq!(*final_x, (NR_THREAD * (NR_THREAD + 1) / 2) * COUNT);
             Ok(())

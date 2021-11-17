@@ -21,6 +21,7 @@ use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{pool::*, AsPPtr};
 use crate::stack::*;
 
+// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
 struct Node<T: Clone> {
     data: T,
     next: PAtomic<Node<T>>,
@@ -41,6 +42,18 @@ impl<T: Clone> From<T> for Node<T> {
 }
 
 unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}
+impl<T: Clone> Collectable for Node<T> {
+    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next_ref = unsafe { next.deref_mut(pool) };
+            Node::<T>::mark(next_ref, gc);
+        }
+    }
+}
 
 trait PushType<T: Clone> {
     fn mine(&self) -> &PAtomic<Node<T>>;
@@ -77,8 +90,15 @@ impl<T: Clone> PushType<T> for TryPush<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryPush<T> {}
 
 impl<T: Clone> Collectable for TryPush<T> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut mine = try_push.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            let mine_ref = unsafe { mine.deref_mut(pool) };
+            Node::mark(mine_ref, gc);
+        }
     }
 }
 
@@ -134,8 +154,15 @@ impl<T: Clone> PushType<T> for Push<T> {
 unsafe impl<T: Clone + Send + Sync> Send for Push<T> {}
 
 impl<T: Clone> Collectable for Push<T> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut mine = push.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            let mine_ref = unsafe { mine.deref_mut(pool) };
+            Node::<T>::mark(mine_ref, gc);
+        }
     }
 }
 
@@ -204,8 +231,15 @@ impl<T: Clone> PopType<T> for TryPop<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
 
 impl<T: Clone> Collectable for TryPop<T> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut target = try_pop.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            let target_ref = unsafe { target.deref_mut(pool) };
+            Node::<T>::mark(target_ref, gc);
+        }
     }
 }
 
@@ -267,8 +301,15 @@ impl<T: Clone> PopType<T> for Pop<T> {
 unsafe impl<T: Clone + Send + Sync> Send for Pop<T> {}
 
 impl<T: Clone> Collectable for Pop<T> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut target = pop.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            let target_ref = unsafe { target.deref_mut(pool) };
+            Node::<T>::mark(target_ref, gc);
+        }
     }
 }
 
@@ -305,6 +346,19 @@ impl<T: Clone> Default for TreiberStack<T> {
     fn default() -> Self {
         Self {
             top: PAtomic::null(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for TreiberStack<T> {
+    fn filter(stack: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut top = stack.top.load(Ordering::SeqCst, guard);
+        if !top.is_null() {
+            let top_ref = unsafe { top.deref_mut(pool) };
+            Node::mark(top_ref, gc);
         }
     }
 }

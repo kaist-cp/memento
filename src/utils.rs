@@ -2,7 +2,6 @@
 
 #[doc(hidden)]
 pub mod tests {
-    use std::env;
     use std::io::Error;
     use std::path::Path;
     use tempfile::NamedTempFile;
@@ -16,7 +15,14 @@ pub mod tests {
     /// e.g. "foo.pool" => "{project-path}/test/foo.pool"
     pub fn get_test_abs_path<P: AsRef<Path>>(rel_path: P) -> String {
         let mut path = std::path::PathBuf::new();
-        path.push(env!("CARGO_MANIFEST_DIR")); // 프로젝트 경로
+        #[cfg(not(feature = "no_persist"))]
+        {
+            path.push("/mnt/pmem0")
+        }
+        #[cfg(feature = "no_persist")]
+        {
+            path.push(env!("CARGO_MANIFEST_DIR")); // 프로젝트 경로
+        }
         path.push("test");
         path.push(rel_path);
         path.to_str().unwrap().to_string()
@@ -52,10 +58,26 @@ pub mod tests {
 
     /// test에 사용하기 위한 더미용 PoolHandle 얻기
     pub fn get_dummy_handle(filesize: usize) -> Result<&'static PoolHandle, Error> {
-        // 임시파일 경로 얻기. `create`에서 파일이 이미 존재하면 실패하기 때문에 여기선 경로만 얻어야함
-        let temp_path = NamedTempFile::new()?.path().to_str().unwrap().to_owned();
-        // 풀 생성 및 핸들 반환
-        Pool::create::<DummyRootOp>(&temp_path, filesize)
+        #[cfg(not(feature = "no_persist"))]
+        {
+            // 임시파일 경로 얻기. `create`에서 파일이 이미 존재하면 실패하기 때문에 여기선 경로만 얻어야함
+            let temp_path = NamedTempFile::new_in("/mnt/pmem0")?
+                .path()
+                .to_str()
+                .unwrap()
+                .to_owned();
+
+            // 풀 생성 및 핸들 반환
+            Pool::create::<DummyRootOp>(&temp_path, filesize)
+        }
+        #[cfg(feature = "no_persist")]
+        {
+            // 임시파일 경로 얻기. `create`에서 파일이 이미 존재하면 실패하기 때문에 여기선 경로만 얻어야함
+            let temp_path = NamedTempFile::new()?.path().to_str().unwrap().to_owned();
+
+            // 풀 생성 및 핸들 반환
+            Pool::create::<DummyRootOp>(&temp_path, filesize)
+        }
     }
 
     /// test를 위한 root op은 아래 조건을 만족하자

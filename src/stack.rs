@@ -9,10 +9,15 @@ use crate::plocation::PoolHandle;
 pub struct TryFail;
 
 /// Persistent stack trait
-pub trait Stack<T: 'static + Clone>: 'static + Default {
+pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
-    type TryPush: for<'o> Memento<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = TryFail>;
+    type TryPush: for<'o> Memento<
+        Object<'o> = &'o Self,
+        Input = T,
+        Output<'o> = (),
+        Error = TryFail,
+    >;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
@@ -51,8 +56,8 @@ impl<T: Clone, S: Stack<T>> Default for Push<T, S> {
 }
 
 impl<T: Clone, S: Stack<T>> Collectable for Push<T, S> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        S::TryPush::filter(&mut push.try_push, gc, pool);
     }
 }
 
@@ -97,8 +102,8 @@ impl<T: Clone, S: Stack<T>> Default for Pop<T, S> {
 }
 
 impl<T: Clone, S: Stack<T>> Collectable for Pop<T, S> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        S::TryPop::filter(&mut pop.try_pop, gc, pool);
     }
 }
 
@@ -163,8 +168,18 @@ pub(crate) mod tests {
         S::Push: Send,
         S::Pop: Send,
     {
-        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(push_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            S::filter(&mut push_pop.stack, gc, pool);
+            for pushes in push_pop.pushes.as_mut() {
+                for push in pushes {
+                    S::Push::filter(push, gc, pool);
+                }
+            }
+            for pops in push_pop.pops.as_mut() {
+                for pop in pops {
+                    S::Pop::filter(pop, gc, pool);
+                }
+            }
         }
     }
 

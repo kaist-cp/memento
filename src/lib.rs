@@ -36,16 +36,16 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
-pub mod elim_stack;
-pub mod exchanger;
-pub mod list;
-pub mod lock;
+pub mod elim_stack; // TODO: free, persist 추가
+pub mod exchanger; // TODO: free, persist 추가
+pub mod list; // TODO: free, persist 추가
+pub mod lock; // TODO: free, persist 추가
 pub mod persistent;
-pub mod pipe;
-pub mod queue;
-pub mod stack;
-pub mod ticket_lock;
-pub mod treiber_stack;
+pub mod pipe; // TODO: free 추가
+pub mod queue; // TODO: free 추가
+pub mod stack; // TODO: free, persist 추가
+pub mod ticket_lock; // TODO: free, persist 추가
+pub mod treiber_stack; // TODO: free, persist 추가
 
 // Persistent location
 pub mod plocation;

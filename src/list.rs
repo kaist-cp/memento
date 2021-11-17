@@ -14,6 +14,7 @@ use crate::{
 };
 
 /// TODO: doc
+// TODO: V가 포인터일 수 있으니 V도 Collectable이여야함
 #[derive(Debug)]
 pub struct Node<K, V> {
     key: K,
@@ -37,6 +38,19 @@ where
     }
 }
 
+impl<K, V> Collectable for Node<K, V> {
+    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next_ref = unsafe { next.deref_mut(pool) };
+            Node::mark(next_ref, gc);
+        }
+    }
+}
+
 /// TODO: doc
 #[derive(Debug)]
 pub struct InsertFront<K, V> {
@@ -52,8 +66,15 @@ impl<K, V> Default for InsertFront<K, V> {
 }
 
 impl<K: 'static, V: 'static> Collectable for InsertFront<K, V> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(insf: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = insf.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::mark(node_ref, gc);
+        }
     }
 }
 
@@ -105,8 +126,15 @@ impl<K, V> Remove<K, V> {
 }
 
 impl<K: 'static, V: 'static> Collectable for Remove<K, V> {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(rmv: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut target = rmv.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            let target_ref = unsafe { target.deref_mut(pool) };
+            Node::mark(target_ref, gc);
+        }
     }
 }
 
@@ -486,5 +514,21 @@ where
     fn no_remover() -> usize {
         let null = PShared::<Remove<K, V>>::null();
         null.into_usize()
+    }
+}
+
+impl<K, V> Collectable for List<K, V>
+where
+    K: Eq,
+{
+    fn filter(list: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut head = list.head.load(Ordering::SeqCst, guard);
+        if !head.is_null() {
+            let head_ref = unsafe { head.deref_mut(pool) };
+            Node::mark(head_ref, gc);
+        }
     }
 }

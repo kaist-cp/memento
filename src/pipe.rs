@@ -47,8 +47,9 @@ where
     for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input>,
     Op2: Memento,
 {
-    fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-        todo!()
+    fn filter(pipe: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Op1::filter(&mut pipe.from, gc, pool);
+        Op2::filter(&mut pipe.to, gc, pool);
     }
 }
 
@@ -155,6 +156,35 @@ mod tests {
         }
     }
 
+    impl Collectable for Transfer {
+        fn filter(transfer: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            let guard = unsafe { pepoch::unprotected() };
+
+            // Mark q1, q2 if ptr is valid
+            let mut q1 = transfer.q1.load(Ordering::SeqCst, guard);
+            if !q1.is_null() {
+                let q1_ref = unsafe { q1.deref_mut(pool) };
+                Queue::mark(q1_ref, gc);
+            }
+            let mut q2 = transfer.q2.load(Ordering::SeqCst, guard);
+            if !q2.is_null() {
+                let q2_ref = unsafe { q2.deref_mut(pool) };
+                Queue::mark(q2_ref, gc);
+            }
+
+            // Call filter of inner struct
+            for pipe in transfer.pipes.as_mut() {
+                Pipe::filter(pipe, gc, pool);
+            }
+            for enq in transfer.suppliers.as_mut() {
+                Enqueue::filter(enq, gc, pool);
+            }
+            for deqsome in transfer.consumers.as_mut() {
+                DequeueSome::filter(deqsome, gc, pool);
+            }
+        }
+    }
+
     impl Memento for Transfer {
         type Object<'o> = ();
         type Input = ();
@@ -208,12 +238,6 @@ mod tests {
 
         fn reset(&mut self, _nested: bool, _: &PoolHandle) {
             todo!("reset test")
-        }
-    }
-
-    impl Collectable for Transfer {
-        fn filter(_s: &mut Self, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
         }
     }
 

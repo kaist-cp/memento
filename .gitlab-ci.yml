@@ -24,7 +24,7 @@ check:
     - cargo check --verbose
     - cargo fmt -- --check
     - cargo clippy -- -D warnings
-    # - cargo audit # TODO: chrono 때문에 통과 안 돼서 잠시 commenting
+    # - cargo audit # TODO: chrono 때문에 통과 안 돼서 잠시 commenting (issue: https://github.com/chronotope/chrono/pull/578#issuecomment-945604623)
 
 debug:
   stage: test

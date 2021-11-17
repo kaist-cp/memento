@@ -1,4 +1,5 @@
 //! Persistent epoch-based garbage collector
+// TODO: 모듈 이름 바꾸든가 하기. persistent EBR이 아닌 volatile EBR을 사용중
 
 pub mod atomic;
 
