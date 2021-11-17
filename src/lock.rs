@@ -291,6 +291,9 @@ pub(crate) mod tests {
         x: Mutex<L, usize>,
         faas: [FetchAdd<L>; NR_THREAD],
         cnts: [usize; NR_THREAD],
+
+        // 결과를 확인하기 위한 lock
+        check_res: Lock<L, usize>,
     }
 
     impl<L: RawLock, const NR_THREAD: usize, const COUNT: usize> Default
@@ -301,6 +304,7 @@ pub(crate) mod tests {
                 x: Mutex::from(0),
                 faas: array_init::array_init(|_| FetchAdd::<L>::default()),
                 cnts: array_init::array_init(|_| 0),
+                check_res: Lock::default(),
             }
         }
     }
@@ -313,6 +317,7 @@ pub(crate) mod tests {
             for faa in concur_add.faas.as_mut() {
                 FetchAdd::filter(faa, gc, pool);
             }
+            Lock::filter(&mut concur_add.check_res, gc, pool);
         }
     }
 
@@ -368,8 +373,9 @@ pub(crate) mod tests {
             })
             .unwrap();
 
-            let mut tmp_lock = Lock::default();
-            let mtx = tmp_lock.run(&self.x, (), pool).unwrap();
+            // Check result
+            self.check_res.reset(false, pool);
+            let mtx = self.check_res.run(&self.x, (), pool).unwrap();
             let final_x = unsafe { MutexGuard::defer_unlock(mtx) };
             assert_eq!(*final_x, (NR_THREAD * (NR_THREAD + 1) / 2) * COUNT);
             Ok(())
