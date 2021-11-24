@@ -178,7 +178,7 @@ impl Pool {
         // root로 사용할 obj를 만든 후 root로 세팅
         // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
         let root_ptr = unsafe { RP_malloc(mem::size_of::<O>() as u64) as *mut O };
-        unsafe { *root_ptr = O::default() };
+        unsafe { root_ptr.write(O::default()) };
         let _prev = unsafe { RP_set_root(root_ptr as *mut c_void, 0) };
 
         // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
