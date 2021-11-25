@@ -26,6 +26,7 @@ use crate::plocation::{global, ralloc::*};
 /// # use compositional_persistent_object::plocation::pool::*;
 /// # use compositional_persistent_object::persistent::*;
 /// # use compositional_persistent_object::utils::tests::DummyRootOp as MyRootOp;
+/// # use crossbeam_epoch::{self as epoch};
 /// // 풀 생성 후 풀의 핸들러 얻기
 /// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024 * 1024 * 1024).unwrap();
 ///
@@ -33,7 +34,8 @@ use crate::plocation::{global, ralloc::*};
 /// let root_op = pool_handle.get_root::<MyRootOp>();
 ///
 /// // 루트 Op 실행
-/// root_op.run((), (), &pool_handle).unwrap();
+/// let mut guard = epoch::pin();
+/// root_op.run((), (), &mut guard, &pool_handle).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
