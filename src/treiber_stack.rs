@@ -471,6 +471,9 @@ impl<T: Clone> TreiberStack<T> {
         } else if self.search(mine, guard, pool)
             || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
         {
+            // TODO: recovery 중에만 분기 타도록
+            // (3) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
+            // (4) 이미 pop 되었다면 push된 것이다
             return Ok(());
         }
 
