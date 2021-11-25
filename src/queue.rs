@@ -379,6 +379,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
+                        // TODO: 여기서 tail을 persist 하는 건 핵손해. offline-gc phase에서 tail align을 해줘야 할 듯
                     })
                     .map_err(|_| ());
             } else {
@@ -499,6 +500,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
+                        persist_obj(&self.head, true);
                         Some(Self::finish_dequeue(next_ref))
                     })
                     .map_err(|_| {
