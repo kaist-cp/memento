@@ -2,6 +2,7 @@
 
 #[doc(hidden)]
 pub mod tests {
+    use crossbeam_epoch::{self as epoch, Guard};
     use std::io::Error;
     use std::path::Path;
     use tempfile::NamedTempFile;
@@ -47,11 +48,13 @@ pub mod tests {
             &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input,
-            _: &PoolHandle,
+            _: &mut Guard,
+            _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             Ok(())
         }
-        fn reset(&mut self, _: bool, _: &'static PoolHandle) {
+
+        fn reset(&mut self, _: &mut Guard, _: bool, _: &'static PoolHandle) {
             // no-op
         }
     }
@@ -84,6 +87,7 @@ pub mod tests {
     pub trait TestRootOp: for<'o> Memento<Object<'o> = (), Input = ()> {}
 
     /// test op 돌리기
+    // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
     pub fn run_test<O: TestRootOp, P: AsRef<Path>>(pool_name: P, pool_len: usize) {
         let filepath = get_test_abs_path(pool_name);
 
@@ -95,6 +99,7 @@ pub mod tests {
         let root_op = pool_handle.get_root::<O>();
 
         // 루트 op 실행
-        while root_op.run((), (), pool_handle).is_err() {}
+        let mut guard = epoch::pin();
+        while root_op.run((), (), &mut guard, pool_handle).is_err() {}
     }
 }

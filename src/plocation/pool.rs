@@ -290,6 +290,7 @@ impl Pool {
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_epoch::{self as epoch, Guard};
     use env_logger as _;
     use log::{self as _, debug};
     use serial_test::serial;
@@ -318,12 +319,12 @@ mod tests {
         type Output<'o> = ();
         type Error = !;
 
-        // invariant 검사(flag=1 => value=42)
         fn run<'o>(
             &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input,
-            _: &PoolHandle,
+            _: &mut Guard,
+            _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             if self.flag.load(SeqCst) {
                 debug!("check inv");
@@ -336,7 +337,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _: &mut Guard, _: bool, _: &'static PoolHandle) {
             // no-op
         }
     }
@@ -346,6 +347,7 @@ mod tests {
 
     /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+    // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn check_inv() {
@@ -361,6 +363,7 @@ mod tests {
         let root_op = pool_handle.get_root::<RootOp>();
 
         // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
-        root_op.run((), (), &pool_handle).unwrap();
+        let mut guard = epoch::pin();
+        root_op.run((), (), &mut guard, &pool_handle).unwrap();
     }
 }
