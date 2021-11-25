@@ -12,11 +12,11 @@
 // - Ordering 최적화
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use etrace::some_or;
 
 use crate::pepoch::atomic::Pointer;
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::persistent::*;
+use crate::plocation::ll::persist_obj;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{pool::*, AsPPtr};
 use crate::stack::*;
@@ -25,6 +25,10 @@ use crate::stack::*;
 struct Node<T: Clone> {
     data: T,
     next: PAtomic<Node<T>>,
+
+    /// push 되었는지 여부
+    // 이게 없으면, pop()에서 node 뺀 후 popper 등록 전에 crash 났을 때, 노드가 이미 push 되었었다는 걸 알 수 없음
+    pushed: bool,
 
     /// 누가 pop 했는지 식별
     // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
@@ -36,6 +40,7 @@ impl<T: Clone> From<T> for Node<T> {
         Self {
             data: value,
             next: PAtomic::null(),
+            pushed: false,
             popper: AtomicUsize::new(TreiberStack::<T>::no_popper()),
         }
     }
@@ -112,15 +117,36 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        stack.push(self, value, &guard, pool)
+        stack.push(self, value, guard, pool)
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if not finished -> free node
-        self.mine.store(PShared::null(), Ordering::SeqCst);
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        let mine = self.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            self.mine.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.mine, true);
+
+            // crash-free execution이지만 try_push라서 push 실패했을 수 있음
+            // 따라서 pushed 플래그로 (1) 성공여부 확인후, (2) push 되지 않았으면 free
+            //
+            // NOTE:
+            //  - 현재는 push CAS 성공 후 pushed=true로 설정해주니까, 성공했다면 pushed=true가 보장됨
+            //  - 만약 최적화하며 push CAS 성공 후 pushed=true를 안하게 바꾼다면, 여기서는 pushed 대신 Token에 담겨있는 Ok or Err 정보로 성공여부 판단해야함 (혹은 Direct tracking..)
+            if unsafe { !mine.deref(pool).pushed } {
+                unsafe { guard.defer_pdestroy(mine) };
+            }
+        }
+    }
+}
+
+impl<T: Clone> Drop for TryPush<T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let mine = self.mine.load(Ordering::SeqCst, guard);
+        assert!(mine.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -176,17 +202,31 @@ impl<T: 'static + Clone> Memento for Push<T> {
         &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        let pushed = stack.push(self, value, &guard, pool);
+        let pushed = stack.push(self, value, guard, pool);
         debug_assert!(pushed.is_ok());
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if not finished -> free node
-        self.mine.store(PShared::null(), Ordering::SeqCst);
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let mine = self.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            self.mine.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.mine, true);
+
+            // crash-free execution이니 내가 가지고 있던 노드는 push 되었음이 확실 => free하면 안됨
+        }
+    }
+}
+
+impl<T: Clone> Drop for Push<T> {
+    fn drop(&mut self) {
+        let mine = self
+            .mine
+            .load(Ordering::SeqCst, unsafe { epoch::unprotected() });
+        assert!(mine.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -196,7 +236,6 @@ trait PopType<T: Clone>: Sized {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         unsafe { self.as_pptr(pool).into_offset() }
     }
-
     fn target(&self) -> &PAtomic<Node<T>>;
     fn is_try(&self) -> bool;
 }
@@ -204,7 +243,7 @@ trait PopType<T: Clone>: Sized {
 /// TreiberStack의 try pop operation
 #[derive(Debug)]
 pub struct TryPop<T: Clone> {
-    /// pup를 위해 할당된 node
+    /// pop를 위해 할당된 node
     target: PAtomic<Node<T>>,
 }
 
@@ -253,16 +292,33 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
+        guard: &mut Guard,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        stack.pop(self, &guard, pool)
+        stack.pop(self, guard, pool)
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if node has not been freed, check if the node is mine and free it
-        // TODO: null이 아닐 때에만 store하는 게 더 빠를까?
-        self.target.store(PShared::null(), Ordering::SeqCst);
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        let target = self.target.load(Ordering::SeqCst, guard);
+
+        if target.tag() == TryPop::<T>::EMPTY {
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+            return;
+        }
+
+        if !target.is_null() {
+            // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+            // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+
+            // crash-free execution이지만 try이니 popper가 내가 아닐 수 있음
+            // 따라서 popper를 확인 후 내가 pop한게 맞다면 free
+            if unsafe { target.deref(pool) }.popper.load(Ordering::SeqCst) == self.id(pool) {
+                unsafe { guard.defer_pdestroy(target) };
+            }
+        }
     }
 }
 
@@ -271,10 +327,19 @@ impl<T: Clone> TryPop<T> {
     const EMPTY: usize = 1;
 }
 
+impl<T: Clone> Drop for TryPop<T> {
+    fn drop(&mut self) {
+        let target = self
+            .target
+            .load(Ordering::SeqCst, unsafe { epoch::unprotected() });
+        assert!(target.is_null(), "reset 되어있지 않음.")
+    }
+}
+
 /// TreiberStack의 pop operation
 #[derive(Debug)]
 pub struct Pop<T: Clone> {
-    /// pup를 위해 할당된 node
+    /// pop를 위해 할당된 node
     target: PAtomic<Node<T>>,
 }
 
@@ -323,15 +388,39 @@ impl<T: 'static + Clone> Memento for Pop<T> {
         &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
+        guard: &mut Guard,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        Ok(stack.pop(self, &guard, pool).unwrap())
+        Ok(stack.pop(self, guard, pool).unwrap())
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if node has not been freed, check if the node is mine and free it
-        self.target.store(PShared::null(), Ordering::SeqCst);
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let target = self.target.load(Ordering::SeqCst, guard);
+
+        if target.tag() == TryPop::<T>::EMPTY {
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+            return;
+        }
+
+        if !target.is_null() {
+            // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+            // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+
+            // crash-free execution이고 try가 아니니 가리키는 노드는 내가 deq한 노드임이 확실 => 내가 free
+            unsafe { guard.defer_pdestroy(target) };
+        }
+    }
+}
+
+impl<T: Clone> Drop for Pop<T> {
+    fn drop(&mut self) {
+        let target = self
+            .target
+            .load(Ordering::SeqCst, unsafe { epoch::unprotected() });
+        assert!(target.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -369,7 +458,7 @@ impl<T: Clone> TreiberStack<T> {
         client: &C,
         value: T,
         guard: &Guard,
-        pool: &PoolHandle,
+        pool: &'static PoolHandle,
     ) -> Result<(), TryFail> {
         let mut mine = client.mine().load(Ordering::SeqCst, guard);
 
@@ -382,9 +471,6 @@ impl<T: Clone> TreiberStack<T> {
         } else if self.search(mine, guard, pool)
             || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
         {
-            // TODO: recovery 중에만 분기 타도록
-            // (3) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
-            // (4) 이미 pop 되었다면 push된 것이다
             return Ok(());
         }
 
@@ -399,17 +485,22 @@ impl<T: Clone> TreiberStack<T> {
     /// top에 새 `node` 연결을 시도
     fn try_push(
         &self,
-        node: PShared<'_, Node<T>>,
+        mut node: PShared<'_, Node<T>>,
         guard: &Guard,
-        pool: &PoolHandle,
+        pool: &'static PoolHandle,
     ) -> Result<(), TryFail> {
-        let node_ref = unsafe { node.deref(pool) };
+        let node_ref = unsafe { node.deref_mut(pool) };
         let top = self.top.load(Ordering::SeqCst, guard);
 
         node_ref.next.store(top, Ordering::SeqCst);
         self.top
             .compare_exchange(top, node, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| ())
+            .map(|_| {
+                // @seungminjeon:
+                // - Tracking in Order의 Elim-stack은 여기서 pushed=true로 표시해주지만, 이는 불필요한 write 같음
+                // - 왜냐하면 push된 노드는 stack에 있거나 혹은 stack에 없으면(i.e. pop 되었으면) pushed=true 적혀있음이 보장되기 때문
+                node_ref.pushed = true;
+            })
             .map_err(|_| TryFail)
     }
 
@@ -490,18 +581,22 @@ impl<T: Clone> TreiberStack<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let top = self.top.load(Ordering::SeqCst, guard);
-        let top_ref = some_or!(unsafe { top.as_ref(pool) }, {
+        let mut top = self.top.load(Ordering::SeqCst, guard);
+        if top.is_null() {
             // empty
             client.target().store(
                 PShared::null().with_tag(TryPop::<T>::EMPTY),
                 Ordering::SeqCst,
             );
             return Ok(None);
-        });
+        };
+        let top_ref = unsafe { top.deref_mut(pool) };
 
         // 우선 내가 top node를 가리키고
         client.target().store(top, Ordering::SeqCst);
+
+        // node가 push된 노드라고 마킹해준 후
+        top_ref.pushed = true;
 
         // top node를 next로 바꿈
         let next = top_ref.next.load(Ordering::SeqCst, guard);
