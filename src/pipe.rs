@@ -1,5 +1,7 @@
 //! Persistent pipe
 
+use crossbeam_epoch::Guard;
+
 use crate::{
     persistent::Memento,
     plocation::{
@@ -70,31 +72,42 @@ where
         &'o mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         if self.resetting {
             // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
-            self.reset(false, pool);
+            self.reset(guard, false, pool);
         }
 
-        let v = self.from.run(from_obj, init, pool).map_err(|_| ())?;
-        self.to.run(to_obj, v, pool).map_err(|_| ())
+        let v = self.from.run(from_obj, init, guard, pool).map_err(|_| ())?;
+        self.to.run(to_obj, v, guard, pool).map_err(|_| ())
     }
 
-    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &mut Guard, nested: bool, pool: &'static PoolHandle) {
         if !nested {
             self.resetting = true;
             persist_obj(&self.resetting, true);
         }
 
-        self.from.reset(true, pool);
-        self.to.reset(true, pool);
+        self.from.reset(guard, true, pool);
+        self.to.reset(guard, true, pool);
 
         if !nested {
             self.resetting = false;
             persist_obj(&self.resetting, true);
         }
+    }
+}
+
+impl<Op1, Op2> Drop for Pipe<Op1, Op2>
+where
+    for<'o> Op1: Memento<Output<'o> = Op2::Input>,
+    Op2: Memento,
+{
+    fn drop(&mut self) {
+        todo!("하위 Memento들이 reset 되어있지않으면 panic")
     }
 }
 
@@ -104,11 +117,12 @@ mod tests {
     use serial_test::serial;
     use std::sync::atomic::Ordering;
 
-    use crate::pepoch::{self, PAtomic};
+    use crate::pepoch::PAtomic;
     use crate::persistent::*;
     use crate::plocation::ralloc::{Collectable, GarbageCollection};
     use crate::queue::*;
     use crate::utils::tests::*;
+    use crossbeam_epoch::{self as epoch};
 
     use super::*;
 
@@ -136,7 +150,7 @@ mod tests {
 
     impl Transfer {
         fn init(&self, pool: &PoolHandle) {
-            let guard = unsafe { pepoch::unprotected() };
+            let guard = unsafe { epoch::unprotected() };
             let q1 = self.q1.load(Ordering::SeqCst, guard);
             let q2 = self.q2.load(Ordering::SeqCst, guard);
 
@@ -158,7 +172,7 @@ mod tests {
 
     impl Collectable for Transfer {
         fn filter(transfer: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            let guard = unsafe { pepoch::unprotected() };
+            let guard = unsafe { epoch::unprotected() };
 
             // Mark q1, q2 if ptr is valid
             let mut q1 = transfer.q1.load(Ordering::SeqCst, guard);
@@ -195,12 +209,12 @@ mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);
 
             // Alias
-            let guard = unsafe { pepoch::unprotected() };
             let q1 = unsafe { self.q1.load(Ordering::SeqCst, guard).deref(pool) };
             let q2 = unsafe { self.q2.load(Ordering::SeqCst, guard).deref(pool) };
             let pipes = &mut self.pipes;
@@ -211,22 +225,25 @@ mod tests {
             thread::scope(|scope| {
                 // T0: Supply q1
                 let _ = scope.spawn(move |_| {
+                    let mut guard = epoch::pin();
                     for (i, enq) in suppliers.iter_mut().enumerate() {
-                        let _ = enq.run(q1, i, pool);
+                        let _ = enq.run(q1, i, &mut guard, pool);
                     }
                 });
 
                 // T1: Transfer q1->q2
                 let _ = scope.spawn(move |_| {
+                    let mut guard = epoch::pin();
                     for pipe in pipes.iter_mut() {
-                        let _ = pipe.run((q1, q2), (), pool);
+                        let _ = pipe.run((q1, q2), (), &mut guard, pool);
                     }
                 });
 
                 // T2: Consume q2
                 let _ = scope.spawn(move |_| {
+                    let mut guard = epoch::pin();
                     for (i, deq) in consumers.iter_mut().enumerate() {
-                        let v = deq.run(&q2, (), pool).unwrap();
+                        let v = deq.run(&q2, (), &mut guard, pool).unwrap();
                         assert_eq!(v, i);
                     }
                 });
@@ -236,7 +253,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool, _: &PoolHandle) {
+        fn reset(&mut self, _: &mut Guard, _nested: bool, _: &PoolHandle) {
             todo!("reset test")
         }
     }
