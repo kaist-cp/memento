@@ -15,6 +15,7 @@ use crate::{
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
     persistent::*,
     plocation::{
+        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
@@ -114,6 +115,7 @@ impl Memento for Lock {
 
         let m_ref = unsafe { m.deref_mut(pool) };
         m_ref.state = State::Ready;
+        persist_obj(&m_ref.state, true);
     }
 }
 
@@ -180,6 +182,7 @@ impl TicketLock {
                 // membership 생성
                 let n = POwned::new(Membership::default(), pool).into_shared(guard);
                 client.membership.store(n, Ordering::SeqCst);
+                persist_obj(&client.membership, true);
                 m = n;
             }
 
@@ -193,6 +196,7 @@ impl TicketLock {
             }
 
             client.registered = true; // TODO: list insert에서 "recovery할 때만 해야할지 생각하기" 해결 후 지워도 되는지 확인
+            persist_obj(&client.registered, true);
         }
 
         let m_ref = unsafe { m.deref_mut(pool) };
@@ -201,9 +205,14 @@ impl TicketLock {
                 State::Ready => {
                     if m_ref.ticket != NO_TICKET {
                         m_ref.ticket = NO_TICKET;
+                        persist_obj(&m_ref.ticket, true);
                     }
                     m_ref.state = State::Trying;
-                    m_ref.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
+                    persist_obj(&m_ref.state, true);
+                    let t = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
+                    persist_obj(&self.next, true);
+                    m_ref.ticket = t;
+                    persist_obj(&m_ref.ticket, true);
                     break;
                 }
                 State::Trying => {
@@ -212,18 +221,18 @@ impl TicketLock {
                     }
 
                     m_ref.state = State::Recovering;
+                    persist_obj(&m_ref.state, true);
                 }
                 State::Recovering => {
                     self.recover(guard, pool);
                     m_ref.state = State::Ready;
+                    persist_obj(&m_ref.state, true);
                 }
             };
         }
 
         let backoff = Backoff::default();
-        // let a = self.curr.load(Ordering::SeqCst);
         while self.curr.load(Ordering::SeqCst) < m_ref.ticket {
-            // println!("{} < {}", membership.ticket, a);
             backoff.snooze();
         }
 
@@ -281,8 +290,9 @@ impl TicketLock {
             }
 
             // curr가 티켓에 도달할 때까지 기다림
+            let backoff = Backoff::default();
             while lost > self.curr.load(Ordering::SeqCst) {
-                // Back-off
+                backoff.snooze();
             }
 
             // CAS로 잃어버린 티켓을 건너뛰게 해줌
@@ -298,6 +308,7 @@ impl TicketLock {
                 )
                 .is_ok()
             {
+                persist_obj(&self.curr, true); // 복구 공헌한 애만 persist를 하고 복구를 졸업
                 return;
             }
         }
@@ -308,6 +319,7 @@ impl TicketLock {
         assert!(ticket <= curr); // for idempotency of `Unlock::run()`
         if curr == ticket {
             self.curr.store(ticket.wrapping_add(1), Ordering::SeqCst);
+            persist_obj(&self.curr, true);
         }
     }
 }
