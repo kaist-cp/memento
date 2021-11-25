@@ -44,9 +44,10 @@ pub mod persistent;
 pub mod pipe; // TODO: persist 추가
 pub mod queue; // TODO: persist 추가
 
-// pub mod stack; // TODO: free, persist 추가하며 주석 해제
+pub mod stack; // TODO: persist 추가
+
 // pub mod ticket_lock; // TODO: free, persist 추가하며 주석 해제
-// pub mod treiber_stack; // TODO: free, persist 추가하며 주석 해제
+pub mod treiber_stack; // TODO: persist 추가
 
 // Persistent location
 pub mod plocation;

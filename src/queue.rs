@@ -171,7 +171,14 @@ impl<T: 'static + Clone> Memento for Dequeue<T> {
 
     fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
-        if target.tag() == Queue::<T>::EMPTY || !target.is_null() {
+
+        if target.tag() == Queue::<T>::EMPTY {
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+            return;
+        }
+
+        if !target.is_null() {
             // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
             // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
             self.target.store(PShared::null(), Ordering::SeqCst);

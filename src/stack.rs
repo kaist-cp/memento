@@ -1,5 +1,7 @@
 //! Persistent Stack
 
+use crossbeam_epoch::Guard;
+
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::PoolHandle;
@@ -74,14 +76,25 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        while self.try_push.run(stack, value.clone(), pool).is_err() {}
+        while self
+            .try_push
+            .run(stack, value.clone(), guard, pool)
+            .is_err()
+        {}
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, pool: &'static PoolHandle) {
-        self.try_push.reset(true, pool);
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        self.try_push.reset(true, guard, pool);
+    }
+}
+
+impl<T: Clone, S: Stack<T>> Drop for Push<T, S> {
+    fn drop(&mut self) {
+        todo!("try_push가 reset 되어있지 않으면 panic")
     }
 }
 
@@ -120,17 +133,24 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
-            if let Ok(v) = self.try_pop.run(stack, (), pool) {
+            if let Ok(v) = self.try_pop.run(stack, (), guard, pool) {
                 return Ok(v);
             }
         }
     }
 
-    fn reset(&mut self, _: bool, pool: &'static PoolHandle) {
-        self.try_pop.reset(true, pool);
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        self.try_pop.reset(true, guard, pool);
+    }
+}
+
+impl<T: Clone, S: Stack<T>> Drop for Pop<T, S> {
+    fn drop(&mut self) {
+        todo!("try_pop이 reset 되어있지 않으면 panic")
     }
 }
 
@@ -139,6 +159,7 @@ unsafe impl<T: Clone, S: Stack<T>> Send for Pop<T, S> where S::TryPop: Send {}
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crossbeam_epoch::{self as epoch};
     use crossbeam_utils::thread;
 
     use crate::{plocation::PoolHandle, utils::tests::TestRootOp};
@@ -203,6 +224,7 @@ pub(crate) mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            _: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             #[allow(box_pointers)]
@@ -221,9 +243,10 @@ pub(crate) mod tests {
                     };
 
                     let _ = scope.spawn(move |_| {
+                        let mut guard = epoch::pin();
                         for i in 0..COUNT {
-                            let _ = pushes[i].run(s, tid, pool);
-                            assert!(pops[i].run(s, (), pool).unwrap().is_some());
+                            let _ = pushes[i].run(s, tid, &mut guard, pool);
+                            assert!(pops[i].run(s, (), &mut guard, pool).unwrap().is_some());
                         }
                     });
                 }
@@ -231,8 +254,9 @@ pub(crate) mod tests {
             .unwrap();
 
             // Check empty
+            let mut guard = epoch::pin();
             assert!(S::Pop::default()
-                .run(&self.stack, (), pool)
+                .run(&self.stack, (), &mut guard, pool)
                 .unwrap()
                 .is_none());
 
@@ -240,7 +264,7 @@ pub(crate) mod tests {
             let mut results = vec![0_usize; NR_THREAD];
             for pops in self.pops.iter_mut() {
                 for pop in pops.iter_mut() {
-                    let ret = pop.run(&self.stack, (), pool).unwrap().unwrap();
+                    let ret = pop.run(&self.stack, (), &mut guard, pool).unwrap().unwrap();
                     results[ret] += 1;
                 }
             }
@@ -249,7 +273,7 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
     }
