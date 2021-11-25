@@ -12,6 +12,12 @@ use crate::persistent::*;
 use crate::plocation::global::global_pool;
 use crate::plocation::ptr::PPtr;
 use crate::plocation::{global, ralloc::*};
+use crossbeam_utils::thread;
+
+// metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
+const IX_NR_MEM: u64 = 0; // memento의 개수는 Ralloc의 0번째 root에 위치
+const IX_OBJ: u64 = 1; // root obj는 Ralloc의 1번째 root에 위치
+const IX_MEMENTO_START: u64 = 2; // root memento(s)는 Ralloc의 2번째 root부터 위치
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
@@ -62,13 +68,55 @@ impl PoolHandle {
         self.start() + self.len
     }
 
-    /// 풀의 루트 Op을 가리키는 포인터 반환
-    #[allow(clippy::mut_from_ref)]
-    #[inline]
-    pub fn get_root<O: Memento>(&self) -> &mut O {
-        // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
-        let root_ptr = unsafe { RP_get_root_c(0) } as *mut O;
-        unsafe { &mut *root_ptr }
+    /// 풀의 메인 프로그램 시작
+    ///
+    /// O: root obj
+    /// M: root memento(s)
+    pub fn execute<O, M>(&'static self)
+    where
+        O: PObj + Send + Sync,
+        for<'o> M: Memento<Object<'o> = &'o O, Input = usize> + Send,
+    {
+        // root memento(들)의 개수 얻기
+        let nr_mem = unsafe { *(RP_get_root_c(IX_NR_MEM) as *mut usize) };
+
+        // root obj 얻기
+        let o = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
+
+        #[allow(box_pointers)]
+        thread::scope(|scope| {
+            // mid번째 스레드가 mid번째 memento를 성공할때까지 반복
+            for mid in 0..nr_mem {
+                // mid번째 root memento 얻기
+                let m = unsafe {
+                    (RP_get_root_c(IX_MEMENTO_START + mid as u64) as *mut M)
+                        .as_mut()
+                        .unwrap()
+                };
+
+                let _ = scope.spawn(move |_| {
+                    thread::scope(|scope| {
+                        loop {
+                            // memento 실행
+                            let hanlder = scope.spawn(|_| {
+                                todo!("g = oldguard(mid);");
+                                todo!("m.set_recovery();");
+                                todo!("m.run(o, mid, &mut g, pool);");
+                            });
+
+                            // 성공시 종료, 실패(i.e. crash)시 memento 재실행
+                            // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
+                            match hanlder.join() {
+                                Ok(_) => break,
+                                Err(_) => {} // no-op
+                            }
+                        }
+                    })
+                    .unwrap();
+                });
+            }
+        })
+        .unwrap();
     }
 
     /// 풀에 T의 크기만큼 할당 후 이를 가리키는 포인터 얻음
@@ -141,7 +189,9 @@ impl Drop for PoolHandle {
 /// 풀 열기/닫기 및 메타데이터를 관리하는 역할
 #[derive(Debug)]
 pub struct Pool {
-    // Ralloc의 API를 사용하기 때문에 별다른 필드 필요없음
+    // NOTE:
+// - Ralloc의 Pool management API를 사용하기 때문에 Pool에 위치할 메타데이터를 추가하려면 Ralloc의 set/get root API를 써야함
+// - Ralloc의 default 설정은 1024개의 root를 사용하며, 이는 pm_config.hpp의 `MAX_ROOT`로 조절 가능
 }
 
 impl Pool {
@@ -156,7 +206,15 @@ impl Pool {
     //
     // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
     // - <O: Memento, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
-    pub fn create<O: Memento>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error> {
+    pub fn create<O, M>(
+        filepath: &str,
+        size: usize,
+        nr_mem: usize, // Root Memento의 개수
+    ) -> Result<&'static PoolHandle, Error>
+    where
+        O: PObj,
+        for<'o> M: Memento<Object<'o> = &'o O, Input = usize>,
+    {
         // 파일 이미 있으면 에러 반환
         // - Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성하기 때문에, 그 중 하나인 "_basemd"를 붙여 확인
         if Path::new(&(filepath.to_owned() + "_basemd")).exists() {
@@ -177,31 +235,35 @@ impl Pool {
         let is_reopen = unsafe { RP_init(filepath.as_ptr(), size as u64) };
         assert_eq!(is_reopen, 0);
 
-        // root로 사용할 obj를 만든 후 root로 세팅
-        // NOTE: Ralloc은 1024개의 root를 set/get할 수 있는데, 우리는 0번째만 사용
-        let root_ptr = unsafe { RP_malloc(mem::size_of::<O>() as u64) as *mut O };
-        unsafe { root_ptr.write(O::default()) };
-        let _prev = unsafe { RP_set_root(root_ptr as *mut c_void, 0) };
-
-        // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
-        let start = unsafe {
-            let mut start: *mut i32 = std::ptr::null_mut();
-            let mut end: *mut i32 = std::ptr::null_mut();
-            let _ret = RP_region_range(
-                1,
-                &mut start as *mut *mut _ as *mut *mut c_void,
-                &mut end as *mut *mut _ as *mut *mut c_void,
-            );
-            start as usize
-        };
+        // 글로벌 pool 세팅
         global::init(PoolHandle {
-            start,
+            start: unsafe { RP_mmapped_addr() },
             len: size,
             recovering: true,
         });
+        let pool = global_pool().unwrap();
 
-        // 글로벌 풀의 핸들러 반환
-        Ok(global_pool().unwrap())
+        // metadta, root obj, root memento 세팅
+        unsafe {
+            // root memento의 개수 세팅 (Ralloc의 0번째 root에 위치시킴)
+            let nr_mem_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
+            nr_mem_ptr.write(nr_mem);
+            let _prev = RP_set_root(nr_mem_ptr as *mut c_void, IX_NR_MEM);
+
+            // root obj 세팅 (Ralloc의 1번째 root에 위치시킴)
+            let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
+            o_ptr.write(O::pdefault(&pool));
+            let _prev = RP_set_root(o_ptr as *mut c_void, IX_OBJ);
+
+            // root memento(들) 세팅 (Ralloc의 2번째 root부터 위치시킴)
+            for i in 0..nr_mem {
+                let root_ptr = RP_malloc(mem::size_of::<M>() as u64) as *mut M;
+                root_ptr.write(M::default());
+                let _prev = RP_set_root(root_ptr as *mut c_void, IX_MEMENTO_START + i as u64);
+            }
+        }
+
+        Ok(pool)
     }
 
     /// 풀 열기
@@ -224,10 +286,11 @@ impl Pool {
     //
     // TODO: filepath 타입을 `P: AsRef<Path>`로 하기
     // - <O: Memento, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
-    pub unsafe fn open<O: Memento>(
-        filepath: &str,
-        size: usize,
-    ) -> Result<&'static PoolHandle, Error> {
+    pub unsafe fn open<O, M>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error>
+    where
+        O: PObj,
+        for<'o> M: Memento<Object<'o> = &'o O, Input = usize>,
+    {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
         if !Path::new(&(filepath.to_owned() + "_basemd")).exists() {
@@ -245,32 +308,40 @@ impl Pool {
         assert_eq!(is_reopen, 1);
 
         // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
-        let start = {
-            let mut start: *mut i32 = std::ptr::null_mut();
-            let mut end: *mut i32 = std::ptr::null_mut();
-            let _ret = RP_region_range(
-                1,
-                &mut start as *mut *mut _ as *mut *mut c_void,
-                &mut end as *mut *mut _ as *mut *mut c_void,
-            );
-            start as usize
-        };
         global::init(PoolHandle {
-            start,
+            start: RP_mmapped_addr(),
             len: size,
             recovering: true,
         });
 
-        // GC의 시작점을 등록하고 GC 수행
-        // - 그러나 이전에 RP_close로 잘 닫았다면(i.e. crash가 아니면) 수행되지 않음
-        unsafe extern "C" fn root_filter<O: Memento>(
-            ptr: *mut ::std::os::raw::c_char,
-            gc: &mut GarbageCollection,
-        ) {
-            RP_mark(gc, ptr, Some(O::filter_inner));
+        // GC 수행
+        {
+            unsafe extern "C" fn root_filter<T: Collectable>(
+                ptr: *mut ::std::os::raw::c_char,
+                gc: &mut GarbageCollection,
+            ) {
+                RP_mark(gc, ptr, Some(T::filter_inner));
+            }
+
+            // root obj의 filter func 등록
+            RP_set_root_filter(Some(root_filter::<O>), IX_OBJ);
+
+            // root memento(들)의 filter func 등록
+            let nr_mem = *(RP_get_root_c(IX_NR_MEM) as *mut usize);
+            for i in 0..nr_mem {
+                // root memento들은 Ralloc의 2번째 root부터 위치
+                RP_set_root_filter(Some(root_filter::<M>), IX_MEMENTO_START + i as u64);
+            }
+
+            // GC 호출
+            //
+            // NOTE: Ralloc의 API상 이전에 RP_close로 잘 닫고 끝났었다면(i.e. crash가 아니면) GC 호출해도 수행되지 않음
+            //
+            // NOTE: Ralloc의 0번째 root는 filter func을 등록하지 않았으니 GC 수행시 default filter가 돔
+            //       그렇지만 우리 로직에선 안전함. `nr_mem` 값을 주소로 보고 marking 시도하는데, marking 하려는 (절대)주소가
+            //       pool 영역이 아니면 marking 되지않고 무시됨. `nr_mem` 값이 pool 영역 범위 내의 값이 될 확률은 매우 적음
+            let _is_gc_executed = RP_recover();
         }
-        RP_set_root_filter(Some(root_filter::<O>), 0);
-        let _is_gc_executed = RP_recover();
 
         // 글로벌 풀의 핸들러 반환
         Ok(global_pool().unwrap())

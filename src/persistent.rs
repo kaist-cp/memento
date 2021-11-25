@@ -124,3 +124,9 @@ pub trait Memento: Default + Collectable {
     /// 알려줄 수 있다.
     fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle);
 }
+
+/// TODO: doc
+pub trait PObj: Collectable {
+    /// TODO: doc
+    fn pdefault(pool: &'static PoolHandle) -> Self;
+}

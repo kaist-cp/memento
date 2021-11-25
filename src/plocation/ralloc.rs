@@ -46,6 +46,19 @@ extern "C" {
     ) -> c_int;
 }
 
+/// RP_init시 매핑된 주소를 반환
+#[allow(non_snake_case)]
+pub(crate) unsafe fn RP_mmapped_addr() -> usize {
+    let mut start: *mut i32 = std::ptr::null_mut();
+    let mut end: *mut i32 = std::ptr::null_mut();
+    let _ret = RP_region_range(
+        1, // superblock region의 index.
+        &mut start as *mut *mut _ as *mut *mut c_void,
+        &mut end as *mut *mut _ as *mut *mut c_void,
+    );
+    start as usize
+}
+
 // 원래 ralloc에는 없고 GC를 위해 추가한 함수
 #[link(name = "ralloc", kind = "static")]
 extern "C" {
