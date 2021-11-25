@@ -78,21 +78,21 @@ where
         if self.resetting {
             // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
-            self.reset(guard, false, pool);
+            self.reset(false, guard, pool);
         }
 
         let v = self.from.run(from_obj, init, guard, pool).map_err(|_| ())?;
         self.to.run(to_obj, v, guard, pool).map_err(|_| ())
     }
 
-    fn reset(&mut self, guard: &mut Guard, nested: bool, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         if !nested {
             self.resetting = true;
             persist_obj(&self.resetting, true);
         }
 
-        self.from.reset(guard, true, pool);
-        self.to.reset(guard, true, pool);
+        self.from.reset(true, guard, pool);
+        self.to.reset(true, guard, pool);
 
         if !nested {
             self.resetting = false;
@@ -253,7 +253,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: &mut Guard, _nested: bool, _: &PoolHandle) {
+        fn reset(&mut self, _: bool, _: &mut Guard, _: &PoolHandle) {
             todo!("reset test")
         }
     }

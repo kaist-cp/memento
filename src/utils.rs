@@ -54,7 +54,7 @@ pub mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: &mut Guard, _: bool, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
             // no-op
         }
     }

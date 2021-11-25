@@ -105,11 +105,11 @@ impl<T: 'static + Clone> Memento for Enqueue<T> {
         Ok(())
     }
 
-    fn reset(&mut self, guard: &mut Guard, _: bool, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
         let mine = self.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             self.mine.store(PShared::null(), Ordering::SeqCst);
-            persist_obj(&self.mine, true); // TODO(@kyeongmin.cho): 이 persist를 꼭 해야하나?
+            persist_obj(&self.mine, true);
 
             // crash-free execution이니 내가 가지고 있던 노드는 enq 되었음이 확실 => 내가 free하면 안됨
         }
@@ -169,13 +169,13 @@ impl<T: 'static + Clone> Memento for Dequeue<T> {
         Ok(queue.dequeue(self, guard, pool))
     }
 
-    fn reset(&mut self, guard: &mut Guard, _: bool, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
         if !target.is_null() {
             // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
             // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
             self.target.store(PShared::null(), Ordering::SeqCst);
-            persist_obj(&self.target, true); // TODO(@kyeongmin.cho): 이 persist를 꼭 해야하나?
+            persist_obj(&self.target, true);
 
             // crash-free execution이니 내가 deq 성공한 노드임이 확실 => 내가 free
             unsafe { guard.defer_pdestroy(target) };
@@ -245,22 +245,19 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
             if let Ok(Some(v)) = self.deq.run(queue, (), guard, pool) {
                 return Ok(v);
             }
-            self.deq.reset(guard, false, pool);
+            self.deq.reset(false, guard, pool);
         }
     }
 
-    fn reset(&mut self, guard: &mut Guard, nested: bool, pool: &'static PoolHandle) {
-        self.deq.reset(guard, nested, pool);
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        self.deq.reset(nested, guard, pool);
     }
 }
 
 impl<T: Clone> Drop for DequeueSome<T> {
     fn drop(&mut self) {
         todo!(
-            "deq가 reset 되어있지 않으면 panic. is_reset API 파서 deq.is_reset()으로 확인해야 할듯.
-            그러나 잘 안됨:
-            - 여기서 T: 'static 붙은 Memento의 API를 쓰려면 Drop에도 T: 'static 붙이라하고, struct에도 붙이라하고..
-            - 결국 전체 다 T: 'static 붙여야하는 걸로 보였음. 이래도 괜찮나?"
+            "deq가 reset 되어있지 않으면 panic. is_reset API 파서 deq.is_reset()으로 확인해야 할듯"
         )
     }
 }
@@ -675,7 +672,7 @@ mod test {
             Ok(())
         }
 
-        fn reset(&mut self, _: &mut Guard, _: bool, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
     }
