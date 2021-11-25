@@ -10,6 +10,7 @@ use rand::{thread_rng, Rng};
 
 use crate::exchanger::{Exchanger, TryExchange};
 use crate::persistent::*;
+use crate::plocation::ll::persist_obj;
 use crate::plocation::pool::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::stack::*;
@@ -99,6 +100,7 @@ where
     fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
+            persist_obj(&self.state, true);
         }
 
         self.try_exchange.reset(true, pool);
@@ -106,6 +108,7 @@ where
 
         if nested {
             self.state = State::TryingInner;
+            persist_obj(&self.state, true);
         }
     }
 }
@@ -166,6 +169,7 @@ where
     fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
+            persist_obj(&self.state, true);
         }
 
         self.try_pop.reset(true, pool);
@@ -173,6 +177,7 @@ where
 
         if nested {
             self.state = State::TryingInner;
+            persist_obj(&self.state, true);
         }
     }
 }
@@ -236,6 +241,7 @@ where
 
             // Trying push was fail, now try elimination backoff
             client.state = State::Eliminating;
+            persist_obj(&client.state, true);
         }
 
         client
@@ -252,6 +258,7 @@ where
             .map(|_| ())
             .map_err(|_| {
                 client.state = State::TryingInner;
+                persist_obj(&client.state, true);
                 TryFail
             })
     }
@@ -277,6 +284,7 @@ where
 
             // Trying pop was fail, now try elimination backoff
             client.state = State::Eliminating;
+            persist_obj(&client.state, true);
         }
 
         client
@@ -297,6 +305,7 @@ where
             })
             .map_err(|_| {
                 client.state = State::TryingInner;
+                persist_obj(&client.state, true);
                 TryFail
             })
     }
