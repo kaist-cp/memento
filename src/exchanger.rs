@@ -19,6 +19,7 @@ use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
+use crate::plocation::ll::persist_obj;
 use crate::plocation::pool::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 
@@ -139,10 +140,10 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         xchg.exchange(self, value, Timeout::Limited(timeout), cond, &guard, pool)
     }
 
+    // TODO: persist
     fn reset(&mut self, _: bool, _: &PoolHandle) {
         self.node.store(PShared::null(), Ordering::SeqCst);
-        // TODO: if not finished -> free node
-        // TODO: if node has not been freed, free node
+        // TODO: 그냥 내 노드 프리하면 될 듯
     }
 }
 
@@ -203,10 +204,10 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
+    // TODO: persist
     fn reset(&mut self, _: bool, _: &PoolHandle) {
         self.node.store(PShared::null(), Ordering::SeqCst);
-        // TODO: if not finished -> free node
-        // TODO: if node has not been freed, free node
+        // TODO: 그냥 내 노드 프리하면 될 듯
     }
 }
 
@@ -256,6 +257,7 @@ impl<T: Clone> Exchanger<T> {
             // myop이 null이면 node 할당이 안 된 것이다
             let n = POwned::new(Node::from(value), pool).into_shared(guard);
             client.node().store(n, Ordering::SeqCst);
+            persist_obj(client.node(), true);
             myop = n;
         }
 
@@ -296,6 +298,7 @@ impl<T: Clone> Exchanger<T> {
                         )
                         .is_ok()
                     {
+                        persist_obj(&self.slot, true);
                         return Err(TryFail);
                     }
 
@@ -325,6 +328,7 @@ impl<T: Clone> Exchanger<T> {
                     Ordering::SeqCst,
                     guard,
                 );
+                persist_obj(&self.slot, true);
                 continue;
             }
 
@@ -343,6 +347,8 @@ impl<T: Clone> Exchanger<T> {
 
                     // slot에 있는 node를 짝꿍 삼기 시도
                     myop_ref.partner.store(yourop, Ordering::SeqCst);
+                    persist_obj(&myop_ref.partner, true);
+
                     if self
                         .slot
                         .compare_exchange(
@@ -354,12 +360,16 @@ impl<T: Clone> Exchanger<T> {
                         )
                         .is_ok()
                     {
+                        persist_obj(&self.slot, true); // slot에 있는 WAITING 노드는 partner가 없다는 invariant를 위함
+                                                       // persist 안하면 slot이 waiting 노드에서 안 바뀐 채로 partner가 생겨 버림
                         self.help(myop, guard, pool);
                         return Ok(Self::finish(myop_ref));
                     }
                 }
                 BUSY => {
                     // Case 4: slot에서 누군가가 짝짓기 중 (나일 수도 있음)
+                    persist_obj(&self.slot, true); // slot에 있는 WAITING 노드는 partner가 없다는 invariant를 위함
+                                                   // persist 안하면 slot이 waiting 노드에서 안 바뀐 채로 partner가 생겨 버림
                     self.help(yourop, guard, pool);
                 }
                 _ => {
@@ -381,11 +391,15 @@ impl<T: Clone> Exchanger<T> {
             let lval = ptr::read(&yourop_ref.mine as *const _);
             let rval = ptr::read(&partner_ref.mine as *const _);
             (yourop_ref.yours.as_ptr() as *mut T).write(rval);
+            persist_obj(&yourop_ref.yours, true);
             (partner_ref.yours.as_ptr() as *mut T).write(lval);
+            persist_obj(&partner_ref.yours, true);
         }
 
         yourop_ref.response.store(true, Ordering::SeqCst);
+        persist_obj(&yourop_ref.response, true);
         partner_ref.response.store(true, Ordering::SeqCst);
+        persist_obj(&yourop_ref.response, true);
 
         // slot 비우기
         let _ = self.slot.compare_exchange(
@@ -395,6 +409,7 @@ impl<T: Clone> Exchanger<T> {
             Ordering::SeqCst,
             guard,
         );
+        persist_obj(&self.slot, true); // TODO: 내가 짝짓기 주인공일 때에만 persist하는 최적화할 수 있을 듯?
     }
 
     /// 상대에게서 받아온 item을 반환
