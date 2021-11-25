@@ -1,8 +1,8 @@
 //! Trait collection for persistent objects
 
-use std::{mem::ManuallyDrop, ptr};
-
 use crate::plocation::{pool::PoolHandle, ralloc::Collectable};
+use crossbeam_epoch::Guard;
+use std::{mem::ManuallyDrop, ptr};
 
 /// Ownership을 얼리기 위한 wrapper.
 ///
@@ -75,8 +75,9 @@ impl<T> Frozen<T> {
 ///
 /// # Safety
 ///
-/// 초기화 혹은 `reset()` 후 다음 `reset()` 전까지
-/// `Memento`은 *반드시* 한 object에 대해서만 `run()`을 수행해야 함.
+/// * 초기화 혹은 `reset()` 후 다음 `reset()` 전까지 `Memento`은 *반드시* 한 object에 대해서만 `run()`을 수행해야 함.
+/// * `Memento`는 자신 혹은 자신이 사용한 `Guard`가 Drop 될 때 *반드시* `reset()` 되어있는 상태여야 함.
+///
 // TODO: Pop operation과 헷갈릴 수 있음. 구분 필요하면 "Op"부분을 바꾸기
 pub trait Memento: Default + Collectable {
     /// Persistent op의 target object
@@ -107,6 +108,7 @@ pub trait Memento: Default + Collectable {
         &'o mut self,
         object: Self::Object<'o>,
         input: Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error>;
 
@@ -120,5 +122,5 @@ pub trait Memento: Default + Collectable {
     /// 나타내는 flag가 켜져있으므로 하위 op의 reset이 따로 reset flag를 설정할 필요가 없다. 이를 위해 하위
     /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
     /// 알려줄 수 있다.
-    fn reset(&mut self, nested: bool, pool: &'static PoolHandle);
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle);
 }

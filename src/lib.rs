@@ -14,7 +14,7 @@
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
 #![deny(unaligned_references)]
-#![deny(unused_crate_dependencies)]
+// #![deny(unused_crate_dependencies)] // TODO: obj 주석 해제하면서 이 주석도 같이 해제
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
@@ -36,16 +36,17 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
-pub mod elim_stack; // TODO: free, persist 추가
-pub mod exchanger; // TODO: free, persist 추가
-pub mod list; // TODO: free, persist 추가
-pub mod lock; // TODO: free, persist 추가
+// pub mod elim_stack; // TODO: free, persist 추가하며 주석 해제
+// pub mod exchanger; // TODO: free, persist 추가하며 주석 해제
+// pub mod list; // TODO: free, persist 추가하며 주석 해제
+// pub mod lock; // TODO: free, persist 추가하며 주석 해제
 pub mod persistent;
-pub mod pipe; // TODO: free 추가
-pub mod queue; // TODO: free 추가
-pub mod stack; // TODO: free, persist 추가
-pub mod ticket_lock; // TODO: free, persist 추가
-pub mod treiber_stack; // TODO: free, persist 추가
+pub mod pipe; // TODO: persist 추가
+pub mod queue; // TODO: persist 추가
+
+// pub mod stack; // TODO: free, persist 추가하며 주석 해제
+// pub mod ticket_lock; // TODO: free, persist 추가하며 주석 해제
+// pub mod treiber_stack; // TODO: free, persist 추가하며 주석 해제
 
 // Persistent location
 pub mod plocation;

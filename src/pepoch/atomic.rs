@@ -238,9 +238,8 @@ impl<T> Pointable for T {
 
     unsafe fn init(init: Self::Init, pool: &PoolHandle) -> usize {
         let ptr = pool.alloc::<T>();
-        // TODO(persistent allocator): 여기서 crash 나면 leak남. 해결 필요
         let t = ptr.deref_mut(pool);
-        *t = init;
+        std::ptr::write(t as *mut T, init);
         persist_obj(t, true);
         ptr.into_offset()
     }

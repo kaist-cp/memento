@@ -5,7 +5,7 @@ use crossbeam_utils::CachePadded;
 use etrace::some_or;
 use std::{mem::MaybeUninit, ptr};
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*, ptr::*};
@@ -98,18 +98,30 @@ impl<T: 'static + Clone> Memento for Enqueue<T> {
         &'o mut self,
         queue: Self::Object<'o>,
         value: Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-
-        queue.enqueue(self, value, &guard, pool);
+        queue.enqueue(self, value, guard, pool);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if not finished -> free node (+ free가 반영되게끔 flush 해줘야함)
-        self.mine.store(PShared::null(), Ordering::SeqCst);
-        persist_obj(&self.mine, true)
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let mine = self.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            self.mine.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.mine, true);
+
+            // crash-free execution이니 내가 가지고 있던 노드는 enq 되었음이 확실 => 내가 free하면 안됨
+        }
+    }
+}
+
+impl<T: Clone> Drop for Enqueue<T> {
+    fn drop(&mut self) {
+        let mine = self
+            .mine
+            .load(Ordering::SeqCst, unsafe { epoch::unprotected() });
+        assert!(mine.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -151,17 +163,23 @@ impl<T: 'static + Clone> Memento for Dequeue<T> {
         &'o mut self,
         queue: Self::Object<'o>,
         (): Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-
-        Ok(queue.dequeue(self, &guard, pool))
+        Ok(queue.dequeue(self, guard, pool))
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if node has not been freed, check if the node is mine and free it
-        self.target.store(PShared::null(), Ordering::SeqCst);
-        persist_obj(&self.target, true)
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let target = self.target.load(Ordering::SeqCst, guard);
+        if target.tag() == Queue::<T>::EMPTY || !target.is_null() {
+            // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+            // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+
+            // crash-free execution이니 내가 deq 성공한 노드임이 확실 => 내가 free
+            unsafe { guard.defer_pdestroy(target) };
+        }
     }
 }
 
@@ -170,6 +188,14 @@ impl<T: Clone> Dequeue<T> {
     fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         unsafe { self.as_pptr(pool).into_offset() }
+    }
+}
+
+impl<T: Clone> Drop for Dequeue<T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let target = self.target.load(Ordering::SeqCst, guard);
+        assert!(target.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -212,18 +238,27 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
         &'o mut self,
         queue: Self::Object<'o>,
         (): Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
-            if let Ok(Some(v)) = self.deq.run(queue, (), pool) {
+            if let Ok(Some(v)) = self.deq.run(queue, (), guard, pool) {
                 return Ok(v);
             }
-            self.deq.reset(false, pool);
+            self.deq.reset(false, guard, pool);
         }
     }
 
-    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
-        self.deq.reset(nested, pool);
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        self.deq.reset(nested, guard, pool);
+    }
+}
+
+impl<T: Clone> Drop for DequeueSome<T> {
+    fn drop(&mut self) {
+        todo!(
+            "deq가 reset 되어있지 않으면 panic. is_reset API 파서 deq.is_reset()으로 확인해야 할듯"
+        )
     }
 }
 
@@ -580,12 +615,12 @@ mod test {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             self.init(pool);
 
             // Alias
-            let guard = unsafe { epoch::unprotected() };
             let (q, enqs, deqs) = (
                 unsafe { self.queue.load(Ordering::SeqCst, guard).deref(pool) },
                 &mut self.enqs,
@@ -607,9 +642,10 @@ mod test {
                     };
 
                     let _ = scope.spawn(move |_| {
+                        let mut guard = epoch::pin();
                         for i in 0..COUNT {
-                            let _ = enq_arr[i].run(q, tid, pool);
-                            assert!(deq_arr[i].run(q, (), pool).unwrap().is_some());
+                            let _ = enq_arr[i].run(q, tid, &mut guard, pool);
+                            assert!(deq_arr[i].run(q, (), &mut guard, pool).unwrap().is_some());
                         }
                     });
                 }
@@ -617,8 +653,9 @@ mod test {
             .unwrap();
 
             // Check empty
+            let mut guard = epoch::pin();
             assert!(Dequeue::<usize>::default()
-                .run(q, (), pool)
+                .run(q, (), &mut guard, pool)
                 .unwrap()
                 .is_none());
 
@@ -626,7 +663,7 @@ mod test {
             let mut results = vec![0_usize; NR_THREAD];
             for deq_arr in deqs.iter_mut() {
                 for deq in deq_arr.iter_mut() {
-                    let ret = deq.run(&q, (), pool).unwrap().unwrap();
+                    let ret = deq.run(&q, (), &mut guard, pool).unwrap().unwrap();
                     results[ret] += 1;
                 }
             }
@@ -635,7 +672,7 @@ mod test {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
     }
@@ -649,6 +686,7 @@ mod test {
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
     //
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+    // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn enq_deq() {
