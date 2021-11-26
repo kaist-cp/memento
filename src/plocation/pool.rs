@@ -13,6 +13,7 @@ use crate::plocation::global::global_pool;
 use crate::plocation::ll::persist_obj;
 use crate::plocation::ptr::PPtr;
 use crate::plocation::{global, ralloc::*};
+use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
 
 // metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
@@ -98,10 +99,8 @@ impl PoolHandle {
                             let hanlder = scope.spawn(move |_| {
                                 let m = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let mut g = crossbeam_epoch::pin(); // TODO: g = oldguard(mid)로 변경;
-
+                                let mut g = epoch::old_guard(mid);
                                 // TODO: m.set_recovery();
-
                                 let _ = m.run(o, mid, &mut g, self);
                             });
 
