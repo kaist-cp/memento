@@ -94,7 +94,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
 
 impl<T: Clone, S: Stack<T>> Drop for Push<T, S> {
     fn drop(&mut self) {
-        todo!("try_push가 reset 되어있지 않으면 panic")
+        // TODO: try_push가 reset 되어있지 않으면 panic
     }
 }
 
@@ -150,7 +150,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
 
 impl<T: Clone, S: Stack<T>> Drop for Pop<T, S> {
     fn drop(&mut self) {
-        todo!("try_pop이 reset 되어있지 않으면 panic")
+        // TODO: try_pop이 reset 되어있지 않으면 panic
     }
 }
 

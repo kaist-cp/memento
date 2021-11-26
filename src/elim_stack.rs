@@ -6,6 +6,7 @@
 //       - 밝혀진 느린 이유: exchange 하게 되면 느려짐. exchager의 helping 메커니즘이 문제일 수도 있음
 
 use chrono::Duration;
+use crossbeam_epoch::Guard;
 use rand::{thread_rng, Rng};
 
 use crate::exchanger::{Exchanger, TryExchange};
@@ -92,19 +93,20 @@ where
         &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        stack.try_push(self, value, pool)
+        stack.try_push(self, value, guard, pool)
     }
 
-    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
             persist_obj(&self.state, true);
         }
 
-        self.try_exchange.reset(true, pool);
-        self.try_push.reset(true, pool);
+        self.try_exchange.reset(true, guard, pool);
+        self.try_push.reset(true, guard, pool);
 
         if nested {
             self.state = State::TryingInner;
@@ -161,19 +163,20 @@ where
         &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        stack.try_pop(self, pool)
+        stack.try_pop(self, guard, pool)
     }
 
-    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
             persist_obj(&self.state, true);
         }
 
-        self.try_pop.reset(true, pool);
-        self.try_exchange.reset(true, pool);
+        self.try_pop.reset(true, guard, pool);
+        self.try_exchange.reset(true, guard, pool);
 
         if nested {
             self.state = State::TryingInner;
@@ -222,18 +225,19 @@ where
         &self,
         client: &mut TryPush<T, S>,
         value: T,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), TryFail> {
         if let State::Resetting = client.state {
             // TODO: recovery 중에만 검사하도록
-            client.reset(false, pool);
+            client.reset(false, guard, pool);
         }
 
         // TODO 느린 이유 의심: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
         if let State::TryingInner = client.state {
             if client
                 .try_push
-                .run(&self.inner, value.clone(), pool)
+                .run(&self.inner, value.clone(), guard, pool)
                 .is_ok()
             {
                 return Ok(());
@@ -253,6 +257,7 @@ where
                     Duration::milliseconds(ELIM_DELAY),
                     |req| matches!(req, Request::Pop),
                 ),
+                guard,
                 pool,
             )
             .map(|_| ())
@@ -270,15 +275,16 @@ where
     fn try_pop(
         &self,
         client: &mut TryPop<T, S>,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Option<T>, TryFail> {
         if let State::Resetting = client.state {
             // TODO: recovery 중에만 검사하도록
-            client.reset(false, pool);
+            client.reset(false, guard, pool);
         }
 
         if let State::TryingInner = client.state {
-            if let Ok(v) = client.try_pop.run(&self.inner, (), pool) {
+            if let Ok(v) = client.try_pop.run(&self.inner, (), guard, pool) {
                 return Ok(v);
             }
 
@@ -294,6 +300,7 @@ where
                 (Request::Pop, Duration::milliseconds(ELIM_DELAY), |req| {
                     matches!(req, Request::Push(_))
                 }),
+                guard,
                 pool,
             )
             .map(|req| {
