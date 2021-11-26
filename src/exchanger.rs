@@ -17,7 +17,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::mem::MaybeUninit;
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ll::persist_obj;
 use crate::plocation::pool::*;
@@ -133,17 +133,19 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         &'o mut self,
         xchg: Self::Object<'o>,
         (value, timeout, cond): Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-
-        xchg.exchange(self, value, Timeout::Limited(timeout), cond, &guard, pool)
+        xchg.exchange(self, value, Timeout::Limited(timeout), cond, guard, pool)
     }
 
-    // TODO: persist
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        self.node.store(PShared::null(), Ordering::SeqCst);
-        // TODO: 그냥 내 노드 프리하면 될 듯
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let node = self.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            self.node.store(PShared::null(), Ordering::SeqCst);
+            // TODO: 이 사이에 죽으면 partner의 포인터에 의해 gc가 수거하지 못해 leak 발생
+            unsafe { guard.defer_pdestroy(node) };
+        }
     }
 }
 
@@ -195,19 +197,21 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         &'o mut self,
         xchg: Self::Object<'o>,
         (value, cond): Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-
         Ok(xchg
-            .exchange(self, value, Timeout::Unlimited, cond, &guard, pool)
+            .exchange(self, value, Timeout::Unlimited, cond, guard, pool)
             .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
-    // TODO: persist
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        self.node.store(PShared::null(), Ordering::SeqCst);
-        // TODO: 그냥 내 노드 프리하면 될 듯
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let node = self.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            self.node.store(PShared::null(), Ordering::SeqCst);
+            // TODO: 이 사이에 죽으면 partner의 포인터에 의해 gc가 수거하지 못해 leak 발생
+            unsafe { guard.defer_pdestroy(node) };
+        }
     }
 }
 
@@ -468,6 +472,7 @@ mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            _: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let xchg = &self.xchg;
@@ -482,8 +487,11 @@ mod tests {
                             .unwrap()
                     };
                     let _ = scope.spawn(move |_| {
+                        let mut guard = epoch::pin();
                         // `move` for `tid`
-                        let ret = exchange.run(xchg, (tid, |_| true), pool).unwrap();
+                        let ret = exchange
+                            .run(xchg, (tid, |_| true), &mut guard, pool)
+                            .unwrap();
                         assert_eq!(ret, 1 - tid);
                     });
                 }
@@ -493,7 +501,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }
@@ -566,6 +574,7 @@ mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            mut guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let lxchg = &self.lxchg;
@@ -581,24 +590,34 @@ mod tests {
             #[allow(box_pointers)]
             thread::scope(|scope| {
                 let _ = scope.spawn(|_| {
+                    let mut guard = epoch::pin();
                     // [0] -> [1]    [2]
-                    *item0 = exchange0.run(lxchg, (*item0, |_| true), pool).unwrap();
+                    *item0 = exchange0
+                        .run(lxchg, (*item0, |_| true), &mut guard, pool)
+                        .unwrap();
                     assert_eq!(*item0, 1);
                 });
 
                 let _ = scope.spawn(|_| {
+                    let mut guard = epoch::pin();
                     // [0]    [1] <- [2]
-                    *item2 = exchange2.run(rxchg, (*item2, |_| true), pool).unwrap();
+                    *item2 = exchange2
+                        .run(rxchg, (*item2, |_| true), &mut guard, pool)
+                        .unwrap();
                     assert_eq!(*item2, 0);
                 });
 
                 // Composition in the middle
                 // Step1: [0] <- [1]    [2]
-                *item1 = exchange1_0.run(lxchg, (*item1, |_| true), pool).unwrap();
+                *item1 = exchange1_0
+                    .run(lxchg, (*item1, |_| true), &mut guard, pool)
+                    .unwrap();
                 assert_eq!(*item1, 0);
 
                 // Step2: [1]    [0] -> [2]
-                *item1 = exchange1_2.run(rxchg, (*item1, |_| true), pool).unwrap();
+                *item1 = exchange1_2
+                    .run(rxchg, (*item1, |_| true), &mut guard, pool)
+                    .unwrap();
                 assert_eq!(*item1, 2);
             })
             .unwrap();
@@ -606,7 +625,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }
@@ -666,6 +685,7 @@ mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let xchg = &self.xchg;
@@ -683,11 +703,14 @@ mod tests {
                     };
 
                     let _ = scope.spawn(move |_| {
+                        let mut guard = epoch::pin();
+
                         // `move` for `tid`
                         for (i, exchange) in exchanges_arr.iter_mut().enumerate() {
                             if let Err(_) = exchange.run(
                                 xchg,
                                 (tid, Duration::milliseconds(500), |_| true),
+                                &mut guard,
                                 pool,
                             ) {
                                 // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
@@ -735,7 +758,12 @@ mod tests {
                         break;
                     }
                     let ret = exchange
-                        .run(xchg, (666, Duration::milliseconds(0), |_| true), pool)
+                        .run(
+                            xchg,
+                            (666, Duration::milliseconds(0), |_| true),
+                            guard,
+                            pool,
+                        )
                         .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
                     results[ret] += 1;
                 }
@@ -750,7 +778,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }

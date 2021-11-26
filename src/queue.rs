@@ -632,7 +632,11 @@ mod test {
 
             // Alias
             let (q, enqs, deqs) = (
-                unsafe { self.queue.load(Ordering::SeqCst, guard).deref(pool) },
+                unsafe {
+                    self.queue
+                        .load(Ordering::SeqCst, epoch::unprotected())
+                        .deref(pool)
+                },
                 &mut self.enqs,
                 &mut self.deqs,
             );
@@ -663,9 +667,8 @@ mod test {
             .unwrap();
 
             // Check empty
-            let mut guard = epoch::pin();
             assert!(Dequeue::<usize>::default()
-                .run(q, (), &mut guard, pool)
+                .run(q, (), guard, pool)
                 .unwrap()
                 .is_none());
 
@@ -673,7 +676,7 @@ mod test {
             let mut results = vec![0_usize; NR_THREAD];
             for deq_arr in deqs.iter_mut() {
                 for deq in deq_arr.iter_mut() {
-                    let ret = deq.run(&q, (), &mut guard, pool).unwrap().unwrap();
+                    let ret = deq.run(&q, (), guard, pool).unwrap().unwrap();
                     results[ret] += 1;
                 }
             }
