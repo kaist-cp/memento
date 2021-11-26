@@ -17,8 +17,9 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::mem::MaybeUninit;
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::persistent::*;
+use crate::plocation::ll::persist_obj;
 use crate::plocation::pool::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 
@@ -132,17 +133,19 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         &'o mut self,
         xchg: Self::Object<'o>,
         (value, timeout, cond): Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-
-        xchg.exchange(self, value, Timeout::Limited(timeout), cond, &guard, pool)
+        xchg.exchange(self, value, Timeout::Limited(timeout), cond, guard, pool)
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        self.node.store(PShared::null(), Ordering::SeqCst);
-        // TODO: if not finished -> free node
-        // TODO: if node has not been freed, free node
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let node = self.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            self.node.store(PShared::null(), Ordering::SeqCst);
+            // TODO: 이 사이에 죽으면 partner의 포인터에 의해 gc가 수거하지 못해 leak 발생
+            unsafe { guard.defer_pdestroy(node) };
+        }
     }
 }
 
@@ -194,19 +197,21 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         &'o mut self,
         xchg: Self::Object<'o>,
         (value, cond): Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-
         Ok(xchg
-            .exchange(self, value, Timeout::Unlimited, cond, &guard, pool)
+            .exchange(self, value, Timeout::Unlimited, cond, guard, pool)
             .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        self.node.store(PShared::null(), Ordering::SeqCst);
-        // TODO: if not finished -> free node
-        // TODO: if node has not been freed, free node
+    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+        let node = self.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            self.node.store(PShared::null(), Ordering::SeqCst);
+            // TODO: 이 사이에 죽으면 partner의 포인터에 의해 gc가 수거하지 못해 leak 발생
+            unsafe { guard.defer_pdestroy(node) };
+        }
     }
 }
 
@@ -256,6 +261,7 @@ impl<T: Clone> Exchanger<T> {
             // myop이 null이면 node 할당이 안 된 것이다
             let n = POwned::new(Node::from(value), pool).into_shared(guard);
             client.node().store(n, Ordering::SeqCst);
+            persist_obj(client.node(), true);
             myop = n;
         }
 
@@ -296,6 +302,7 @@ impl<T: Clone> Exchanger<T> {
                         )
                         .is_ok()
                     {
+                        persist_obj(&self.slot, true);
                         return Err(TryFail);
                     }
 
@@ -325,6 +332,7 @@ impl<T: Clone> Exchanger<T> {
                     Ordering::SeqCst,
                     guard,
                 );
+                persist_obj(&self.slot, true);
                 continue;
             }
 
@@ -343,6 +351,8 @@ impl<T: Clone> Exchanger<T> {
 
                     // slot에 있는 node를 짝꿍 삼기 시도
                     myop_ref.partner.store(yourop, Ordering::SeqCst);
+                    persist_obj(&myop_ref.partner, true);
+
                     if self
                         .slot
                         .compare_exchange(
@@ -354,12 +364,16 @@ impl<T: Clone> Exchanger<T> {
                         )
                         .is_ok()
                     {
+                        persist_obj(&self.slot, true); // slot에 있는 WAITING 노드는 partner가 없다는 invariant를 위함
+                                                       // persist 안하면 slot이 waiting 노드에서 안 바뀐 채로 partner가 생겨 버림
                         self.help(myop, guard, pool);
                         return Ok(Self::finish(myop_ref));
                     }
                 }
                 BUSY => {
                     // Case 4: slot에서 누군가가 짝짓기 중 (나일 수도 있음)
+                    persist_obj(&self.slot, true); // slot에 있는 WAITING 노드는 partner가 없다는 invariant를 위함
+                                                   // persist 안하면 slot이 waiting 노드에서 안 바뀐 채로 partner가 생겨 버림
                     self.help(yourop, guard, pool);
                 }
                 _ => {
@@ -381,11 +395,15 @@ impl<T: Clone> Exchanger<T> {
             let lval = ptr::read(&yourop_ref.mine as *const _);
             let rval = ptr::read(&partner_ref.mine as *const _);
             (yourop_ref.yours.as_ptr() as *mut T).write(rval);
+            persist_obj(&yourop_ref.yours, true);
             (partner_ref.yours.as_ptr() as *mut T).write(lval);
+            persist_obj(&partner_ref.yours, true);
         }
 
         yourop_ref.response.store(true, Ordering::SeqCst);
+        persist_obj(&yourop_ref.response, true);
         partner_ref.response.store(true, Ordering::SeqCst);
+        persist_obj(&yourop_ref.response, true);
 
         // slot 비우기
         let _ = self.slot.compare_exchange(
@@ -395,6 +413,7 @@ impl<T: Clone> Exchanger<T> {
             Ordering::SeqCst,
             guard,
         );
+        persist_obj(&self.slot, true); // TODO: 내가 짝짓기 주인공일 때에만 persist하는 최적화할 수 있을 듯?
     }
 
     /// 상대에게서 받아온 item을 반환
@@ -453,6 +472,7 @@ mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            _: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let xchg = &self.xchg;
@@ -467,8 +487,11 @@ mod tests {
                             .unwrap()
                     };
                     let _ = scope.spawn(move |_| {
+                        let mut guard = epoch::pin();
                         // `move` for `tid`
-                        let ret = exchange.run(xchg, (tid, |_| true), pool).unwrap();
+                        let ret = exchange
+                            .run(xchg, (tid, |_| true), &mut guard, pool)
+                            .unwrap();
                         assert_eq!(ret, 1 - tid);
                     });
                 }
@@ -478,7 +501,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }
@@ -551,6 +574,7 @@ mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            mut guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let lxchg = &self.lxchg;
@@ -566,24 +590,34 @@ mod tests {
             #[allow(box_pointers)]
             thread::scope(|scope| {
                 let _ = scope.spawn(|_| {
+                    let mut guard = epoch::pin();
                     // [0] -> [1]    [2]
-                    *item0 = exchange0.run(lxchg, (*item0, |_| true), pool).unwrap();
+                    *item0 = exchange0
+                        .run(lxchg, (*item0, |_| true), &mut guard, pool)
+                        .unwrap();
                     assert_eq!(*item0, 1);
                 });
 
                 let _ = scope.spawn(|_| {
+                    let mut guard = epoch::pin();
                     // [0]    [1] <- [2]
-                    *item2 = exchange2.run(rxchg, (*item2, |_| true), pool).unwrap();
+                    *item2 = exchange2
+                        .run(rxchg, (*item2, |_| true), &mut guard, pool)
+                        .unwrap();
                     assert_eq!(*item2, 0);
                 });
 
                 // Composition in the middle
                 // Step1: [0] <- [1]    [2]
-                *item1 = exchange1_0.run(lxchg, (*item1, |_| true), pool).unwrap();
+                *item1 = exchange1_0
+                    .run(lxchg, (*item1, |_| true), &mut guard, pool)
+                    .unwrap();
                 assert_eq!(*item1, 0);
 
                 // Step2: [1]    [0] -> [2]
-                *item1 = exchange1_2.run(rxchg, (*item1, |_| true), pool).unwrap();
+                *item1 = exchange1_2
+                    .run(rxchg, (*item1, |_| true), &mut guard, pool)
+                    .unwrap();
                 assert_eq!(*item1, 2);
             })
             .unwrap();
@@ -591,7 +625,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }
@@ -651,6 +685,7 @@ mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let xchg = &self.xchg;
@@ -668,11 +703,14 @@ mod tests {
                     };
 
                     let _ = scope.spawn(move |_| {
+                        let mut guard = epoch::pin();
+
                         // `move` for `tid`
                         for (i, exchange) in exchanges_arr.iter_mut().enumerate() {
                             if let Err(_) = exchange.run(
                                 xchg,
                                 (tid, Duration::milliseconds(500), |_| true),
+                                &mut guard,
                                 pool,
                             ) {
                                 // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
@@ -720,7 +758,12 @@ mod tests {
                         break;
                     }
                     let ret = exchange
-                        .run(xchg, (666, Duration::milliseconds(0), |_| true), pool)
+                        .run(
+                            xchg,
+                            (666, Duration::milliseconds(0), |_| true),
+                            guard,
+                            pool,
+                        )
                         .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
                     results[ret] += 1;
                 }
@@ -735,7 +778,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }

@@ -15,6 +15,7 @@ use crate::{
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
     persistent::*,
     plocation::{
+        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
@@ -35,7 +36,7 @@ enum State {
 
 #[derive(Debug)]
 struct Membership {
-    ticket: usize, // TODO: atomic?
+    ticket: usize,
     state: State,
 }
 
@@ -96,24 +97,23 @@ impl Memento for Lock {
         &'o mut self,
         lock: Self::Object<'o>,
         _: Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        Ok(lock.lock(self, &guard, pool))
+        Ok(lock.lock(self, guard, pool))
     }
 
     // TODO: reset을 해도 membership까지 reset 되거나 할당 해제되진 않을 것임 (state->Ready, ticket->NO_TICKET)
     //       이것이 디자인의 일관성을 깨진 않는지?
-    fn reset(&mut self, _: bool, pool: &PoolHandle) {
-        let guard = epoch::pin();
-
-        let mut m = self.membership.load(Ordering::SeqCst, &guard);
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        let mut m = self.membership.load(Ordering::SeqCst, guard);
         if m.is_null() {
             return;
         }
 
         let m_ref = unsafe { m.deref_mut(pool) };
         m_ref.state = State::Ready;
+        persist_obj(&m_ref.state, true);
     }
 }
 
@@ -144,13 +144,14 @@ impl Memento for Unlock {
         &'o mut self,
         lock: Self::Object<'o>,
         ticket: Self::Input,
-        _: &PoolHandle,
+        _: &mut Guard,
+        _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         lock.unlock(ticket);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {}
+    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {}
 }
 
 /// IMPORTANT: ticket의 overflow는 없다고 가정
@@ -172,7 +173,7 @@ impl Default for TicketLock {
 }
 
 impl TicketLock {
-    fn lock(&self, client: &mut Lock, guard: &Guard, pool: &'static PoolHandle) -> usize {
+    fn lock(&self, client: &mut Lock, guard: &mut Guard, pool: &'static PoolHandle) -> usize {
         let mut m = client.membership.load(Ordering::SeqCst, guard);
 
         if !client.registered {
@@ -180,19 +181,28 @@ impl TicketLock {
                 // membership 생성
                 let n = POwned::new(Membership::default(), pool).into_shared(guard);
                 client.membership.store(n, Ordering::SeqCst);
+                persist_obj(&client.membership, true);
                 m = n;
             }
+
+            let mut guard0 = epoch::pin(); // membership drop은 어차피 이 memento가 할 거라서 persistent context를 요구하진 않음
 
             // membership 등록: "(key: id, value: membership 포인터)"를 멤버리스트에 삽입
             if client
                 .register
-                .run(&self.members, (client.id(), m.into_usize()), pool)
+                .run(
+                    &self.members,
+                    (client.id(), m.into_usize()),
+                    &mut guard0,
+                    pool,
+                )
                 .is_err()
             {
                 unreachable!("Unique client ID as a key")
             }
 
             client.registered = true; // TODO: list insert에서 "recovery할 때만 해야할지 생각하기" 해결 후 지워도 되는지 확인
+            persist_obj(&client.registered, true);
         }
 
         let m_ref = unsafe { m.deref_mut(pool) };
@@ -201,9 +211,14 @@ impl TicketLock {
                 State::Ready => {
                     if m_ref.ticket != NO_TICKET {
                         m_ref.ticket = NO_TICKET;
+                        persist_obj(&m_ref.ticket, true);
                     }
                     m_ref.state = State::Trying;
-                    m_ref.ticket = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
+                    persist_obj(&m_ref.state, true);
+                    let t = self.next.fetch_add(TICKET_JUMP, Ordering::SeqCst); // where a crash matters
+                    persist_obj(&self.next, true);
+                    m_ref.ticket = t;
+                    persist_obj(&m_ref.ticket, true);
                     break;
                 }
                 State::Trying => {
@@ -212,18 +227,18 @@ impl TicketLock {
                     }
 
                     m_ref.state = State::Recovering;
+                    persist_obj(&m_ref.state, true);
                 }
                 State::Recovering => {
                     self.recover(guard, pool);
                     m_ref.state = State::Ready;
+                    persist_obj(&m_ref.state, true);
                 }
             };
         }
 
         let backoff = Backoff::default();
-        // let a = self.curr.load(Ordering::SeqCst);
         while self.curr.load(Ordering::SeqCst) < m_ref.ticket {
-            // println!("{} < {}", membership.ticket, a);
             backoff.snooze();
         }
 
@@ -281,8 +296,9 @@ impl TicketLock {
             }
 
             // curr가 티켓에 도달할 때까지 기다림
+            let backoff = Backoff::default();
             while lost > self.curr.load(Ordering::SeqCst) {
-                // Back-off
+                backoff.snooze();
             }
 
             // CAS로 잃어버린 티켓을 건너뛰게 해줌
@@ -298,6 +314,7 @@ impl TicketLock {
                 )
                 .is_ok()
             {
+                persist_obj(&self.curr, true); // 복구 공헌한 애만 persist를 하고 복구를 졸업
                 return;
             }
         }
@@ -308,6 +325,7 @@ impl TicketLock {
         assert!(ticket <= curr); // for idempotency of `Unlock::run()`
         if curr == ticket {
             self.curr.store(ticket.wrapping_add(1), Ordering::SeqCst);
+            persist_obj(&self.curr, true);
         }
     }
 }

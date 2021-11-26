@@ -379,6 +379,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
+                        // TODO: 여기서 tail을 persist 하는 건 핵손해. offline-gc phase에서 tail align을 해줘야 할 듯
                     })
                     .map_err(|_| ());
             } else {
@@ -427,10 +428,12 @@ impl<T: Clone> Queue<T> {
         if !target.is_null() {
             // post-crash execution (trying)
             let target_ref = unsafe { target.deref(pool) };
+            let next = target_ref.next.load(Ordering::SeqCst, guard);
+            let next_ref = unsafe { next.deref(pool) };
 
             // node가 정말 내가 dequeue한 게 맞는지 확인
-            if target_ref.dequeuer.load(Ordering::SeqCst) == client.id(pool) {
-                return Some(Self::finish_dequeue(target_ref));
+            if next_ref.dequeuer.load(Ordering::SeqCst) == client.id(pool) {
+                return Some(Self::finish_dequeue(next_ref));
             }
         }
 
@@ -477,7 +480,7 @@ impl<T: Clone> Queue<T> {
                 return Err(());
             } else {
                 // 우선 내가 dequeue할 node를 가리킴
-                client.target.store(next, Ordering::SeqCst);
+                client.target.store(head, Ordering::SeqCst);
                 persist_obj(&client.target, true);
 
                 // 실제로 dequeue 함
@@ -499,12 +502,13 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
+                        persist_obj(&self.head, true);
                         Some(Self::finish_dequeue(next_ref))
                     })
                     .map_err(|_| {
                         let h = self.head.load(Ordering::SeqCst, guard);
                         if h == head {
-                            persist_obj(&next_ref.dequeuer, true);
+                            persist_obj(&next_ref.dequeuer, true); // enqueuer에게 enqueue 됐다는 확신을 주기 위해 head advance 전에 persist 해야 함
                             let _ = self.head.compare_exchange(
                                 head,
                                 next,
@@ -522,7 +526,6 @@ impl<T: Clone> Queue<T> {
 
     fn finish_dequeue(node: &Node<T>) -> T {
         unsafe { (*node.data.as_ptr()).clone() }
-        // TODO: free node
     }
 
     #[inline]
@@ -629,7 +632,11 @@ mod test {
 
             // Alias
             let (q, enqs, deqs) = (
-                unsafe { self.queue.load(Ordering::SeqCst, guard).deref(pool) },
+                unsafe {
+                    self.queue
+                        .load(Ordering::SeqCst, epoch::unprotected())
+                        .deref(pool)
+                },
                 &mut self.enqs,
                 &mut self.deqs,
             );
@@ -660,9 +667,8 @@ mod test {
             .unwrap();
 
             // Check empty
-            let mut guard = epoch::pin();
             assert!(Dequeue::<usize>::default()
-                .run(q, (), &mut guard, pool)
+                .run(q, (), guard, pool)
                 .unwrap()
                 .is_none());
 
@@ -670,7 +676,7 @@ mod test {
             let mut results = vec![0_usize; NR_THREAD];
             for deq_arr in deqs.iter_mut() {
                 for deq in deq_arr.iter_mut() {
-                    let ret = deq.run(&q, (), &mut guard, pool).unwrap().unwrap();
+                    let ret = deq.run(&q, (), guard, pool).unwrap().unwrap();
                     results[ret] += 1;
                 }
             }

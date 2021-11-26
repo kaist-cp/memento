@@ -1,24 +1,12 @@
 //! Persistent stack based on Treiber stack
 
-// TODO(SMR 적용):
-// - SMR 만든 후 crossbeam 걷어내기
-// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
-
-// TODO(pmem 사용(#31, #32)):
-// - persist를 위해 flush/fence 추가
-// - persistent location 위에서 동작
-
-// TODO(Ordering):
-// - Ordering 최적화
-
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::ll::persist_obj;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
-use crate::plocation::{pool::*, AsPPtr};
+use crate::plocation::{ll::*, pool::*, AsPPtr};
 use crate::stack::*;
 
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
@@ -467,6 +455,7 @@ impl<T: Clone> TreiberStack<T> {
             let n = POwned::new(Node::from(value), pool).into_shared(guard);
 
             client.mine().store(n, Ordering::SeqCst);
+            persist_obj(client.mine(), true);
             mine = n;
         } else if self.search(mine, guard, pool)
             || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
@@ -496,13 +485,17 @@ impl<T: Clone> TreiberStack<T> {
         let top = self.top.load(Ordering::SeqCst, guard);
 
         node_ref.next.store(top, Ordering::SeqCst);
+        persist_obj(&node_ref.next, true);
         self.top
             .compare_exchange(top, node, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| {
+                persist_obj(&self.top, true);
+
                 // @seungminjeon:
                 // - Tracking in Order의 Elim-stack은 여기서 pushed=true로 표시해주지만, 이는 불필요한 write 같음
                 // - 왜냐하면 push된 노드는 stack에 있거나 혹은 stack에 없으면(i.e. pop 되었으면) pushed=true 적혀있음이 보장되기 때문
                 node_ref.pushed = true;
+                persist_obj(&node_ref.pushed, true);
             })
             .map_err(|_| TryFail)
     }
@@ -560,6 +553,7 @@ impl<T: Clone> TreiberStack<T> {
                     )
                     .is_ok()
                 {
+                    persist_obj(&target_ref.popper, true);
                     return Ok(Some(Self::finish_pop(target_ref)));
                 }
             }
@@ -591,15 +585,18 @@ impl<T: Clone> TreiberStack<T> {
                 PShared::null().with_tag(TryPop::<T>::EMPTY),
                 Ordering::SeqCst,
             );
+            persist_obj(client.target(), true);
             return Ok(None);
         };
         let top_ref = unsafe { top.deref_mut(pool) };
 
         // 우선 내가 top node를 가리키고
         client.target().store(top, Ordering::SeqCst);
+        persist_obj(client.target(), true);
 
         // node가 push된 노드라고 마킹해준 후
         top_ref.pushed = true;
+        persist_obj(&top_ref.pushed, true);
 
         // top node를 next로 바꿈
         let next = top_ref.next.load(Ordering::SeqCst, guard);
@@ -611,6 +608,8 @@ impl<T: Clone> TreiberStack<T> {
             return Err(TryFail);
         }
 
+        persist_obj(&self.top, true);
+
         // top node에 내 이름 새겨넣음
         // CAS인 이유: pop 복구 중인 스레드와 경합이 일어날 수 있음
         top_ref
@@ -621,7 +620,10 @@ impl<T: Clone> TreiberStack<T> {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
-            .map(|_| Some(Self::finish_pop(top_ref)))
+            .map(|_| {
+                persist_obj(&top_ref.popper, true);
+                Some(Self::finish_pop(top_ref))
+            })
             .map_err(|_| TryFail)
     }
 

@@ -5,15 +5,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use etrace::some_or;
 
 use crate::{
-    pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
+    pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, PDestroyable, POwned, PShared},
     persistent::Memento,
     plocation::{
+        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,
     },
 };
 
-/// TODO: doc
+/// List에 들어가는 node
 // TODO: V가 포인터일 수 있으니 V도 Collectable이여야함
 #[derive(Debug)]
 pub struct Node<K, V> {
@@ -21,6 +22,7 @@ pub struct Node<K, V> {
     value: V,
     next: PAtomic<Node<K, V>>,
     remover: AtomicUsize,
+    inserted: bool,
 }
 
 impl<K, V> Node<K, V>
@@ -34,6 +36,7 @@ where
             value,
             next: PAtomic::null(),
             remover: AtomicUsize::new(List::<K, V>::no_remover()),
+            inserted: false,
         }
     }
 }
@@ -51,7 +54,7 @@ impl<K, V> Collectable for Node<K, V> {
     }
 }
 
-/// TODO: doc
+/// List의 제일 앞에 element를 추가하는 Memento
 #[derive(Debug)]
 pub struct InsertFront<K, V> {
     node: PAtomic<Node<K, V>>,
@@ -85,25 +88,29 @@ where
     type Object<'o> = &'o List<K, V>;
     type Input = (K, V);
     type Output<'o> = ();
-    type Error = ();
+    type Error = !;
 
     fn run<'o>(
         &'o mut self,
         list: Self::Object<'o>,
         (key, value): Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        list.insert_front(self, key, value, &guard, pool)
+        list.insert_front(self, key, value, guard, pool);
+        Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if not finished -> free node
-        self.node.store(PShared::null(), Ordering::SeqCst);
+    fn reset(&mut self, _: bool, guard: &mut Guard, _pool: &'static PoolHandle) {
+        let node = self.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            self.node.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.node, true);
+        }
     }
 }
 
-/// TODO: doc
+/// List에서 key에 해당하는 element를 제거하는 Memento
 #[derive(Debug)]
 pub struct Remove<K, V> {
     target: PAtomic<Node<K, V>>,
@@ -151,28 +158,35 @@ where
         &'o mut self,
         list: Self::Object<'o>,
         key: Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        Ok(list.remove(self, &key, &guard, pool))
+        Ok(list.remove(self, &key, guard, pool))
     }
 
-    fn reset(&mut self, nested: bool, _: &PoolHandle) {
-        let _ = nested;
-        unimplemented!()
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        let target = self.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+
+            if unsafe { target.deref(pool) }.remover.load(Ordering::SeqCst) == self.id(pool) {
+                unsafe { guard.defer_pdestroy(target) };
+            }
+        }
     }
 }
 
-/// TODO: doc
+/// List 탐색 도중 동시적으로 node 제거가 생길 경우 발생하는 에러
 #[derive(Debug)]
 pub struct Deprecated;
 
-/// TODO: doc
+/// List의 특정 node를 가리키는 cursor (Volatile)
 #[derive(Debug)]
 pub struct Cursor<'g, K, V> {
     prev: &'g PAtomic<Node<K, V>>,
 
-    /// TODO: doc
+    /// cursor가 가리키는 현재 node
     pub curr: PShared<'g, Node<K, V>>,
 }
 
@@ -208,10 +222,19 @@ where
 
             if next.tag() != Self::NOT_DELETED {
                 next = next.with_tag(Self::NOT_DELETED);
-                let _ = self
-                    .prev
-                    .compare_exchange(self.curr, next, Ordering::SeqCst, Ordering::SeqCst, guard)
-                    .map_err(|_| ())?;
+                let res = self.prev.compare_exchange(
+                    self.curr,
+                    next,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+                persist_obj(self.prev, true); // TODO: CAS 실패한 애도 persist 해야하는지 고민
+
+                if res.is_err() {
+                    return Err(());
+                }
+
                 self.curr = next;
                 continue;
             }
@@ -242,12 +265,15 @@ where
         let node_ref = unsafe { node.deref(pool) };
         node_ref.next.store(self.curr, Ordering::SeqCst);
 
-        self.prev
-            .compare_exchange(self.curr, node, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| {
-                self.curr = node;
-            })
-            .map_err(|_| ())
+        let res =
+            self.prev
+                .compare_exchange(self.curr, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+        persist_obj(self.prev, true); // TODO: CAS 실패한 애도 persist 해야하는지 고민
+
+        res.map(|_| {
+            self.curr = node;
+        })
+        .map_err(|_| ())
     }
 
     /// Deletes the current node.
@@ -266,6 +292,8 @@ where
         let next = curr_node
             .next
             .fetch_or(Self::DELETED, Ordering::SeqCst, guard);
+        persist_obj(&curr_node.next, true); // TODO: FAO 실패한 애도 persist 해야하는지 고민
+
         if next.tag() == Self::DELETED {
             return Err(());
         }
@@ -285,14 +313,17 @@ where
             return Err(());
         }
 
+        persist_obj(&curr_node.remover, true);
+
         let _ =
             self.prev
                 .compare_exchange(self.curr, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        persist_obj(&self.prev, true);
 
         Ok(&curr_node.value)
     }
 
-    /// TODO: doc
+    /// cursor를 다음 node로 옮김
     #[inline]
     pub fn next(
         &mut self,
@@ -328,7 +359,8 @@ where
     }
 }
 
-/// TODO: doc
+/// Ticket lock에서 쓰기 위한 list
+/// `InsertFront`로 주어지는 Key는 모두 unique함을 가정
 #[derive(Debug)]
 pub struct List<K, V>
 where
@@ -352,7 +384,7 @@ impl<K, V> List<K, V>
 where
     K: Eq,
 {
-    /// TODO: doc
+    /// List의 head node
     pub fn head<'g>(&'g self, guard: &'g Guard) -> Cursor<'g, K, V> {
         Cursor {
             prev: &self.head,
@@ -376,7 +408,7 @@ where
         }
     }
 
-    /// TODO: doc
+    /// List에서 주어진 `key`를 가지는 element의 값을 구함
     #[inline]
     pub fn lookup<'g>(&'g self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Option<&'g V> {
         let (found, cursor) = self.find(key, guard, pool);
@@ -387,7 +419,6 @@ where
         }
     }
 
-    /// TODO: doc
     #[inline]
     fn insert_front<'g>(
         &'g self,
@@ -396,7 +427,7 @@ where
         value: V,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<(), ()> {
+    ) {
         let mut node = client.node.load(Ordering::SeqCst, guard);
 
         if node.is_null() {
@@ -405,35 +436,18 @@ where
 
             client.node.store(n, Ordering::SeqCst);
             node = n;
-        }
-
-        let node_ref = unsafe { node.deref(pool) };
-        let (found, cursor) = self.find(&node_ref.key, guard, pool);
-
-        // TODO: recovery할 때만 해야할지 생각하기
-        if found {
-            if node.as_ptr() == cursor.curr().as_ptr() {
-                return Ok(()); // 내가 넣은 것
-            } else {
-                return Err(()); // 이미 같은 키가 존재
-            }
-        } else if node_ref.remover.load(Ordering::SeqCst) != Self::no_remover() {
-            return Ok(()); // 내가 예전에 넣었는데 누군가 뺌
+        } else if self.search_node(node, guard, pool) || unsafe { node.deref(pool).inserted } {
+            return; // 이미 예전에 삽입함
         }
 
         loop {
+            // unique key만 주어진다는 보장
             if self.head(guard).insert(node, guard, pool).is_ok() {
-                return Ok(()); // 삽입 성공
-            }
-
-            let (found, _) = self.find(&node_ref.key, guard, pool);
-            if found {
-                return Err(()); // 이미 같은 키가 존재
+                return; // 삽입 성공
             }
         }
     }
 
-    /// TODO: doc
     #[inline]
     fn remove<'g>(
         &'g self,
@@ -475,6 +489,7 @@ where
                     )
                     .is_ok()
                 {
+                    persist_obj(&target_ref.remover, true);
                     return true; // Some(&target_ref.value);
                 }
             }
