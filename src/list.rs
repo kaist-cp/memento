@@ -8,6 +8,7 @@ use crate::{
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
     persistent::Memento,
     plocation::{
+        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,
     },
@@ -21,6 +22,7 @@ pub struct Node<K, V> {
     value: V,
     next: PAtomic<Node<K, V>>,
     remover: AtomicUsize,
+    inserted: bool,
 }
 
 impl<K, V> Node<K, V>
@@ -34,6 +36,7 @@ where
             value,
             next: PAtomic::null(),
             remover: AtomicUsize::new(List::<K, V>::no_remover()),
+            inserted: false,
         }
     }
 }
@@ -85,7 +88,7 @@ where
     type Object<'o> = &'o List<K, V>;
     type Input = (K, V);
     type Output<'o> = ();
-    type Error = ();
+    type Error = !;
 
     fn run<'o>(
         &'o mut self,
@@ -94,7 +97,7 @@ where
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let guard = epoch::pin();
-        list.insert_front(self, key, value, &guard, pool)
+        Ok(list.insert_front(self, key, value, &guard, pool))
     }
 
     fn reset(&mut self, _: bool, _: &PoolHandle) {
@@ -160,6 +163,7 @@ where
     fn reset(&mut self, nested: bool, _: &PoolHandle) {
         let _ = nested;
         unimplemented!()
+        // TODO: set target to null & free node
     }
 }
 
@@ -208,10 +212,19 @@ where
 
             if next.tag() != Self::NOT_DELETED {
                 next = next.with_tag(Self::NOT_DELETED);
-                let _ = self
-                    .prev
-                    .compare_exchange(self.curr, next, Ordering::SeqCst, Ordering::SeqCst, guard)
-                    .map_err(|_| ())?;
+                let res = self.prev.compare_exchange(
+                    self.curr,
+                    next,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+                persist_obj(self.prev, true); // TODO: CAS 실패한 애도 persist 해야하는지 고민
+
+                if res.is_err() {
+                    return Err(());
+                }
+
                 self.curr = next;
                 continue;
             }
@@ -242,12 +255,15 @@ where
         let node_ref = unsafe { node.deref(pool) };
         node_ref.next.store(self.curr, Ordering::SeqCst);
 
-        self.prev
-            .compare_exchange(self.curr, node, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| {
-                self.curr = node;
-            })
-            .map_err(|_| ())
+        let res =
+            self.prev
+                .compare_exchange(self.curr, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+        persist_obj(self.prev, true); // TODO: CAS 실패한 애도 persist 해야하는지 고민
+
+        res.map(|_| {
+            self.curr = node;
+        })
+        .map_err(|_| ())
     }
 
     /// Deletes the current node.
@@ -266,6 +282,8 @@ where
         let next = curr_node
             .next
             .fetch_or(Self::DELETED, Ordering::SeqCst, guard);
+        persist_obj(&curr_node.next, true); // TODO: FAO 실패한 애도 persist 해야하는지 고민
+
         if next.tag() == Self::DELETED {
             return Err(());
         }
@@ -285,9 +303,12 @@ where
             return Err(());
         }
 
+        persist_obj(&curr_node.remover, true);
+
         let _ =
             self.prev
                 .compare_exchange(self.curr, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        persist_obj(&self.prev, true);
 
         Ok(&curr_node.value)
     }
@@ -396,7 +417,7 @@ where
         value: V,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<(), ()> {
+    ) {
         let mut node = client.node.load(Ordering::SeqCst, guard);
 
         if node.is_null() {
@@ -405,30 +426,14 @@ where
 
             client.node.store(n, Ordering::SeqCst);
             node = n;
-        }
-
-        let node_ref = unsafe { node.deref(pool) };
-        let (found, cursor) = self.find(&node_ref.key, guard, pool);
-
-        // TODO: recovery할 때만 해야할지 생각하기
-        if found {
-            if node.as_ptr() == cursor.curr().as_ptr() {
-                return Ok(()); // 내가 넣은 것
-            } else {
-                return Err(()); // 이미 같은 키가 존재
-            }
-        } else if node_ref.remover.load(Ordering::SeqCst) != Self::no_remover() {
-            return Ok(()); // 내가 예전에 넣었는데 누군가 뺌
+        } else if self.search_node(node, guard, pool) || unsafe { node.deref(pool).inserted } {
+            return; // 이미 예전에 삽입함
         }
 
         loop {
+            // unique key만 주어진다는 보장
             if self.head(guard).insert(node, guard, pool).is_ok() {
-                return Ok(()); // 삽입 성공
-            }
-
-            let (found, _) = self.find(&node_ref.key, guard, pool);
-            if found {
-                return Err(()); // 이미 같은 키가 존재
+                return; // 삽입 성공
             }
         }
     }
@@ -475,6 +480,7 @@ where
                     )
                     .is_ok()
                 {
+                    persist_obj(&target_ref.remover, true);
                     return true; // Some(&target_ref.value);
                 }
             }
