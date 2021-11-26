@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use etrace::some_or;
 
 use crate::{
-    pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
+    pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, PDestroyable, POwned, PShared},
     persistent::Memento,
     plocation::{
         ll::persist_obj,
@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-/// TODO: doc
+/// List에 들어가는 node
 // TODO: V가 포인터일 수 있으니 V도 Collectable이여야함
 #[derive(Debug)]
 pub struct Node<K, V> {
@@ -54,7 +54,7 @@ impl<K, V> Collectable for Node<K, V> {
     }
 }
 
-/// TODO: doc
+/// List의 제일 앞에 element를 추가하는 Memento
 #[derive(Debug)]
 pub struct InsertFront<K, V> {
     node: PAtomic<Node<K, V>>,
@@ -94,19 +94,23 @@ where
         &'o mut self,
         list: Self::Object<'o>,
         (key, value): Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        Ok(list.insert_front(self, key, value, &guard, pool))
+        list.insert_front(self, key, value, guard, pool);
+        Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {
-        // TODO: if not finished -> free node
-        self.node.store(PShared::null(), Ordering::SeqCst);
+    fn reset(&mut self, _: bool, guard: &mut Guard, _pool: &'static PoolHandle) {
+        let node = self.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            self.node.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.node, true);
+        }
     }
 }
 
-/// TODO: doc
+/// List에서 key에 해당하는 element를 제거하는 Memento
 #[derive(Debug)]
 pub struct Remove<K, V> {
     target: PAtomic<Node<K, V>>,
@@ -154,29 +158,35 @@ where
         &'o mut self,
         list: Self::Object<'o>,
         key: Self::Input,
-        pool: &PoolHandle,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        Ok(list.remove(self, &key, &guard, pool))
+        Ok(list.remove(self, &key, guard, pool))
     }
 
-    fn reset(&mut self, nested: bool, _: &PoolHandle) {
-        let _ = nested;
-        unimplemented!()
-        // TODO: set target to null & free node
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        let target = self.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+
+            if unsafe { target.deref(pool) }.remover.load(Ordering::SeqCst) == self.id(pool) {
+                unsafe { guard.defer_pdestroy(target) };
+            }
+        }
     }
 }
 
-/// TODO: doc
+/// List 탐색 도중 동시적으로 node 제거가 생길 경우 발생하는 에러
 #[derive(Debug)]
 pub struct Deprecated;
 
-/// TODO: doc
+/// List의 특정 node를 가리키는 cursor (Volatile)
 #[derive(Debug)]
 pub struct Cursor<'g, K, V> {
     prev: &'g PAtomic<Node<K, V>>,
 
-    /// TODO: doc
+    /// cursor가 가리키는 현재 node
     pub curr: PShared<'g, Node<K, V>>,
 }
 
@@ -313,7 +323,7 @@ where
         Ok(&curr_node.value)
     }
 
-    /// TODO: doc
+    /// cursor를 다음 node로 옮김
     #[inline]
     pub fn next(
         &mut self,
@@ -349,7 +359,8 @@ where
     }
 }
 
-/// TODO: doc
+/// Ticket lock에서 쓰기 위한 list
+/// `InsertFront`로 주어지는 Key는 모두 unique함을 가정
 #[derive(Debug)]
 pub struct List<K, V>
 where
@@ -373,7 +384,7 @@ impl<K, V> List<K, V>
 where
     K: Eq,
 {
-    /// TODO: doc
+    /// List의 head node
     pub fn head<'g>(&'g self, guard: &'g Guard) -> Cursor<'g, K, V> {
         Cursor {
             prev: &self.head,
@@ -397,7 +408,7 @@ where
         }
     }
 
-    /// TODO: doc
+    /// List에서 주어진 `key`를 가지는 element의 값을 구함
     #[inline]
     pub fn lookup<'g>(&'g self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Option<&'g V> {
         let (found, cursor) = self.find(key, guard, pool);
@@ -408,7 +419,6 @@ where
         }
     }
 
-    /// TODO: doc
     #[inline]
     fn insert_front<'g>(
         &'g self,
@@ -438,7 +448,6 @@ where
         }
     }
 
-    /// TODO: doc
     #[inline]
     fn remove<'g>(
         &'g self,
