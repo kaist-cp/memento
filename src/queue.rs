@@ -428,10 +428,12 @@ impl<T: Clone> Queue<T> {
         if !target.is_null() {
             // post-crash execution (trying)
             let target_ref = unsafe { target.deref(pool) };
+            let next = target_ref.next.load(Ordering::SeqCst, guard);
+            let next_ref = unsafe { next.deref(pool) };
 
             // node가 정말 내가 dequeue한 게 맞는지 확인
-            if target_ref.dequeuer.load(Ordering::SeqCst) == client.id(pool) {
-                return Some(Self::finish_dequeue(target_ref));
+            if next_ref.dequeuer.load(Ordering::SeqCst) == client.id(pool) {
+                return Some(Self::finish_dequeue(next_ref));
             }
         }
 
@@ -478,7 +480,7 @@ impl<T: Clone> Queue<T> {
                 return Err(());
             } else {
                 // 우선 내가 dequeue할 node를 가리킴
-                client.target.store(next, Ordering::SeqCst);
+                client.target.store(head, Ordering::SeqCst);
                 persist_obj(&client.target, true);
 
                 // 실제로 dequeue 함
@@ -506,7 +508,7 @@ impl<T: Clone> Queue<T> {
                     .map_err(|_| {
                         let h = self.head.load(Ordering::SeqCst, guard);
                         if h == head {
-                            persist_obj(&next_ref.dequeuer, true);
+                            persist_obj(&next_ref.dequeuer, true); // enqueuer에게 enqueue 됐다는 확신을 주기 위해 head advance 전에 persist 해야 함
                             let _ = self.head.compare_exchange(
                                 head,
                                 next,
@@ -524,7 +526,6 @@ impl<T: Clone> Queue<T> {
 
     fn finish_dequeue(node: &Node<T>) -> T {
         unsafe { (*node.data.as_ptr()).clone() }
-        // TODO: free node
     }
 
     #[inline]
