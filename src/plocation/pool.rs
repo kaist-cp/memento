@@ -10,6 +10,7 @@ use std::{fs, mem};
 
 use crate::persistent::*;
 use crate::plocation::global::global_pool;
+use crate::plocation::ll::persist_obj;
 use crate::plocation::ptr::PPtr;
 use crate::plocation::{global, ralloc::*};
 use crossbeam_utils::thread;
@@ -75,7 +76,7 @@ impl PoolHandle {
     pub fn execute<O, M>(&'static self)
     where
         O: PObj + Send + Sync,
-        for<'o> M: Memento<Object<'o> = &'o O, Input = usize> + Send,
+        for<'o> M: Memento<Object<'o> = &'o O, Input = usize> + Send + Sync,
     {
         // root memento(들)의 개수 얻기
         let nr_mem = unsafe { *(RP_get_root_c(IX_NR_MEM) as *mut usize) };
@@ -88,27 +89,29 @@ impl PoolHandle {
             // mid번째 스레드가 mid번째 memento를 성공할때까지 반복
             for mid in 0..nr_mem {
                 // mid번째 root memento 얻기
-                let m = unsafe {
-                    (RP_get_root_c(IX_MEMENTO_START + mid as u64) as *mut M)
-                        .as_mut()
-                        .unwrap()
-                };
+                let m_addr = unsafe { RP_get_root_c(IX_MEMENTO_START + mid as u64) as usize };
 
                 let _ = scope.spawn(move |_| {
                     thread::scope(|scope| {
                         loop {
                             // memento 실행
-                            let hanlder = scope.spawn(|_| {
-                                todo!("g = oldguard(mid);");
-                                todo!("m.set_recovery();");
-                                todo!("m.run(o, mid, &mut g, pool);");
+                            let hanlder = scope.spawn(move |_| {
+                                let m = unsafe { (m_addr as *mut M).as_mut().unwrap() };
+
+                                let mut g = crossbeam_epoch::pin(); // TODO: g = oldguard(mid)로 변경;
+
+                                // TODO: m.set_recovery();
+
+                                let _ = m.run(o, mid, &mut g, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
                             // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
                             match hanlder.join() {
                                 Ok(_) => break,
-                                Err(_) => {} // no-op
+                                Err(_) => {
+                                    todo!("뭔가 할 게 있나?")
+                                }
                             }
                         }
                     })
@@ -248,17 +251,20 @@ impl Pool {
             // root memento의 개수 세팅 (Ralloc의 0번째 root에 위치시킴)
             let nr_mem_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
             nr_mem_ptr.write(nr_mem);
+            persist_obj(nr_mem_ptr.as_mut().unwrap(), true);
             let _prev = RP_set_root(nr_mem_ptr as *mut c_void, IX_NR_MEM);
 
             // root obj 세팅 (Ralloc의 1번째 root에 위치시킴)
             let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
-            o_ptr.write(O::pdefault(&pool));
+            o_ptr.write(O::pdefault(pool));
+            persist_obj(o_ptr.as_mut().unwrap(), true);
             let _prev = RP_set_root(o_ptr as *mut c_void, IX_OBJ);
 
             // root memento(들) 세팅 (Ralloc의 2번째 root부터 위치시킴)
             for i in 0..nr_mem {
                 let root_ptr = RP_malloc(mem::size_of::<M>() as u64) as *mut M;
                 root_ptr.write(M::default());
+                persist_obj(root_ptr.as_mut().unwrap(), true);
                 let _prev = RP_set_root(root_ptr as *mut c_void, IX_MEMENTO_START + i as u64);
             }
         }
@@ -363,32 +369,30 @@ impl Pool {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_epoch::{self as epoch, Guard};
+    use crossbeam_epoch::Guard;
     use env_logger as _;
     use log::{self as _, debug};
     use serial_test::serial;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
     use crate::persistent::Memento;
     use crate::plocation::pool::*;
     use crate::utils::tests::*;
 
     #[derive(Default)]
-    struct RootOp {
-        // 단순 usize, bool이 아닌 Atomic을 사용하는 이유: `PersistentOp` trait이 &mut self를 받지 않기때문
-        value: AtomicUsize,
-        flag: AtomicBool,
+    struct RootMemento {
+        value: usize,
+        flag: bool,
     }
 
-    impl Collectable for RootOp {
+    impl Collectable for RootMemento {
         fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
             // no-op
         }
     }
 
-    impl Memento for RootOp {
-        type Object<'o> = ();
-        type Input = ();
+    impl Memento for RootMemento {
+        type Object<'o> = &'o DummyRootObj;
+        type Input = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
@@ -399,13 +403,13 @@ mod tests {
             _: &mut Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            if self.flag.load(SeqCst) {
+            if self.flag {
                 debug!("check inv");
-                assert_eq!(self.value.load(SeqCst), 42);
+                assert_eq!(self.value, 42);
             } else {
                 debug!("update");
-                self.value.store(42, SeqCst);
-                self.flag.store(true, SeqCst);
+                self.value = 42;
+                self.flag = true;
             }
             Ok(())
         }
@@ -414,6 +418,8 @@ mod tests {
             // no-op
         }
     }
+
+    impl TestRootMemento<DummyRootObj> for RootMemento {}
 
     const FILE_NAME: &str = "check_inv.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
@@ -426,17 +432,7 @@ mod tests {
     fn check_inv() {
         // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
         env_logger::init();
-        let filepath = get_test_abs_path(FILE_NAME);
 
-        // 풀 열기 (없으면 새로 만듦)
-        let pool_handle = unsafe { Pool::open::<RootOp>(&filepath, FILE_SIZE) }
-            .unwrap_or_else(|_| Pool::create::<RootOp>(&filepath, FILE_SIZE).unwrap());
-
-        // 루트 Op 가져오기
-        let root_op = pool_handle.get_root::<RootOp>();
-
-        // 루트 Op 실행. 이 경우 루트 Op은 invariant 검사(flag=1 => value=42)
-        let mut guard = epoch::pin();
-        root_op.run((), (), &mut guard, &pool_handle).unwrap();
+        run_test::<DummyRootObj, RootMemento, _>(FILE_NAME, FILE_SIZE, 1);
     }
 }
