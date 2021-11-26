@@ -6,6 +6,8 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use crossbeam_epoch::{self as epoch, Guard};
+
 use crate::{
     persistent::*,
     plocation::{
@@ -77,13 +79,15 @@ impl<L: RawLock, T> Collectable for Mutex<L, T> {
 /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
 /// use compositional_persistent_object::ticket_lock::TicketLock;
 /// use compositional_persistent_object::lock::{Mutex, Lock, MutexGuard};
+/// use crossbeam_epoch::{self as epoch};
 ///
 /// let x = Mutex::<TicketLock, i32>::from(0);
 /// let mut lock = Lock::default();
+/// let mut ebr_guard = epoch::pin();
 ///
 /// {
-///     let guard = lock.run(&x, (), pool).unwrap();
-///     let v = unsafe { MutexGuard::defer_unlock(guard) };
+///     let mtx_guard = lock.run(&x, (), &mut ebr_guard, pool).unwrap();
+///     let v = unsafe { MutexGuard::defer_unlock(mtx_guard) };
 ///
 ///     // ... Critical section
 /// } // Unlock when `v` is dropped
@@ -122,9 +126,10 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         &'o mut self,
         mtx: Self::Object<'o>,
         (): Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let token = self.lock.run(&mtx.lock, (), pool).unwrap();
+        let token = self.lock.run(&mtx.lock, (), guard, pool).unwrap();
         Ok(Frozen::from(MutexGuard {
             mtx,
             unlock: &mut self.unlock,
@@ -134,9 +139,9 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         }))
     }
 
-    fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         // `MutexGuard`가 살아있을 때 이 함수 호출은 컴파일 타임에 막아짐.
-        self.lock.reset(nested, pool);
+        self.lock.reset(nested, guard, pool);
     }
 }
 
@@ -159,9 +164,10 @@ pub struct MutexGuard<'l, L: RawLock, T> {
 
 impl<L: RawLock, T> Drop for MutexGuard<'_, L, T> {
     fn drop(&mut self) {
+        let mut guard = epoch::pin(); // TODO: run에서 쓰인 guard 안 받고 이래도 되나
         let _ = self
             .unlock
-            .run(&self.mtx.lock, self.token.clone(), self.pool);
+            .run(&self.mtx.lock, self.token.clone(), &mut guard, self.pool);
     }
 }
 
@@ -244,14 +250,15 @@ pub(crate) mod tests {
             &'o mut self,
             count: Self::Object<'o>,
             rhs: Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             if let State::Resetting = self.state {
-                self.reset(false, pool);
+                self.reset(false, guard, pool);
             }
 
             // Lock the object
-            let guard = self.lock.run(count, (), pool).unwrap();
+            let guard = self.lock.run(count, (), guard, pool).unwrap();
             let mut x = unsafe { MutexGuard::defer_unlock(guard) };
 
             loop {
@@ -274,12 +281,12 @@ pub(crate) mod tests {
             }
         } // Unlock when `cnt` is dropped
 
-        fn reset(&mut self, nested: bool, pool: &'static PoolHandle) {
+        fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
             if !nested {
                 self.state = State::Resetting;
             }
 
-            self.lock.reset(nested, pool);
+            self.lock.reset(nested, guard, pool);
 
             if !nested {
                 self.state = State::Ready;
@@ -339,6 +346,7 @@ pub(crate) mod tests {
             &'o mut self,
             (): Self::Object<'o>,
             (): Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             #[allow(box_pointers)]
@@ -360,12 +368,13 @@ pub(crate) mod tests {
                     assert!(*cnt <= 2 * COUNT);
 
                     let _ = scope.spawn(move |_| {
+                        let mut guard = epoch::pin();
                         while *cnt < 2 * COUNT {
                             if *cnt & 1 == 0 {
-                                let _ = faa.run(x, tid + 1, pool);
+                                let _ = faa.run(x, tid + 1, &mut guard, pool);
                                 *cnt += 1;
                             }
-                            faa.reset(false, pool);
+                            faa.reset(false, &mut guard, pool);
                             *cnt += 1;
                         }
                     });
@@ -374,14 +383,14 @@ pub(crate) mod tests {
             .unwrap();
 
             // Check result
-            self.check_res.reset(false, pool);
-            let mtx = self.check_res.run(&self.x, (), pool).unwrap();
+            self.check_res.reset(false, guard, pool);
+            let mtx = self.check_res.run(&self.x, (), guard, pool).unwrap();
             let final_x = unsafe { MutexGuard::defer_unlock(mtx) };
             assert_eq!(*final_x, (NR_THREAD * (NR_THREAD + 1) / 2) * COUNT);
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!()
         }
     }

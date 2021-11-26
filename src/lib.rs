@@ -39,14 +39,14 @@
 pub mod elim_stack;
 pub mod exchanger;
 pub mod list;
-// pub mod lock; // TODO: free, persist 추가하며 주석 해제
+pub mod lock;
 pub mod persistent;
 pub mod pipe;
 pub mod queue;
 
 pub mod stack;
 
-// pub mod ticket_lock; // TODO: free, persist 추가하며 주석 해제
+pub mod ticket_lock;
 pub mod treiber_stack;
 
 // Persistent location

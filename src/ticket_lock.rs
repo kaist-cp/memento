@@ -36,7 +36,7 @@ enum State {
 
 #[derive(Debug)]
 struct Membership {
-    ticket: usize, // TODO: atomic?
+    ticket: usize,
     state: State,
 }
 
@@ -97,18 +97,16 @@ impl Memento for Lock {
         &'o mut self,
         lock: Self::Object<'o>,
         _: Self::Input,
+        guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let guard = epoch::pin();
-        Ok(lock.lock(self, &guard, pool))
+        Ok(lock.lock(self, guard, pool))
     }
 
     // TODO: reset을 해도 membership까지 reset 되거나 할당 해제되진 않을 것임 (state->Ready, ticket->NO_TICKET)
     //       이것이 디자인의 일관성을 깨진 않는지?
-    fn reset(&mut self, _: bool, pool: &PoolHandle) {
-        let guard = epoch::pin();
-
-        let mut m = self.membership.load(Ordering::SeqCst, &guard);
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        let mut m = self.membership.load(Ordering::SeqCst, guard);
         if m.is_null() {
             return;
         }
@@ -146,13 +144,14 @@ impl Memento for Unlock {
         &'o mut self,
         lock: Self::Object<'o>,
         ticket: Self::Input,
-        _: &PoolHandle,
+        _: &mut Guard,
+        _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         lock.unlock(ticket);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &PoolHandle) {}
+    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {}
 }
 
 /// IMPORTANT: ticket의 overflow는 없다고 가정
@@ -174,7 +173,7 @@ impl Default for TicketLock {
 }
 
 impl TicketLock {
-    fn lock(&self, client: &mut Lock, guard: &Guard, pool: &'static PoolHandle) -> usize {
+    fn lock(&self, client: &mut Lock, guard: &mut Guard, pool: &'static PoolHandle) -> usize {
         let mut m = client.membership.load(Ordering::SeqCst, guard);
 
         if !client.registered {
@@ -186,10 +185,17 @@ impl TicketLock {
                 m = n;
             }
 
+            let mut guard0 = epoch::pin(); // membership drop은 어차피 이 memento가 할 거라서 persistent context를 요구하진 않음
+
             // membership 등록: "(key: id, value: membership 포인터)"를 멤버리스트에 삽입
             if client
                 .register
-                .run(&self.members, (client.id(), m.into_usize()), pool)
+                .run(
+                    &self.members,
+                    (client.id(), m.into_usize()),
+                    &mut guard0,
+                    pool,
+                )
                 .is_err()
             {
                 unreachable!("Unique client ID as a key")
