@@ -495,7 +495,7 @@ impl<T: Clone> TreiberStack<T> {
                 // - Tracking in Order의 Elim-stack은 여기서 pushed=true로 표시해주지만, 이는 불필요한 write 같음
                 // - 왜냐하면 push된 노드는 stack에 있거나 혹은 stack에 없으면(i.e. pop 되었으면) pushed=true 적혀있음이 보장되기 때문
                 node_ref.pushed = true;
-                persist_obj(&node_ref.pushed, true)
+                persist_obj(&node_ref.pushed, true);
             })
             .map_err(|_| TryFail)
     }
@@ -596,6 +596,7 @@ impl<T: Clone> TreiberStack<T> {
 
         // node가 push된 노드라고 마킹해준 후
         top_ref.pushed = true;
+        persist_obj(&top_ref.pushed, true);
 
         // top node를 next로 바꿈
         let next = top_ref.next.load(Ordering::SeqCst, guard);
