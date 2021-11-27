@@ -1,9 +1,12 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
-use crate::common::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
-use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned};
-use compositional_persistent_object::persistent::*;
-use compositional_persistent_object::plocation::{ll::*, pool::*};
+use crate::common::{TestKind, TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
+use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
+use epoch::Guard;
+use memento::pepoch::{PAtomic, POwned};
+use memento::persistent::*;
+use memento::plocation::ralloc::{Collectable, GarbageCollection};
+use memento::plocation::{ll::*, pool::*};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -40,26 +43,28 @@ struct DurableQueue<T: Clone> {
     ret_val: [CachePadded<PAtomic<Option<T>>>; MAX_THREADS], // None: "EMPTY"
 }
 
-impl<T: Clone> DurableQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle) -> POwned<Self> {
-        let guard = unsafe { pepoch::unprotected(pool) };
+impl<T: Clone> Collectable for DurableQueue<T> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<T: Clone> PDefault for DurableQueue<T> {
+    fn pdefault(pool: &'static PoolHandle) -> Self {
+        let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
-        let ret = POwned::new(
-            Self {
-                head: CachePadded::new(PAtomic::from(sentinel)),
-                tail: CachePadded::new(PAtomic::from(sentinel)),
-                ret_val: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
-            },
-            pool,
-        );
-        persist_obj(unsafe { ret.deref(pool) }, true);
-        ret
+        Self {
+            head: CachePadded::new(PAtomic::from(sentinel)),
+            tail: CachePadded::new(PAtomic::from(sentinel)),
+            ret_val: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
+        }
     }
+}
 
-    fn enqueue<O: POp>(&self, val: T, pool: &PoolHandle) {
-        let guard = pepoch::pin(pool);
+impl<T: Clone> DurableQueue<T> {
+    fn enqueue(&self, val: T, guard: &mut Guard, pool: &'static PoolHandle) {
         let node = POwned::new(Node::new(val), pool).into_shared(&guard);
         persist_obj(unsafe { node.deref(pool) }, true);
 
@@ -99,9 +104,7 @@ impl<T: Clone> DurableQueue<T> {
         }
     }
 
-    fn dequeue<O: POp>(&self, tid: usize, pool: &PoolHandle) {
-        let guard = pepoch::pin(pool);
-
+    fn dequeue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) {
         // NOTE: Durable 큐의 하자 (1/1)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Durable 큐: deq한 값을 가리킬 포인터 할당 및 persist
@@ -199,63 +202,132 @@ impl<T: Clone> TestQueue for DurableQueue<T> {
     type EnqInput = T; // input
     type DeqInput = usize; // tid
 
-    fn enqueue<O: POp>(&self, input: Self::EnqInput, pool: &PoolHandle) {
-        self.enqueue(input, pool);
+    fn enqueue(&self, input: Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+        self.enqueue(input, guard, pool);
     }
-    fn dequeue<O: POp>(&self, tid: Self::DeqInput, pool: &PoolHandle) {
-        self.dequeue(tid, pool);
+
+    fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+        self.dequeue(tid, guard, pool);
+    }
+}
+
+#[derive(Debug)]
+pub struct TestDurableQueue {
+    queue: DurableQueue<usize>,
+}
+
+impl Collectable for TestDurableQueue {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl PDefault for TestDurableQueue {
+    fn pdefault(pool: &'static PoolHandle) -> Self {
+        let queue = DurableQueue::pdefault(pool);
+        let mut guard = epoch::pin();
+
+        // 초기 노드 삽입
+        for i in 0..QUEUE_INIT_SIZE {
+            queue.enqueue(i, &mut guard, pool);
+        }
+        Self { queue }
     }
 }
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
 #[derive(Default, Debug)]
-pub struct GetDurableQueueNOps;
+pub struct DurableQueueEnqDeqPair;
 
-impl TestNOps for GetDurableQueueNOps {}
+impl Collectable for DurableQueueEnqDeqPair {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
 
-impl POp for GetDurableQueueNOps {
-    type Object<'o> = ();
-    type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
-    type Output<'o> = usize; // 실행한 operation 수
+impl TestNOps for DurableQueueEnqDeqPair {}
+
+impl Memento for DurableQueueEnqDeqPair {
+    type Object<'o> = &'o TestDurableQueue;
+    type Input = usize; // tid
+    type Output<'o> = ();
+    type Error = ();
 
     fn run<'o>(
-        &mut self,
-        _: Self::Object<'o>,
-        (kind, nr_thread, duration): Self::Input,
-        pool: &PoolHandle,
-    ) -> Self::Output<'o> {
-        // Initialize Queue
-        let q = DurableQueue::<usize>::new(pool);
-        let q_ref = unsafe { q.deref(pool) };
+        &'o mut self,
+        queue: Self::Object<'o>,
+        tid: Self::Input,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        let q = &queue.queue;
+        let duration = unsafe { DURATION };
 
-        for i in 0..QUEUE_INIT_SIZE {
-            q_ref.enqueue(i, pool);
-        }
-
-        match kind {
-            TestKind::QueuePair => self.test_nops(
-                &|tid| {
-                    let enq_input = tid;
-                    let deq_input = tid;
-                    enq_deq_pair(q_ref, enq_input, deq_input, pool);
-                },
-                nr_thread,
-                duration,
-            ),
-            TestKind::QueueProb(prob) => self.test_nops(
-                &|tid| {
-                    let enq_input = tid;
-                    let deq_input = tid;
-                    enq_deq_prob(q_ref, enq_input, deq_input, prob, pool);
-                },
-                nr_thread,
-                duration,
-            ),
-            _ => unreachable!("Queue를 위한 테스트만 해야함"),
-        }
+        let ops = self.test_nops(
+            &|tid, guard| {
+                let enq_input = tid;
+                let deq_input = tid;
+                enq_deq_pair(q, enq_input, deq_input, guard, pool);
+            },
+            tid,
+            duration,
+            guard,
+        );
+        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+        Ok(())
     }
 
-    fn reset(&mut self, _: bool) {
+    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        // no-op
+    }
+}
+
+// TODO: 모든 큐의 실험 로직이 통합되어야 함
+#[derive(Default, Debug)]
+pub struct DurableQueueEnqDeqProb;
+
+impl Collectable for DurableQueueEnqDeqProb {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl TestNOps for DurableQueueEnqDeqProb {}
+
+impl Memento for DurableQueueEnqDeqProb {
+    type Object<'o> = &'o TestDurableQueue;
+    type Input = usize; // tid
+    type Output<'o> = ();
+    type Error = ();
+
+    fn run<'o>(
+        &'o mut self,
+        queue: Self::Object<'o>,
+        tid: Self::Input,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        let q = &queue.queue;
+        let duration = unsafe { DURATION };
+        let prob = unsafe { PROB };
+
+        let ops = self.test_nops(
+            &|tid, guard| {
+                let enq_input = tid;
+                let deq_input = tid;
+                enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+            },
+            tid,
+            duration,
+            guard,
+        );
+
+        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
         // no-op
     }
 }
