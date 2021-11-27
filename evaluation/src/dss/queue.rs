@@ -3,7 +3,7 @@ use crate::common::{TestKind, TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
-use memento::pepoch::{PAtomic, POwned, PShared};
+use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use memento::persistent::*;
 use memento::plocation::ralloc::{Collectable, GarbageCollection};
 use memento::plocation::{ll::*, pool::*};
@@ -69,6 +69,12 @@ const ENQ_PREP_TAG: usize = 1;
 const ENQ_COMPL_TAG: usize = 4;
 const DEQ_PREP_TAG: usize = 2;
 const EMPTY_TAG: usize = 4;
+
+// resolve시 Op 타입
+enum OpResolved {
+    Enqueue,
+    Dequeue,
+}
 
 #[derive(Debug)]
 struct DSSQueue<T: Clone> {
@@ -163,15 +169,23 @@ impl<T: Clone> DSSQueue<T> {
         }
     }
 
-    fn _resolve_enqueue<O: Memento>(&self, tid: usize, pool: &'static PoolHandle) {
-        let guard = epoch::pin();
-        let x_tid = self.x[tid].load(Ordering::SeqCst, &guard);
+    fn resolve_enqueue(
+        &self,
+        tid: usize,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) -> (T, bool) {
+        let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
+        let node_ref = unsafe { x_tid.deref(pool) };
+        let value = unsafe { (*node_ref.val.as_ptr()).clone() };
         if (x_tid.tag() & ENQ_COMPL_TAG) != 0 {
             // enqueue was prepared and took effect
-            todo!("return (value, OK)")
+            // "Enq 됨"
+            return (value, true);
         } else {
             // enqueue was prepared and did not take effect
-            todo!("return (value, null")
+            // "아직 Enq 되지 못함"
+            return (value, false);
         }
     }
 
@@ -226,6 +240,7 @@ impl<T: Clone> DSSQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
+                        // TODO: persist `head`?
                         return Some(unsafe { (*next_ref.val.as_ptr()).clone() });
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         // help another dequeueing thread
@@ -243,39 +258,59 @@ impl<T: Clone> DSSQueue<T> {
         }
     }
 
-    fn _resolve_dequeue<O: Memento>(&self, tid: usize, pool: &'static PoolHandle) {
-        let guard = epoch::pin();
-        let x_tid = self.x[tid].load(Ordering::SeqCst, &guard);
+    fn resolve_dequeue(
+        &self,
+        tid: usize,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) -> (Option<T>, bool) {
+        let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
         if x_tid == PShared::null().with_tag(DEQ_PREP_TAG) {
             // dequeue was prepared but did not take effect
-            todo!("return null");
+            // "준비는 했지만 실행을 안함"
+            return (None, false);
         } else if x_tid == PShared::null().with_tag(DEQ_PREP_TAG | EMPTY_TAG) {
             // empty queue
-            todo!("return EMPTY");
+            // "EMPTY로 성공"
+            return (None, true);
         } else {
             let x_tid_ref = unsafe { x_tid.deref(pool) };
             let next = x_tid_ref.next.load(Ordering::SeqCst, &guard);
             let next_ref = unsafe { next.deref(pool) };
             if next_ref.deq_tid.load(Ordering::SeqCst) == tid as isize {
                 // non-empty queue
-                todo!("return next_ref.value")
+                // "Deq 성공"
+                let value = unsafe { (*next_ref.val.as_ptr()).clone() };
+                return (Some(value), true);
             } else {
                 // X holds a node pointer, crashed before completing dequeue
-                todo!("return null")
+                // "포인팅했지만 내가 Deq 하지 못함"
+                return (None, false);
             }
         }
     }
 
-    fn _resolve<O: Memento>(&self, tid: usize, pool: &'static PoolHandle) {
-        let guard = epoch::pin();
+    // return: ((op 종류, op에 관련된 값), op 성공여부)
+    fn resolve(
+        &self,
+        tid: usize,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) -> (Option<(OpResolved, Option<T>)>, bool) {
         let x_tid = self.x[tid].load(Ordering::SeqCst, &guard);
         if (x_tid.tag() & ENQ_PREP_TAG) != 0 {
-            todo!("resolve enq and return")
+            // Enq를 준비했었음. 성공했는지는 resolve_enqueue로 확인
+            let (value, completed) = self.resolve_enqueue(tid, guard, pool);
+            // ((Enq, Enq 하려던(혹은 이미 한) 값), Enq 성공여부)
+            return (Some((OpResolved::Enqueue, Some(value))), completed);
         } else if (x_tid.tag() & DEQ_PREP_TAG) != 0 {
-            todo!("resolove deq and return")
+            // Deq를 준비했었음. 성공했는지는 resolve_deqqueue로 확인
+            let (value, completed) = self.resolve_dequeue(tid, guard, pool);
+            // ((Deq, Deq 한 값), Deq 성공여부)
+            return (Some((OpResolved::Dequeue, value)), completed);
         } else {
             // no operation was prepared
-            todo!("return null")
+            return (None, false);
         }
     }
 }
@@ -285,14 +320,51 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     type DeqInput = usize; // tid
 
     fn enqueue(&self, (input, tid): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+        // 저장소에 enq 노드를 새로 준비하기전에, 이전에 enq되지 못한 노드가 남아있다면 free
+        match self.resolve(tid, guard, pool) {
+            // some operation was prepared
+            (Some((op, _)), completed) => {
+                let node_tid = self.x[tid].load(Ordering::SeqCst, guard);
+                if let OpResolved::Enqueue = op {
+                    if !completed {
+                        // 노드가 아직 Enq 되지 않았으니 free
+                        unsafe { guard.defer_pdestroy(node_tid) };
+                    }
+                }
+            }
+            // no operation was prepared
+            (None, _) => {
+                // 이 케이스 때문에 바로 resolve_enqueue 쓰면 안됨.
+                // resolve_enqueue를 바로 쓰려면 준비되있는게 enq임이 확실해야함.
+            }
+        }
         self.prep_enqueue(input, tid, pool);
         self.exec_enqueue(tid, guard, pool);
     }
 
     fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+        // 저장소에 deq할 준비를 새로하기 전에, 이전에 deq된 노드가 남아있으면 free
+        match self.resolve(tid, guard, pool) {
+            // some operation was prepared
+            (Some((op, val)), completed) => {
+                let node_tid = self.x[tid].load(Ordering::SeqCst, guard);
+                if let OpResolved::Dequeue = op {
+                    if completed && val.is_some() {
+                        // Deq된 노드가 있으니 free
+                        // (`val`이 None이면 EMPTY로 끝난거니 free하면 안됨)
+                        unsafe { guard.defer_pdestroy(node_tid) };
+                    }
+                }
+            }
+            (None, _) => {
+                // no operation was prepared
+                // 이 케이스 때문에 바로 resolve_dequeue 쓰면 안됨.
+                // resolve_deqqueue를 바로 쓰려면 준비되있는게 deq임이 확실해야함.
+            }
+        }
         self.prep_dequeue(tid);
         let _ = self.exec_dequeue(tid, guard, pool);
-    } // tid
+    }
 }
 
 #[derive(Debug)]
