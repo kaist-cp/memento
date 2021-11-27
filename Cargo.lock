@@ -60,22 +60,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "compositional-persistent-object"
-version = "0.1.0"
-dependencies = [
- "array-init",
- "chrono",
- "crossbeam-epoch",
- "crossbeam-utils 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "env_logger",
- "etrace",
- "log",
- "rand",
- "serial_test",
- "tempfile",
-]
-
-[[package]]
 name = "crossbeam-epoch"
 version = "0.9.5"
 source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard#e70fe281a9c74ecf7c5fbd788f63f2a01b9dfe5f"
@@ -195,6 +179,22 @@ name = "memchr"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
+
+[[package]]
+name = "memento"
+version = "0.1.0"
+dependencies = [
+ "array-init",
+ "chrono",
+ "crossbeam-epoch",
+ "crossbeam-utils 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "env_logger",
+ "etrace",
+ "log",
+ "rand",
+ "serial_test",
+ "tempfile",
+]
 
 [[package]]
 name = "memoffset"

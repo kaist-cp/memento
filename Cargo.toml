@@ -1,5 +1,5 @@
 [package]
-name = "compositional-persistent-object"
+name = "memento"
 version = "0.1.0"
 authors = [
     "Kyeongmin Cho <kyeongmin.cho@kaist.ac.kr>",
