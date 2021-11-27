@@ -126,7 +126,7 @@ pub trait Memento: Default + Collectable {
 }
 
 /// TODO: doc
-pub trait PObj: Collectable {
+pub trait PDefault: Collectable {
     /// TODO: doc
     fn pdefault(pool: &'static PoolHandle) -> Self;
 }

@@ -292,7 +292,7 @@ impl<T: Clone> Collectable for Queue<T> {
     }
 }
 
-impl<T: Clone> PObj for Queue<T> {
+impl<T: Clone> PDefault for Queue<T> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);

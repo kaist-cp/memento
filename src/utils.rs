@@ -8,7 +8,7 @@ pub mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
-    use crate::persistent::{Memento, PObj};
+    use crate::persistent::{Memento, PDefault};
     use crate::plocation::pool::*;
     use crate::plocation::ralloc::{Collectable, GarbageCollection};
 
@@ -39,7 +39,7 @@ pub mod tests {
         }
     }
 
-    impl PObj for DummyRootObj {
+    impl PDefault for DummyRootObj {
         fn pdefault(_: &'static PoolHandle) -> Self {
             Self {}
         }
@@ -104,7 +104,7 @@ pub mod tests {
     impl TestRootMemento<DummyRootObj> for DummyRootMemento {}
 
     /// test를 위한 root obj, root op은 아래 조건을 만족하자
-    pub trait TestRootObj: PObj {}
+    pub trait TestRootObj: PDefault + Collectable {}
     pub trait TestRootMemento<O: TestRootObj>:
         for<'o> Memento<Object<'o> = &'o O, Input = usize>
     {

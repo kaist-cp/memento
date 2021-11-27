@@ -76,7 +76,7 @@ impl PoolHandle {
     /// M: root memento(s)
     pub fn execute<O, M>(&'static self)
     where
-        O: PObj + Send + Sync,
+        O: PDefault + Send + Sync,
         for<'o> M: Memento<Object<'o> = &'o O, Input = usize> + Send + Sync,
     {
         // root obj 얻기
@@ -214,7 +214,7 @@ impl Pool {
         nr_mem: usize, // Root Memento의 개수
     ) -> Result<&'static PoolHandle, Error>
     where
-        O: PObj,
+        O: PDefault,
         for<'o> M: Memento<Object<'o> = &'o O, Input = usize>,
     {
         // 파일 이미 있으면 에러 반환
@@ -293,7 +293,7 @@ impl Pool {
     // - <O: Memento, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
     pub unsafe fn open<O, M>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error>
     where
-        O: PObj,
+        O: PDefault,
         for<'o> M: Memento<Object<'o> = &'o O, Input = usize>,
     {
         // 파일 없으면 에러 반환
