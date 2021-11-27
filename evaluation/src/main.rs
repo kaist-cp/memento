@@ -37,6 +37,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
     };
     match target {
         "our_queue" => TestTarget::OurQueue(kind),
+        "our_pipe_queue" => TestTarget::OurPipeQueue(kind),
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
@@ -89,6 +90,7 @@ fn bench(opt: &Opt) -> f64 {
     let target = parse_target(&opt.target, &opt.kind);
     let nops = match target {
         TestTarget::OurQueue(kind) => bench_queue(opt, target, kind),
+        TestTarget::OurPipeQueue(kind) => bench_queue(opt, target, kind),
         TestTarget::FriedmanDurableQueue(kind) => bench_queue(opt, target, kind),
         TestTarget::FriedmanLogQueue(kind) => bench_queue(opt, target, kind),
         TestTarget::DSSQueue(kind) => bench_queue(opt, target, kind),

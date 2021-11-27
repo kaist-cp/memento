@@ -57,19 +57,21 @@ rm -rf ${PMEM_PATH}/*.pool* # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
-# bench our_queue prob50 $out_path/queue.csv
-# bench durable_queue prob50 $out_path/queue.csv
-# bench log_queue prob50 $out_path/queue.csv
-# bench dss_queue prob50 $out_path/queue.csv
-bench our_queue pair $out_path/queue.csv
-bench durable_queue pair $out_path/queue.csv
-bench log_queue pair $out_path/queue.csv
-bench dss_queue pair $out_path/queue.csv
+bench our_queue prob50 $out_path/queue.csv
+bench durable_queue prob50 $out_path/queue.csv
+bench log_queue prob50 $out_path/queue.csv
+bench dss_queue prob50 $out_path/queue.csv
+bench our_pipe_queue prob50 $out_path/queue.csv
+# bench our_queue pair $out_path/queue.csv
+# bench our_pipe_queue pair $out_path/queue.csv
+# bench durable_queue pair $out_path/queue.csv
+# bench log_queue pair $out_path/queue.csv
+# bench dss_queue pair $out_path/queue.csv
 
 # 3. Benchmarking pipe performance
-bench our_pipe pipe $out_path/pipe.csv
-bench crndm_pipe pipe $out_path/pipe.csv
-bench pmdk_pipe pipe $out_path/pipe.csv
+# bench our_pipe pipe $out_path/pipe.csv
+# bench crndm_pipe pipe $out_path/pipe.csv
+# bench pmdk_pipe pipe $out_path/pipe.csv
 
 # 4. Plot and finish
 python3 plot.py

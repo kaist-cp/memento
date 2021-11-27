@@ -6,25 +6,26 @@ objs = {
     "queue": {
         "targets": {
             "our_queue": {'label': "Memento queue", 'marker': 'o', 'color': 'k', 'style': '-'},
+            'our_pipe_queue': {'label': "Memento pipe-queue", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
             'durable_queue': {'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
             'dss_queue': {'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
         },
-        # 'bench_kinds': ['prob50', 'pair'],
+        # 'bench_kinds': ['prob10', 'prob50', 'prob90', 'pair'],
         # 'plot_lower_ylim': [(1, 3.5), (0.5, 1.8)],
-        'bench_kinds': ['pair'],
+        'bench_kinds': ['prob50'],
         'plot_lower_ylim': [(1, 3.5)], # 위 아래 분리해서 그릴 때 아래 plot의 범위 설정: 1 ~ 3.5
     },
-    "pipe": {
-        "targets": {
-            'our_pipe': {'label': "Memento pipe", 'marker': 'o', 'color': 'k', 'style': '-'},
-            'crndm_pipe': {'label': "Corundum pipe", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
-            'pmdk_pipe': {'label': "PMDK pipe", 'marker': 'x', 'color': 'c', 'style': '--'},
-        },
-        'bench_kinds': ['pipe'],
-        'plot_lower_ylim': [(0, 1.2)],
-        # 'plot_lower_ylim': [(0, 0.2)],
-    }
+    # "pipe": {
+    #     "targets": {
+    #         'our_pipe': {'label': "Memento pipe", 'marker': 'o', 'color': 'k', 'style': '-'},
+    #         'crndm_pipe': {'label': "Corundum pipe", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
+    #         'pmdk_pipe': {'label': "PMDK pipe", 'marker': 'x', 'color': 'c', 'style': '--'},
+    #     },
+    #     'bench_kinds': ['pipe'],
+    #     'plot_lower_ylim': [(0, 1.2)],
+    #     # 'plot_lower_ylim': [(0, 0.2)],
+    # }
 
     # TODO: other obj..
 }

@@ -111,7 +111,7 @@ where
     Op2: Memento,
 {
     fn drop(&mut self) {
-        todo!("하위 Memento들이 reset 되어있지않으면 panic")
+        // TODO: "하위 Memento들이 reset 되어있지않으면 panic"
     }
 }
 
