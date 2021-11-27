@@ -1,16 +1,6 @@
 //! Concurrent exchanger
 
-// TODO(SMR 적용):
-// - SMR 만든 후 crossbeam 걷어내기
-// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
-
 // TODO(로직 변경: https://cp-git.kaist.ac.kr/persistent-mem/compositional-persistent-object/-/issues/3#note_6979)
-
-// TODO(pmem 사용(#31, #32)):
-// - persist를 위해 flush/fence 추가
-
-// TODO(Ordering):
-// - Ordering 최적화
 
 use chrono::{Duration, Utc};
 use core::ptr;
@@ -144,9 +134,12 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
             // TODO: 이 사이에 죽으면 partner의 포인터에 의해 gc가 수거하지 못해 leak 발생
+            // 해결책: freed 플래그를 두고 free한 뒤에 토글
             unsafe { guard.defer_pdestroy(node) };
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// Exchanger의 exchange operation.
@@ -213,6 +206,8 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             unsafe { guard.defer_pdestroy(node) };
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// 스레드 간의 exchanger
@@ -479,6 +474,10 @@ mod tests {
         fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.exchange.set_recovery(pool);
+        }
     }
 
     impl TestRootObj for Exchanger<usize> {}
@@ -577,6 +576,11 @@ mod tests {
 
         fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
+        }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.exchange0.set_recovery(pool);
+            self.exchange2.set_recovery(pool);
         }
     }
 
