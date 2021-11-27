@@ -17,8 +17,8 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
 
 // metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
-const IX_NR_MEM: u64 = 0; // memento의 개수는 Ralloc의 0번째 root에 위치
-const IX_OBJ: u64 = 1; // root obj는 Ralloc의 1번째 root에 위치
+const IX_OBJ: u64 = 0; // root obj는 Ralloc의 0번째 root에 위치
+const IX_NR_MEM: u64 = 1; // memento의 개수는 Ralloc의 1번째 root에 위치
 const IX_MEMENTO_START: u64 = 2; // root memento(s)는 Ralloc의 2번째 root부터 위치
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
@@ -79,11 +79,11 @@ impl PoolHandle {
         O: PObj + Send + Sync,
         for<'o> M: Memento<Object<'o> = &'o O, Input = usize> + Send + Sync,
     {
-        // root memento(들)의 개수 얻기
-        let nr_mem = unsafe { *(RP_get_root_c(IX_NR_MEM) as *mut usize) };
-
         // root obj 얻기
         let o = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
+
+        // root memento(들)의 개수 얻기
+        let nr_mem = unsafe { *(RP_get_root_c(IX_NR_MEM) as *mut usize) };
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
@@ -247,17 +247,17 @@ impl Pool {
 
         // metadta, root obj, root memento 세팅
         unsafe {
-            // root memento의 개수 세팅 (Ralloc의 0번째 root에 위치시킴)
-            let nr_mem_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
-            nr_mem_ptr.write(nr_mem);
-            persist_obj(nr_mem_ptr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(nr_mem_ptr as *mut c_void, IX_NR_MEM);
-
-            // root obj 세팅 (Ralloc의 1번째 root에 위치시킴)
+            // root obj 세팅 (Ralloc의 0번째 root에 위치시킴)
             let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
             o_ptr.write(O::pdefault(pool));
             persist_obj(o_ptr.as_mut().unwrap(), true);
             let _prev = RP_set_root(o_ptr as *mut c_void, IX_OBJ);
+
+            // root memento의 개수 세팅 (Ralloc의 1번째 root에 위치시킴)
+            let nr_mem_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
+            nr_mem_ptr.write(nr_mem);
+            persist_obj(nr_mem_ptr.as_mut().unwrap(), true);
+            let _prev = RP_set_root(nr_mem_ptr as *mut c_void, IX_NR_MEM);
 
             // root memento(들) 세팅 (Ralloc의 2번째 root부터 위치시킴)
             for i in 0..nr_mem {
@@ -342,7 +342,7 @@ impl Pool {
             //
             // NOTE: Ralloc의 API상 이전에 RP_close로 잘 닫고 끝났었다면(i.e. crash가 아니면) GC 호출해도 수행되지 않음
             //
-            // NOTE: Ralloc의 0번째 root는 filter func을 등록하지 않았으니 GC 수행시 default filter가 돔
+            // NOTE: Ralloc의 `IX_NR_MEM` 번째 root는 filter func을 등록하지 않았으니 GC 수행시 default filter가 돔
             //       그렇지만 우리 로직에선 안전함. `nr_mem` 값을 주소로 보고 marking 시도하는데, marking 하려는 (절대)주소가
             //       pool 영역이 아니면 marking 되지않고 무시됨. `nr_mem` 값이 pool 영역 범위 내의 값이 될 확률은 매우 적음
             let _is_gc_executed = RP_recover();
