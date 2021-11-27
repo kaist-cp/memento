@@ -5,6 +5,7 @@ pub mod tests {
     use crossbeam_epoch::Guard;
     use std::io::Error;
     use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
     use crate::persistent::{Memento, PObj};
@@ -109,17 +110,29 @@ pub mod tests {
     {
     }
 
+    use lazy_static::lazy_static;
+
+    lazy_static! {
+        pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
+        pub static ref RESULTS: [AtomicUsize; 1024] =
+            array_init::array_init(|_| AtomicUsize::new(0));
+    }
+
     /// test op 돌리기
-    // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_mem: usize)
     where
         O: TestRootObj + Send + Sync,
         M: TestRootMemento<O> + Send + Sync,
         P: AsRef<Path>,
     {
-        let filepath = get_test_abs_path(pool_name);
+        // 테스트 변수 초기화
+        JOB_FINISHED.store(0, Ordering::SeqCst);
+        for res in RESULTS.as_ref() {
+            res.store(0, Ordering::SeqCst);
+        }
 
         // 풀 열기 (없으면 새로 만듦)
+        let filepath = get_test_abs_path(pool_name);
         let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
             .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_mem).unwrap());
 

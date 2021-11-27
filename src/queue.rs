@@ -535,51 +535,19 @@ impl<T: Clone> Queue<T> {
 
 #[cfg(test)]
 mod test {
-    use serial_test::serial;
-
-    use crate::{plocation::ralloc::Collectable, utils::tests::*};
-
     use super::*;
+    use crate::{plocation::ralloc::Collectable, utils::tests::*};
+    use serial_test::serial;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;
 
-    struct RootObj {
-        queue: Queue<usize>,
-        job_finished: AtomicUsize,
-        result: [AtomicUsize; NR_THREAD + 1],
-    }
-
-    impl Collectable for RootObj {
-        fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Queue::filter(&mut s.queue, gc, pool);
-
-            // clear result of previous test
-            s.job_finished.store(0, Ordering::SeqCst);
-            for res in s.result.as_ref() {
-                res.store(0, Ordering::SeqCst);
-            }
-        }
-    }
-
-    impl PObj for RootObj {
-        fn pdefault(pool: &'static PoolHandle) -> Self {
-            Self {
-                queue: Queue::pdefault(pool),
-                job_finished: AtomicUsize::new(0),
-                result: array_init::array_init(|_| AtomicUsize::new(0)),
-            }
-        }
-    }
-
-    impl TestRootObj for RootObj {}
-
-    struct RootMemento {
+    struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],
         deqs: [Dequeue<usize>; COUNT],
     }
 
-    impl Default for RootMemento {
+    impl Default for EnqDeq {
         fn default() -> Self {
             Self {
                 enqs: array_init::array_init(|_| Enqueue::<usize>::default()),
@@ -588,7 +556,7 @@ mod test {
         }
     }
 
-    impl Collectable for RootMemento {
+    impl Collectable for EnqDeq {
         fn filter(m: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
             for i in 0..COUNT {
                 Enqueue::filter(&mut m.enqs[i], gc, pool);
@@ -597,8 +565,8 @@ mod test {
         }
     }
 
-    impl Memento for RootMemento {
-        type Object<'o> = &'o RootObj;
+    impl Memento for EnqDeq {
+        type Object<'o> = &'o Queue<usize>;
         type Input = usize; // tid(=mid)
         type Output<'o> = ();
         type Error = !;
@@ -606,50 +574,45 @@ mod test {
         /// idempotent enq_deq
         fn run<'o>(
             &'o mut self,
-            obj: Self::Object<'o>,
+            queue: Self::Object<'o>,
             tid: Self::Input,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let q = &obj.queue;
-            let job_finished = &obj.job_finished;
-            let results = &obj.result;
-
             match tid {
-                // tid:0은 다른 memento들의 실행결과를 확인
+                // T0: 다른 스레드들의 실행결과를 확인
                 0 => {
                     // 다른 스레드들이 다 끝날때까지 기다림
-                    while job_finished.load(Ordering::SeqCst) != NR_THREAD {}
+                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check queue is empty
                     assert!(Dequeue::<usize>::default()
-                        .run(q, (), guard, pool)
+                        .run(queue, (), guard, pool)
                         .unwrap()
                         .is_none());
 
                     // Check results
-                    assert!(results[0].load(Ordering::SeqCst) == 0);
+                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
                     for tid in 1..NR_THREAD + 1 {
-                        assert!(results[tid].load(Ordering::SeqCst) == COUNT);
+                        assert!(RESULTS[tid].load(Ordering::SeqCst) == COUNT);
                     }
                 }
-
-                // tid:0이 아닌 memento는 obj에 op 수행
+                // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ = self.enqs[i].run(q, tid, guard, pool);
-                        assert!(self.deqs[i].run(q, (), guard, pool).unwrap().is_some());
+                        let _ = self.enqs[i].run(queue, tid, guard, pool);
+                        assert!(self.deqs[i].run(queue, (), guard, pool).unwrap().is_some());
                     }
 
-                    // deq 결과값 전달
+                    // deq 결과를 실험결과에 전달
                     for deq in self.deqs.as_mut() {
-                        let ret = deq.run(q, (), guard, pool).unwrap().unwrap();
-                        let _ = results[ret].fetch_add(1, Ordering::SeqCst);
+                        let ret = deq.run(queue, (), guard, pool).unwrap().unwrap();
+                        let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
                     }
 
                     // "나 끝났다"
-                    let _ = job_finished.fetch_add(1, Ordering::SeqCst);
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
             Ok(())
@@ -660,7 +623,8 @@ mod test {
         }
     }
 
-    impl TestRootMemento<RootObj> for RootMemento {}
+    impl TestRootObj for Queue<usize> {}
+    impl TestRootMemento<Queue<usize>> for EnqDeq {}
 
     // TODO: stack의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -669,13 +633,12 @@ mod test {
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
     //
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn enq_deq() {
         const FILE_NAME: &str = "enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<RootObj, RootMemento, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<Queue<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }

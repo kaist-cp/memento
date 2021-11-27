@@ -190,6 +190,7 @@ dependencies = [
  "crossbeam-utils 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger",
  "etrace",
+ "lazy_static",
  "log",
  "rand",
  "serial_test",
