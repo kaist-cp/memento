@@ -114,6 +114,8 @@ impl<T: 'static + Clone> Memento for Enqueue<T> {
             // crash-free execution이니 내가 가지고 있던 노드는 enq 되었음이 확실 => 내가 free하면 안됨
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Drop for Enqueue<T> {
@@ -188,6 +190,8 @@ impl<T: 'static + Clone> Memento for Dequeue<T> {
             unsafe { guard.defer_pdestroy(target) };
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Dequeue<T> {
@@ -259,6 +263,8 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
     fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         self.deq.reset(nested, guard, pool);
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Drop for DequeueSome<T> {
@@ -331,7 +337,7 @@ impl<T: Clone> Queue<T> {
             return Some(n);
         }
 
-        // (2) stack 안에 있으면 enqueue된 것이다 (Direct tracking)
+        // (2) queue 안에 있으면 enqueue된 것이다 (Direct tracking)
         if self.search(mine, guard, pool) {
             return None;
         }
@@ -621,6 +627,8 @@ mod test {
         fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
+
+        fn set_recovery(&mut self, _: &'static PoolHandle) {}
     }
 
     impl TestRootObj for Queue<usize> {}
