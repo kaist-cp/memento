@@ -172,6 +172,12 @@ impl Default for TicketLock {
     }
 }
 
+impl PDefault for TicketLock {
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Self::default()
+    }
+}
+
 impl TicketLock {
     fn lock(&self, client: &mut Lock, guard: &mut Guard, pool: &'static PoolHandle) -> usize {
         let mut m = client.membership.load(Ordering::SeqCst, guard);
@@ -344,11 +350,12 @@ impl RawLock for TicketLock {
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
-
-    use crate::{lock::tests::ConcurAdd, utils::tests::run_test};
-
     use super::*;
+    use crate::{
+        lock::{tests::ConcurAdd, Mutex},
+        utils::tests::run_test,
+    };
+    use serial_test::serial;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
@@ -360,6 +367,10 @@ mod tests {
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn concur_add() {
         const FILE_NAME: &str = "ticket_concur_add.pool";
-        run_test::<ConcurAdd<TicketLock, NR_THREAD, COUNT>, _>(FILE_NAME, FILE_SIZE)
+        run_test::<Mutex<TicketLock, usize>, ConcurAdd<TicketLock, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
     }
 }
