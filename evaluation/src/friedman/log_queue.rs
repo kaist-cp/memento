@@ -249,7 +249,7 @@ impl<T: Clone> LogQueue<T> {
                             &guard,
                         );
                         // NOTE: 로그가 가리키고 있을 수 있으니 여기서 deq한 노드를 free하면 안됨
-                        // TODO(persist): persist `first`?
+                        persist_obj(&self.head, true);
                         return;
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         persist_obj(&next_ref.log_remove, true);

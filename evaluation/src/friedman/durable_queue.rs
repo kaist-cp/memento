@@ -172,8 +172,8 @@ impl<T: Clone> DurableQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
+                        persist_obj(&self.head, true);
                         unsafe { guard.defer_pdestroy(first) };
-                        // TODO(persist): persist `head`?
                         return;
                     } else {
                         let deq_tid = next_ref.deq_tid.load(Ordering::SeqCst);
