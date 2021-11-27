@@ -148,6 +148,8 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         // `MutexGuard`가 살아있을 때 이 함수 호출은 컴파일 타임에 막아짐.
         self.lock.reset(nested, guard, pool);
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 unsafe impl<L: RawLock, T> Send for Lock<L, T>
@@ -296,6 +298,13 @@ pub(crate) mod tests {
                 self.state = State::Ready;
             }
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.lock.set_recovery(pool);
+
+            // TODO: reset 중이었다가 crash난 애의 reset을 끝내줄 수 있음.
+            //       그러면 run에서 reset 중인지 검사 불필요.
+        }
     }
 
     pub(crate) struct ConcurAdd<L: RawLock, const NR_THREAD: usize, const COUNT: usize> {
@@ -386,6 +395,11 @@ pub(crate) mod tests {
 
         fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!()
+        }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.faa.set_recovery(pool);
+            // TODO: reset 구현 후 reset 복구도 해줄 수 있나 확인
         }
     }
 

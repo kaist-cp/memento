@@ -115,6 +115,10 @@ impl Memento for Lock {
         m_ref.state = State::Ready;
         persist_obj(&m_ref.state, true);
     }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        self.register.set_recovery(pool);
+    }
 }
 
 impl Lock {
@@ -152,6 +156,8 @@ impl Memento for Unlock {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {}
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// IMPORTANT: ticket의 overflow는 없다고 가정
@@ -207,7 +213,7 @@ impl TicketLock {
                 unreachable!("Unique client ID as a key")
             }
 
-            client.registered = true; // TODO: list insert에서 "recovery할 때만 해야할지 생각하기" 해결 후 지워도 되는지 확인
+            client.registered = true;
             persist_obj(&client.registered, true);
         }
 
