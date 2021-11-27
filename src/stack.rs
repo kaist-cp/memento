@@ -90,6 +90,10 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         self.try_push.reset(true, guard, pool);
     }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        self.try_push.set_recovery(pool);
+    }
 }
 
 impl<T: Clone, S: Stack<T>> Drop for Push<T, S> {
@@ -145,6 +149,10 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
 
     fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         self.try_pop.reset(true, guard, pool);
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        self.try_pop.set_recovery(pool);
     }
 }
 
