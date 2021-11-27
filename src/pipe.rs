@@ -76,7 +76,6 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         if self.resetting {
-            // TODO: recovery 중에만 검사하도록
             // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
             self.reset(false, guard, pool);
         }
@@ -98,6 +97,11 @@ where
             self.resetting = false;
             persist_obj(&self.resetting, true);
         }
+    }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
+        // TODO: reset 중이었다가 crash난 애의 reset을 끝내줄 수 있음.
+        //       그러면 run에서 reset 중인지 검사 불필요.
     }
 }
 
@@ -208,6 +212,20 @@ mod tests {
 
         fn reset(&mut self, _: bool, _: &mut Guard, _: &PoolHandle) {
             todo!("reset test")
+        }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            for m in self.pipes.iter_mut() {
+                m.set_recovery(pool);
+            }
+
+            for m in self.suppliers.iter_mut() {
+                m.set_recovery(pool);
+            }
+
+            for m in self.consumers.iter_mut() {
+                m.set_recovery(pool);
+            }
         }
     }
 
