@@ -113,24 +113,29 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_utils::thread;
-    use serial_test::serial;
-    use std::sync::atomic::Ordering;
-
-    use crate::pepoch::PAtomic;
-    use crate::persistent::*;
+    use super::*;
+    use crate::persistent::PDefault;
     use crate::plocation::ralloc::{Collectable, GarbageCollection};
     use crate::queue::*;
     use crate::utils::tests::*;
-    use crossbeam_epoch::{self as epoch};
-
-    use super::*;
+    use serial_test::serial;
 
     const COUNT: usize = 1_000_000;
 
+    impl Collectable for [Queue<usize>; 2] {
+        fn filter(q_arr: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Queue::<usize>::filter(&mut q_arr[0], gc, pool);
+            Queue::<usize>::filter(&mut q_arr[1], gc, pool);
+        }
+    }
+
+    impl PDefault for [Queue<usize>; 2] {
+        fn pdefault(pool: &'static PoolHandle) -> Self {
+            [Queue::pdefault(pool), Queue::pdefault(pool)]
+        }
+    }
+
     struct Transfer {
-        q1: PAtomic<Queue<usize>>,
-        q2: PAtomic<Queue<usize>>,
         pipes: [Pipe<DequeueSome<usize>, Enqueue<usize>>; COUNT],
         suppliers: [Enqueue<usize>; COUNT],
         consumers: [DequeueSome<usize>; COUNT],
@@ -139,8 +144,6 @@ mod tests {
     impl Default for Transfer {
         fn default() -> Self {
             Self {
-                q1: Default::default(),
-                q2: Default::default(),
                 pipes: array_init::array_init(|_| Pipe::default()),
                 suppliers: array_init::array_init(|_| Enqueue::default()),
                 consumers: array_init::array_init(|_| DequeueSome::default()),
@@ -148,44 +151,8 @@ mod tests {
         }
     }
 
-    impl Transfer {
-        fn init(&self, pool: &PoolHandle) {
-            let guard = unsafe { epoch::unprotected() };
-            let q1 = self.q1.load(Ordering::SeqCst, guard);
-            let q2 = self.q2.load(Ordering::SeqCst, guard);
-
-            // Initialize q1
-            if q1.is_null() {
-                let q = Queue::<usize>::new(pool);
-                // TODO: 여기서 crash나면 leak남
-                self.q1.store(q, Ordering::SeqCst);
-            }
-
-            // Initialize q2
-            if q2.is_null() {
-                let q = Queue::<usize>::new(pool);
-                // TODO: 여기서 crash나면 leak남
-                self.q2.store(q, Ordering::SeqCst);
-            }
-        }
-    }
-
     impl Collectable for Transfer {
         fn filter(transfer: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            let guard = unsafe { epoch::unprotected() };
-
-            // Mark q1, q2 if ptr is valid
-            let mut q1 = transfer.q1.load(Ordering::SeqCst, guard);
-            if !q1.is_null() {
-                let q1_ref = unsafe { q1.deref_mut(pool) };
-                Queue::mark(q1_ref, gc);
-            }
-            let mut q2 = transfer.q2.load(Ordering::SeqCst, guard);
-            if !q2.is_null() {
-                let q2_ref = unsafe { q2.deref_mut(pool) };
-                Queue::mark(q2_ref, gc);
-            }
-
             // Call filter of inner struct
             for pipe in transfer.pipes.as_mut() {
                 Pipe::filter(pipe, gc, pool);
@@ -200,56 +167,42 @@ mod tests {
     }
 
     impl Memento for Transfer {
-        type Object<'o> = ();
-        type Input = ();
+        type Object<'o> = &'o [Queue<usize>; 2];
+        type Input = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
+            q_arr: Self::Object<'o>,
+            tid: Self::Input,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            self.init(pool);
+            let (q1, q2) = (&q_arr[0], &q_arr[1]);
 
-            // Alias
-            let q1 = unsafe { self.q1.load(Ordering::SeqCst, guard).deref(pool) };
-            let q2 = unsafe { self.q2.load(Ordering::SeqCst, guard).deref(pool) };
-            let pipes = &mut self.pipes;
-            let suppliers = &mut self.suppliers;
-            let consumers = &mut self.consumers;
-
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
+            match tid {
                 // T0: Supply q1
-                let _ = scope.spawn(move |_| {
-                    let mut guard = epoch::pin();
-                    for (i, enq) in suppliers.iter_mut().enumerate() {
-                        let _ = enq.run(q1, i, &mut guard, pool);
+                0 => {
+                    for (i, enq) in self.suppliers.iter_mut().enumerate() {
+                        let _ = enq.run(q1, i, guard, pool);
                     }
-                });
-
+                }
                 // T1: Transfer q1->q2
-                let _ = scope.spawn(move |_| {
-                    let mut guard = epoch::pin();
-                    for pipe in pipes.iter_mut() {
-                        let _ = pipe.run((q1, q2), (), &mut guard, pool);
+                1 => {
+                    for pipe in self.pipes.iter_mut() {
+                        let _ = pipe.run((q1, q2), (), guard, pool);
                     }
-                });
-
+                }
                 // T2: Consume q2
-                let _ = scope.spawn(move |_| {
-                    let mut guard = epoch::pin();
-                    for (i, deq) in consumers.iter_mut().enumerate() {
-                        let v = deq.run(&q2, (), &mut guard, pool).unwrap();
+                2 => {
+                    for (i, deq) in self.consumers.iter_mut().enumerate() {
+                        let v = deq.run(&q2, (), guard, pool).unwrap();
                         assert_eq!(v, i);
                     }
-                });
-            })
-            .unwrap();
-
+                }
+                _ => unreachable!(),
+            }
             Ok(())
         }
 
@@ -258,7 +211,8 @@ mod tests {
         }
     }
 
-    impl TestRootOp for Transfer {}
+    impl TestRootObj for [Queue<usize>; 2] {}
+    impl TestRootMemento<[Queue<usize>; 2]> for Transfer {}
 
     const FILE_NAME: &str = "pipe_concur.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
@@ -267,6 +221,6 @@ mod tests {
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn pipe_concur() {
-        run_test::<Transfer, _>(FILE_NAME, FILE_SIZE)
+        run_test::<[Queue<usize>; 2], Transfer, _>(FILE_NAME, FILE_SIZE, 3)
     }
 }
