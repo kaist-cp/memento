@@ -628,7 +628,15 @@ mod test {
             todo!("reset test")
         }
 
-        fn set_recovery(&mut self, _: &'static PoolHandle) {}
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            for enq in self.enqs.iter_mut() {
+                enq.set_recovery(pool);
+            }
+
+            for deq in self.deqs.iter_mut() {
+                deq.set_recovery(pool);
+            }
+        }
     }
 
     impl TestRootObj for Queue<usize> {}

@@ -272,6 +272,16 @@ pub(crate) mod tests {
         fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            for push in self.pushes.iter_mut() {
+                push.set_recovery(pool);
+            }
+
+            for pop in self.pops.iter_mut() {
+                pop.set_recovery(pool);
+            }
+        }
     }
 
     impl<S, const NR_THREAD: usize, const COUNT: usize> TestRootMemento<S>
