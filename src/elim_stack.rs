@@ -1,6 +1,5 @@
 //! Persistent stack based on Elimination backoff stack
 
-// TODO: Add persist instruction
 // TODO: treiber 보다 느림...
 //       - 느린 이유 의심: `push(value)` 시 inner stack node와 exchanger node에 각각 value를 clone 함
 //       - 밝혀진 느린 이유: exchange 하게 되면 느려짐. exchager의 helping 메커니즘이 문제일 수도 있음
@@ -113,6 +112,14 @@ where
             persist_obj(&self.state, true);
         }
     }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        self.try_push.set_recovery(pool);
+        self.try_exchange.set_recovery(pool);
+
+        // TODO: reset 중이었다가 crash난 애의 reset을 끝내줄 수 있음.
+        //       그러면 run에서 reset 중인지 검사 불필요.
+    }
 }
 
 /// `ElimStack::pop()`를 호출할 때 쓰일 client
@@ -182,6 +189,14 @@ where
             self.state = State::TryingInner;
             persist_obj(&self.state, true);
         }
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        self.try_pop.set_recovery(pool);
+        self.try_exchange.set_recovery(pool);
+
+        // TODO: reset 중이었다가 crash난 애의 reset을 끝내줄 수 있음.
+        //       그러면 run에서 reset 중인지 검사 불필요.
     }
 }
 
@@ -349,9 +364,9 @@ mod test {
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-    type ElimT = ElimStack<usize, TreiberStack<usize>>;
-    impl TestRootObj for ElimT {}
-    impl TestRootObj for ElimStack<usize, ElimT> {}
+    type ElimTreiber = ElimStack<usize, TreiberStack<usize>>;
+    impl TestRootObj for ElimTreiber {}
+    impl TestRootObj for ElimStack<usize, ElimTreiber> {}
 
     /// treiber stack을 inner stack으로 하는 elim stack의 push-pop 테스트
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -359,7 +374,7 @@ mod test {
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn push_pop() {
-        type O = ElimT;
+        type O = ElimTreiber;
         type M = PushPop<O, NR_THREAD, COUNT>;
 
         const FILE_NAME: &str = "elim_push_pop.pool";
@@ -372,7 +387,7 @@ mod test {
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn push_pop_double() {
-        type O = ElimStack<usize, ElimT>;
+        type O = ElimStack<usize, ElimTreiber>;
         type M = PushPop<O, NR_THREAD, COUNT>;
 
         const FILE_NAME: &str = "elim_push_pop_double.pool";
