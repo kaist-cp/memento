@@ -58,9 +58,9 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=1, split=False, upper_
     plt.ylabel(ylabel, size='large')
 
     if not split:
-        plt.savefig("{}_wo_alloc.png".format(output), dpi=300)
+        plt.savefig("{}.png".format(output), dpi=300)
     else:
-        plt.savefig("{}_split_wo_alloc.png".format(output), dpi=300)
+        plt.savefig("{}_split.png".format(output), dpi=300)
 
 for obj in objs:
     data = pd.read_csv("./out/{}.csv".format(obj))

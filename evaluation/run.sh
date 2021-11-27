@@ -23,7 +23,7 @@ function bench() {
         for ((var=1; var<=$TEST_CNT; var++));
         do
             echo "test $var/$TEST_CNT...";
-            rm -f $poolpath
+            rm -f $poolpath*
             if [ "pmdk_pipe" == "${target}" ]; then
                 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $out
             else
@@ -53,7 +53,7 @@ dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
 mkdir -p $PMEM_PATH
 mkdir -p $out_path
-rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
+rm -rf ${PMEM_PATH}/*.pool* # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
