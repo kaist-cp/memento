@@ -119,7 +119,7 @@ pub mod tests {
     }
 
     /// test op 돌리기
-    pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_mem: usize)
+    pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
         O: TestRootObj + Send + Sync,
         M: TestRootMemento<O> + Send + Sync,
@@ -134,7 +134,7 @@ pub mod tests {
         // 풀 열기 (없으면 새로 만듦)
         let filepath = get_test_abs_path(pool_name);
         let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
-            .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_mem).unwrap());
+            .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap());
 
         // 루트 op 실행
         pool_handle.execute::<O, M>();
