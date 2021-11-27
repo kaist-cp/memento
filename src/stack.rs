@@ -158,16 +158,17 @@ unsafe impl<T: Clone, S: Stack<T>> Send for Pop<T, S> where S::TryPop: Send {}
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::*;
-    use crossbeam_epoch::{self as epoch};
-    use crossbeam_utils::thread;
 
-    use crate::{plocation::PoolHandle, utils::tests::TestRootOp};
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+    use crate::plocation::PoolHandle;
+    use crate::utils::tests::*;
+    use crossbeam_epoch::{self as epoch};
 
     pub(crate) struct PushPop<S: Stack<usize>, const NR_THREAD: usize, const COUNT: usize> {
-        stack: S,
-        pushes: [[S::Push; COUNT]; NR_THREAD],
-        pops: [[S::Pop; COUNT]; NR_THREAD],
+        pushes: [S::Push; COUNT],
+        pops: [S::Pop; COUNT],
     }
 
     impl<S, const NR_THREAD: usize, const COUNT: usize> Default for PushPop<S, NR_THREAD, COUNT>
@@ -176,9 +177,8 @@ pub(crate) mod tests {
     {
         fn default() -> Self {
             Self {
-                stack: Default::default(),
-                pushes: array_init::array_init(|_| array_init::array_init(|_| S::Push::default())),
-                pops: array_init::array_init(|_| array_init::array_init(|_| S::Pop::default())),
+                pushes: array_init::array_init(|_| S::Push::default()),
+                pops: array_init::array_init(|_| S::Pop::default()),
             }
         }
     }
@@ -190,16 +190,11 @@ pub(crate) mod tests {
         S::Pop: Send,
     {
         fn filter(push_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            S::filter(&mut push_pop.stack, gc, pool);
-            for pushes in push_pop.pushes.as_mut() {
-                for push in pushes {
-                    S::Push::filter(push, gc, pool);
-                }
+            for push in push_pop.pushes.as_mut() {
+                S::Push::filter(push, gc, pool);
             }
-            for pops in push_pop.pops.as_mut() {
-                for pop in pops {
-                    S::Pop::filter(pop, gc, pool);
-                }
+            for pop in push_pop.pops.as_mut() {
+                S::Pop::filter(pop, gc, pool);
             }
         }
     }
@@ -210,8 +205,8 @@ pub(crate) mod tests {
         S::Push: Send,
         S::Pop: Send,
     {
-        type Object<'o> = ();
-        type Input = ();
+        type Object<'o> = &'o S;
+        type Input = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
@@ -222,54 +217,47 @@ pub(crate) mod tests {
         /// - 마지막에 지금까지의 모든 pop의 결과물이 각 tid값의 정확한 누적 횟수를 가지는지 체크
         fn run<'o>(
             &'o mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
-            _: &mut Guard,
+            stack: Self::Object<'o>,
+            tid: Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
-                for tid in 0..NR_THREAD {
-                    let s = &self.stack;
-                    let pushes = unsafe {
-                        (self.pushes.get_unchecked_mut(tid) as *mut [S::Push; COUNT])
-                            .as_mut()
-                            .unwrap()
-                    };
-                    let pops = unsafe {
-                        (self.pops.get_unchecked_mut(tid) as *mut [S::Pop; COUNT])
-                            .as_mut()
-                            .unwrap()
-                    };
+            match tid {
+                // T0: 다른 스레드들의 실행결과를 확인
+                0 => {
+                    // 다른 스레드들이 다 끝날때까지 기다림
+                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
-                    let _ = scope.spawn(move |_| {
-                        let mut guard = epoch::pin();
-                        for i in 0..COUNT {
-                            let _ = pushes[i].run(s, tid, &mut guard, pool);
-                            assert!(pops[i].run(s, (), &mut guard, pool).unwrap().is_some());
-                        }
-                    });
+                    // Check empty
+                    let mut guard = epoch::pin();
+                    assert!(S::Pop::default()
+                        .run(stack, (), &mut guard, pool)
+                        .unwrap()
+                        .is_none());
+
+                    // Check results
+                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
+                    for tid in 1..NR_THREAD + 1 {
+                        assert!(RESULTS[tid].load(Ordering::SeqCst) == COUNT);
+                    }
                 }
-            })
-            .unwrap();
+                // T0이 아닌 다른 스레드들은 stack에 { push; pop; } 수행
+                _ => {
+                    // push; pop;
+                    for i in 0..COUNT {
+                        let _ = self.pushes[i].run(stack, tid, guard, pool);
+                        assert!(self.pops[i].run(stack, (), guard, pool).unwrap().is_some());
+                    }
 
-            // Check empty
-            let mut guard = epoch::pin();
-            assert!(S::Pop::default()
-                .run(&self.stack, (), &mut guard, pool)
-                .unwrap()
-                .is_none());
+                    // pop 결과를 실험결과에 전달
+                    for pop in self.pops.as_mut() {
+                        let ret = pop.run(stack, (), guard, pool).unwrap().unwrap();
+                        let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
+                    }
 
-            // Check results
-            let mut results = vec![0_usize; NR_THREAD];
-            for pops in self.pops.iter_mut() {
-                for pop in pops.iter_mut() {
-                    let ret = pop.run(&self.stack, (), &mut guard, pool).unwrap().unwrap();
-                    results[ret] += 1;
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
-
-            assert!(results.iter().all(|r| *r == COUNT));
             Ok(())
         }
 
@@ -278,9 +266,10 @@ pub(crate) mod tests {
         }
     }
 
-    impl<S, const NR_THREAD: usize, const COUNT: usize> TestRootOp for PushPop<S, NR_THREAD, COUNT>
+    impl<S, const NR_THREAD: usize, const COUNT: usize> TestRootMemento<S>
+        for PushPop<S, NR_THREAD, COUNT>
     where
-        S: Stack<usize> + Sync + 'static,
+        S: Stack<usize> + Sync + 'static + TestRootObj,
         S::Push: Send,
         S::Pop: Send,
     {

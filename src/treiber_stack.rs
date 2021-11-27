@@ -440,6 +440,12 @@ impl<T: Clone> Collectable for TreiberStack<T> {
     }
 }
 
+impl<T: Clone> PDefault for TreiberStack<T> {
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Self::default()
+    }
+}
+
 impl<T: Clone> TreiberStack<T> {
     fn push<C: PushType<T>>(
         &self,
@@ -659,12 +665,18 @@ mod tests {
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
+    impl TestRootObj for TreiberStack<usize> {}
+
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn push_pop() {
         const FILE_NAME: &str = "treiber_push_pop.pool";
-        run_test::<PushPop<TreiberStack<usize>, NR_THREAD, COUNT>, _>(FILE_NAME, FILE_SIZE)
+        run_test::<TreiberStack<usize>, PushPop<TreiberStack<usize>, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
     }
 }
