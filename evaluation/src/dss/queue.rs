@@ -320,22 +320,29 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     type DeqInput = usize; // tid
 
     fn enqueue(&self, (input, tid): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
-        // 저장소에 enq 노드를 새로 준비하기전에, 이전에 enq되지 못한 노드가 남아있다면 free
+        // 저장소에 enq 노드를 새로 준비하기전에, 이전 정보를 확인하고 필요시 free
         match self.resolve(tid, guard, pool) {
             // some operation was prepared
-            (Some((op, _)), completed) => {
+            (Some((op, val)), completed) => {
                 let node_tid = self.x[tid].load(Ordering::SeqCst, guard);
-                if let OpResolved::Enqueue = op {
-                    if !completed {
-                        // 노드가 아직 Enq 되지 않았으니 free
-                        unsafe { guard.defer_pdestroy(node_tid) };
+                match op {
+                    OpResolved::Enqueue => {
+                        if !completed {
+                            // 노드가 아직 Enq 되지 않았으니 free
+                            unsafe { guard.defer_pdestroy(node_tid) };
+                        }
+                    }
+                    OpResolved::Dequeue => {
+                        if completed && val.is_some() {
+                            // Deq된 노드가 있으니 free
+                            // (`val`이 None이면 EMPTY로 끝난거니 free하면 안됨)
+                            unsafe { guard.defer_pdestroy(node_tid) };
+                        }
                     }
                 }
             }
-            // no operation was prepared
             (None, _) => {
-                // 이 케이스 때문에 바로 resolve_enqueue 쓰면 안됨.
-                // resolve_enqueue를 바로 쓰려면 준비되있는게 enq임이 확실해야함.
+                // no operation was prepared
             }
         }
         self.prep_enqueue(input, tid, pool);
@@ -343,23 +350,29 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     }
 
     fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
-        // 저장소에 deq할 준비를 새로하기 전에, 이전에 deq된 노드가 남아있으면 free
+        // 저장소에 새로 deq할 준비하기 전에, 이전 정보를 확인하고 필요시 free
         match self.resolve(tid, guard, pool) {
             // some operation was prepared
             (Some((op, val)), completed) => {
                 let node_tid = self.x[tid].load(Ordering::SeqCst, guard);
-                if let OpResolved::Dequeue = op {
-                    if completed && val.is_some() {
-                        // Deq된 노드가 있으니 free
-                        // (`val`이 None이면 EMPTY로 끝난거니 free하면 안됨)
-                        unsafe { guard.defer_pdestroy(node_tid) };
+                match op {
+                    OpResolved::Enqueue => {
+                        if !completed {
+                            // 노드가 아직 Enq 되지 않았으니 free
+                            unsafe { guard.defer_pdestroy(node_tid) };
+                        }
+                    }
+                    OpResolved::Dequeue => {
+                        if completed && val.is_some() {
+                            // Deq된 노드가 있으니 free
+                            // (`val`이 None이면 EMPTY로 끝난거니 free하면 안됨)
+                            unsafe { guard.defer_pdestroy(node_tid) };
+                        }
                     }
                 }
             }
             (None, _) => {
                 // no operation was prepared
-                // 이 케이스 때문에 바로 resolve_dequeue 쓰면 안됨.
-                // resolve_deqqueue를 바로 쓰려면 준비되있는게 deq임이 확실해야함.
             }
         }
         self.prep_dequeue(tid);

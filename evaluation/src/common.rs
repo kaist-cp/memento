@@ -15,7 +15,7 @@ use structopt::StructOpt;
 pub const FILE_SIZE: usize = 80 * 1024 * 1024 * 1024;
 
 /// Queue 테스트시 초기 노드 수
-pub const QUEUE_INIT_SIZE: usize = 10;
+pub const QUEUE_INIT_SIZE: usize = 1_000_000;
 
 /// Pipe 테스트시 Queue 1의 초기 노드 수
 // TODO: cpp의 PIPE_INIT_SIZE는 별도로 있음(commons.hpp). 이를 하나의 컨픽 파일로 통일하기
