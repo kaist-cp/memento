@@ -115,6 +115,10 @@ impl Memento for MementoQueueEnqDeqPair {
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
         // no-op
     }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        // no-op
+    }
 }
 
 #[derive(Debug)]
@@ -178,6 +182,10 @@ impl Memento for MementoQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        // no-op
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
         // no-op
     }
 }

@@ -434,7 +434,11 @@ impl Memento for DSSQueueEnqDeqPair {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
-        // no-ops
+        // no-op
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        // no-op
     }
 }
 
@@ -481,6 +485,10 @@ impl Memento for DSSQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
-        // no-ops
+        // no-op
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        // no-op
     }
 }

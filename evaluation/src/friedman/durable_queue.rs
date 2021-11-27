@@ -283,6 +283,10 @@ impl Memento for DurableQueueEnqDeqPair {
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
         // no-op
     }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        // no-op
+    }
 }
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
@@ -331,6 +335,10 @@ impl Memento for DurableQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        // no-op
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
         // no-op
     }
 }

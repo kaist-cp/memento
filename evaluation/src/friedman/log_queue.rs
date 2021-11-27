@@ -360,7 +360,11 @@ impl Memento for LogQueueEnqDeqPair {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
-        // no-ops
+        // no-op
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        // no-op
     }
 }
 
@@ -408,6 +412,10 @@ impl Memento for LogQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
-        // no-ops
+        // no-op
+    }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        // no-op
     }
 }
