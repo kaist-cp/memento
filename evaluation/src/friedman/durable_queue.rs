@@ -3,7 +3,7 @@ use crate::common::{TestKind, TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
-use memento::pepoch::{PAtomic, POwned};
+use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::persistent::*;
 use memento::plocation::ralloc::{Collectable, GarbageCollection};
 use memento::plocation::{ll::*, pool::*};
@@ -114,9 +114,10 @@ impl<T: Clone> DurableQueue<T> {
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
-        self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
+        let prev = self.ret_val[tid].swap(new_ret_val, Ordering::SeqCst, guard);
         persist_obj(&self.ret_val[tid], true);
         // ```
+        unsafe { guard.defer_pdestroy(prev) }; // ret_val[tid]에 덮어쓰므로 원래 있던 포인터 free
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         loop {
@@ -171,6 +172,8 @@ impl<T: Clone> DurableQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
+                        unsafe { guard.defer_pdestroy(first) };
+                        // TODO(persist): persist `head`?
                         return;
                     } else {
                         let deq_tid = next_ref.deq_tid.load(Ordering::SeqCst);
