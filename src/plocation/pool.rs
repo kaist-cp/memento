@@ -100,7 +100,7 @@ impl PoolHandle {
                                 let m = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                                 let mut g = epoch::old_guard(mid);
-                                // TODO: m.set_recovery();
+                                m.set_recovery(self);
                                 let _ = m.run(o, mid, &mut g, self);
                             });
 
