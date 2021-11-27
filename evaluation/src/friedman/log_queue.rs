@@ -3,7 +3,7 @@ use crate::common::{TestKind, TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
-use memento::pepoch::{PAtomic, POwned, PShared};
+use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use memento::persistent::*;
 use memento::plocation::ralloc::{Collectable, GarbageCollection};
 use memento::plocation::{ll::*, pool::*};
@@ -117,7 +117,13 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(node_ref, true);
         persist_obj(log_ref, true);
 
-        self.logs[tid].store(log, Ordering::SeqCst);
+        let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard);
+        // TODO: prev 및 prev가 가리키는 노드를 free
+        // 주의할 점: prev가 enq 로그인지 deq 로그인지 모름
+        //      1. 가리키는 노드가 deq 되지 않았다면 free하면 안됨
+        //      2. 가리키는 노드가 deq 된 노드라면 double free 하지 않게 주의해야함
+        //      (아마 deq된 노드인지 확인부터 한뒤, free할 담당자를 CAS로 결정해야할듯. 그리고 담당자는 노드를 free하기 전에 다른 로그와의 연결부터 끊어줘야..?)
+
         persist_obj(&self.logs[tid], true);
         // ```
 
@@ -170,7 +176,14 @@ impl<T: Clone> LogQueue<T> {
         .into_shared(&guard);
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
-        self.logs[tid].store(log, Ordering::SeqCst);
+
+        let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard);
+        // TODO: prev 및 prev가 가리키는 노드를 free
+        // 주의할 점: prev가 enq 로그인지 deq 로그인지 모름
+        //      1. 가리키는 노드가 deq 되지 않았다면 free하면 안됨
+        //      2. 가리키는 노드가 deq 된 노드라면 double free 하지 않게 주의해야함
+        //      (아마 deq된 노드인지 확인부터 한뒤, free할 담당자를 CAS로 결정해야할듯. 그리고 담당자는 노드를 free하기 전에 다른 로그와의 연결부터 끊어줘야..?)
+
         persist_obj(&self.logs[tid], true);
         // ```
 
@@ -235,6 +248,8 @@ impl<T: Clone> LogQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
+                        // NOTE: 로그가 가리키고 있을 수 있으니 여기서 deq한 노드를 free하면 안됨
+                        // TODO(persist): persist `first`?
                         return;
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         persist_obj(&next_ref.log_remove, true);
