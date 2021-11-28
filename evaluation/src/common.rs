@@ -144,7 +144,7 @@ pub struct Opt {
     pub output: Option<String>,
 
     /// TODO
-    #[structopt(short, long)]
+    #[structopt(short, long, default_value = "10000")]
     pub relax: usize,
 }
 
