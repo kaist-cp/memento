@@ -162,7 +162,6 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "csv",
- "lazy_static",
  "memento",
  "rand",
  "regex",

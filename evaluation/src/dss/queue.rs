@@ -1,5 +1,5 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
-use crate::common::{TestKind, TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
+use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
@@ -84,7 +84,7 @@ struct DSSQueue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for DSSQueue<T> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -386,7 +386,7 @@ pub struct TestDSSQueue {
 }
 
 impl Collectable for TestDSSQueue {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -409,7 +409,7 @@ impl PDefault for TestDSSQueue {
 pub struct DSSQueueEnqDeqPair;
 
 impl Collectable for DSSQueueEnqDeqPair {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -450,7 +450,7 @@ impl Memento for DSSQueueEnqDeqPair {
         // no-op
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -459,7 +459,7 @@ impl Memento for DSSQueueEnqDeqPair {
 pub struct DSSQueueEnqDeqProb;
 
 impl Collectable for DSSQueueEnqDeqProb {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -501,7 +501,7 @@ impl Memento for DSSQueueEnqDeqProb {
         // no-op
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }

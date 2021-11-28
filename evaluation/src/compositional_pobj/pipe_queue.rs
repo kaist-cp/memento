@@ -28,7 +28,7 @@ struct EnqueuePipeQ {
 }
 
 impl Collectable for EnqueuePipeQ {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -74,7 +74,7 @@ impl Memento for EnqueuePipeQ {
         }
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -85,7 +85,7 @@ struct DequeuePipeQ {
 }
 
 impl Collectable for DequeuePipeQ {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -111,7 +111,7 @@ impl Memento for DequeuePipeQ {
         self.deq.reset(nested, guard, pool);
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -128,7 +128,7 @@ impl TestQueue for PipeQueue {
     type DeqInput = &'static mut DequeuePipeQ; // Memento
 
     fn enqueue(&self, (enq, input): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
-        enq.run(self, input, guard, pool);
+        let _ = enq.run(self, input, guard, pool);
         enq.reset(false, guard, pool);
     }
 
@@ -145,7 +145,7 @@ pub struct TestPipeQueue {
 }
 
 impl Collectable for TestPipeQueue {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -162,7 +162,7 @@ impl PDefault for TestPipeQueue {
         // 초기 노드 삽입
         let mut enq_init = EnqueuePipeQ::default();
         for i in 0..QUEUE_INIT_SIZE {
-            enq_init.run(&pipeq, i, &mut guard, pool);
+            let _ = enq_init.run(&pipeq, i, &mut guard, pool);
             enq_init.reset(false, &mut guard, pool);
         }
 
@@ -186,7 +186,7 @@ impl Default for MementoPipeQueueEnqDeqPair {
 }
 
 impl Collectable for MementoPipeQueueEnqDeqPair {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -233,7 +233,7 @@ impl Memento for MementoPipeQueueEnqDeqPair {
         // no-op
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -254,7 +254,7 @@ impl Default for MementoPipeQueueEnqDeqProb {
 }
 
 impl Collectable for MementoPipeQueueEnqDeqProb {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -301,7 +301,7 @@ impl Memento for MementoPipeQueueEnqDeqProb {
         // no-op
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }

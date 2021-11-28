@@ -7,7 +7,7 @@ use memento::plocation::ralloc::{Collectable, GarbageCollection};
 use memento::queue::*;
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
-use crate::common::{TestKind, TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
+use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
 // for<'o> Memento<Object<'o> = &'o O, Input = usize>
 
@@ -16,7 +16,7 @@ impl<T: 'static + Clone> TestQueue for Queue<T> {
     type DeqInput = &'static mut Dequeue<T>; // Memento
 
     fn enqueue(&self, (enq, input): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
-        enq.run(self, input, guard, pool);
+        let _ = enq.run(self, input, guard, pool);
         enq.reset(false, guard, pool);
     }
 
@@ -33,7 +33,7 @@ pub struct TestMementoQueue {
 }
 
 impl Collectable for TestMementoQueue {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -46,7 +46,7 @@ impl PDefault for TestMementoQueue {
         // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..QUEUE_INIT_SIZE {
-            push_init.run(&queue, i, &mut guard, pool);
+            let _ = push_init.run(&queue, i, &mut guard, pool);
             push_init.reset(false, &mut guard, pool);
         }
         Self { queue }
@@ -69,7 +69,7 @@ impl Default for MementoQueueEnqDeqPair {
 }
 
 impl Collectable for MementoQueueEnqDeqPair {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -116,7 +116,7 @@ impl Memento for MementoQueueEnqDeqPair {
         // no-op
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -137,7 +137,7 @@ impl Default for MementoQueueEnqDeqProb {
 }
 
 impl Collectable for MementoQueueEnqDeqProb {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -185,7 +185,7 @@ impl Memento for MementoQueueEnqDeqProb {
         // no-op
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }

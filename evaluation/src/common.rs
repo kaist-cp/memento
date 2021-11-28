@@ -1,12 +1,9 @@
 //! Abstraction for evaluation
 
 use crossbeam_epoch::Guard;
-use crossbeam_utils::thread;
-use lazy_static::lazy_static;
 use memento::persistent::{Memento, PDefault};
 use memento::plocation::Pool;
 use rand::Rng;
-use std::fs::remove_file;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
@@ -144,7 +141,7 @@ pub struct Opt {
 /// Abstraction of queue
 pub mod queue {
     use crossbeam_epoch::Guard;
-    use memento::{persistent::Memento, plocation::PoolHandle};
+    use memento::plocation::PoolHandle;
 
     use crate::{
         common::{get_nops, PROB},
@@ -195,7 +192,7 @@ pub mod queue {
         q.dequeue(deq, guard, pool);
     }
 
-    pub fn bench_queue(opt: &Opt, target: TestTarget, kind: TestKind) -> usize {
+    pub fn bench_queue(opt: &Opt, target: TestTarget, _: TestKind) -> usize {
         match target {
             TestTarget::OurQueue(kind) => match kind {
                 TestKind::QueuePair => {
