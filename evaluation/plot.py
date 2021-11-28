@@ -7,8 +7,8 @@ objs = {
     "queue": {
         "targets": {
             # TODO: our -> memento로 이름 변경
-            "our_queue": {'label': "Memento queue", 'marker': 'o', 'color': 'k', 'style': '-'},
-            'our_pipe_queue': {'label': "Memento pipe-queue", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
+            "memento_queue": {'label': "Memento queue", 'marker': 'o', 'color': 'k', 'style': '-'},
+            'memento_pipe_queue': {'label': "Memento pipe-queue", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
             'durable_queue': {'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
             'dss_queue': {'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
@@ -18,7 +18,7 @@ objs = {
     # TODO: pipe 실험 가능하게 하기
     # "pipe": {
     #     "targets": {
-    #         'our_pipe': {'label': "Memento pipe", 'marker': 'o', 'color': 'k', 'style': '-'},
+    #         'memento_pipe': {'label': "Memento pipe", 'marker': 'o', 'color': 'k', 'style': '-'},
     #         'crndm_pipe': {'label': "Corundum pipe", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
     #         'pmdk_pipe': {'label': "PMDK pipe", 'marker': 'x', 'color': 'c', 'style': '--'},
     #     },

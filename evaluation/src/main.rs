@@ -26,12 +26,12 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         _ => unreachable!(),
     };
     match target {
-        "our_queue" => TestTarget::OurQueue(kind),
-        "our_pipe_queue" => TestTarget::OurPipeQueue(kind),
+        "memento_queue" => TestTarget::MementoQueue(kind),
+        "memento_pipe_queue" => TestTarget::MementoPipeQueue(kind),
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
-        "our_pipe" => TestTarget::OurPipe(kind),
+        "memento_pipe" => TestTarget::MementoPipe(kind),
         "crndm_pipe" => TestTarget::CrndmPipe(kind),
         _ => unreachable!("invalid target"),
     }
@@ -89,12 +89,12 @@ fn bench(opt: &Opt) -> f64 {
     let target = parse_target(&opt.target, &opt.kind);
 
     let nops = match target {
-        TestTarget::OurQueue(_) => bench_queue(opt, target),
-        TestTarget::OurPipeQueue(_) => bench_queue(opt, target),
+        TestTarget::MementoQueue(_) => bench_queue(opt, target),
+        TestTarget::MementoPipeQueue(_) => bench_queue(opt, target),
         TestTarget::FriedmanDurableQueue(_) => bench_queue(opt, target),
         TestTarget::FriedmanLogQueue(_) => bench_queue(opt, target),
         TestTarget::DSSQueue(_) => bench_queue(opt, target),
-        TestTarget::OurPipe(_) => {
+        TestTarget::MementoPipe(_) => {
             // get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
             todo!()
         }

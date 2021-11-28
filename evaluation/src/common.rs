@@ -71,12 +71,12 @@ pub fn get_total_nops() -> usize {
 
 #[derive(Debug)]
 pub enum TestTarget {
-    OurQueue(TestKind),
-    OurPipeQueue(TestKind),
+    MementoQueue(TestKind),
+    MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
     DSSQueue(TestKind),
-    OurPipe(TestKind),
+    MementoPipe(TestKind),
     CrndmPipe(TestKind),
 }
 
@@ -204,7 +204,7 @@ pub mod queue {
 
     pub fn bench_queue(opt: &Opt, target: TestTarget) -> usize {
         match target {
-            TestTarget::OurQueue(kind) => match kind {
+            TestTarget::MementoQueue(kind) => match kind {
                 TestKind::QueuePair => {
                     get_nops::<TestMementoQueue, MementoQueueEnqDeqPair>(&opt.filepath, opt.threads)
                 }
@@ -214,7 +214,7 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
-            TestTarget::OurPipeQueue(kind) => match kind {
+            TestTarget::MementoPipeQueue(kind) => match kind {
                 TestKind::QueuePair => get_nops::<TestPipeQueue, MementoPipeQueueEnqDeqPair>(
                     &opt.filepath,
                     opt.threads,
