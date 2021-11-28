@@ -50,6 +50,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
 fn setup() -> (Opt, Writer<File>) {
     let opt = Opt::from_args();
     unsafe { DURATION = opt.duration }; // 각 스레드가 수행할 시간 설정
+    unsafe { RELAXED = opt.relax }; // 각 스레드가 op을 `n`번 실행할때마다 guard repin
 
     let output_name = match &opt.output {
         Some(o) => o.clone(),
@@ -72,7 +73,14 @@ fn setup() -> (Opt, Writer<File>) {
                 .unwrap();
             let mut output = csv::Writer::from_writer(f);
             output
-                .write_record(&["target", "bench kind", "threads", "duration", "throughput"])
+                .write_record(&[
+                    "target",
+                    "bench kind",
+                    "threads",
+                    "duration",
+                    "relaxed",
+                    "throughput",
+                ])
                 .unwrap();
             output.flush().unwrap();
             output
@@ -120,6 +128,7 @@ fn main() {
             opt.kind,
             opt.threads.to_string(),
             opt.duration.to_string(),
+            opt.relax.to_string(),
             avg_mops.to_string(),
         ])
         .unwrap();

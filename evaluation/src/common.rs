@@ -27,6 +27,8 @@ pub const MAX_THREADS: usize = 256;
 // TODO: 이렇게 두지않고 다른 방법 없나?
 pub static mut DURATION: f64 = 0.0;
 pub static mut PROB: u32 = 0;
+/// repin 호출 주기 (op을 `RELAXED`번 수행시마다 repin 호출)
+pub static mut RELAXED: usize = 0;
 pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
 
 // lazy_static! {
@@ -140,6 +142,10 @@ pub struct Opt {
     /// 출력 파일. 주어지지 않으면 ./out/{target}.csv에 저장
     #[structopt(short, long)]
     pub output: Option<String>,
+
+    /// TODO
+    #[structopt(short, long)]
+    pub relax: usize,
 }
 
 /// Abstraction of queue
