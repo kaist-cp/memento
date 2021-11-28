@@ -240,7 +240,7 @@ impl<T: Clone> DSSQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
-                        persist_obj(&self.head, true);
+                        guard.defer_persist(&self.head);
                         return Some(unsafe { (*next_ref.val.as_ptr()).clone() });
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         // help another dequeueing thread

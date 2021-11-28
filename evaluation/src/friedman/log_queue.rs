@@ -199,7 +199,7 @@ impl<T: Clone> LogQueue<T> {
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
 
-        let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard);
+        let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard); // TODO: swap을 사용하는 건 정당하지 않음. load 하자
         persist_obj(&self.logs[tid], true);
         // ```
 
@@ -292,7 +292,7 @@ impl<T: Clone> LogQueue<T> {
                             &guard,
                         );
                         // NOTE: 로그가 가리키고 있을 수 있으니 여기서 deq한 노드를 free하면 안됨
-                        persist_obj(&self.head, true);
+                        guard.defer_persist(&self.head);
                         return;
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         persist_obj(&next_ref.log_remove, true);

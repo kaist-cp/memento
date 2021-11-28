@@ -505,7 +505,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
-                        persist_obj(&self.head, true);
+                        guard.defer_persist(&self.head);
                         Some(Self::finish_dequeue(next_ref))
                     })
                     .map_err(|_| {

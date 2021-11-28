@@ -175,7 +175,7 @@ impl<T: Clone> DurableQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
-                        persist_obj(&self.head, true);
+                        guard.defer_persist(&self.head);
                         unsafe { guard.defer_pdestroy(first) };
                         guard.repin();
                         return;
