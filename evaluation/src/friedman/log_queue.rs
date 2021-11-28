@@ -107,9 +107,9 @@ impl<T: Clone> LogQueue<T> {
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Enqueue, op_num),
             pool,
         )
-        .into_shared(&guard);
+        .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
         let log_ref = unsafe { log.deref(pool) };
-        let node = POwned::new(Node::new(val), pool).into_shared(&guard);
+        let node = POwned::new(Node::new(val), pool);
         let node_ref = unsafe { node.deref(pool) };
 
         log_ref.node.store(node, Ordering::SeqCst);
@@ -129,7 +129,7 @@ impl<T: Clone> LogQueue<T> {
             //   3. 이전 Log array는 버리고 새로 만듦
             //
             // 따라서 이 로직에 도달하는 것은 crash-free execution
-            if prev.is_null() {
+            if !prev.is_null() {
                 let prev_ref = unsafe { prev.deref(pool) };
 
                 // 이 시점(crash-free execution)의 prev 로그는 항상 enq or deq 성공한 로그
@@ -143,10 +143,12 @@ impl<T: Clone> LogQueue<T> {
                     }
                 }
                 unsafe { guard.defer_pdestroy(prev) };
+                guard.repin();
             }
         }
         // ```
 
+        let node = log_ref.node.load(Ordering::SeqCst, guard);
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -193,7 +195,7 @@ impl<T: Clone> LogQueue<T> {
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, op_num),
             pool,
         )
-        .into_shared(&guard);
+        .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
 
@@ -209,7 +211,7 @@ impl<T: Clone> LogQueue<T> {
             //   3. 이전 Log array는 버리고 새로 만듦
             //
             // 따라서 이 로직에 도달하는 것은 crash-free execution
-            if prev.is_null() {
+            if !prev.is_null() {
                 let prev_ref = unsafe { prev.deref(pool) };
 
                 // 이 시점(crash-free execution)의 prev 로그는 항상 enq or deq 성공한 로그
@@ -223,6 +225,7 @@ impl<T: Clone> LogQueue<T> {
                     }
                 }
                 unsafe { guard.defer_pdestroy(prev) };
+                guard.repin();
             }
         }
         // ```

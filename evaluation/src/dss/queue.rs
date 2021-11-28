@@ -330,6 +330,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
                         if !completed {
                             // 노드가 아직 Enq 되지 않았으니 free
                             unsafe { guard.defer_pdestroy(node_tid) };
+                            guard.repin();
                         }
                     }
                     OpResolved::Dequeue => {
@@ -337,6 +338,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
                             // Deq된 노드가 있으니 free
                             // (`val`이 None이면 EMPTY로 끝난거니 free하면 안됨)
                             unsafe { guard.defer_pdestroy(node_tid) };
+                            guard.repin();
                         }
                     }
                 }
@@ -360,6 +362,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
                         if !completed {
                             // 노드가 아직 Enq 되지 않았으니 free
                             unsafe { guard.defer_pdestroy(node_tid) };
+                            guard.repin();
                         }
                     }
                     OpResolved::Dequeue => {
@@ -367,6 +370,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
                             // Deq된 노드가 있으니 free
                             // (`val`이 None이면 EMPTY로 끝난거니 free하면 안됨)
                             unsafe { guard.defer_pdestroy(node_tid) };
+                            guard.repin();
                         }
                     }
                 }

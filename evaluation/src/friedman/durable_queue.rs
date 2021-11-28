@@ -110,14 +110,17 @@ impl<T: Clone> DurableQueue<T> {
         // - Durable 큐: deq한 값을 가리킬 포인터 할당 및 persist
         //
         // ```
-        let mut new_ret_val = POwned::new(None, pool).into_shared(&guard);
+        let mut new_ret_val = POwned::new(None, pool).into_shared(unsafe { epoch::unprotected() }); // 이 ret var은 `tid`만 건드리니 unprotect해도 안전
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
         let prev = self.ret_val[tid].swap(new_ret_val, Ordering::SeqCst, guard);
         persist_obj(&self.ret_val[tid], true);
         // ```
-        unsafe { guard.defer_pdestroy(prev) }; // ret_val[tid]에 덮어쓰므로 원래 있던 포인터 free
+        if !prev.is_null() {
+            unsafe { guard.defer_pdestroy(prev) }; // ret_val[tid]에 덮어쓰므로 원래 있던 포인터 free
+            guard.repin();
+        }
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         loop {
@@ -174,6 +177,7 @@ impl<T: Clone> DurableQueue<T> {
                         );
                         persist_obj(&self.head, true);
                         unsafe { guard.defer_pdestroy(first) };
+                        guard.repin();
                         return;
                     } else {
                         let deq_tid = next_ref.deq_tid.load(Ordering::SeqCst);
