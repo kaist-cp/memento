@@ -23,17 +23,20 @@ pub const PIPE_INIT_SIZE: usize = 10_000_000;
 // - TODO: 이 상수 없앨 수 있는지 고민 (e.g. MAX_THREAD=32 ./run.sh처럼 가능한가?)
 pub const MAX_THREADS: usize = 256;
 
-/// 각 스레드가 수행할 시간
-// TODO: 이렇게 두지않고 다른 방법 없나?
+// ``` thread-local하게 사용하는 변수
+// TODO: 더 좋은 방법? 현재는 인자로 tid 밖에 전달해줄 수 없으니 이렇게 해둠
+
+/// op 반복을 지속할 시간
 pub static mut DURATION: f64 = 0.0;
+
+/// 확률값
 pub static mut PROB: u32 = 0;
+
 /// repin 호출 주기 (op을 `RELAXED`번 수행시마다 repin 호출)
 pub static mut RELAXED: usize = 0;
-pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
+// ```
 
-// lazy_static! {
-//     static ref TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
-// }
+pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
 
 pub trait TestNOps {
     /// `duration`초 동안의 `op` 실행횟수 계산
@@ -54,8 +57,8 @@ pub trait TestNOps {
             op(tid, guard);
             ops += 1;
 
-            if ops % 10000 == 0 {
-                guard.repin();
+            if ops % unsafe { RELAXED } == 0 {
+                guard.repin_after(|| {});
             }
         }
         ops
@@ -89,10 +92,7 @@ fn pick(prob: u32) -> bool {
     rand::thread_rng().gen_ratio(prob, 100)
 }
 
-// - 우리의 pool API로 만든 테스트 로직 실행
-// - root op으로 operation 실행 수를 카운트하는 로직을 가짐
-//      - input: 테스트 종류, n개 스레드로 m초 동안 테스트
-//      - output: m초 동안 실행된 operation 수
+// 우리의 pool API로 만든 테스트 로직 실행
 fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: PDefault + Send + Sync,
@@ -202,7 +202,7 @@ pub mod queue {
         q.dequeue(deq, guard, pool);
     }
 
-    pub fn bench_queue(opt: &Opt, target: TestTarget, _: TestKind) -> usize {
+    pub fn bench_queue(opt: &Opt, target: TestTarget) -> usize {
         match target {
             TestTarget::OurQueue(kind) => match kind {
                 TestKind::QueuePair => {

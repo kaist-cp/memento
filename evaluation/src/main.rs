@@ -4,19 +4,9 @@
 // use corundum::default::BuddyAlloc;
 use csv::Writer;
 use evaluation::common::queue::bench_queue;
-use evaluation::common::{
-    get_total_nops, Opt, TestKind, TestNOps, TestTarget, DURATION, FILE_SIZE,
-};
-// use evaluation::compositional_pobj::{GetOurPipeNOps, GetOurQueueNOps};
-use evaluation::compositional_pobj::{MementoQueueEnqDeqPair, TestMementoQueue};
-// use evaluation::crndm::CrndmPipe;
-// use evaluation::dss::GetDSSQueueNOps;
-// use evaluation::friedman::{GetDurableQueueNOps, GetLogQueueNOps};
-use memento::persistent::*;
-use memento::plocation::*;
+use evaluation::common::{Opt, TestKind, TestTarget, DURATION, RELAXED};
 use regex::Regex;
 use std::fs::create_dir_all;
-use std::fs::remove_file;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::path::Path;
@@ -89,24 +79,26 @@ fn setup() -> (Opt, Writer<File>) {
     (opt, output)
 }
 
-// 스레드 `nr_thread`개를 사용할 때의 처리율 계산
+// 스레드 `nr_thread`개를 사용할 때의 처리율(op 실행 수/s) 계산
+// TODO: refactoring
 fn bench(opt: &Opt) -> f64 {
     println!(
         "bench {}:{} using {} threads",
         opt.target, opt.kind, opt.threads
     );
     let target = parse_target(&opt.target, &opt.kind);
+
     let nops = match target {
-        TestTarget::OurQueue(kind) => bench_queue(opt, target, kind),
-        TestTarget::OurPipeQueue(kind) => bench_queue(opt, target, kind),
-        TestTarget::FriedmanDurableQueue(kind) => bench_queue(opt, target, kind),
-        TestTarget::FriedmanLogQueue(kind) => bench_queue(opt, target, kind),
-        TestTarget::DSSQueue(kind) => bench_queue(opt, target, kind),
-        TestTarget::OurPipe(kind) => {
+        TestTarget::OurQueue(_) => bench_queue(opt, target),
+        TestTarget::OurPipeQueue(_) => bench_queue(opt, target),
+        TestTarget::FriedmanDurableQueue(_) => bench_queue(opt, target),
+        TestTarget::FriedmanLogQueue(_) => bench_queue(opt, target),
+        TestTarget::DSSQueue(_) => bench_queue(opt, target),
+        TestTarget::OurPipe(_) => {
             // get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
             todo!()
         }
-        TestTarget::CrndmPipe(kind) => {
+        TestTarget::CrndmPipe(_) => {
             // let root = BuddyAlloc::open::<CrndmPipe>(&opt.filepath, O_16GB | O_CF).unwrap();
             //   root.get_nops(kind, opt.threads, opt.duration)
             todo!()
