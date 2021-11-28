@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+# NOTE: plot 하지 않을 `target` 혹은 `bench_kind`는 주석처리 해야함
 objs = {
     "queue": {
         "targets": {
@@ -40,11 +41,7 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=1):
     plt.legend()
     plt.xlabel(xlabel, size='large')
     plt.ylabel(ylabel, size='large')
-
-    if not split:
-        plt.savefig("{}.png".format(output), dpi=300)
-    else:
-        plt.savefig("{}_split.png".format(output), dpi=300)
+    plt.savefig("{}.png".format(output), dpi=300)
 
 for obj in objs:
     data = pd.read_csv("./out/{}.csv".format(obj))
