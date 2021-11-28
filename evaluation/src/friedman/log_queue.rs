@@ -41,7 +41,7 @@ impl<T: Clone> Node<T> {
 
 struct LogEntry<T: Clone> {
     _op_num: usize,
-    _op: Operation,
+    op: Operation,
     status: bool,
     node: PAtomic<Node<T>>,
 }
@@ -50,7 +50,7 @@ impl<T: Clone> LogEntry<T> {
     fn new(status: bool, node_with_log: PAtomic<Node<T>>, op: Operation, op_num: usize) -> Self {
         Self {
             _op_num: op_num,
-            _op: op,
+            op,
             status,
             node: node_with_log,
         }
@@ -118,13 +118,33 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(log_ref, true);
 
         let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard);
-        // TODO: prev 및 prev가 가리키는 노드를 free
-        // 주의할 점: prev가 enq 로그인지 deq 로그인지 모름
-        //      1. 가리키는 노드가 deq 되지 않았다면 free하면 안됨
-        //      2. 가리키는 노드가 deq 된 노드라면 double free 하지 않게 주의해야함
-        //      (아마 deq된 노드인지 확인부터 한뒤, free할 담당자를 CAS로 결정해야할듯. 그리고 담당자는 노드를 free하기 전에 다른 로그와의 연결부터 끊어줘야..?)
-
         persist_obj(&self.logs[tid], true);
+        // ```
+
+        // ``` prev 로그 및 prev 로그가 가리키는 노드를 free
+        {
+            // Log queue의 recovery phase는 수행됐다고 생각
+            //   1. Enq Log: enq 성공못한 로그는 recovery phase에서 전부 enq
+            //   2. Deq Log: 노드를 가리켰지만 Queue에서 노드를 Deq하지 못한 로그는 recovery phase에서 마저 전부 deq
+            //   3. 이전 Log array는 버리고 새로 만듦
+            //
+            // 따라서 이 로직에 도달하는 것은 crash-free execution
+            if prev.is_null() {
+                let prev_ref = unsafe { prev.deref(pool) };
+
+                // 이 시점(crash-free execution)의 prev 로그는 항상 enq or deq 성공한 로그
+                // - enq 로그라면 가리키는 노드를 free하면 안됨
+                // - deq 로그라면 가리키는 노드를 free. 단 "EMPTY"로 성공했었다면 free하면 안됨
+                if let Operation::Dequeue = prev_ref.op {
+                    // status=true면 dequeue를 EMPTY로 성공한 것임
+                    if !prev_ref.status {
+                        let node = prev_ref.node.load(Ordering::SeqCst, guard);
+                        unsafe { guard.defer_pdestroy(node) };
+                    }
+                }
+                unsafe { guard.defer_pdestroy(prev) };
+            }
+        }
         // ```
 
         loop {
@@ -178,13 +198,33 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(log_ref, true);
 
         let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard);
-        // TODO: prev 및 prev가 가리키는 노드를 free
-        // 주의할 점: prev가 enq 로그인지 deq 로그인지 모름
-        //      1. 가리키는 노드가 deq 되지 않았다면 free하면 안됨
-        //      2. 가리키는 노드가 deq 된 노드라면 double free 하지 않게 주의해야함
-        //      (아마 deq된 노드인지 확인부터 한뒤, free할 담당자를 CAS로 결정해야할듯. 그리고 담당자는 노드를 free하기 전에 다른 로그와의 연결부터 끊어줘야..?)
-
         persist_obj(&self.logs[tid], true);
+        // ```
+
+        // ``` prev 로그 및 prev 로그가 가리키는 노드를 free
+        {
+            // Log queue의 recovery phase는 수행됐다고 생각
+            //   1. Enq Log: enq 성공못한 로그는 recovery phase에서 전부 enq
+            //   2. Deq Log: 노드를 가리켰지만 Queue에서 노드를 Deq하지 못한 로그는 recovery phase에서 마저 전부 deq
+            //   3. 이전 Log array는 버리고 새로 만듦
+            //
+            // 따라서 이 로직에 도달하는 것은 crash-free execution
+            if prev.is_null() {
+                let prev_ref = unsafe { prev.deref(pool) };
+
+                // 이 시점(crash-free execution)의 prev 로그는 항상 enq or deq 성공한 로그
+                // - enq 로그라면 가리키는 노드를 free하면 안됨
+                // - deq 로그라면 가리키는 노드를 free. 단 "EMPTY"로 성공했었다면 free하면 안됨
+                if let Operation::Dequeue = prev_ref.op {
+                    // status=true면 dequeue를 EMPTY로 성공한 것임
+                    if !prev_ref.status {
+                        let node = prev_ref.node.load(Ordering::SeqCst, guard);
+                        unsafe { guard.defer_pdestroy(node) };
+                    }
+                }
+                unsafe { guard.defer_pdestroy(prev) };
+            }
+        }
         // ```
 
         loop {
