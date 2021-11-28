@@ -188,6 +188,7 @@ impl<T: 'static + Clone> Memento for Dequeue<T> {
 
             // crash-free execution이니 내가 deq 성공한 노드임이 확실 => 내가 free
             unsafe { guard.defer_pdestroy(target) };
+            guard.repin();
         }
     }
 
