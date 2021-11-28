@@ -1,5 +1,5 @@
 [package]
-name = "compositional-persistent-object"
+name = "memento"
 version = "0.1.0"
 authors = [
     "Kyeongmin Cho <kyeongmin.cho@kaist.ac.kr>",
@@ -19,13 +19,14 @@ use_msync = []
 stat_print_flushes = []
 
 [dependencies]
-crossbeam-epoch = "0.9.5"
+crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "old_guard" }
 crossbeam-utils = "0.8.5"
 chrono = "0.4"
 etrace = "1.1.1"
 rand = "0.8.4"
 tempfile = "3.2.0"
 array-init = "2.0.0"
+lazy_static = "1.4.0"
 
 [dev-dependencies]
 log = "0.4.14"

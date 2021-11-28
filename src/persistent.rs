@@ -46,7 +46,7 @@ impl<T> Frozen<T> {
     /// # Examples
     ///
     /// ```rust
-    ///    use compositional_persistent_object::persistent::Frozen;
+    ///    use memento::persistent::Frozen;
     ///
     ///    // 이 변수들은 언제나 pmem에서 접근 가능함을 가정
     ///    let src = Frozen::<Box<i32>>::from(Box::new(42)); // TODO: use `PBox`
@@ -77,8 +77,6 @@ impl<T> Frozen<T> {
 ///
 /// * 초기화 혹은 `reset()` 후 다음 `reset()` 전까지 `Memento`은 *반드시* 한 object에 대해서만 `run()`을 수행해야 함.
 /// * `Memento`는 자신 혹은 자신이 사용한 `Guard`가 Drop 될 때 *반드시* `reset()` 되어있는 상태여야 함.
-///
-// TODO: Pop operation과 헷갈릴 수 있음. 구분 필요하면 "Op"부분을 바꾸기
 pub trait Memento: Default + Collectable {
     /// Persistent op의 target object
     type Object<'o>;
@@ -123,4 +121,15 @@ pub trait Memento: Default + Collectable {
     /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
     /// 알려줄 수 있다.
     fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle);
+
+    /// Recovery할 때만 필요한 로직을 포함하는 memento가 해당 로직을 수행하도록 셋팅
+    ///
+    /// 프로그램 시작할 때 root에서 set_recovery를 호출
+    fn set_recovery(&mut self, pool: &'static PoolHandle);
+}
+
+/// TODO: doc
+pub trait PDefault: Collectable {
+    /// TODO: doc
+    fn pdefault(pool: &'static PoolHandle) -> Self;
 }

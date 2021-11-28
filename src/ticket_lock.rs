@@ -115,6 +115,10 @@ impl Memento for Lock {
         m_ref.state = State::Ready;
         persist_obj(&m_ref.state, true);
     }
+
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        self.register.set_recovery(pool);
+    }
 }
 
 impl Lock {
@@ -152,6 +156,8 @@ impl Memento for Unlock {
     }
 
     fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {}
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// IMPORTANT: ticket의 overflow는 없다고 가정
@@ -169,6 +175,12 @@ impl Default for TicketLock {
             next: AtomicUsize::new(TICKET_LOCK_INIT),
             members: Default::default(),
         }
+    }
+}
+
+impl PDefault for TicketLock {
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Self::default()
     }
 }
 
@@ -201,7 +213,7 @@ impl TicketLock {
                 unreachable!("Unique client ID as a key")
             }
 
-            client.registered = true; // TODO: list insert에서 "recovery할 때만 해야할지 생각하기" 해결 후 지워도 되는지 확인
+            client.registered = true;
             persist_obj(&client.registered, true);
         }
 
@@ -344,11 +356,12 @@ impl RawLock for TicketLock {
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
-
-    use crate::{lock::tests::ConcurAdd, utils::tests::run_test};
-
     use super::*;
+    use crate::{
+        lock::{tests::ConcurAdd, Mutex},
+        utils::tests::run_test,
+    };
+    use serial_test::serial;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
@@ -360,6 +373,10 @@ mod tests {
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn concur_add() {
         const FILE_NAME: &str = "ticket_concur_add.pool";
-        run_test::<ConcurAdd<TicketLock, NR_THREAD, COUNT>, _>(FILE_NAME, FILE_SIZE)
+        run_test::<Mutex<TicketLock, usize>, ConcurAdd<TicketLock, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
     }
 }

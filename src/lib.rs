@@ -43,9 +43,7 @@ pub mod lock;
 pub mod persistent;
 pub mod pipe;
 pub mod queue;
-
 pub mod stack;
-
 pub mod ticket_lock;
 pub mod treiber_stack;
 

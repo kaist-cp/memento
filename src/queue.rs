@@ -114,6 +114,8 @@ impl<T: 'static + Clone> Memento for Enqueue<T> {
             // crash-free execution이니 내가 가지고 있던 노드는 enq 되었음이 확실 => 내가 free하면 안됨
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Drop for Enqueue<T> {
@@ -188,6 +190,8 @@ impl<T: 'static + Clone> Memento for Dequeue<T> {
             unsafe { guard.defer_pdestroy(target) };
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Dequeue<T> {
@@ -259,6 +263,8 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
     fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
         self.deq.reset(nested, guard, pool);
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Drop for DequeueSome<T> {
@@ -281,6 +287,9 @@ impl<T: Clone> Collectable for Queue<T> {
         let guard = unsafe { epoch::unprotected() };
 
         // Mark valid ptr to trace
+        //
+        // Ralloc에 null ptr 걸러내는 로직 있지만, 우리도 체크해야함. 왜냐하면 우리 로직에서 null ptr를 deref_mut하면 절대주소 구할 때 overflow나기때문
+        // TODO: 우리는 null 검사 안해도 되게하기. Ralloc에서 null ptr 거르는데 우리도 null 검사하는 게 불편함
         let mut head = queue.head.load(Ordering::SeqCst, guard);
         if !head.is_null() {
             let head = unsafe { head.deref_mut(pool) };
@@ -289,25 +298,20 @@ impl<T: Clone> Collectable for Queue<T> {
     }
 }
 
-impl<T: Clone> Queue<T> {
-    /// new
-    // TODO: alloc, init 구상한 후 시그니처 변경
-    pub fn new(pool: &PoolHandle) -> POwned<Self> {
+impl<T: Clone> PDefault for Queue<T> {
+    fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
-        let ret = POwned::new(
-            Self {
-                head: CachePadded::new(PAtomic::from(sentinel)),
-                tail: CachePadded::new(PAtomic::from(sentinel)),
-            },
-            pool,
-        );
-        persist_obj(unsafe { ret.deref(pool) }, true);
-        ret
+        Self {
+            head: CachePadded::new(PAtomic::from(sentinel)),
+            tail: CachePadded::new(PAtomic::from(sentinel)),
+        }
     }
+}
 
+impl<T: Clone> Queue<T> {
     fn enqueue(&self, client: &mut Enqueue<T>, value: T, guard: &Guard, pool: &PoolHandle) {
         let node = some_or!(self.is_incomplete(client, value, guard, pool), return);
 
@@ -333,7 +337,7 @@ impl<T: Clone> Queue<T> {
             return Some(n);
         }
 
-        // (2) stack 안에 있으면 enqueue된 것이다 (Direct tracking)
+        // (2) queue 안에 있으면 enqueue된 것이다 (Direct tracking)
         if self.search(mine, guard, pool) {
             return None;
         }
@@ -537,160 +541,106 @@ impl<T: Clone> Queue<T> {
 
 #[cfg(test)]
 mod test {
-    use crossbeam_utils::thread;
-    use serial_test::serial;
-
-    use crate::{plocation::ralloc::Collectable, utils::tests::*};
-
     use super::*;
+    use crate::{plocation::ralloc::Collectable, utils::tests::*};
+    use serial_test::serial;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;
 
-    /// 여러 스레드가 각각 enqueue; dequeue 순서로 반복
-    struct RootOp {
-        // PAtomic인 이유
-        // - Queue 초기화시 PoolHandle을 넘겨줘야하는데, Default로는 그게 안됌
-        // - 따라서 일단 null로 초기화한 후 이후에 실제로 Queue 초기화
-        //
-        // TODO: 위처럼 adhoc한 방법 말고 더 나은 solution으로 바꾸기 (https://cp-git.kaist.ac.kr/persistent-mem/compositional-persistent-object/-/issues/74)
-        queue: PAtomic<Queue<usize>>,
-
-        enqs: [[Enqueue<usize>; COUNT]; NR_THREAD],
-        deqs: [[Dequeue<usize>; COUNT]; NR_THREAD],
+    struct EnqDeq {
+        enqs: [Enqueue<usize>; COUNT],
+        deqs: [Dequeue<usize>; COUNT],
     }
 
-    impl Default for RootOp {
+    impl Default for EnqDeq {
         fn default() -> Self {
             Self {
-                queue: PAtomic::null(),
-                enqs: array_init::array_init(|_| {
-                    array_init::array_init(|_| Enqueue::<usize>::default())
-                }),
-                deqs: array_init::array_init(|_| {
-                    array_init::array_init(|_| Dequeue::<usize>::default())
-                }),
+                enqs: array_init::array_init(|_| Enqueue::<usize>::default()),
+                deqs: array_init::array_init(|_| Dequeue::<usize>::default()),
             }
         }
     }
 
-    impl RootOp {
-        fn init(&self, pool: &PoolHandle) {
-            let guard = unsafe { epoch::unprotected() };
-            let q = self.queue.load(Ordering::SeqCst, guard);
-
-            // Initialize queue
-            if q.is_null() {
-                let q = Queue::<usize>::new(pool);
-                // TODO: 여기서 crash나면 leak남
-                self.queue.store(q, Ordering::SeqCst);
+    impl Collectable for EnqDeq {
+        fn filter(m: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            for i in 0..COUNT {
+                Enqueue::filter(&mut m.enqs[i], gc, pool);
+                Dequeue::filter(&mut m.deqs[i], gc, pool);
             }
         }
     }
 
-    impl Collectable for RootOp {
-        fn filter(root: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            let guard = unsafe { epoch::unprotected() };
-
-            // Mark valid ptr to trace
-            //
-            // Ralloc에 null ptr 걸러내는 로직 있지만, 우리도 체크해야함. 왜냐하면 우리 로직에서 null ptr를 deref_mut하면 절대주소 구할 때 overflow나기때문
-            // TODO: 우리는 null 검사 안해도 되게하기. Ralloc에서 null ptr 거르는데 우리도 null 검사하는 게 불편함
-            let mut queue = root.queue.load(Ordering::SeqCst, guard);
-            if !queue.is_null() {
-                let queue = unsafe { queue.deref_mut(pool) };
-                Queue::mark(queue, gc);
-            }
-            for enq_arr in root.enqs.as_mut() {
-                for enq in enq_arr {
-                    Enqueue::filter(enq, gc, pool);
-                }
-            }
-            for deq_arr in root.deqs.as_mut() {
-                for deq in deq_arr {
-                    Dequeue::filter(deq, gc, pool);
-                }
-            }
-        }
-    }
-
-    impl Memento for RootOp {
-        type Object<'o> = ();
-        type Input = ();
+    impl Memento for EnqDeq {
+        type Object<'o> = &'o Queue<usize>;
+        type Input = usize; // tid(=mid)
         type Output<'o> = ();
         type Error = !;
 
         /// idempotent enq_deq
         fn run<'o>(
             &'o mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
+            queue: Self::Object<'o>,
+            tid: Self::Input,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            self.init(pool);
+            match tid {
+                // T0: 다른 스레드들의 실행결과를 확인
+                0 => {
+                    // 다른 스레드들이 다 끝날때까지 기다림
+                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
-            // Alias
-            let (q, enqs, deqs) = (
-                unsafe {
-                    self.queue
-                        .load(Ordering::SeqCst, epoch::unprotected())
-                        .deref(pool)
-                },
-                &mut self.enqs,
-                &mut self.deqs,
-            );
+                    // Check queue is empty
+                    assert!(Dequeue::<usize>::default()
+                        .run(queue, (), guard, pool)
+                        .unwrap()
+                        .is_none());
 
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
-                for tid in 0..NR_THREAD {
-                    let enq_arr = unsafe {
-                        (enqs.get_unchecked_mut(tid) as *mut [Enqueue<usize>])
-                            .as_mut()
-                            .unwrap()
-                    };
-                    let deq_arr = unsafe {
-                        (deqs.get_unchecked_mut(tid) as *mut [Dequeue<usize>])
-                            .as_mut()
-                            .unwrap()
-                    };
-
-                    let _ = scope.spawn(move |_| {
-                        let mut guard = epoch::pin();
-                        for i in 0..COUNT {
-                            let _ = enq_arr[i].run(q, tid, &mut guard, pool);
-                            assert!(deq_arr[i].run(q, (), &mut guard, pool).unwrap().is_some());
-                        }
-                    });
+                    // Check results
+                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
+                    for tid in 1..NR_THREAD + 1 {
+                        assert!(RESULTS[tid].load(Ordering::SeqCst) == COUNT);
+                    }
                 }
-            })
-            .unwrap();
+                // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
+                _ => {
+                    // enq; deq;
+                    for i in 0..COUNT {
+                        let _ = self.enqs[i].run(queue, tid, guard, pool);
+                        assert!(self.deqs[i].run(queue, (), guard, pool).unwrap().is_some());
+                    }
 
-            // Check empty
-            assert!(Dequeue::<usize>::default()
-                .run(q, (), guard, pool)
-                .unwrap()
-                .is_none());
+                    // deq 결과를 실험결과에 전달
+                    for deq in self.deqs.as_mut() {
+                        let ret = deq.run(queue, (), guard, pool).unwrap().unwrap();
+                        let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
+                    }
 
-            // Check results
-            let mut results = vec![0_usize; NR_THREAD];
-            for deq_arr in deqs.iter_mut() {
-                for deq in deq_arr.iter_mut() {
-                    let ret = deq.run(&q, (), guard, pool).unwrap().unwrap();
-                    results[ret] += 1;
+                    // "나 끝났다"
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
-
-            assert!(results.iter().all(|r| *r == COUNT));
             Ok(())
         }
 
         fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            for enq in self.enqs.iter_mut() {
+                enq.set_recovery(pool);
+            }
+
+            for deq in self.deqs.iter_mut() {
+                deq.set_recovery(pool);
+            }
+        }
     }
 
-    impl TestRootOp for RootOp {}
+    impl TestRootObj for Queue<usize> {}
+    impl TestRootMemento<Queue<usize>> for EnqDeq {}
 
     // TODO: stack의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -699,13 +649,12 @@ mod test {
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
     //
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn enq_deq() {
         const FILE_NAME: &str = "enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<RootOp, _>(FILE_NAME, FILE_SIZE)
+        run_test::<Queue<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }

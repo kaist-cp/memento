@@ -66,19 +66,24 @@ impl<L: RawLock, T> Collectable for Mutex<L, T> {
     }
 }
 
+impl<L: RawLock> PDefault for Mutex<L, usize> {
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Self::from(0)
+    }
+}
 /// MutexGuard를 얼려서 반환하므로 사용하기 위해선 Guard::defer_unlock()을 호출해야 함.
 ///
 /// # Examples
 ///
 /// ```rust
-/// # use compositional_persistent_object::{
+/// # use memento::{
 /// #   plocation::pool::*,
 /// #   persistent::*,
 /// #   utils::tests::get_dummy_handle
 /// # };
 /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-/// use compositional_persistent_object::ticket_lock::TicketLock;
-/// use compositional_persistent_object::lock::{Mutex, Lock, MutexGuard};
+/// use memento::ticket_lock::TicketLock;
+/// use memento::lock::{Mutex, Lock, MutexGuard};
 /// use crossbeam_epoch::{self as epoch};
 ///
 /// let x = Mutex::<TicketLock, i32>::from(0);
@@ -143,6 +148,8 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         // `MutexGuard`가 살아있을 때 이 함수 호출은 컴파일 타임에 막아짐.
         self.lock.reset(nested, guard, pool);
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 unsafe impl<L: RawLock, T> Send for Lock<L, T>
@@ -199,14 +206,13 @@ impl<'l, L: RawLock, T> MutexGuard<'l, L, T> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crossbeam_utils::thread;
-
-    use crate::{
-        plocation::{ralloc::GarbageCollection, PoolHandle},
-        utils::tests::TestRootOp,
-    };
+    use std::sync::atomic::Ordering;
 
     use super::*;
+    use crate::{
+        plocation::{ralloc::GarbageCollection, PoolHandle},
+        utils::tests::*,
+    };
 
     struct FetchAdd<L: RawLock> {
         lock: Lock<L, usize>,
@@ -292,15 +298,26 @@ pub(crate) mod tests {
                 self.state = State::Ready;
             }
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.lock.set_recovery(pool);
+
+            // TODO: reset 중이었다가 crash난 애의 reset을 끝내줄 수 있음.
+            //       그러면 run에서 reset 중인지 검사 불필요.
+        }
     }
 
     pub(crate) struct ConcurAdd<L: RawLock, const NR_THREAD: usize, const COUNT: usize> {
-        x: Mutex<L, usize>,
-        faas: [FetchAdd<L>; NR_THREAD],
-        cnts: [usize; NR_THREAD],
+        faa: FetchAdd<L>,
+        cnt: usize,
 
         // 결과를 확인하기 위한 lock
         check_res: Lock<L, usize>,
+    }
+
+    unsafe impl<L: RawLock, const NR_THREAD: usize, const COUNT: usize> Sync
+        for ConcurAdd<L, NR_THREAD, COUNT>
+    {
     }
 
     impl<L: RawLock, const NR_THREAD: usize, const COUNT: usize> Default
@@ -308,9 +325,8 @@ pub(crate) mod tests {
     {
         fn default() -> Self {
             Self {
-                x: Mutex::from(0),
-                faas: array_init::array_init(|_| FetchAdd::<L>::default()),
-                cnts: array_init::array_init(|_| 0),
+                faa: FetchAdd::<L>::default(),
+                cnt: 0,
                 check_res: Lock::default(),
             }
         }
@@ -320,10 +336,7 @@ pub(crate) mod tests {
         for ConcurAdd<L, NR_THREAD, COUNT>
     {
         fn filter(concur_add: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Mutex::filter(&mut concur_add.x, gc, pool);
-            for faa in concur_add.faas.as_mut() {
-                FetchAdd::filter(faa, gc, pool);
-            }
+            FetchAdd::filter(&mut concur_add.faa, gc, pool);
             Lock::filter(&mut concur_add.check_res, gc, pool);
         }
     }
@@ -334,8 +347,8 @@ pub(crate) mod tests {
         L::Lock: Send,
         L::Unlock: Send,
     {
-        type Object<'o> = ();
-        type Input = ();
+        type Object<'o> = &'o Mutex<L, usize>;
+        type Input = usize; // tid(mid)
         type Output<'o>
         where
             L: 'o,
@@ -344,59 +357,55 @@ pub(crate) mod tests {
 
         fn run<'o>(
             &'o mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
+            x: Self::Object<'o>,
+            tid: Self::Input,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
-                let x = &self.x;
+            match tid {
+                0 => {
+                    // 다른 스레드들이 다 끝날때까지 기다림
+                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
-                for tid in 0..NR_THREAD {
-                    let faa = unsafe {
-                        (self.faas.get_unchecked_mut(tid) as *mut FetchAdd<L>)
-                            .as_mut()
-                            .unwrap()
-                    };
-                    let cnt = unsafe {
-                        (self.cnts.get_unchecked_mut(tid) as *mut usize)
-                            .as_mut()
-                            .unwrap()
-                    };
+                    // Check result
+                    self.check_res.reset(false, guard, pool);
+                    let mtx = self.check_res.run(x, (), guard, pool).unwrap();
+                    let final_x = unsafe { MutexGuard::defer_unlock(mtx) };
+                    assert_eq!(*final_x, (NR_THREAD * (NR_THREAD + 1) / 2) * COUNT);
+                }
+                _ => {
+                    let faa = &mut self.faa;
+                    let cnt = &mut self.cnt;
 
                     assert!(*cnt <= 2 * COUNT);
-
-                    let _ = scope.spawn(move |_| {
-                        let mut guard = epoch::pin();
-                        while *cnt < 2 * COUNT {
-                            if *cnt & 1 == 0 {
-                                let _ = faa.run(x, tid + 1, &mut guard, pool);
-                                *cnt += 1;
-                            }
-                            faa.reset(false, &mut guard, pool);
+                    while *cnt < 2 * COUNT {
+                        if *cnt & 1 == 0 {
+                            let _ = faa.run(x, tid, guard, pool);
                             *cnt += 1;
                         }
-                    });
-                }
-            })
-            .unwrap();
+                        faa.reset(false, guard, pool);
+                        *cnt += 1;
+                    }
 
-            // Check result
-            self.check_res.reset(false, guard, pool);
-            let mtx = self.check_res.run(&self.x, (), guard, pool).unwrap();
-            let final_x = unsafe { MutexGuard::defer_unlock(mtx) };
-            assert_eq!(*final_x, (NR_THREAD * (NR_THREAD + 1) / 2) * COUNT);
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+                }
+            }
             Ok(())
         }
 
         fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!()
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.faa.set_recovery(pool);
+            // TODO: reset 구현 후 reset 복구도 해줄 수 있나 확인
+        }
     }
 
-    impl<L: 'static + RawLock, const NR_THREAD: usize, const COUNT: usize> TestRootOp
-        for ConcurAdd<L, NR_THREAD, COUNT>
+    impl<L: 'static + RawLock> TestRootObj for Mutex<L, usize> {}
+    impl<L: 'static + RawLock, const NR_THREAD: usize, const COUNT: usize>
+        TestRootMemento<Mutex<L, usize>> for ConcurAdd<L, NR_THREAD, COUNT>
     where
         L::Lock: Send,
         L::Unlock: Send,

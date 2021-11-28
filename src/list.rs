@@ -108,6 +108,8 @@ where
             persist_obj(&self.node, true);
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// List에서 key에 해당하는 element를 제거하는 Memento
@@ -175,6 +177,8 @@ where
             }
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// List 탐색 도중 동시적으로 node 제거가 생길 경우 발생하는 에러

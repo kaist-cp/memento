@@ -95,6 +95,13 @@ impl<T: Clone> Collectable for TryPush<T> {
     }
 }
 
+impl<T: Clone> TryPush<T> {
+    const DEFAULT: usize = 0;
+
+    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
+    const RECOVERY: usize = 1;
+}
+
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'s> = &'s TreiberStack<T>;
     type Input = T;
@@ -126,6 +133,17 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
             if unsafe { !mine.deref(pool).pushed } {
                 unsafe { guard.defer_pdestroy(mine) };
             }
+        }
+    }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+        let mine = self.mine.load(Ordering::SeqCst, guard);
+
+        if mine.tag() & Self::RECOVERY != Self::RECOVERY {
+            self.mine()
+                .store(mine.with_tag(Self::RECOVERY), Ordering::SeqCst);
+            // 복구해야 한다는 표시이므로 persist 필요 없음
         }
     }
 }
@@ -207,6 +225,8 @@ impl<T: 'static + Clone> Memento for Push<T> {
             // crash-free execution이니 내가 가지고 있던 노드는 push 되었음이 확실 => free하면 안됨
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Drop for Push<T> {
@@ -308,11 +328,28 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
             }
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+        let target = self.target.load(Ordering::SeqCst, guard);
+
+        let tag = target.tag();
+        if tag & Self::EMPTY != Self::EMPTY && tag & Self::RECOVERY != Self::RECOVERY {
+            self.target()
+                .store(target.with_tag(Self::RECOVERY), Ordering::SeqCst);
+            // 복구해야 한다는 표시이므로 persist 필요 없음
+        }
+    }
 }
 
 impl<T: Clone> TryPop<T> {
+    const DEFAULT: usize = 0;
+
+    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
+    const RECOVERY: usize = 1;
+
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
-    const EMPTY: usize = 1;
+    const EMPTY: usize = 2;
 }
 
 impl<T: Clone> Drop for TryPop<T> {
@@ -401,6 +438,8 @@ impl<T: 'static + Clone> Memento for Pop<T> {
             unsafe { guard.defer_pdestroy(target) };
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 impl<T: Clone> Drop for Pop<T> {
@@ -413,7 +452,6 @@ impl<T: Clone> Drop for Pop<T> {
 }
 
 /// Persistent Treiber stack
-// TODO: persist 추가
 #[derive(Debug)]
 pub struct TreiberStack<T: Clone> {
     top: PAtomic<Node<T>>,
@@ -440,6 +478,12 @@ impl<T: Clone> Collectable for TreiberStack<T> {
     }
 }
 
+impl<T: Clone> PDefault for TreiberStack<T> {
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Self::default()
+    }
+}
+
 impl<T: Clone> TreiberStack<T> {
     fn push<C: PushType<T>>(
         &self,
@@ -457,13 +501,25 @@ impl<T: Clone> TreiberStack<T> {
             client.mine().store(n, Ordering::SeqCst);
             persist_obj(client.mine(), true);
             mine = n;
-        } else if self.search(mine, guard, pool)
-            || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
+        } else if !client.is_try() || mine.tag() & TryPush::<T>::RECOVERY == TryPush::<T>::RECOVERY
         {
-            // TODO: recovery 중에만 분기 타도록
-            // (3) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
-            // (4) 이미 pop 되었다면 push된 것이다
-            return Ok(());
+            // 복구 로직 실행 조건: "try가 아님" 혹은 "try인데 복구중"
+
+            if client.is_try() {
+                client
+                    .mine()
+                    .store(mine.with_tag(TryPush::<T>::DEFAULT), Ordering::SeqCst);
+                // 복구 해제
+                // 복구와 관련된 것이므로 persist 필요 없음
+            }
+
+            if self.search(mine, guard, pool)
+                || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
+            {
+                // (2) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
+                // (3) 이미 pop 되었다면 push된 것이다
+                return Ok(());
+            }
         }
 
         if client.is_try() {
@@ -524,7 +580,7 @@ impl<T: Clone> TreiberStack<T> {
     ) -> Result<Option<T>, TryFail> {
         let target = client.target().load(Ordering::SeqCst, guard);
 
-        if target.tag() == TryPop::<T>::EMPTY {
+        if target.tag() & TryPop::<T>::EMPTY == TryPop::<T>::EMPTY {
             // post-crash execution (empty)
             return Ok(None);
         }
@@ -538,23 +594,34 @@ impl<T: Clone> TreiberStack<T> {
                 return Ok(Some(Self::finish_pop(target_ref)));
             };
 
-            // target이 stack에서 pop되긴 했는지 확인
-            // TODO: recovery 중에만 분기 타도록
-            if !self.search(target, guard, pool) {
-                // 누군가가 target을 stack에서 빼고 popper 기록 전에 crash가 남. 그러므로 popper를 마저 기록해줌
-                // CAS인 이유: 서로 누가 진짜 주인인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
-                if target_ref
-                    .popper
-                    .compare_exchange(
-                        Self::no_popper(),
-                        client.id(pool),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
-                    .is_ok()
-                {
-                    persist_obj(&target_ref.popper, true);
-                    return Ok(Some(Self::finish_pop(target_ref)));
+            if !client.is_try() || target.tag() & TryPop::<T>::RECOVERY == TryPop::<T>::RECOVERY {
+                // 복구 로직 실행 조건: "try가 아님" 혹은 "try인데 복구중"
+
+                if client.is_try() {
+                    client
+                        .target()
+                        .store(target.with_tag(TryPop::<T>::DEFAULT), Ordering::SeqCst);
+                    // 복구 해제
+                    // 복구와 관련된 것이므로 persist 필요 없음
+                }
+
+                // target이 stack에서 pop되긴 했는지 확인
+                if !self.search(target, guard, pool) {
+                    // 누군가가 target을 stack에서 빼고 popper 기록 전에 crash가 남. 그러므로 popper를 마저 기록해줌
+                    // CAS인 이유: 서로 누가 진짜 주인인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
+                    if target_ref
+                        .popper
+                        .compare_exchange(
+                            Self::no_popper(),
+                            client.id(pool),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        persist_obj(&target_ref.popper, true);
+                        return Ok(Some(Self::finish_pop(target_ref)));
+                    }
                 }
             }
         }
@@ -659,12 +726,18 @@ mod tests {
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
+    impl TestRootObj for TreiberStack<usize> {}
+
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn push_pop() {
         const FILE_NAME: &str = "treiber_push_pop.pool";
-        run_test::<PushPop<TreiberStack<usize>, NR_THREAD, COUNT>, _>(FILE_NAME, FILE_SIZE)
+        run_test::<TreiberStack<usize>, PushPop<TreiberStack<usize>, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
     }
 }

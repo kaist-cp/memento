@@ -1,16 +1,6 @@
 //! Concurrent exchanger
 
-// TODO(SMR 적용):
-// - SMR 만든 후 crossbeam 걷어내기
-// - 현재는 persistent guard가 없어서 lifetime도 이상하게 박혀 있음
-
 // TODO(로직 변경: https://cp-git.kaist.ac.kr/persistent-mem/compositional-persistent-object/-/issues/3#note_6979)
-
-// TODO(pmem 사용(#31, #32)):
-// - persist를 위해 flush/fence 추가
-
-// TODO(Ordering):
-// - Ordering 최적화
 
 use chrono::{Duration, Utc};
 use core::ptr;
@@ -144,9 +134,12 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
             // TODO: 이 사이에 죽으면 partner의 포인터에 의해 gc가 수거하지 못해 leak 발생
+            // 해결책: freed 플래그를 두고 free한 뒤에 토글
             unsafe { guard.defer_pdestroy(node) };
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// Exchanger의 exchange operation.
@@ -213,6 +206,8 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             unsafe { guard.defer_pdestroy(node) };
         }
     }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }
 
 /// 스레드 간의 exchanger
@@ -242,6 +237,12 @@ impl<T: Clone> Collectable for Exchanger<T> {
             let slot_ref = unsafe { slot.deref_mut(pool) };
             Node::mark(slot_ref, gc);
         }
+    }
+}
+
+impl<T: Clone> PDefault for Exchanger<T> {
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Self::default()
     }
 }
 
@@ -426,77 +427,46 @@ unsafe impl<T: Clone + Send + Sync> Send for Exchanger<T> {}
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
-
-    use chrono::Duration;
-    use crossbeam_utils::thread;
     use serial_test::serial;
 
     use crate::{
         plocation::ralloc::{Collectable, GarbageCollection},
-        utils::tests::{run_test, TestRootOp},
+        utils::tests::{run_test, TestRootMemento, TestRootObj},
     };
 
     use super::*;
 
     /// 두 스레드가 한 exchanger를 두고 잘 교환하는지 (1회) 테스트
+    #[derive(Default)]
     struct ExchangeOnce {
-        xchg: Exchanger<usize>,
-        exchanges: [Exchange<usize>; 2],
-    }
-
-    impl Default for ExchangeOnce {
-        fn default() -> Self {
-            Self {
-                xchg: Default::default(),
-                exchanges: array_init::array_init(|_| Exchange::<usize>::default()),
-            }
-        }
+        exchange: Exchange<usize>,
     }
 
     impl Collectable for ExchangeOnce {
         fn filter(xchg_once: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Exchanger::filter(&mut xchg_once.xchg, gc, pool);
-            Exchange::filter(&mut xchg_once.exchanges[0], gc, pool);
-            Exchange::filter(&mut xchg_once.exchanges[1], gc, pool);
+            Exchange::filter(&mut xchg_once.exchange, gc, pool);
         }
     }
 
     impl Memento for ExchangeOnce {
-        type Object<'o> = ();
-        type Input = ();
+        type Object<'o> = &'o Exchanger<usize>;
+        type Input = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
-            _: &mut Guard,
+            xchg: Self::Object<'o>,
+            tid: Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let xchg = &self.xchg;
-            let exchanges = &mut self.exchanges;
-
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
-                for tid in 0..2 {
-                    let exchange = unsafe {
-                        (exchanges.get_unchecked_mut(tid) as *mut Exchange<usize>)
-                            .as_mut()
-                            .unwrap()
-                    };
-                    let _ = scope.spawn(move |_| {
-                        let mut guard = epoch::pin();
-                        // `move` for `tid`
-                        let ret = exchange
-                            .run(xchg, (tid, |_| true), &mut guard, pool)
-                            .unwrap();
-                        assert_eq!(ret, 1 - tid);
-                    });
-                }
-            })
-            .unwrap();
+            // `move` for `tid`
+            let ret = self
+                .exchange
+                .run(xchg, (tid, |_| true), guard, pool)
+                .unwrap();
+            assert_eq!(ret, 1 - tid);
 
             Ok(())
         }
@@ -504,9 +474,14 @@ mod tests {
         fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.exchange.set_recovery(pool);
+        }
     }
 
-    impl TestRootOp for ExchangeOnce {}
+    impl TestRootObj for Exchanger<usize> {}
+    impl TestRootMemento<Exchanger<usize>> for ExchangeOnce {}
 
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
@@ -515,56 +490,32 @@ mod tests {
         const FILE_NAME: &str = "exchange_once.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<ExchangeOnce, _>(FILE_NAME, FILE_SIZE)
+        run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
     }
 
     /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
-    ///     (exchange0)        (exchange1_0)     (exchange1_2)        (exchange2)
-    /// [item0]    <-----lxchg----->       [item1]       <-----rxchg----->    [item2]
+    ///
+    ///   ---T0---                   -------T1-------                   ---T2---
+    ///  |        |                 |                |                 |        |
+    ///     (exchange0)        (exchange0)     (exchange2)        (exchange2)
+    /// [item]    <-----lxchg----->       [item]       <-----rxchg----->     [item]
+    #[derive(Default)]
     struct RotateLeft {
-        lxchg: Exchanger<usize>,
-        rxchg: Exchanger<usize>,
-
-        item0: usize,
-        item1: usize,
-        item2: usize,
-
+        item: usize,
         exchange0: Exchange<usize>,
-        exchange1_0: Exchange<usize>,
-        exchange1_2: Exchange<usize>,
         exchange2: Exchange<usize>,
-    }
-
-    impl Default for RotateLeft {
-        fn default() -> Self {
-            Self {
-                lxchg: Default::default(),
-                rxchg: Default::default(),
-                item0: 0,
-                item1: 1,
-                item2: 2,
-                exchange0: Default::default(),
-                exchange1_0: Default::default(),
-                exchange1_2: Default::default(),
-                exchange2: Default::default(),
-            }
-        }
     }
 
     impl Collectable for RotateLeft {
         fn filter(rleft: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Exchanger::filter(&mut rleft.lxchg, gc, pool);
-            Exchanger::filter(&mut rleft.rxchg, gc, pool);
             Exchange::filter(&mut rleft.exchange0, gc, pool);
-            Exchange::filter(&mut rleft.exchange1_0, gc, pool);
-            Exchange::filter(&mut rleft.exchange1_2, gc, pool);
             Exchange::filter(&mut rleft.exchange2, gc, pool);
         }
     }
 
     impl Memento for RotateLeft {
-        type Object<'o> = ();
-        type Input = ();
+        type Object<'o> = &'o [Exchanger<usize>; 2];
+        type Input = usize;
         type Output<'o> = ();
         type Error = !;
 
@@ -572,65 +523,80 @@ mod tests {
         /// After rotation  : [1]  [2]  [0]
         fn run<'o>(
             &'o mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
-            mut guard: &mut Guard,
+            xchgs: Self::Object<'o>,
+            tid: Self::Input,
+            guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
-            let lxchg = &self.lxchg;
-            let rxchg = &self.rxchg;
-            let exchange0 = &mut self.exchange0;
-            let exchange1_0 = &mut self.exchange1_0;
-            let exchange1_2 = &mut self.exchange1_2;
-            let exchange2 = &mut self.exchange2;
-            let item0 = &mut self.item0;
-            let item1 = &mut self.item1;
-            let item2 = &mut self.item2;
+            // Alias
+            let lxchg = &xchgs[0];
+            let rxchg = &xchgs[1];
+            let item = &mut self.item;
 
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
-                let _ = scope.spawn(|_| {
-                    let mut guard = epoch::pin();
-                    // [0] -> [1]    [2]
-                    *item0 = exchange0
-                        .run(lxchg, (*item0, |_| true), &mut guard, pool)
+            *item = tid;
+
+            match tid {
+                // T0: [0] -> [1]    [2]
+                0 => {
+                    *item = self
+                        .exchange0
+                        .run(lxchg, (*item, |_| true), guard, pool)
                         .unwrap();
-                    assert_eq!(*item0, 1);
-                });
+                    assert_eq!(*item, 1);
+                }
+                // T1: Composition in the middle
+                1 => {
+                    // Step1: [0] <- [1]    [2]
 
-                let _ = scope.spawn(|_| {
-                    let mut guard = epoch::pin();
-                    // [0]    [1] <- [2]
-                    *item2 = exchange2
-                        .run(rxchg, (*item2, |_| true), &mut guard, pool)
+                    *item = self
+                        .exchange0
+                        .run(lxchg, (*item, |_| true), guard, pool)
                         .unwrap();
-                    assert_eq!(*item2, 0);
-                });
+                    assert_eq!(*item, 0);
 
-                // Composition in the middle
-                // Step1: [0] <- [1]    [2]
-                *item1 = exchange1_0
-                    .run(lxchg, (*item1, |_| true), &mut guard, pool)
-                    .unwrap();
-                assert_eq!(*item1, 0);
-
-                // Step2: [1]    [0] -> [2]
-                *item1 = exchange1_2
-                    .run(rxchg, (*item1, |_| true), &mut guard, pool)
-                    .unwrap();
-                assert_eq!(*item1, 2);
-            })
-            .unwrap();
-
+                    // Step2: [1]    [0] -> [2]
+                    *item = self
+                        .exchange2
+                        .run(rxchg, (*item, |_| true), guard, pool)
+                        .unwrap();
+                    assert_eq!(*item, 2);
+                }
+                // T2: [0]    [1] <- [2]
+                2 => {
+                    *item = self
+                        .exchange2
+                        .run(rxchg, (*item, |_| true), guard, pool)
+                        .unwrap();
+                    assert_eq!(*item, 0);
+                }
+                _ => unreachable!(),
+            }
             Ok(())
         }
 
         fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
+
+        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+            self.exchange0.set_recovery(pool);
+            self.exchange2.set_recovery(pool);
+        }
     }
 
-    impl TestRootOp for RotateLeft {}
+    impl Collectable for [Exchanger<usize>; 2] {
+        fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchanger::filter(&mut s[0], gc, pool);
+            Exchanger::filter(&mut s[1], gc, pool);
+        }
+    }
+    impl PDefault for [Exchanger<usize>; 2] {
+        fn pdefault(pool: &'static PoolHandle) -> Self {
+            [Exchanger::pdefault(pool), Exchanger::pdefault(pool)]
+        }
+    }
+    impl TestRootObj for [Exchanger<usize>; 2] {}
+    impl TestRootMemento<[Exchanger<usize>; 2]> for RotateLeft {}
 
     // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     #[test]
@@ -639,168 +605,165 @@ mod tests {
         const FILE_NAME: &str = "rotate_left.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<RotateLeft, _>(FILE_NAME, FILE_SIZE)
+        run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
     }
 
-    const NR_THREAD: usize = 12;
-    const COUNT: usize = 1_000_000;
+    // TODO: ExchangeMany 테스트도 바뀐 root op에 맞게 적용
+    // const NR_THREAD: usize = 12;
+    // const COUNT: usize = 1_000_000;
 
-    /// 여러 스레드가 하나의 exchanger를 두고 서로 교환하는 테스트
-    /// 마지막에 서로가 교환 후 아이템 별 총 개수가 교환 전 아이템 별 총 개수와 일치하는지 체크
-    struct ExchangeMany {
-        xchg: Exchanger<usize>,
-        exchanges: [[TryExchange<usize>; COUNT]; NR_THREAD],
-    }
+    // /// 여러 스레드가 하나의 exchanger를 두고 서로 교환하는 테스트
+    // /// 마지막에 서로가 교환 후 아이템 별 총 개수가 교환 전 아이템 별 총 개수와 일치하는지 체크
+    // struct ExchangeMany {
+    //     xchg: Exchanger<usize>,
+    //     exchanges: [[TryExchange<usize>; COUNT]; NR_THREAD],
+    // }
 
-    impl Default for ExchangeMany {
-        fn default() -> Self {
-            Self {
-                xchg: Default::default(),
-                exchanges: array_init::array_init(|_| {
-                    array_init::array_init(|_| TryExchange::<usize>::default())
-                }),
-            }
-        }
-    }
+    // impl Default for ExchangeMany {
+    //     fn default() -> Self {
+    //         Self {
+    //             xchg: Default::default(),
+    //             exchanges: array_init::array_init(|_| {
+    //                 array_init::array_init(|_| TryExchange::<usize>::default())
+    //             }),
+    //         }
+    //     }
+    // }
 
-    impl Collectable for ExchangeMany {
-        fn filter(xchg_many: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Exchanger::filter(&mut xchg_many.xchg, gc, pool);
+    // impl Collectable for ExchangeMany {
+    //     fn filter(xchg_many: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    //         Exchanger::filter(&mut xchg_many.xchg, gc, pool);
 
-            for try_xchgs in xchg_many.exchanges.as_mut() {
-                for try_xchg in try_xchgs {
-                    TryExchange::filter(try_xchg, gc, pool);
-                }
-            }
-        }
-    }
+    //         for try_xchgs in xchg_many.exchanges.as_mut() {
+    //             for try_xchg in try_xchgs {
+    //                 TryExchange::filter(try_xchg, gc, pool);
+    //         }
+    //     }
+    // }
 
-    impl Memento for ExchangeMany {
-        type Object<'o> = ();
-        type Input = ();
-        type Output<'o> = ();
-        type Error = ();
+    // impl Memento for ExchangeMany {
+    //     type Object<'o> = ();
+    //     type Input = ();
+    //     type Output<'o> = ();
+    //     type Error = ();
 
-        fn run<'o>(
-            &'o mut self,
-            (): Self::Object<'o>,
-            (): Self::Input,
-            guard: &mut Guard,
-            pool: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error> {
-            let xchg = &self.xchg;
-            let exchanges = &mut self.exchanges;
+    //     fn run<'o>(
+    //         &'o mut self,
+    //         (): Self::Object<'o>,
+    //         (): Self::Input,
+    //         guard: &mut Guard,
+    //         pool: &'static PoolHandle,
+    //     ) -> Result<Self::Output<'o>, Self::Error> {
+    //         let unfinished = &Unfinished::default();
 
-            let unfinished = &Unfinished::default();
+    //         #[allow(box_pointers)]
+    //         thread::scope(|scope| {
+    //             for tid in 0..NR_THREAD {
+    //                 let exchanges_arr = unsafe {
+    //                     (exchanges.get_unchecked_mut(tid) as *mut [TryExchange<usize>])
+    //                         .as_mut()
+    //                         .unwrap()
+    //                 };
 
-            #[allow(box_pointers)]
-            thread::scope(|scope| {
-                for tid in 0..NR_THREAD {
-                    let exchanges_arr = unsafe {
-                        (exchanges.get_unchecked_mut(tid) as *mut [TryExchange<usize>])
-                            .as_mut()
-                            .unwrap()
-                    };
+    //                 let _ = scope.spawn(move |_| {
+    //                     let mut guard = epoch::pin();
 
-                    let _ = scope.spawn(move |_| {
-                        let mut guard = epoch::pin();
+    //                     // `move` for `tid`
+    //                     for (i, exchange) in exchanges_arr.iter_mut().enumerate() {
+    //                         if let Err(_) = exchange.run(
+    //                             xchg,
+    //                             (tid, Duration::milliseconds(500), |_| true),
+    //                             &mut guard,
+    //                             pool,
+    //                         ) {
+    //                             // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
+    //                             // => 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
+    //                             if unfinished.flag.fetch_add(1, Ordering::SeqCst) == 0 {
+    //                                 unfinished.tid.store(tid, Ordering::SeqCst);
+    //                                 unfinished.cnt.store(i, Ordering::SeqCst);
+    //                             }
+    //                             break;
+    //                         }
+    //                     }
+    //                 });
+    //             }
+    //         })
+    //         .unwrap();
 
-                        // `move` for `tid`
-                        for (i, exchange) in exchanges_arr.iter_mut().enumerate() {
-                            if let Err(_) = exchange.run(
-                                xchg,
-                                (tid, Duration::milliseconds(500), |_| true),
-                                &mut guard,
-                                pool,
-                            ) {
-                                // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
-                                // => 스레드 혼자 남을 경우 더 이상 global exchange 진행 불가
-                                if unfinished.flag.fetch_add(1, Ordering::SeqCst) == 0 {
-                                    unfinished.tid.store(tid, Ordering::SeqCst);
-                                    unfinished.cnt.store(i, Ordering::SeqCst);
-                                }
-                                break;
-                            }
-                        }
-                    });
-                }
-            })
-            .unwrap();
+    //         // Validate test
+    //         let u_flag = unfinished.flag.load(Ordering::SeqCst);
+    //         let u_tid_cnt = if u_flag == 1 {
+    //             Some((
+    //                 unfinished.tid.load(Ordering::SeqCst),
+    //                 unfinished.cnt.load(Ordering::SeqCst),
+    //             ))
+    //         } else if u_flag == 0 {
+    //             None
+    //         } else {
+    //             // 끝까지 하지 못한 스레드가 둘 이상일 경우 무효
+    //             // 원인: 어떤 스레드가 자기 빼고 다 끝난 줄 알고 (긴 시간 경과) 테스트를 끝냈는데
+    //             //      알고보니 그러지 않았던 경우 발생
+    //             return Err(());
+    //         };
 
-            // Validate test
-            let u_flag = unfinished.flag.load(Ordering::SeqCst);
-            let u_tid_cnt = if u_flag == 1 {
-                Some((
-                    unfinished.tid.load(Ordering::SeqCst),
-                    unfinished.cnt.load(Ordering::SeqCst),
-                ))
-            } else if u_flag == 0 {
-                None
-            } else {
-                // 끝까지 하지 못한 스레드가 둘 이상일 경우 무효
-                // 원인: 어떤 스레드가 자기 빼고 다 끝난 줄 알고 (긴 시간 경과) 테스트를 끝냈는데
-                //      알고보니 그러지 않았던 경우 발생
-                return Err(());
-            };
+    //         // Gather results
+    //         let mut results = vec![0_usize; NR_THREAD];
+    //         let expected: Vec<usize> = (0..NR_THREAD)
+    //             .map(|tid| match u_tid_cnt {
+    //                 Some((u_tid, u_cnt)) if tid == u_tid => u_cnt,
+    //                 Some(_) | None => COUNT,
+    //             })
+    //             .collect();
 
-            // Gather results
-            let mut results = vec![0_usize; NR_THREAD];
-            let expected: Vec<usize> = (0..NR_THREAD)
-                .map(|tid| match u_tid_cnt {
-                    Some((u_tid, u_cnt)) if tid == u_tid => u_cnt,
-                    Some(_) | None => COUNT,
-                })
-                .collect();
+    //         for (tid, exchanges) in exchanges.iter_mut().enumerate() {
+    //             for (i, exchange) in exchanges.iter_mut().enumerate() {
+    //                 if i == expected[tid] {
+    //                     break;
+    //                 }
+    //                 let ret = exchange
+    //                     .run(
+    //                         xchg,
+    //                         (666, Duration::milliseconds(0), |_| true),
+    //                         guard,
+    //                         pool,
+    //                     )
+    //                     .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
+    //                 results[ret] += 1;
+    //             }
+    //         }
 
-            for (tid, exchanges) in exchanges.iter_mut().enumerate() {
-                for (i, exchange) in exchanges.iter_mut().enumerate() {
-                    if i == expected[tid] {
-                        break;
-                    }
-                    let ret = exchange
-                        .run(
-                            xchg,
-                            (666, Duration::milliseconds(0), |_| true),
-                            guard,
-                            pool,
-                        )
-                        .unwrap(); // 이미 끝난 op이므로 (1) dummy input은 영향 없고 (2) 반드시 리턴.
-                    results[ret] += 1;
-                }
-            }
+    //         // Check results
+    //         assert!(results
+    //             .iter()
+    //             .enumerate()
+    //             .all(|(tid, r)| *r == expected[tid]));
 
-            // Check results
-            assert!(results
-                .iter()
-                .enumerate()
-                .all(|(tid, r)| *r == expected[tid]));
+    //         Ok(())
+    //     }
 
-            Ok(())
-        }
+    //     fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
+    //         todo!("reset test")
+    //     }
+    // }
 
-        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
-            todo!("reset test")
-        }
-    }
+    // impl TestRootOp for ExchangeMany {}
 
-    impl TestRootOp for ExchangeMany {}
+    // /// 여럿이서 exchange 하다가 혼자만 남은 tid와 exchange한 횟수
+    // #[derive(Default)]
+    // struct Unfinished {
+    //     flag: AtomicUsize,
+    //     tid: AtomicUsize,
+    //     cnt: AtomicUsize,
+    // }
 
-    /// 여럿이서 exchange 하다가 혼자만 남은 tid와 exchange한 횟수
-    #[derive(Default)]
-    struct Unfinished {
-        flag: AtomicUsize,
-        tid: AtomicUsize,
-        cnt: AtomicUsize,
-    }
+    // /// 스레드 여러 개의 exchange
+    // // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+    // #[test]
+    // #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
+    // fn exchange_many() {
+    //     const FILE_NAME: &str = "exchange_many.pool";
+    //     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-    /// 스레드 여러 개의 exchange
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn exchange_many() {
-        const FILE_NAME: &str = "exchange_many.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-        run_test::<ExchangeMany, _>(FILE_NAME, FILE_SIZE);
-    }
+    //     run_test::<ExchangeMany, _>(FILE_NAME, FILE_SIZE);
+    // }
 }

@@ -168,12 +168,12 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 ///
 /// ```
 /// # // 테스트용 pool 얻기
-/// # use compositional_persistent_object::plocation::pool::*;
-/// # use compositional_persistent_object::persistent::*;
-/// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+/// # use memento::plocation::pool::*;
+/// # use memento::persistent::*;
+/// # use memento::utils::tests::get_dummy_handle;
 /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
 /// use std::mem::MaybeUninit;
-/// use compositional_persistent_object::pepoch::POwned;
+/// use memento::pepoch::POwned;
 ///
 /// // Assume there are PoolHandle, `pool`
 /// let o = POwned::<[MaybeUninit<i32>]>::init(10, &pool); // allocating [i32; 10]
@@ -352,11 +352,11 @@ impl<T> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::PAtomic;
+    /// use memento::pepoch::PAtomic;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
@@ -373,11 +373,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::PAtomic;
+    /// use memento::pepoch::PAtomic;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::init(1234, &pool);
@@ -399,7 +399,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::PAtomic;
+    /// use memento::pepoch::PAtomic;
     ///
     /// let a = PAtomic::<i32>::null();
     /// ```
@@ -422,11 +422,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -454,11 +454,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::new(1234, &pool);
@@ -478,11 +478,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{PAtomic, POwned, PShared};
+    /// use memento::pepoch::{PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -504,11 +504,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -541,11 +541,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -603,11 +603,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -688,11 +688,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -754,11 +754,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -818,11 +818,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -881,11 +881,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -910,11 +910,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(PShared::null().with_tag(1));
@@ -938,11 +938,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, PShared};
+    /// use memento::pepoch::{self as epoch, PAtomic, PShared};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -974,7 +974,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```rust
     /// # use std::mem;
-    /// # use compositional_persistent_object::pepoch::PAtomic;
+    /// # use memento::pepoch::PAtomic;
     /// struct DataStructure {
     ///     ptr: PAtomic<usize>,
     /// }
@@ -1047,11 +1047,11 @@ impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{PAtomic, POwned};
+    /// use memento::pepoch::{PAtomic, POwned};
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let a = PAtomic::<i32>::from(POwned::new(1234, &pool));
@@ -1077,7 +1077,7 @@ impl<'g, T: ?Sized + Pointable> From<PShared<'g, T>> for PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::{PAtomic, PShared};
+    /// use memento::pepoch::{PAtomic, PShared};
     ///
     /// let a = PAtomic::<i32>::from(PShared::<i32>::null());
     /// ```
@@ -1093,8 +1093,8 @@ impl<T> From<PPtr<T>> for PAtomic<T> {
     ///
     /// ```
     /// use std::ptr;
-    /// use compositional_persistent_object::plocation::ptr::PPtr;
-    /// use compositional_persistent_object::pepoch::PAtomic;
+    /// use memento::plocation::ptr::PPtr;
+    /// use memento::pepoch::PAtomic;
     ///
     /// let a = PAtomic::<i32>::from(PPtr::<i32>::null());
     /// ```
@@ -1172,12 +1172,12 @@ impl<T> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::plocation::ptr::PPtr;
-    /// use compositional_persistent_object::pepoch::POwned;
+    /// use memento::plocation::ptr::PPtr;
+    /// use memento::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let mut ptr = pool.alloc::<usize>();
@@ -1213,11 +1213,11 @@ impl<T> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::POwned;
+    /// use memento::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(1234, &pool);
@@ -1234,11 +1234,11 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::POwned;
+    /// use memento::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::<i32>::init(1234, &pool);
@@ -1253,11 +1253,11 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, POwned};
+    /// use memento::pepoch::{self as epoch, POwned};
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(1234, &pool);
@@ -1275,11 +1275,11 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::POwned;
+    /// use memento::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// assert_eq!(POwned::new(1234, &pool).tag(), 0);
@@ -1296,11 +1296,11 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::POwned;
+    /// use memento::pepoch::POwned;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let o = POwned::new(0u64, &pool);
@@ -1472,12 +1472,12 @@ impl<T> PShared<'_, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::plocation::ptr::PPtr;
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
+    /// use memento::plocation::ptr::PPtr;
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1503,7 +1503,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// use compositional_persistent_object::pepoch::PShared;
+    /// use memento::pepoch::PShared;
     ///
     /// let p = PShared::<i32>::null();
     /// assert!(p.is_null());
@@ -1522,11 +1522,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1565,11 +1565,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1604,11 +1604,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1658,11 +1658,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1699,11 +1699,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1725,11 +1725,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned};
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1751,11 +1751,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic};
+    /// use memento::pepoch::{self as epoch, PAtomic};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`
@@ -1791,11 +1791,11 @@ impl<T> From<PPtr<T>> for PShared<'_, T> {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::PShared;
+    /// use memento::pepoch::PShared;
     ///
     /// // Assume there is PoolHandle, `pool`
     /// let ptr = pool.alloc::<usize>();

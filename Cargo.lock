@@ -60,29 +60,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "compositional-persistent-object"
-version = "0.1.0"
-dependencies = [
- "array-init",
- "chrono",
- "crossbeam-epoch",
- "crossbeam-utils",
- "env_logger",
- "etrace",
- "log",
- "rand",
- "serial_test",
- "tempfile",
-]
-
-[[package]]
 name = "crossbeam-epoch"
 version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ec02e091aa634e2c3ada4a392989e7c3116673ef0ac5b72232439094d73b7fd"
+source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard#e70fe281a9c74ecf7c5fbd788f63f2a01b9dfe5f"
 dependencies = [
  "cfg-if",
- "crossbeam-utils",
+ "crossbeam-utils 0.8.5 (git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard)",
  "lazy_static",
  "memoffset",
  "scopeguard",
@@ -93,6 +76,15 @@ name = "crossbeam-utils"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d82cfc11ce7f2c3faef78d8a684447b40d503d9681acebed6cb728d45940c4db"
+dependencies = [
+ "cfg-if",
+ "lazy_static",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.5"
+source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard#e70fe281a9c74ecf7c5fbd788f63f2a01b9dfe5f"
 dependencies = [
  "cfg-if",
  "lazy_static",
@@ -187,6 +179,23 @@ name = "memchr"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
+
+[[package]]
+name = "memento"
+version = "0.1.0"
+dependencies = [
+ "array-init",
+ "chrono",
+ "crossbeam-epoch",
+ "crossbeam-utils 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "env_logger",
+ "etrace",
+ "lazy_static",
+ "log",
+ "rand",
+ "serial_test",
+ "tempfile",
+]
 
 [[package]]
 name = "memoffset"
