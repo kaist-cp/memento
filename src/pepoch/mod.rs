@@ -56,11 +56,11 @@ pub trait PDestroyable {
     ///
     /// ```
     /// # // 테스트용 pool 얻기
-    /// # use compositional_persistent_object::plocation::pool::*;
-    /// # use compositional_persistent_object::persistent::*;
-    /// # use compositional_persistent_object::utils::tests::get_dummy_handle;
+    /// # use memento::plocation::pool::*;
+    /// # use memento::persistent::*;
+    /// # use memento::utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-    /// use compositional_persistent_object::pepoch::{self as epoch, PAtomic, POwned, PShared, PDestroyable};
+    /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared, PDestroyable};
     /// use std::sync::atomic::Ordering::SeqCst;
     ///
     /// // Assume there is PoolHandle, `pool`

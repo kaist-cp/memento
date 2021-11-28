@@ -76,14 +76,14 @@ impl<L: RawLock> PDefault for Mutex<L, usize> {
 /// # Examples
 ///
 /// ```rust
-/// # use compositional_persistent_object::{
+/// # use memento::{
 /// #   plocation::pool::*,
 /// #   persistent::*,
 /// #   utils::tests::get_dummy_handle
 /// # };
 /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-/// use compositional_persistent_object::ticket_lock::TicketLock;
-/// use compositional_persistent_object::lock::{Mutex, Lock, MutexGuard};
+/// use memento::ticket_lock::TicketLock;
+/// use memento::lock::{Mutex, Lock, MutexGuard};
 /// use crossbeam_epoch::{self as epoch};
 ///
 /// let x = Mutex::<TicketLock, i32>::from(0);

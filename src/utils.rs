@@ -138,7 +138,7 @@ pub mod tests {
         let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
             .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap());
 
-        // 루트 op 실행
+        // 루트 memento 실행
         pool_handle.execute::<O, M>();
     }
 }

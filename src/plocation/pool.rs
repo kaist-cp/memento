@@ -25,25 +25,22 @@ const IX_MEMENTO_START: u64 = 2; // root memento(s)는 Ralloc의 2번째 root부
 ///
 /// # Safety
 ///
-/// `Pool::create` 혹은 `Pool::open`으로 `PoolHandle`을 새로 얻을 시, 이전에 사용하던 `PoolHandle`은 더이상 사용하면 안됨 (Ralloc이 global pool 하나만 사용하기 때문에, pool 정보가 덮어씌워짐)
+/// `Pool::create` 혹은 `Pool::open`으로 `PoolHandle`을 새로 얻을 시,
+/// 이전에 사용하던 `PoolHandle`은 더이상 사용하면 안됨 (Ralloc이 global pool 하나만 사용하기 때문에, pool 정보가 덮어씌워짐)
 ///
 /// # Example
 ///
 /// ```no_run
 /// # // "이렇게 사용한다"만 보이기 위해 파일을 실제로 만들진 않고 "no_run"으로 함
-/// # use compositional_persistent_object::plocation::pool::*;
-/// # use compositional_persistent_object::persistent::*;
-/// # use compositional_persistent_object::utils::tests::DummyRootOp as MyRootOp;
+/// # use memento::plocation::pool::*;
+/// # use memento::persistent::*;
+/// # use memento::utils::tests::{DummyRootObj as MyRootObj, DummyRootMemento as MyRootMemento};
 /// # use crossbeam_epoch::{self as epoch};
 /// // 풀 생성 후 풀의 핸들러 얻기
-/// let pool_handle = Pool::create::<MyRootOp>("foo.pool", 8 * 1024 * 1024 * 1024).unwrap();
+/// let pool_handle = Pool::create::<MyRootObj, MyRootMemento>("foo.pool", 8 * 1024 * 1024 * 1024, 1).unwrap();
 ///
-/// // 핸들러로 풀의 루트 Op 가져오기
-/// let root_op = pool_handle.get_root::<MyRootOp>();
-///
-/// // 루트 Op 실행
-/// let mut guard = epoch::pin();
-/// root_op.run((), (), &mut guard, &pool_handle).unwrap();
+/// // 루트 memento 실행
+/// pool_handle.execute::<MyRootObj, MyRootMemento>();
 /// ```
 #[derive(Debug)]
 pub struct PoolHandle {
