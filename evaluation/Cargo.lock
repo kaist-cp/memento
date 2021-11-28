@@ -98,7 +98,7 @@ dependencies = [
 [[package]]
 name = "crossbeam-epoch"
 version = "0.9.5"
-source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard#e70fe281a9c74ecf7c5fbd788f63f2a01b9dfe5f"
+source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard#e007ce5e0549d070db1be8f4f36b4c241f9cde33"
 dependencies = [
  "cfg-if",
  "crossbeam-utils 0.8.5 (git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard)",
@@ -120,7 +120,7 @@ dependencies = [
 [[package]]
 name = "crossbeam-utils"
 version = "0.8.5"
-source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard#e70fe281a9c74ecf7c5fbd788f63f2a01b9dfe5f"
+source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=old_guard#e007ce5e0549d070db1be8f4f36b4c241f9cde33"
 dependencies = [
  "cfg-if",
  "lazy_static",
@@ -211,9 +211,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.104"
+version = "0.2.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b2f96d100e1cf1929e7719b7edb3b90ab5298072638fccd77be9ce942ecdfce"
+checksum = "8521a1b57e76b1ec69af7599e75e38e7b7fad6610f037db8c79b127201b5d119"
 
 [[package]]
 name = "memchr"
@@ -265,9 +265,9 @@ dependencies = [
 
 [[package]]
 name = "ppv-lite86"
-version = "0.2.14"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3ca011bd0129ff4ae15cd04c4eef202cadf6c51c21e47aba319b4e0501db741"
+checksum = "ed0cfbc8191465bed66e1718596ee0b0b35d5ee1f41c5df2189d0fe8bde535ba"
 
 [[package]]
 name = "proc-macro-error"
@@ -295,9 +295,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.30"
+version = "1.0.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edc3358ebc67bc8b7fa0c007f945b0b18226f78437d61bec735a9eb96b61ee70"
+checksum = "ba508cc11742c0dc5c1659771673afbab7a0efab23aa17e854cbab0837ed0b43"
 dependencies = [
  "unicode-xid",
 ]
@@ -442,9 +442,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.80"
+version = "1.0.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d010a1623fbd906d51d650a9916aaefc05ffa0e4053ff7fe601167f3e715d194"
+checksum = "8daf5dd0bb60cbd4137b1b587d2fc0ae729bc07cf01cd70b36a1ed5ade3b9d59"
 dependencies = [
  "proc-macro2",
  "quote",

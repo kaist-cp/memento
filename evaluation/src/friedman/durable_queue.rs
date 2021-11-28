@@ -119,7 +119,6 @@ impl<T: Clone> DurableQueue<T> {
         // ```
         if !prev.is_null() {
             unsafe { guard.defer_pdestroy(prev) }; // ret_val[tid]에 덮어쓰므로 원래 있던 포인터 free
-            guard.repin();
         }
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
@@ -177,7 +176,6 @@ impl<T: Clone> DurableQueue<T> {
                         );
                         guard.defer_persist(&self.head);
                         unsafe { guard.defer_pdestroy(first) };
-                        guard.repin();
                         return;
                     } else {
                         let deq_tid = next_ref.deq_tid.load(Ordering::SeqCst);

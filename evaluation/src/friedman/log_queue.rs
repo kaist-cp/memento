@@ -143,7 +143,6 @@ impl<T: Clone> LogQueue<T> {
                     }
                 }
                 unsafe { guard.defer_pdestroy(prev) };
-                guard.repin();
             }
         }
         // ```
@@ -225,7 +224,6 @@ impl<T: Clone> LogQueue<T> {
                     }
                 }
                 unsafe { guard.defer_pdestroy(prev) };
-                guard.repin();
             }
         }
         // ```

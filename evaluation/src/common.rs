@@ -51,6 +51,10 @@ pub trait TestNOps {
         while start.elapsed() < dur {
             op(tid, guard);
             ops += 1;
+
+            if ops % 10000 == 0 {
+                guard.repin();
+            }
         }
         ops
     }
