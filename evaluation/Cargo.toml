@@ -10,7 +10,7 @@ name = "bench"
 path = "src/main.rs"
 
 [dependencies]
-memento = { path = "../../memento" }
+memento = { path = "../" }
 crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "old_guard" }
 crossbeam-utils = "0.8.5"
 rand = "0.8.4"
