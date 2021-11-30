@@ -25,9 +25,10 @@ function bench() {
             echo "test $var/$TEST_CNT...";
             rm -f $poolpath*
             if [ "pmdk_pipe" == "${target}" ]; then
-                $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $out
+                # pinning NUMA node 0
+                numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $out
             else
-                $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $t -d $TEST_DUR -o $out
+                numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $t -d $TEST_DUR -o $out
             fi
         done
     done
