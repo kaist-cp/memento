@@ -33,6 +33,7 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=1):
     markers_on = (datas[0]['x'] == 1) | (datas[0]['x'] % x_interval == 0)
 
     for data in datas:
+        plt.errorbar(data['x'], data['y'], data['stddev'], color=data['color'], linestyle='None', marker='^', markevery=markers_on)
         plt.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['style'], marker=data['marker'], markevery=markers_on)
     plt.title(title)
     ax = plt.subplot()
@@ -45,6 +46,12 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=1):
 
 for obj in objs:
     data = pd.read_csv("./out/{}.csv".format(obj))
+
+    # get stddev
+    stddev = data.groupby(['target', 'bench kind', 'threads'])['throughput'].std().div(pow(10, 6)).reset_index(name='stddev')
+    stddev = stddev.groupby(['target', 'bench kind'])['stddev'].apply(list).reset_index(name="stddev")
+
+    # get throughput
     data = data.groupby(['target', 'bench kind', 'threads'])['throughput'].mean().div(pow(10, 6)).reset_index(name='throughput')
     data = data.groupby(['target', 'bench kind'])['throughput'].apply(list).reset_index(name="throughput")
     targets = objs[obj]['targets']
@@ -66,10 +73,14 @@ for obj in objs:
             style = targets[t]['style']
             marker = targets[t]['marker']
             throughputs = data[(data['target']==t) & (data['bench kind']==k)]
+            stddev_t = stddev[(stddev['target']==t) & (stddev['bench kind']==k)]
+
             if throughputs.empty:
                 continue
             throughputs = list(throughputs['throughput'])[0]
-            plot_lines.append({'x': np.arange(1, len(throughputs)+1), 'y': throughputs, 'label': label, 'marker': shape, 'color': color, 'style':style})
-        
+            stddev_t = list(stddev_t['stddev'])[0]
+
+            plot_lines.append({'x': np.arange(1, len(throughputs)+1), 'y': throughputs, 'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style':style})
+
         # Draw
         draw(plot_id, 'Threads', 'Throughput (M op/s)', plot_lines, "./out/{}".format(plot_id), 4)
