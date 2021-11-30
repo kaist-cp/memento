@@ -114,7 +114,8 @@ impl<T: Clone> DurableQueue<T> {
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
-        let prev = self.ret_val[tid].swap(new_ret_val, Ordering::SeqCst, guard);
+        let prev = self.ret_val[tid].load(Ordering::SeqCst, guard);
+        self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
         persist_obj(&self.ret_val[tid], true);
         // ```
         if !prev.is_null() {

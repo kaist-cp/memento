@@ -320,21 +320,19 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     type DeqInput = usize; // tid
 
     fn enqueue(&self, (input, tid): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
-        // crash-free execution이라고 가정
-        // 만약 crash-free로 가정하지 않는다면 prep 하기전에 남아있는거 resolve로 확인하고, 필요시 free 해야함
+        // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_enqueue(input, tid, pool);
         self.exec_enqueue(tid, guard, pool);
 
-        // enq는 성공했을 테니 x[tid] 정리해줄 필요 없음. 다음에 prep_enq 혹은 prep_deq로 x[tid]에 덮어씌워도 됨
+        // 다음 prep으로 x[tid]를 덮어씌우더라도 여기서 x[tid]가 가리키는 노드는 free하면 안됨. 이미 enq된 노드임
     }
 
     fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
-        // crash-free execution이라고 가정
-        // 만약 crash-free로 가정하지 않는다면 prep 하기전에 남아있는거 resolve로 확인하고, 필요시 free 해야함
+        // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_dequeue(tid);
         let _ = self.exec_dequeue(tid, guard, pool);
 
-        // deq를 성공했을 테니, EMPTY로 성공한게 아니라면 free.
+        // 다음 prep으로 x[tid]를 덮어씌우기 전에 여기서 x[tid]가 가리키는 deq된 노드를 free
         let node = self.x[tid].load(Ordering::SeqCst, guard);
         if !node.is_null() {
             unsafe { guard.defer_pdestroy(node) };

@@ -117,7 +117,8 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(node_ref, true);
         persist_obj(log_ref, true);
 
-        let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard);
+        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
+        self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&self.logs[tid], true);
         // ```
 
@@ -198,7 +199,8 @@ impl<T: Clone> LogQueue<T> {
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
 
-        let prev = self.logs[tid].swap(log, Ordering::SeqCst, guard); // TODO: swap을 사용하는 건 정당하지 않음. load 하자
+        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
+        self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&self.logs[tid], true);
         // ```
 
