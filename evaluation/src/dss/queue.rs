@@ -108,7 +108,7 @@ impl<T: Clone> DSSQueue<T> {
         let node = POwned::new(Node::new(val), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
         self.x[tid].store(node.with_tag(ENQ_PREP_TAG), Ordering::SeqCst);
-        persist_obj(&self.x[tid], true);
+        persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
     fn exec_enqueue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) {
@@ -143,7 +143,8 @@ impl<T: Clone> DSSQueue<T> {
                         //
                         // ```
                         let _ = self.x[tid].fetch_or(ENQ_COMPL_TAG, Ordering::SeqCst, &guard);
-                        persist_obj(&self.x[tid], true);
+                        persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+
                         // ```
 
                         let _ = self.tail.compare_exchange(
@@ -191,7 +192,7 @@ impl<T: Clone> DSSQueue<T> {
 
     fn prep_dequeue(&self, tid: usize) {
         self.x[tid].store(PShared::null().with_tag(DEQ_PREP_TAG), Ordering::SeqCst);
-        persist_obj(&self.x[tid], true);
+        persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
     fn exec_dequeue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) -> Option<T> {
@@ -207,7 +208,7 @@ impl<T: Clone> DSSQueue<T> {
                     if next.is_null() {
                         // nothing new appended at tail
                         let _ = self.x[tid].fetch_or(EMPTY_TAG, Ordering::SeqCst, &guard);
-                        persist_obj(&self.x[tid], true);
+                        persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         return None; // EMPTY
                     }
 
@@ -224,7 +225,7 @@ impl<T: Clone> DSSQueue<T> {
                 } else {
                     // non-empty queue
                     self.x[tid].store(first.with_tag(DEQ_PREP_TAG), Ordering::SeqCst); // save predecessor of node to be dequeued
-                    persist_obj(&self.x[tid], true);
+                    persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
                     let next_ref = unsafe { next.deref(pool) };
                     if next_ref
@@ -240,7 +241,7 @@ impl<T: Clone> DSSQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
-                        guard.defer_persist(&self.head);
+                        guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         return Some(unsafe { (*next_ref.val.as_ptr()).clone() });
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         // help another dequeueing thread

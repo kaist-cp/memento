@@ -115,7 +115,8 @@ impl<T: Clone> DurableQueue<T> {
         persist_obj(new_ret_val_ref, true);
 
         self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
-        persist_obj(&self.ret_val[tid], true);
+        persist_obj(&*self.ret_val[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+
         // ```
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
@@ -171,7 +172,7 @@ impl<T: Clone> DurableQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
-                        guard.defer_persist(&self.head);
+                        guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         unsafe { guard.defer_pdestroy(first) };
                         return;
                     } else {
