@@ -11,19 +11,23 @@
 
 using namespace std;
 
-enum TestTarget {
+enum TestTarget
+{
   PMDK_Pipe
 };
 
-TestTarget parse_target(string target, string kind) {
-  if (target=="pmdk_pipe" && kind=="pipe") {
+TestTarget parse_target(string target, string kind)
+{
+  if (target == "pmdk_pipe" && kind == "pipe")
+  {
     return TestTarget::PMDK_Pipe;
   }
-  std::cerr << "Invalid target or bench kind: (target: " << target << ", kind: " << kind <<")" << std::endl;
+  std::cerr << "Invalid target or bench kind: (target: " << target << ", kind: " << kind << ")" << std::endl;
   exit(0);
 }
 
-struct Config {
+struct Config
+{
   string filepath;
   string target;
   string kind;
@@ -31,24 +35,26 @@ struct Config {
   double duration;
   ofstream *output;
 
-  Config(string filepath, string target, string kind, int threads, double duration, ofstream* output) :
-    filepath{filepath}, target{target}, kind{kind}, threads{threads}, duration{duration}, output{output}{}
+  Config(string filepath, string target, string kind, int threads, double duration, ofstream *output) : filepath{filepath}, target{target}, kind{kind}, threads{threads}, duration{duration}, output{output} {}
 };
 
-Config setup(int argc, char* argv[]) {
-  if (argc < 7) {
+Config setup(int argc, char *argv[])
+{
+  if (argc < 7)
+  {
     std::cerr << "Argument 부족. plz see usage on readme" << std::endl;
     exit(0);
   }
 
   ifstream f(argv[6]);
   static ofstream of(argv[6], fstream::out | fstream::app);
-  if (f.fail()) {
+  if (f.fail())
+  {
     of << "target,"
-      << "bench kind,"
-      << "threads,"
-      << "duration,"
-      << "throughput" << endl;
+       << "bench kind,"
+       << "threads,"
+       << "duration,"
+       << "throughput" << endl;
   }
 
   // example: ./bench ./pmem/ pmdk_pipe pipe 16 5
@@ -58,14 +64,16 @@ Config setup(int argc, char* argv[]) {
 }
 
 // 스레드 `nr_thread`개를 사용할 때의 처리율 계산
-double bench(Config cfg) {
-  cout << "bench " << cfg.target+":"+cfg.kind << " using " << cfg.threads << " threads" << endl;
+double bench(Config cfg)
+{
+  cout << "bench " << cfg.target + ":" + cfg.kind << " using " << cfg.threads << " threads" << endl;
 
   TestTarget target = parse_target(cfg.target, cfg.kind);
   int nops = 0;
-  switch (target) {
-    case PMDK_Pipe:
-      nops = get_pipe_nops(cfg.filepath, cfg.threads, cfg.duration);
+  switch (target)
+  {
+  case PMDK_Pipe:
+    nops = get_pipe_nops(cfg.filepath, cfg.threads, cfg.duration);
 
     // TODO: other c++ implementations..
   }
@@ -75,17 +83,16 @@ double bench(Config cfg) {
   return nops / cfg.duration;
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
   Config cfg = setup(argc, argv);
   float avg_mops = bench(cfg);
 
   // Write result
   *cfg.output
-    << cfg.target << ","
-    << cfg.kind << ","
-    << cfg.threads << ","
-    << cfg.duration << ","
-    << avg_mops << endl;
+      << cfg.target << ","
+      << cfg.kind << ","
+      << cfg.threads << ","
+      << cfg.duration << ","
+      << avg_mops << endl;
 }
-

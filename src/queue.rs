@@ -269,9 +269,7 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
 
 impl<T: Clone> Drop for DequeueSome<T> {
     fn drop(&mut self) {
-        todo!(
-            "deq가 reset 되어있지 않으면 panic. is_reset API 파서 deq.is_reset()으로 확인해야 할듯"
-        )
+        // TODO: "deq가 reset 되어있지 않으면 panic. is_reset API 파서 deq.is_reset()으로 확인해야 할듯"
     }
 }
 
@@ -506,7 +504,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
-                        persist_obj(&self.head, true);
+                        guard.defer_persist(&self.head);
                         Some(Self::finish_dequeue(next_ref))
                     })
                     .map_err(|_| {

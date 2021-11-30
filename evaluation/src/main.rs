@@ -1,38 +1,16 @@
 #![feature(generic_associated_types)]
 
-use compositional_persistent_object::persistent::*;
-use compositional_persistent_object::plocation::*;
-use corundum::alloc::*;
-use corundum::default::BuddyAlloc;
+// use corundum::alloc::*;
+// use corundum::default::BuddyAlloc;
 use csv::Writer;
-use evaluation::common::{TestKind, TestTarget, FILE_SIZE};
-use evaluation::compositional_pobj::{GetOurPipeNOps, GetOurQueueNOps};
-use evaluation::crndm::CrndmPipe;
-use evaluation::dss::GetDSSQueueNOps;
-use evaluation::friedman::{GetDurableQueueNOps, GetLogQueueNOps};
+use evaluation::common::queue::bench_queue;
+use evaluation::common::{Opt, TestKind, TestTarget, DURATION, RELAXED};
 use regex::Regex;
 use std::fs::create_dir_all;
-use std::fs::remove_file;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::path::Path;
-
-// - 우리의 pool API로 만든 테스트 로직 실행
-// - root op으로 operation 실행 수를 카운트하는 로직을 가짐
-//      - input: 테스트 종류, n개 스레드로 m초 동안 테스트
-//      - output: m초 동안 실행된 operation 수
-fn get_nops<'o, O: POp<Object<'o> = (), Input = (TestKind, usize, f64), Output<'o> = usize>>(
-    filepath: &str,
-    kind: TestKind,
-    nr_thread: usize,
-    duration: f64,
-) -> usize {
-    let _ = remove_file(filepath);
-    let pool_handle = Pool::create::<O>(filepath, FILE_SIZE).unwrap();
-    pool_handle
-        .get_root()
-        .run((), (kind, nr_thread, duration), &pool_handle)
-}
+use structopt::StructOpt;
 
 fn parse_target(target: &str, kind: &str) -> TestTarget {
     // 앞 4글자는 테스트 종류 구분 역할, 뒤에 더 붙는 글자는 부가 입력 역할
@@ -48,47 +26,21 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         _ => unreachable!(),
     };
     match target {
-        "our_queue" => TestTarget::OurQueue(kind),
+        "memento_queue" => TestTarget::MementoQueue(kind),
+        "memento_pipe_queue" => TestTarget::MementoPipeQueue(kind),
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
-        "our_pipe" => TestTarget::OurPipe(kind),
+        "memento_pipe" => TestTarget::MementoPipe(kind),
         "crndm_pipe" => TestTarget::CrndmPipe(kind),
         _ => unreachable!("invalid target"),
     }
 }
 
-use structopt::StructOpt;
-#[derive(StructOpt, Debug)]
-#[structopt(name = "bench")]
-struct Opt {
-    /// PMEM pool로서 사용할 파일 경로
-    #[structopt(short, long)]
-    filepath: String,
-
-    /// 처리율 측정대상
-    #[structopt(short = "a", long)]
-    target: String,
-
-    /// 실험종류
-    #[structopt(short, long)]
-    kind: String,
-
-    /// 동작시킬 스레드 수
-    #[structopt(short, long)]
-    threads: usize,
-
-    /// 처리율 1번 측정시 실험 수행시간
-    #[structopt(short, long, default_value = "5")]
-    duration: f64,
-
-    /// 출력 파일. 주어지지 않으면 ./out/{target}.csv에 저장
-    #[structopt(short, long)]
-    output: Option<String>,
-}
-
 fn setup() -> (Opt, Writer<File>) {
     let opt = Opt::from_args();
+    unsafe { DURATION = opt.duration }; // 각 스레드가 수행할 시간 설정
+    unsafe { RELAXED = opt.relax }; // 각 스레드가 op을 `n`번 실행할때마다 guard repin
 
     let output_name = match &opt.output {
         Some(o) => o.clone(),
@@ -111,7 +63,14 @@ fn setup() -> (Opt, Writer<File>) {
                 .unwrap();
             let mut output = csv::Writer::from_writer(f);
             output
-                .write_record(&["target", "bench kind", "threads", "duration", "throughput"])
+                .write_record(&[
+                    "target",
+                    "bench kind",
+                    "threads",
+                    "duration",
+                    "relaxed",
+                    "throughput",
+                ])
                 .unwrap();
             output.flush().unwrap();
             output
@@ -120,32 +79,29 @@ fn setup() -> (Opt, Writer<File>) {
     (opt, output)
 }
 
-// 스레드 `nr_thread`개를 사용할 때의 처리율 계산
+// 스레드 `nr_thread`개를 사용할 때의 처리율(op 실행 수/s) 계산
+// TODO: refactoring
 fn bench(opt: &Opt) -> f64 {
     println!(
         "bench {}:{} using {} threads",
         opt.target, opt.kind, opt.threads
     );
     let target = parse_target(&opt.target, &opt.kind);
+
     let nops = match target {
-        TestTarget::OurQueue(kind) => {
-            get_nops::<GetOurQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+        TestTarget::MementoQueue(_) => bench_queue(opt, target),
+        TestTarget::MementoPipeQueue(_) => bench_queue(opt, target),
+        TestTarget::FriedmanDurableQueue(_) => bench_queue(opt, target),
+        TestTarget::FriedmanLogQueue(_) => bench_queue(opt, target),
+        TestTarget::DSSQueue(_) => bench_queue(opt, target),
+        TestTarget::MementoPipe(_) => {
+            // get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
+            todo!()
         }
-        TestTarget::FriedmanDurableQueue(kind) => {
-            get_nops::<GetDurableQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-        }
-        TestTarget::FriedmanLogQueue(kind) => {
-            get_nops::<GetLogQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-        }
-        TestTarget::DSSQueue(kind) => {
-            get_nops::<GetDSSQueueNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-        }
-        TestTarget::OurPipe(kind) => {
-            get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-        }
-        TestTarget::CrndmPipe(kind) => {
-            let root = BuddyAlloc::open::<CrndmPipe>(&opt.filepath, O_16GB | O_CF).unwrap();
-            root.get_nops(kind, opt.threads, opt.duration)
+        TestTarget::CrndmPipe(_) => {
+            // let root = BuddyAlloc::open::<CrndmPipe>(&opt.filepath, O_16GB | O_CF).unwrap();
+            //   root.get_nops(kind, opt.threads, opt.duration)
+            todo!()
         }
     };
     let avg_ops = (nops as f64) / opt.duration; // 평균 op/s
@@ -164,6 +120,7 @@ fn main() {
             opt.kind,
             opt.threads.to_string(),
             opt.duration.to_string(),
+            opt.relax.to_string(),
             avg_mops.to_string(),
         ])
         .unwrap();

@@ -1,9 +1,12 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
-use crate::common::{TestKind, TestNOps, MAX_THREADS, QUEUE_INIT_SIZE};
-use compositional_persistent_object::pepoch::{self as pepoch, PAtomic, POwned, PShared};
-use compositional_persistent_object::persistent::*;
-use compositional_persistent_object::plocation::{ll::*, pool::*};
+use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
+use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
+use epoch::Guard;
+use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
+use memento::persistent::*;
+use memento::plocation::ralloc::{Collectable, GarbageCollection};
+use memento::plocation::{ll::*, pool::*};
 use std::mem::MaybeUninit;
 use std::sync::atomic::Ordering;
 
@@ -38,7 +41,7 @@ impl<T: Clone> Node<T> {
 
 struct LogEntry<T: Clone> {
     _op_num: usize,
-    _op: Operation,
+    op: Operation,
     status: bool,
     node: PAtomic<Node<T>>,
 }
@@ -47,7 +50,7 @@ impl<T: Clone> LogEntry<T> {
     fn new(status: bool, node_with_log: PAtomic<Node<T>>, op: Operation, op_num: usize) -> Self {
         Self {
             _op_num: op_num,
-            _op: op,
+            op,
             status,
             node: node_with_log,
         }
@@ -66,27 +69,35 @@ struct LogQueue<T: Clone> {
     logs: [CachePadded<PAtomic<LogEntry<T>>>; MAX_THREADS],
 }
 
-impl<T: Clone> LogQueue<T> {
-    fn new<O: POp>(pool: &PoolHandle) -> POwned<Self> {
-        let guard = unsafe { pepoch::unprotected(pool) };
+impl<T: Clone> Collectable for LogQueue<T> {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<T: Clone> PDefault for LogQueue<T> {
+    fn pdefault(pool: &'static PoolHandle) -> Self {
+        let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
-        let ret = POwned::new(
-            Self {
-                head: CachePadded::new(PAtomic::from(sentinel)),
-                tail: CachePadded::new(PAtomic::from(sentinel)),
-                logs: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
-            },
-            pool,
-        );
-        persist_obj(unsafe { ret.deref(pool) }, true);
-        ret
+        Self {
+            head: CachePadded::new(PAtomic::from(sentinel)),
+            tail: CachePadded::new(PAtomic::from(sentinel)),
+            logs: array_init::array_init(|_| CachePadded::new(PAtomic::null())),
+        }
     }
+}
 
-    fn enqueue<O: POp>(&self, val: T, tid: usize, op_num: usize, pool: &PoolHandle) {
-        let guard = pepoch::pin(pool);
-
+impl<T: Clone> LogQueue<T> {
+    fn enqueue(
+        &self,
+        val: T,
+        tid: usize,
+        op_num: usize,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) {
         // NOTE: Log 큐의 하자 (1/2)
         // - 우리 큐: enq할 노드만 새롭게 할당 & persist함
         // - Log 큐: enq할 노드 뿐 아니라 enq log 또한 할당하고 persist함
@@ -96,9 +107,9 @@ impl<T: Clone> LogQueue<T> {
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Enqueue, op_num),
             pool,
         )
-        .into_shared(&guard);
+        .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
         let log_ref = unsafe { log.deref(pool) };
-        let node = POwned::new(Node::new(val), pool).into_shared(&guard);
+        let node = POwned::new(Node::new(val), pool);
         let node_ref = unsafe { node.deref(pool) };
 
         log_ref.node.store(node, Ordering::SeqCst);
@@ -110,6 +121,7 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(&self.logs[tid], true);
         // ```
 
+        let node = log_ref.node.load(Ordering::SeqCst, guard);
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -146,9 +158,7 @@ impl<T: Clone> LogQueue<T> {
         }
     }
 
-    fn dequeue<O: POp>(&self, tid: usize, op_num: usize, pool: &PoolHandle) {
-        let guard = pepoch::pin(pool);
-
+    fn dequeue(&self, tid: usize, op_num: usize, guard: &mut Guard, pool: &'static PoolHandle) {
         // NOTE: Log 큐의 하자 (2/2)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Log 큐: deq 로그 할당 및 persist
@@ -158,9 +168,10 @@ impl<T: Clone> LogQueue<T> {
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, op_num),
             pool,
         )
-        .into_shared(&guard);
+        .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
+
         self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&self.logs[tid], true);
         // ```
@@ -226,6 +237,8 @@ impl<T: Clone> LogQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
+                        guard.defer_persist(&self.head);
+                        unsafe { guard.defer_pdestroy(first) };
                         return;
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         persist_obj(&next_ref.log_remove, true);
@@ -255,66 +268,157 @@ impl<T: Clone> TestQueue for LogQueue<T> {
     type EnqInput = (T, usize, usize); // input, tid, op_num
     type DeqInput = (usize, usize); // tid, op_num
 
-    fn enqueue<O: POp>(&self, (input, tid, op_num): Self::EnqInput, pool: &PoolHandle) {
-        self.enqueue(input, tid, op_num, pool);
+    fn enqueue(
+        &self,
+        (input, tid, op_num): Self::EnqInput,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) {
+        self.enqueue(input, tid, op_num, guard, pool);
+
+        // 다음 op으로 logs[tid]를 덮어씌우기 전에 여기서 logs[tid]에 있는 로그를 free
+        let log = self.logs[tid].load(Ordering::SeqCst, guard);
+        if !log.is_null() {
+            unsafe { guard.defer_pdestroy(log) };
+        }
     }
-    fn dequeue<O: POp>(&self, (tid, op_num): Self::DeqInput, pool: &PoolHandle) {
-        self.dequeue(tid, op_num, pool);
+
+    fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+        self.dequeue(tid, op_num, guard, pool);
+
+        // 다음 op으로 logs[tid]를 덮어씌우기 전에 여기서 logs[tid]에 있는 로그를 free
+        let log = self.logs[tid].load(Ordering::SeqCst, guard);
+        if !log.is_null() {
+            unsafe { guard.defer_pdestroy(log) };
+
+            // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TestLogQueue {
+    queue: LogQueue<usize>,
+}
+
+impl Collectable for TestLogQueue {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl PDefault for TestLogQueue {
+    fn pdefault(pool: &'static PoolHandle) -> Self {
+        let queue = LogQueue::pdefault(pool);
+        let mut guard = epoch::pin();
+
+        // 초기 노드 삽입
+        for i in 0..QUEUE_INIT_SIZE {
+            queue.enqueue(i, 0, 0, &mut guard, pool);
+        }
+        Self { queue }
     }
 }
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
 #[derive(Default, Debug)]
-pub struct GetLogQueueNOps;
+pub struct LogQueueEnqDeqPair;
 
-impl TestNOps for GetLogQueueNOps {}
+impl Collectable for LogQueueEnqDeqPair {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        todo!()
+    }
+}
 
-impl POp for GetLogQueueNOps {
-    type Object<'o> = ();
-    type Input = (TestKind, usize, f64); // (테스트 종류, n개 스레드로 m초 동안 테스트)
-    type Output<'o> = usize; // 실행한 operation 수
+impl TestNOps for LogQueueEnqDeqPair {}
+
+impl Memento for LogQueueEnqDeqPair {
+    type Object<'o> = &'o TestLogQueue;
+    type Input = usize; // tid
+    type Output<'o> = ();
+    type Error = ();
+
     fn run<'o>(
-        &mut self,
-        _: Self::Object<'o>,
-        (kind, nr_thread, duration): Self::Input,
-        pool: &PoolHandle,
-    ) -> Self::Output<'o> {
-        // Initialize Queue
-        let q = LogQueue::<usize>::new(pool);
-        let q_ref = unsafe { q.deref(pool) };
+        &'o mut self,
+        queue: Self::Object<'o>,
+        tid: Self::Input,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        let q = &queue.queue;
+        let duration = unsafe { DURATION };
 
-        for i in 0..QUEUE_INIT_SIZE {
-            q_ref.enqueue(i, 0, 0, pool);
-        }
-
-        match kind {
-            TestKind::QueuePair => {
-                self.test_nops(
-                    &|tid| {
-                        let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                        let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                        enq_deq_pair(q_ref, enq_input, deq_input, pool);
-                    },
-                    nr_thread,
-                    duration,
-                )
-            }
-            TestKind::QueueProb(prob) => {
-                self.test_nops(
-                    &|tid| {
-                        let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                        let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                        enq_deq_prob(q_ref, enq_input, deq_input, prob, pool);
-                    },
-                    nr_thread,
-                    duration,
-                )
-            }
-            _ => unreachable!("Queue를 위한 테스트만 해야함"),
-        }
+        let ops = self.test_nops(
+            &|tid, guard| {
+                let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                enq_deq_pair(q, enq_input, deq_input, guard, pool);
+            },
+            tid,
+            duration,
+            guard,
+        );
+        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+        Ok(())
     }
 
-    fn reset(&mut self, _: bool) {
-        // no-ops
+    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        // no-op
+    }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
+        // no-op
+    }
+}
+
+// TODO: 모든 큐의 실험 로직이 통합되어야 함
+#[derive(Default, Debug)]
+pub struct LogQueueEnqDeqProb;
+
+impl Collectable for LogQueueEnqDeqProb {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl TestNOps for LogQueueEnqDeqProb {}
+
+impl Memento for LogQueueEnqDeqProb {
+    type Object<'o> = &'o TestLogQueue;
+    type Input = usize; // tid
+    type Output<'o> = ();
+    type Error = ();
+
+    fn run<'o>(
+        &'o mut self,
+        queue: Self::Object<'o>,
+        tid: Self::Input,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        let q = &queue.queue;
+        let duration = unsafe { DURATION };
+        let prob = unsafe { PROB };
+
+        let ops = self.test_nops(
+            &|tid, guard| {
+                let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+            },
+            tid,
+            duration,
+            guard,
+        );
+        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        // no-op
+    }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
+        // no-op
     }
 }

@@ -2,4 +2,4 @@
 
 mod queue;
 
-pub use queue::GetDSSQueueNOps;
+pub use queue::{DSSQueueEnqDeqPair, DSSQueueEnqDeqProb, TestDSSQueue};

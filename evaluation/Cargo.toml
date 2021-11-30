@@ -10,14 +10,17 @@ name = "bench"
 path = "src/main.rs"
 
 [dependencies]
-compositional-persistent-object = { path = "../../compositional-persistent-object" }
+memento = { path = "../" }
+crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "old_guard" }
 crossbeam-utils = "0.8.5"
 rand = "0.8.4"
 array-init = "2.0.0"
 regex = "1.5.4"
 structopt = "0.3"
 csv = "1.1.6"
-corundum = "0.4.0"
+# corundum = "0.4.0"
 
 [features]
-no_persist = ["compositional-persistent-object/no_persist", "corundum/no_persist"]
+# no_persist = ["memento/no_persist", "corundum/no_persist"]
+no_persist = ["memento/no_persist"]
+

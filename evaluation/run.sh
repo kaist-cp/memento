@@ -23,7 +23,7 @@ function bench() {
         for ((var=1; var<=$TEST_CNT; var++));
         do
             echo "test $var/$TEST_CNT...";
-            rm -f $poolpath
+            rm -f $poolpath*
             if [ "pmdk_pipe" == "${target}" ]; then
                 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $out
             else
@@ -53,23 +53,25 @@ dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
 mkdir -p $PMEM_PATH
 mkdir -p $out_path
-rm -rf ${PMEM_PATH}*.pool # 기존 풀 파일 제거
+rm -rf ${PMEM_PATH}/*.pool* # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
-# bench our_queue prob50 $out_path/queue.csv
-# bench durable_queue prob50 $out_path/queue.csv
-# bench log_queue prob50 $out_path/queue.csv
-# bench dss_queue prob50 $out_path/queue.csv
-bench our_queue pair $out_path/queue.csv
+bench memento_queue prob50 $out_path/queue.csv
+bench memento_pipe_queue prob50 $out_path/queue.csv
+bench durable_queue prob50 $out_path/queue.csv
+bench log_queue prob50 $out_path/queue.csv
+bench dss_queue prob50 $out_path/queue.csv
+bench memento_queue pair $out_path/queue.csv
+bench memento_pipe_queue pair $out_path/queue.csv
 bench durable_queue pair $out_path/queue.csv
 bench log_queue pair $out_path/queue.csv
 bench dss_queue pair $out_path/queue.csv
 
 # 3. Benchmarking pipe performance
-bench our_pipe pipe $out_path/pipe.csv
-bench crndm_pipe pipe $out_path/pipe.csv
-bench pmdk_pipe pipe $out_path/pipe.csv
+# bench memento_pipe pipe $out_path/pipe.csv
+# bench crndm_pipe pipe $out_path/pipe.csv
+# bench pmdk_pipe pipe $out_path/pipe.csv
 
 # 4. Plot and finish
 python3 plot.py

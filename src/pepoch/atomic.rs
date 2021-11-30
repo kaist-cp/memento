@@ -240,7 +240,6 @@ impl<T> Pointable for T {
         let ptr = pool.alloc::<T>();
         let t = ptr.deref_mut(pool);
         std::ptr::write(t as *mut T, init);
-        persist_obj(t, true);
         ptr.into_offset()
     }
 

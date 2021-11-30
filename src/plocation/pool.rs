@@ -349,6 +349,14 @@ impl Pool {
         Ok(global_pool().unwrap())
     }
 
+    /// TODO: doc
+    pub fn remove(filepath: &str) -> Result<(), Error> {
+        fs::remove_file(&(filepath.to_owned() + "_basemd"))?;
+        fs::remove_file(&(filepath.to_owned() + "_desc"))?;
+        fs::remove_file(&(filepath.to_owned() + "_sb"))?;
+        Ok(())
+    }
+
     /// 풀에 size만큼 할당 후 이를 가리키는 포인터 반환
     #[inline]
     fn alloc(&self, size: usize) -> *mut u8 {

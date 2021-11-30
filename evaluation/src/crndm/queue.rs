@@ -133,9 +133,9 @@ impl CrndmQueue {
 #[cfg(test)]
 mod test {
     use super::CrndmQueue;
-    use compositional_persistent_object::utils::tests::get_test_abs_path;
     use corundum::default::*;
     use crossbeam_utils::thread;
+    use memento::utils::tests::get_test_abs_path;
 
     const FILE_NAME: &str = "crndm_enqdeq.pool";
     const COUNT: usize = 100_000;
