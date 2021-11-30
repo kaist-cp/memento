@@ -9,8 +9,6 @@ use memento::queue::*;
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-// for<'o> Memento<Object<'o> = &'o O, Input = usize>
-
 impl<T: 'static + Clone> TestQueue for Queue<T> {
     type EnqInput = (&'static mut Enqueue<T>, T); // Memento, input
     type DeqInput = &'static mut Dequeue<T>; // Memento
@@ -26,7 +24,7 @@ impl<T: 'static + Clone> TestQueue for Queue<T> {
     }
 }
 
-/// 초기화시 세팅한 노드 수만큼 넣어줌  
+/// 초기화시 세팅한 노드 수만큼 넣어줌
 #[derive(Debug)]
 pub struct TestMementoQueue {
     queue: Queue<usize>,
@@ -55,15 +53,15 @@ impl PDefault for TestMementoQueue {
 
 #[derive(Debug)]
 pub struct MementoQueueEnqDeqPair {
-    push: CachePadded<Enqueue<usize>>,
-    pop: CachePadded<Dequeue<usize>>,
+    enq: CachePadded<Enqueue<usize>>,
+    deq: CachePadded<Dequeue<usize>>,
 }
 
 impl Default for MementoQueueEnqDeqPair {
     fn default() -> Self {
         Self {
-            push: CachePadded::new(Enqueue::<usize>::default()),
-            pop: CachePadded::new(Dequeue::<usize>::default()),
+            enq: CachePadded::new(Enqueue::<usize>::default()),
+            deq: CachePadded::new(Dequeue::<usize>::default()),
         }
     }
 }
@@ -94,12 +92,13 @@ impl Memento for MementoQueueEnqDeqPair {
 
         let ops = self.test_nops(
             &|tid, guard| {
-                let push =
-                    unsafe { (&*self.push as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
-                let pop =
-                    unsafe { (&*self.pop as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
-                let enq_input = (push, tid);
-                let deq_input = pop;
+                // NOTE!!!: &CahePadded<T>를 &T로 읽으면 안됨. 지금처럼 &*로 &T를 가져와서 &T로 읽어야함
+                let enq =
+                    unsafe { (&*self.enq as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
+                let deq =
+                    unsafe { (&*self.deq as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
+                let enq_input = (enq, tid);
+                let deq_input = deq;
                 enq_deq_pair(q, enq_input, deq_input, guard, pool);
             },
             tid,
@@ -123,15 +122,15 @@ impl Memento for MementoQueueEnqDeqPair {
 
 #[derive(Debug)]
 pub struct MementoQueueEnqDeqProb {
-    push: CachePadded<Enqueue<usize>>,
-    pop: CachePadded<Dequeue<usize>>,
+    enq: CachePadded<Enqueue<usize>>,
+    deq: CachePadded<Dequeue<usize>>,
 }
 
 impl Default for MementoQueueEnqDeqProb {
     fn default() -> Self {
         Self {
-            push: CachePadded::new(Enqueue::<usize>::default()),
-            pop: CachePadded::new(Dequeue::<usize>::default()),
+            enq: CachePadded::new(Enqueue::<usize>::default()),
+            deq: CachePadded::new(Dequeue::<usize>::default()),
         }
     }
 }
@@ -163,12 +162,13 @@ impl Memento for MementoQueueEnqDeqProb {
 
         let ops = self.test_nops(
             &|tid, guard| {
-                let push =
-                    unsafe { (&*self.push as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
-                let pop =
-                    unsafe { (&*self.pop as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
-                let enq_input = (push, tid);
-                let deq_input = pop;
+                // NOTE!!!: &CahePadded<T>를 &T로 읽으면 안됨. 지금처럼 &*로 &T를 가져와서 &T로 읽어야함
+                let enq =
+                    unsafe { (&*self.enq as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
+                let deq =
+                    unsafe { (&*self.deq as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
+                let enq_input = (enq, tid);
+                let deq_input = deq;
                 enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
             },
             tid,

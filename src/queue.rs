@@ -504,7 +504,7 @@ impl<T: Clone> Queue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
-                        guard.defer_persist(&self.head);
+                        guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         Some(Self::finish_dequeue(next_ref))
                     })
                     .map_err(|_| {

@@ -41,7 +41,7 @@ impl<T: Clone> Node<T> {
 
 struct LogEntry<T: Clone> {
     _op_num: usize,
-    op: Operation,
+    _op: Operation,
     status: bool,
     node: PAtomic<Node<T>>,
 }
@@ -50,7 +50,7 @@ impl<T: Clone> LogEntry<T> {
     fn new(status: bool, node_with_log: PAtomic<Node<T>>, op: Operation, op_num: usize) -> Self {
         Self {
             _op_num: op_num,
-            op,
+            _op: op,
             status,
             node: node_with_log,
         }
@@ -118,7 +118,8 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(log_ref, true);
 
         self.logs[tid].store(log, Ordering::SeqCst);
-        persist_obj(&self.logs[tid], true);
+        persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+
         // ```
 
         let node = log_ref.node.load(Ordering::SeqCst, guard);
@@ -173,8 +174,8 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(log_ref, true);
 
         self.logs[tid].store(log, Ordering::SeqCst);
-        persist_obj(&self.logs[tid], true);
-        // ```
+        persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+                                             // ```
 
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
@@ -237,7 +238,7 @@ impl<T: Clone> LogQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
-                        guard.defer_persist(&self.head);
+                        guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         unsafe { guard.defer_pdestroy(first) };
                         return;
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {

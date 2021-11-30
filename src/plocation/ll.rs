@@ -3,7 +3,7 @@
 //! src: https://github.com/NVSL/Corundum/blob/main/src/ll.rs
 #![allow(unused)]
 
-const CACHE_LINE: usize = 256;
+const CACHE_LINE: usize = 64;
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{_mm_mfence, _mm_sfence, clflush};
