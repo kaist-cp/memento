@@ -114,13 +114,9 @@ impl<T: Clone> DurableQueue<T> {
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
-        let prev = self.ret_val[tid].load(Ordering::SeqCst, guard);
         self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
         persist_obj(&self.ret_val[tid], true);
         // ```
-        if !prev.is_null() {
-            unsafe { guard.defer_pdestroy(prev) }; // ret_val[tid]에 덮어쓰므로 원래 있던 포인터 free
-        }
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         loop {
@@ -214,6 +210,12 @@ impl<T: Clone> TestQueue for DurableQueue<T> {
 
     fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
         self.dequeue(tid, guard, pool);
+
+        // 다음 deq로 ret_val[tid]를 덮어씌우기 전에 여기서 ret_val[tid] 포인터를 free
+        let ret_val = self.ret_val[tid].load(Ordering::SeqCst, guard);
+        if !ret_val.is_null() {
+            unsafe { guard.defer_pdestroy(ret_val) };
+        }
     }
 }
 

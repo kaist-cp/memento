@@ -117,35 +117,8 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(node_ref, true);
         persist_obj(log_ref, true);
 
-        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
         self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&self.logs[tid], true);
-        // ```
-
-        // ``` prev 로그 및 prev 로그가 가리키는 노드를 free
-        {
-            // Log queue의 recovery phase는 수행됐다고 생각
-            //   1. Enq Log: enq 성공못한 로그는 recovery phase에서 전부 enq
-            //   2. Deq Log: 노드를 가리켰지만 Queue에서 노드를 Deq하지 못한 로그는 recovery phase에서 마저 전부 deq
-            //   3. 이전 Log array는 버리고 새로 만듦
-            //
-            // 따라서 이 로직에 도달하는 것은 crash-free execution
-            if !prev.is_null() {
-                let prev_ref = unsafe { prev.deref(pool) };
-
-                // 이 시점(crash-free execution)의 prev 로그는 항상 enq or deq 성공한 로그
-                // - enq 로그라면 가리키는 노드를 free하면 안됨
-                // - deq 로그라면 가리키는 노드를 free. 단 "EMPTY"로 성공했었다면 free하면 안됨
-                if let Operation::Dequeue = prev_ref.op {
-                    // status=true면 dequeue를 EMPTY로 성공한 것임
-                    if !prev_ref.status {
-                        let node = prev_ref.node.load(Ordering::SeqCst, guard);
-                        unsafe { guard.defer_pdestroy(node) };
-                    }
-                }
-                unsafe { guard.defer_pdestroy(prev) };
-            }
-        }
         // ```
 
         let node = log_ref.node.load(Ordering::SeqCst, guard);
@@ -199,35 +172,8 @@ impl<T: Clone> LogQueue<T> {
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
 
-        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
         self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&self.logs[tid], true);
-        // ```
-
-        // ``` prev 로그 및 prev 로그가 가리키는 노드를 free
-        {
-            // Log queue의 recovery phase는 수행됐다고 생각
-            //   1. Enq Log: enq 성공못한 로그는 recovery phase에서 전부 enq
-            //   2. Deq Log: 노드를 가리켰지만 Queue에서 노드를 Deq하지 못한 로그는 recovery phase에서 마저 전부 deq
-            //   3. 이전 Log array는 버리고 새로 만듦
-            //
-            // 따라서 이 로직에 도달하는 것은 crash-free execution
-            if !prev.is_null() {
-                let prev_ref = unsafe { prev.deref(pool) };
-
-                // 이 시점(crash-free execution)의 prev 로그는 항상 enq or deq 성공한 로그
-                // - enq 로그라면 가리키는 노드를 free하면 안됨
-                // - deq 로그라면 가리키는 노드를 free. 단 "EMPTY"로 성공했었다면 free하면 안됨
-                if let Operation::Dequeue = prev_ref.op {
-                    // status=true면 dequeue를 EMPTY로 성공한 것임
-                    if !prev_ref.status {
-                        let node = prev_ref.node.load(Ordering::SeqCst, guard);
-                        unsafe { guard.defer_pdestroy(node) };
-                    }
-                }
-                unsafe { guard.defer_pdestroy(prev) };
-            }
-        }
         // ```
 
         loop {
@@ -291,8 +237,8 @@ impl<T: Clone> LogQueue<T> {
                             Ordering::SeqCst,
                             &guard,
                         );
-                        // NOTE: 로그가 가리키고 있을 수 있으니 여기서 deq한 노드를 free하면 안됨
                         guard.defer_persist(&self.head);
+                        unsafe { guard.defer_pdestroy(first) };
                         return;
                     } else if self.head.load(Ordering::SeqCst, &guard) == first {
                         persist_obj(&next_ref.log_remove, true);
@@ -329,10 +275,24 @@ impl<T: Clone> TestQueue for LogQueue<T> {
         pool: &'static PoolHandle,
     ) {
         self.enqueue(input, tid, op_num, guard, pool);
+
+        // 다음 op으로 logs[tid]를 덮어씌우기 전에 여기서 logs[tid]에 있는 로그를 free
+        let log = self.logs[tid].load(Ordering::SeqCst, guard);
+        if !log.is_null() {
+            unsafe { guard.defer_pdestroy(log) };
+        }
     }
 
     fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
         self.dequeue(tid, op_num, guard, pool);
+
+        // 다음 op으로 logs[tid]를 덮어씌우기 전에 여기서 logs[tid]에 있는 로그를 free
+        let log = self.logs[tid].load(Ordering::SeqCst, guard);
+        if !log.is_null() {
+            unsafe { guard.defer_pdestroy(log) };
+
+            // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
+        }
     }
 }
 
