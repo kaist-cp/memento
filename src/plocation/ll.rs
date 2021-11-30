@@ -3,6 +3,8 @@
 //! src: https://github.com/NVSL/Corundum/blob/main/src/ll.rs
 #![allow(unused)]
 
+const CACHE_LINE: usize = 256;
+
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{_mm_mfence, _mm_sfence, clflush};
 
@@ -79,7 +81,7 @@ pub fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
                     compile_error!("Please Select only one from clflushopt and clwb")
                 }
             }
-            start += 64;
+            start += CACHE_LINE;
         }
     }
     if (fence) {
