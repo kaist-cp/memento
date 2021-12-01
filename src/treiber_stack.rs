@@ -513,9 +513,7 @@ impl<T: Clone> TreiberStack<T> {
                 // 복구와 관련된 것이므로 persist 필요 없음
             }
 
-            if self.search(mine, guard, pool)
-                || unsafe { mine.deref(pool) }.popper.load(Ordering::SeqCst) != Self::no_popper()
-            {
+            if self.search(mine, guard, pool) || unsafe { mine.deref(pool) }.pushed {
                 // (2) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
                 // (3) 이미 pop 되었다면 push된 것이다
                 return Ok(());
