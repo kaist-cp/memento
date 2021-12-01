@@ -94,7 +94,7 @@ impl<T: Clone> LogQueue<T> {
         &self,
         val: T,
         tid: usize,
-        op_num: usize,
+        op_num: &mut usize,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) {
@@ -104,7 +104,7 @@ impl<T: Clone> LogQueue<T> {
         //
         // ```
         let log = POwned::new(
-            LogEntry::<T>::new(false, PAtomic::null(), Operation::Enqueue, op_num),
+            LogEntry::<T>::new(false, PAtomic::null(), Operation::Enqueue, *op_num),
             pool,
         )
         .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
@@ -117,10 +117,17 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(node_ref, true);
         persist_obj(log_ref, true);
 
+        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
         self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
         // ```
+
+        // 이전 로그를 free
+        if !prev.is_null() {
+            unsafe { guard.defer_pdestroy(prev) };
+            // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
+        }
 
         let node = log_ref.node.load(Ordering::SeqCst, guard);
         loop {
@@ -159,23 +166,37 @@ impl<T: Clone> LogQueue<T> {
         }
     }
 
-    fn dequeue(&self, tid: usize, op_num: usize, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn dequeue(
+        &self,
+        tid: usize,
+        op_num: &mut usize,
+        guard: &mut Guard,
+        pool: &'static PoolHandle,
+    ) {
         // NOTE: Log 큐의 하자 (2/2)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Log 큐: deq 로그 할당 및 persist
         //
         // ```
         let mut log = POwned::new(
-            LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, op_num),
+            LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, *op_num),
             pool,
         )
         .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
 
+        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
         self.logs[tid].store(log, Ordering::SeqCst);
         persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
-                                             // ```
+
+        // ```
+
+        // 이전 로그를 free
+        if !prev.is_null() {
+            unsafe { guard.defer_pdestroy(prev) };
+            // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
+        }
 
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
@@ -266,8 +287,8 @@ impl<T: Clone> LogQueue<T> {
 }
 
 impl<T: Clone> TestQueue for LogQueue<T> {
-    type EnqInput = (T, usize, usize); // input, tid, op_num
-    type DeqInput = (usize, usize); // tid, op_num
+    type EnqInput = (T, usize, &'static mut usize); // input, tid, op_num
+    type DeqInput = (usize, &'static mut usize); // tid, op_num
 
     fn enqueue(
         &self,
@@ -276,24 +297,14 @@ impl<T: Clone> TestQueue for LogQueue<T> {
         pool: &'static PoolHandle,
     ) {
         self.enqueue(input, tid, op_num, guard, pool);
-
-        // 다음 op으로 logs[tid]를 덮어씌우기 전에 여기서 logs[tid]에 있는 로그를 free
-        let log = self.logs[tid].load(Ordering::SeqCst, guard);
-        if !log.is_null() {
-            unsafe { guard.defer_pdestroy(log) };
-        }
+        *op_num += 1;
+        persist_obj(op_num, true);
     }
 
     fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
         self.dequeue(tid, op_num, guard, pool);
-
-        // 다음 op으로 logs[tid]를 덮어씌우기 전에 여기서 logs[tid]에 있는 로그를 free
-        let log = self.logs[tid].load(Ordering::SeqCst, guard);
-        if !log.is_null() {
-            unsafe { guard.defer_pdestroy(log) };
-
-            // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
-        }
+        *op_num += 1;
+        persist_obj(op_num, true);
     }
 }
 
@@ -315,7 +326,7 @@ impl PDefault for TestLogQueue {
 
         // 초기 노드 삽입
         for i in 0..QUEUE_INIT_SIZE {
-            queue.enqueue(i, 0, 0, &mut guard, pool);
+            queue.enqueue(i, 0, &mut 0, &mut guard, pool);
         }
         Self { queue }
     }
@@ -323,7 +334,10 @@ impl PDefault for TestLogQueue {
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
 #[derive(Default, Debug)]
-pub struct LogQueueEnqDeqPair;
+pub struct LogQueueEnqDeqPair {
+    /// unique operation number
+    op_num: CachePadded<usize>,
+}
 
 impl Collectable for LogQueueEnqDeqPair {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
@@ -351,8 +365,12 @@ impl Memento for LogQueueEnqDeqPair {
 
         let ops = self.test_nops(
             &|tid, guard| {
-                let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                // TODO: 더 깔끔하게 op_num의 ref 전달
+                let op_num = unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
+                let op_num_same =
+                    unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
+                let enq_input = (tid, tid, op_num);
+                let deq_input = (tid, op_num_same);
                 enq_deq_pair(q, enq_input, deq_input, guard, pool);
             },
             tid,
@@ -374,7 +392,10 @@ impl Memento for LogQueueEnqDeqPair {
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
 #[derive(Default, Debug)]
-pub struct LogQueueEnqDeqProb;
+pub struct LogQueueEnqDeqProb {
+    /// unique operation number
+    op_num: CachePadded<usize>,
+}
 
 impl Collectable for LogQueueEnqDeqProb {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
@@ -403,8 +424,12 @@ impl Memento for LogQueueEnqDeqProb {
 
         let ops = self.test_nops(
             &|tid, guard| {
-                let enq_input = (tid, tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
-                let deq_input = (tid, 0); // TODO: op_num=0 으로 고정했음. 이래도 괜찮나?
+                // TODO: 더 깔끔하게 op_num의 ref 전달
+                let op_num = unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
+                let op_num_same =
+                    unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
+                let enq_input = (tid, tid, op_num);
+                let deq_input = (tid, op_num_same);
                 enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
             },
             tid,

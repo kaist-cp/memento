@@ -114,10 +114,15 @@ impl<T: Clone> DurableQueue<T> {
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
+        let ret_val = self.ret_val[tid].load(Ordering::SeqCst, guard);
         self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
         persist_obj(&*self.ret_val[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
         // ```
+        // 이전 ret_val을 free
+        if !ret_val.is_null() {
+            unsafe { guard.defer_pdestroy(ret_val) };
+        }
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         loop {
@@ -211,12 +216,6 @@ impl<T: Clone> TestQueue for DurableQueue<T> {
 
     fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
         self.dequeue(tid, guard, pool);
-
-        // 다음 deq로 ret_val[tid]를 덮어씌우기 전에 여기서 ret_val[tid] 포인터를 free
-        let ret_val = self.ret_val[tid].load(Ordering::SeqCst, guard);
-        if !ret_val.is_null() {
-            unsafe { guard.defer_pdestroy(ret_val) };
-        }
     }
 }
 

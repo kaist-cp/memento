@@ -15,6 +15,8 @@ impl<T: 'static + Clone> TestQueue for Queue<T> {
 
     fn enqueue(&self, (enq, input): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
         let _ = enq.run(self, input, guard, pool);
+
+        // TODO: custom logic 추상화
         enq.reset(false, guard, pool);
     }
 

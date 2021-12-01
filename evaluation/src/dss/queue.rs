@@ -334,6 +334,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
         let _ = self.exec_dequeue(tid, guard, pool);
 
         // 다음 prep으로 x[tid]를 덮어씌우기 전에 여기서 x[tid]가 가리키는 deq된 노드를 free
+        // TODO: 이것도 prep 안으로 넣어야하나?
         let node = self.x[tid].load(Ordering::SeqCst, guard);
         if !node.is_null() {
             unsafe { guard.defer_pdestroy(node) };
