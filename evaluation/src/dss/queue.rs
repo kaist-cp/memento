@@ -1,7 +1,7 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::CachePadded;
+use crossbeam_utils::{Backoff, CachePadded};
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use memento::persistent::*;
@@ -114,6 +114,7 @@ impl<T: Clone> DSSQueue<T> {
     fn exec_enqueue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) {
         let node = self.x[tid].load(Ordering::SeqCst, &guard);
 
+        let backoff = Backoff::new();
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -167,6 +168,7 @@ impl<T: Clone> DSSQueue<T> {
                     );
                 };
             }
+            backoff.snooze();
         }
     }
 
@@ -196,6 +198,7 @@ impl<T: Clone> DSSQueue<T> {
     }
 
     fn exec_dequeue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) -> Option<T> {
+        let backoff = Backoff::new();
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
             let last = self.tail.load(Ordering::SeqCst, &guard);
@@ -256,6 +259,7 @@ impl<T: Clone> DSSQueue<T> {
                     }
                 }
             }
+            backoff.snooze();
         }
     }
 

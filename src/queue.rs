@@ -1,7 +1,7 @@
 //! Persistent queue
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_utils::CachePadded;
+use crossbeam_utils::{Backoff, CachePadded};
 use etrace::some_or;
 use std::{mem::MaybeUninit, ptr};
 
@@ -313,7 +313,10 @@ impl<T: Clone> Queue<T> {
     fn enqueue(&self, client: &mut Enqueue<T>, value: T, guard: &Guard, pool: &PoolHandle) {
         let node = some_or!(self.is_incomplete(client, value, guard, pool), return);
 
-        while self.try_enqueue(node, guard, pool).is_err() {}
+        let backoff = Backoff::new();
+        while self.try_enqueue(node, guard, pool).is_err() {
+            backoff.snooze();
+        }
     }
 
     fn is_incomplete<'g>(
@@ -439,10 +442,12 @@ impl<T: Clone> Queue<T> {
             }
         }
 
+        let backoff = Backoff::new();
         loop {
             if let Ok(v) = self.try_dequeue(client, guard, pool) {
                 return v;
             }
+            backoff.snooze();
         }
     }
 

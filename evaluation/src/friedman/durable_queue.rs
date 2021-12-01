@@ -1,7 +1,7 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::CachePadded;
+use crossbeam_utils::{Backoff, CachePadded};
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::persistent::*;
@@ -68,6 +68,7 @@ impl<T: Clone> DurableQueue<T> {
         let node = POwned::new(Node::new(val), pool).into_shared(&guard);
         persist_obj(unsafe { node.deref(pool) }, true);
 
+        let backoff = Backoff::new();
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -101,6 +102,8 @@ impl<T: Clone> DurableQueue<T> {
                     );
                 };
             }
+
+            backoff.snooze();
         }
     }
 
@@ -125,6 +128,7 @@ impl<T: Clone> DurableQueue<T> {
         }
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
+        let backoff = Backoff::new();
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
             let last = self.tail.load(Ordering::SeqCst, &guard);
@@ -202,6 +206,8 @@ impl<T: Clone> DurableQueue<T> {
                     }
                 }
             }
+
+            backoff.snooze();
         }
     }
 }
