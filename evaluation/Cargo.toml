@@ -11,8 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 memento = { path = "../" }
-crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "old_guard" }
-crossbeam-utils = "0.8.5"
+crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "memento" }
+crossbeam-utils = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-utils", branch = "memento" }
 rand = "0.8.4"
 array-init = "2.0.0"
 regex = "1.5.4"
