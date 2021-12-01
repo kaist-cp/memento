@@ -19,8 +19,8 @@ use_msync = []
 stat_print_flushes = []
 
 [dependencies]
-crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "old_guard" }
-crossbeam-utils = "0.8.5"
+crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "memento" }
+crossbeam-utils = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-utils", branch = "memento" }
 chrono = "0.4"
 etrace = "1.1.1"
 rand = "0.8.4"
