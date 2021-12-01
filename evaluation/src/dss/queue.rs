@@ -338,10 +338,15 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
         let _ = self.exec_dequeue(tid, guard, pool);
 
         // 다음 prep으로 x[tid]를 덮어씌우기 전에 여기서 x[tid]가 가리키는 deq된 노드를 free
-        // TODO: 이것도 prep 안으로 넣어야하나?
-        let node = self.x[tid].load(Ordering::SeqCst, guard);
-        if !node.is_null() {
-            unsafe { guard.defer_pdestroy(node) };
+        //
+        // NOTE: 단순 x[tid]에 있는게 null이 아니라고 free하면 안됨. deq 성공여부 확인하고 free 해야함
+        //       왜냐하면 deq 시도했다가 실패후 이후에 EMPTY로 끝날시 x[tid]에 "deq 시도했던 노드 with EMPTY tag"로 남기때문
+        let (val, completed) = self._resolve_dequeue(tid, guard, pool);
+        if completed && val.is_some() {
+            // Deq 성공한 노드를 free
+            // (`val`이 None이면 EMPTY로 끝난 것. free하면 안됨)
+            let node_tid = self.x[tid].load(Ordering::SeqCst, guard);
+            unsafe { guard.defer_pdestroy(node_tid) };
         }
     }
 }
