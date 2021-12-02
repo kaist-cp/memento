@@ -107,9 +107,9 @@ impl<T: Clone> LogQueue<T> {
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Enqueue, *op_num),
             pool,
         )
-        .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
+        .into_shared(guard);
         let log_ref = unsafe { log.deref(pool) };
-        let node = POwned::new(Node::new(val), pool);
+        let node = POwned::new(Node::new(val), pool).into_shared(guard);
         let node_ref = unsafe { node.deref(pool) };
 
         log_ref.node.store(node, Ordering::SeqCst);
@@ -129,18 +129,17 @@ impl<T: Clone> LogQueue<T> {
             // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
         }
 
-        let node = log_ref.node.load(Ordering::SeqCst, guard);
         let backoff = Backoff::new();
         loop {
-            let last = self.tail.load(Ordering::SeqCst, &guard);
+            let last = self.tail.load(Ordering::SeqCst, guard);
             let last_ref = unsafe { last.deref(pool) };
-            let next = last_ref.next.load(Ordering::SeqCst, &guard);
+            let next = last_ref.next.load(Ordering::SeqCst, guard);
 
-            if last == self.tail.load(Ordering::SeqCst, &guard) {
+            if last == self.tail.load(Ordering::SeqCst, guard) {
                 if next.is_null() {
                     if last_ref
                         .next
-                        .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst, &guard)
+                        .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst, guard)
                         .is_ok()
                     {
                         persist_obj(&last_ref.next, true);
@@ -149,7 +148,7 @@ impl<T: Clone> LogQueue<T> {
                             node,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                         return;
                     }
@@ -160,7 +159,7 @@ impl<T: Clone> LogQueue<T> {
                         next,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        &guard,
+                        guard,
                     );
                 }
             }
@@ -185,7 +184,7 @@ impl<T: Clone> LogQueue<T> {
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, *op_num),
             pool,
         )
-        .into_shared(unsafe { epoch::unprotected() }); // 이 log는 `tid`만 건드리니 unprotect해도 안전
+        .into_shared(guard);
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
 
@@ -203,12 +202,12 @@ impl<T: Clone> LogQueue<T> {
 
         let backoff = Backoff::new();
         loop {
-            let first = self.head.load(Ordering::SeqCst, &guard);
+            let first = self.head.load(Ordering::SeqCst, guard);
             let first_ref = unsafe { first.deref(pool) };
-            let last = self.tail.load(Ordering::SeqCst, &guard);
-            let next = first_ref.next.load(Ordering::SeqCst, &guard);
+            let last = self.tail.load(Ordering::SeqCst, guard);
+            let next = first_ref.next.load(Ordering::SeqCst, guard);
 
-            if first == self.head.load(Ordering::SeqCst, &guard) {
+            if first == self.head.load(Ordering::SeqCst, guard) {
                 if first == last {
                     if next.is_null() {
                         // TODO: atomic data?
@@ -223,7 +222,7 @@ impl<T: Clone> LogQueue<T> {
                         next,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        &guard,
+                        guard,
                     );
                 } else {
                     // NOTE: 여기서 Log 큐가 우리 큐랑 persist하는 시점은 다르지만 persist하는 총 횟수는 똑같음
@@ -243,15 +242,15 @@ impl<T: Clone> LogQueue<T> {
                             log,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         )
                         .is_ok()
                     {
                         persist_obj(&next_ref.log_remove, true);
-                        let log_remove = next_ref.log_remove.load(Ordering::SeqCst, &guard);
+                        let log_remove = next_ref.log_remove.load(Ordering::SeqCst, guard);
                         let log_remove_ref = unsafe { log_remove.deref(pool) };
                         log_remove_ref.node.store(
-                            first_ref.next.load(Ordering::SeqCst, &guard),
+                            first_ref.next.load(Ordering::SeqCst, guard),
                             Ordering::SeqCst,
                         );
                         persist_obj(&log_remove_ref.node, true);
@@ -261,17 +260,17 @@ impl<T: Clone> LogQueue<T> {
                             next,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                         guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         unsafe { guard.defer_pdestroy(first) };
                         return;
-                    } else if self.head.load(Ordering::SeqCst, &guard) == first {
+                    } else if self.head.load(Ordering::SeqCst, guard) == first {
                         persist_obj(&next_ref.log_remove, true);
-                        let log_remove = next_ref.log_remove.load(Ordering::SeqCst, &guard);
+                        let log_remove = next_ref.log_remove.load(Ordering::SeqCst, guard);
                         let log_remove_ref = unsafe { log_remove.deref(pool) };
                         log_remove_ref.node.store(
-                            first_ref.next.load(Ordering::SeqCst, &guard),
+                            first_ref.next.load(Ordering::SeqCst, guard),
                             Ordering::SeqCst,
                         );
                         persist_obj(&log_remove_ref.node, true);
@@ -281,7 +280,7 @@ impl<T: Clone> LogQueue<T> {
                             next,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                     }
                 }
