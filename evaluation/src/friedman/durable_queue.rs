@@ -113,18 +113,18 @@ impl<T: Clone> DurableQueue<T> {
         // - Durable 큐: deq한 값을 가리킬 포인터 할당 및 persist
         //
         // ```
-        let mut new_ret_val = POwned::new(None, pool).into_shared(unsafe { epoch::unprotected() }); // 이 ret var은 `tid`만 건드리니 unprotect해도 안전
+        let mut new_ret_val = POwned::new(None, pool).into_shared(guard);
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
-        let ret_val = self.ret_val[tid].load(Ordering::SeqCst, guard);
+        let prev = self.ret_val[tid].load(Ordering::SeqCst, guard);
         self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
         persist_obj(&*self.ret_val[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
         // ```
         // 이전 ret_val을 free
-        if !ret_val.is_null() {
-            unsafe { guard.defer_pdestroy(ret_val) };
+        if !prev.is_null() {
+            unsafe { guard.defer_pdestroy(prev) };
         }
 
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
