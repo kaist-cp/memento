@@ -2,14 +2,16 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::atomic_update::{Acked, Insert, Traversable};
 use crate::pepoch::atomic::Pointer;
-use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*, AsPPtr};
 use crate::stack::*;
 
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
+#[derive(Debug)]
 struct Node<T: Clone> {
     data: T,
     next: PAtomic<Node<T>>,
@@ -34,7 +36,14 @@ impl<T: Clone> From<T> for Node<T> {
     }
 }
 
+impl<T: Clone> Acked for Node<T> {
+    fn acked(&self) -> bool {
+        self.pushed
+    }
+}
+
 unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}
+
 impl<T: Clone> Collectable for Node<T> {
     fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
@@ -48,35 +57,18 @@ impl<T: Clone> Collectable for Node<T> {
     }
 }
 
-trait PushType<T: Clone> {
-    fn mine(&self) -> &PAtomic<Node<T>>;
-    fn is_try(&self) -> bool;
-}
-
 /// TreiberStack의 try push operation
 #[derive(Debug)]
 pub struct TryPush<T: Clone> {
     /// push를 위해 할당된 node
-    mine: PAtomic<Node<T>>,
+    insert: Insert<TreiberStack<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryPush<T> {
     fn default() -> Self {
         Self {
-            mine: PAtomic::null(),
+            insert: Default::default(),
         }
-    }
-}
-
-impl<T: Clone> PushType<T> for TryPush<T> {
-    #[inline]
-    fn mine(&self) -> &PAtomic<Node<T>> {
-        &self.mine
-    }
-
-    #[inline]
-    fn is_try(&self) -> bool {
-        true
     }
 }
 
@@ -84,157 +76,54 @@ unsafe impl<T: Clone + Send + Sync> Send for TryPush<T> {}
 
 impl<T: Clone> Collectable for TryPush<T> {
     fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut mine = try_push.mine.load(Ordering::SeqCst, guard);
-        if !mine.is_null() {
-            let mine_ref = unsafe { mine.deref_mut(pool) };
-            Node::mark(mine_ref, gc);
-        }
+        Insert::filter(&mut try_push.insert, gc, pool);
     }
 }
 
 impl<T: Clone> TryPush<T> {
-    const DEFAULT: usize = 0;
-
-    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
-    const RECOVERY: usize = 1;
+    fn before_cas(mine: &mut Node<T>, oldtop: PShared<'_, Node<T>>) {
+        mine.next.store(oldtop, Ordering::SeqCst);
+        persist_obj(&mine.next, true);
+    }
 }
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
-    type Object<'s> = &'s TreiberStack<T>;
-    type Input = T;
-    type Output<'s> = ();
+    type Object<'o> = &'o TreiberStack<T>;
+    type Input<'o> = T;
+    type Output<'o> = ();
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        value: Self::Input,
+        value: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        stack.push(self, value, guard, pool)
+        self.insert
+            .run(
+                stack,
+                (Node::from(value), &stack.top, Self::before_cas),
+                guard,
+                pool,
+            )
+            .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
-        let mine = self.mine.load(Ordering::SeqCst, guard);
-        if !mine.is_null() {
-            self.mine.store(PShared::null(), Ordering::SeqCst);
-            persist_obj(&self.mine, true);
-
-            // crash-free execution이지만 try_push라서 push 실패했을 수 있음
-            // 따라서 pushed 플래그로 (1) 성공여부 확인후, (2) push 되지 않았으면 free
-            //
-            // NOTE:
-            //  - 현재는 push CAS 성공 후 pushed=true로 설정해주니까, 성공했다면 pushed=true가 보장됨
-            //  - 만약 최적화하며 push CAS 성공 후 pushed=true를 안하게 바꾼다면, 여기서는 pushed 대신 Token에 담겨있는 Ok or Err 정보로 성공여부 판단해야함 (혹은 Direct tracking..)
-            if unsafe { !mine.deref(pool).pushed } {
-                unsafe { guard.defer_pdestroy(mine) };
-            }
-        }
+    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        // 원래 하위 memento를 reset할 경우 reset flag를 쓰는 게 도리에 맞으나
+        // `Insert`의 `reset()`이 atomic 하므로 안 써도 됨
+        self.insert.reset(nested, guard, pool);
     }
 
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-        let mine = self.mine.load(Ordering::SeqCst, guard);
-
-        if mine.tag() & Self::RECOVERY != Self::RECOVERY {
-            self.mine()
-                .store(mine.with_tag(Self::RECOVERY), Ordering::SeqCst);
-            // 복구해야 한다는 표시이므로 persist 필요 없음
-        }
+    fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        self.insert.set_recovery(pool);
     }
 }
 
 impl<T: Clone> Drop for TryPush<T> {
     fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let mine = self.mine.load(Ordering::SeqCst, guard);
-        assert!(mine.is_null(), "reset 되어있지 않음.")
-    }
-}
-
-/// TreiberStack의 push operation
-#[derive(Debug)]
-pub struct Push<T: Clone> {
-    /// push를 위해 할당된 node
-    mine: PAtomic<Node<T>>,
-}
-
-impl<T: Clone> Default for Push<T> {
-    fn default() -> Self {
-        Self {
-            mine: PAtomic::null(),
-        }
-    }
-}
-
-impl<T: Clone> PushType<T> for Push<T> {
-    #[inline]
-    fn mine(&self) -> &PAtomic<Node<T>> {
-        &self.mine
-    }
-
-    #[inline]
-    fn is_try(&self) -> bool {
-        false
-    }
-}
-
-unsafe impl<T: Clone + Send + Sync> Send for Push<T> {}
-
-impl<T: Clone> Collectable for Push<T> {
-    fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut mine = push.mine.load(Ordering::SeqCst, guard);
-        if !mine.is_null() {
-            let mine_ref = unsafe { mine.deref_mut(pool) };
-            Node::<T>::mark(mine_ref, gc);
-        }
-    }
-}
-
-impl<T: 'static + Clone> Memento for Push<T> {
-    type Object<'s> = &'s TreiberStack<T>;
-    type Input = T;
-    type Output<'s> = ();
-    type Error = !;
-
-    fn run<'o>(
-        &'o mut self,
-        stack: Self::Object<'o>,
-        value: Self::Input,
-        guard: &mut Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
-        let pushed = stack.push(self, value, guard, pool);
-        debug_assert!(pushed.is_ok());
-        Ok(())
-    }
-
-    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
-        let mine = self.mine.load(Ordering::SeqCst, guard);
-        if !mine.is_null() {
-            self.mine.store(PShared::null(), Ordering::SeqCst);
-            persist_obj(&self.mine, true);
-
-            // crash-free execution이니 내가 가지고 있던 노드는 push 되었음이 확실 => free하면 안됨
-        }
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {}
-}
-
-impl<T: Clone> Drop for Push<T> {
-    fn drop(&mut self) {
-        let mine = self
-            .mine
-            .load(Ordering::SeqCst, unsafe { epoch::unprotected() });
-        assert!(mine.is_null(), "reset 되어있지 않음.")
+        todo!("하위 메멘토의 `is_reset()`이 필요함")
     }
 }
 
@@ -291,15 +180,15 @@ impl<T: Clone> Collectable for TryPop<T> {
 }
 
 impl<T: 'static + Clone> Memento for TryPop<T> {
-    type Object<'s> = &'s TreiberStack<T>;
-    type Input = ();
-    type Output<'s> = Option<T>;
+    type Object<'o> = &'o TreiberStack<T>;
+    type Input<'o> = ();
+    type Output<'o> = Option<T>;
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (): Self::Input,
+        (): Self::Input<'o>,
         guard: &mut Guard,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -404,15 +293,15 @@ impl<T: Clone> Collectable for Pop<T> {
 }
 
 impl<T: 'static + Clone> Memento for Pop<T> {
-    type Object<'s> = &'s TreiberStack<T>;
-    type Input = ();
-    type Output<'s> = Option<T>;
+    type Object<'o> = &'o TreiberStack<T>;
+    type Input<'o> = ();
+    type Output<'o> = Option<T>;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (): Self::Input,
+        (): Self::Input<'o>,
         guard: &mut Guard,
         pool: &PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -484,82 +373,13 @@ impl<T: Clone> PDefault for TreiberStack<T> {
     }
 }
 
-impl<T: Clone> TreiberStack<T> {
-    fn push<C: PushType<T>>(
-        &self,
-        client: &C,
-        value: T,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<(), TryFail> {
-        let mut mine = client.mine().load(Ordering::SeqCst, guard);
-
-        if mine.is_null() {
-            // (1) mine이 null이면 node 할당이 안 된 것이다
-            let n = POwned::new(Node::from(value), pool).into_shared(guard);
-
-            client.mine().store(n, Ordering::SeqCst);
-            persist_obj(client.mine(), true);
-            mine = n;
-        } else if !client.is_try() || mine.tag() & TryPush::<T>::RECOVERY == TryPush::<T>::RECOVERY
-        {
-            // 복구 로직 실행 조건: "try가 아님" 혹은 "try인데 복구중"
-
-            if client.is_try() {
-                client
-                    .mine()
-                    .store(mine.with_tag(TryPush::<T>::DEFAULT), Ordering::SeqCst);
-                // 복구 해제
-                // 복구와 관련된 것이므로 persist 필요 없음
-            }
-
-            if self.search(mine, guard, pool) || unsafe { mine.deref(pool) }.pushed {
-                // (2) stack 안에 mine이 있으면 push된 것이다 (Direct tracking)
-                // (3) 이미 pop 되었다면 push된 것이다
-                return Ok(());
-            }
-        }
-
-        if client.is_try() {
-            self.try_push(mine, guard, pool)
-        } else {
-            while self.try_push(mine, guard, pool).is_err() {}
-            Ok(())
-        }
-    }
-
-    /// top에 새 `node` 연결을 시도
-    fn try_push(
-        &self,
-        mut node: PShared<'_, Node<T>>,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<(), TryFail> {
-        let node_ref = unsafe { node.deref_mut(pool) };
-        let top = self.top.load(Ordering::SeqCst, guard);
-
-        node_ref.next.store(top, Ordering::SeqCst);
-        persist_obj(&node_ref.next, true);
-        self.top
-            .compare_exchange(top, node, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| {
-                persist_obj(&self.top, true);
-
-                // @seungminjeon:
-                // - Tracking in Order의 Elim-stack은 여기서 pushed=true로 표시해주지만, 이는 불필요한 write 같음
-                // - 왜냐하면 push된 노드는 stack에 있거나 혹은 stack에 없으면(i.e. pop 되었으면) pushed=true 적혀있음이 보장되기 때문
-                node_ref.pushed = true;
-                persist_obj(&node_ref.pushed, true);
-            })
-            .map_err(|_| TryFail)
-    }
-
+impl<T: Clone> Traversable<Node<T>> for TreiberStack<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(&self, node: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
-            if curr == node {
+            if curr == target {
                 return true;
             }
 
@@ -569,7 +389,9 @@ impl<T: Clone> TreiberStack<T> {
 
         false
     }
+}
 
+impl<T: Clone> TreiberStack<T> {
     fn pop<C: PopType<T>>(
         &self,
         client: &mut C,
@@ -707,7 +529,6 @@ unsafe impl<T: Clone + Send + Sync> Send for TreiberStack<T> {}
 
 impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
     type TryPush = TryPush<T>;
-    type Push = Push<T>;
     type TryPop = TryPop<T>;
     type Pop = Pop<T>;
 }

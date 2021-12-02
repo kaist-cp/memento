@@ -16,14 +16,14 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     type TryPush: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input = T,
+        Input<'o> = T,
         Output<'o> = (),
         Error = TryFail,
     >;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
-    type Push: for<'o> Memento<Object<'o> = &'o Self, Input = T, Output<'o> = (), Error = !> =
+    type Push: for<'o> Memento<Object<'o> = &'o Self, Input<'o> = T, Output<'o> = (), Error = !> =
         Push<T, Self>;
 
     /// Try pop 연산을 위한 Persistent op.
@@ -31,7 +31,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
     type TryPop: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input = (),
+        Input<'o> = (),
         Output<'o> = Option<T>,
         Error = TryFail,
     >;
@@ -39,8 +39,12 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
     /// pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
-    type Pop: for<'o> Memento<Object<'o> = &'o Self, Input = (), Output<'o> = Option<T>, Error = !> =
-        Pop<T, Self>;
+    type Pop: for<'o> Memento<
+        Object<'o> = &'o Self,
+        Input<'o> = (),
+        Output<'o> = Option<T>,
+        Error = !,
+    > = Pop<T, Self>;
 }
 
 /// Stack의 try push를 이용하는 push op.
@@ -65,7 +69,7 @@ impl<T: Clone, S: Stack<T>> Collectable for Push<T, S> {
 
 impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     type Object<'o> = &'o S;
-    type Input = T;
+    type Input<'o> = T;
     type Output<'o>
     where
         T: 'o,
@@ -75,7 +79,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        value: Self::Input,
+        value: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -126,7 +130,7 @@ impl<T: Clone, S: Stack<T>> Collectable for Pop<T, S> {
 
 impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
     type Object<'o> = &'o S;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o>
     where
         T: 'o,
@@ -136,7 +140,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (): Self::Input,
+        (): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -214,7 +218,7 @@ pub(crate) mod tests {
         S::Pop: Send,
     {
         type Object<'o> = &'o S;
-        type Input = usize; // tid(mid)
+        type Input<'o> = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
@@ -226,7 +230,7 @@ pub(crate) mod tests {
         fn run<'o>(
             &'o mut self,
             stack: Self::Object<'o>,
-            tid: Self::Input,
+            tid: Self::Input<'o>,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {

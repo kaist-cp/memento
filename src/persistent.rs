@@ -82,7 +82,7 @@ pub trait Memento: Default + Collectable {
     type Object<'o>;
 
     /// Persistent op의 input type
-    type Input;
+    type Input<'o>;
 
     /// Persistent op의 output type
     type Output<'o>: Clone
@@ -105,7 +105,7 @@ pub trait Memento: Default + Collectable {
     fn run<'o>(
         &'o mut self,
         object: Self::Object<'o>,
-        input: Self::Input,
+        input: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error>;

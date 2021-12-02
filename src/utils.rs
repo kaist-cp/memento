@@ -58,14 +58,14 @@ pub mod tests {
 
     impl Memento for DummyRootMemento {
         type Object<'o> = &'o DummyRootObj;
-        type Input = usize;
+        type Input<'o> = usize;
         type Output<'o> = ();
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
             _: Self::Object<'o>,
-            _: Self::Input,
+            _: Self::Input<'o>,
             _: &mut Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
@@ -108,7 +108,7 @@ pub mod tests {
     /// test를 위한 root obj, root op은 아래 조건을 만족하자
     pub trait TestRootObj: PDefault + Collectable {}
     pub trait TestRootMemento<O: TestRootObj>:
-        for<'o> Memento<Object<'o> = &'o O, Input = usize>
+        for<'o> Memento<Object<'o> = &'o O, Input<'o> = usize>
     {
     }
 
