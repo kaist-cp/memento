@@ -1,7 +1,7 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::CachePadded;
+use crossbeam_utils::{Backoff, CachePadded};
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use memento::persistent::*;
@@ -114,6 +114,7 @@ impl<T: Clone> DSSQueue<T> {
     fn exec_enqueue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) {
         let node = self.x[tid].load(Ordering::SeqCst, &guard);
 
+        let backoff = Backoff::new();
         loop {
             let last = self.tail.load(Ordering::SeqCst, &guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -167,6 +168,7 @@ impl<T: Clone> DSSQueue<T> {
                     );
                 };
             }
+            backoff.snooze();
         }
     }
 
@@ -196,6 +198,7 @@ impl<T: Clone> DSSQueue<T> {
     }
 
     fn exec_dequeue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) -> Option<T> {
+        let backoff = Backoff::new();
         loop {
             let first = self.head.load(Ordering::SeqCst, &guard);
             let last = self.tail.load(Ordering::SeqCst, &guard);
@@ -256,6 +259,7 @@ impl<T: Clone> DSSQueue<T> {
                     }
                 }
             }
+            backoff.snooze();
         }
     }
 
@@ -331,12 +335,14 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
         // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_dequeue(tid);
-        let _ = self.exec_dequeue(tid, guard, pool);
+        let val = self.exec_dequeue(tid, guard, pool);
 
         // 다음 prep으로 x[tid]를 덮어씌우기 전에 여기서 x[tid]가 가리키는 deq된 노드를 free
-        let node = self.x[tid].load(Ordering::SeqCst, guard);
-        if !node.is_null() {
-            unsafe { guard.defer_pdestroy(node) };
+        //
+        // `val`이 None이면 EMPTY로 끝난 것. free하면 안됨
+        if val.is_some() {
+            let node_tid = self.x[tid].load(Ordering::SeqCst, guard);
+            unsafe { guard.defer_pdestroy(node_tid) };
         }
     }
 }
