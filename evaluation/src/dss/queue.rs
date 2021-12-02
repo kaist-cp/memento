@@ -144,7 +144,7 @@ impl<T: Clone> DSSQueue<T> {
                         //
                         // ```
                         self.x[tid]
-                            .store(node.with_tag(node.tag() | ENQ_COMPL_TAG), Ordering::Relaxed);
+                            .store(node.with_tag(node.tag() | ENQ_COMPL_TAG), Ordering::SeqCst);
                         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
                         // ```
@@ -211,8 +211,8 @@ impl<T: Clone> DSSQueue<T> {
                     // empty queue
                     if next.is_null() {
                         // nothing new appended at tail
-                        let node = self.x[tid].load(Ordering::Relaxed, guard);
-                        self.x[tid].store(node.with_tag(node.tag() | EMPTY_TAG), Ordering::Relaxed);
+                        let node = self.x[tid].load(Ordering::SeqCst, guard);
+                        self.x[tid].store(node.with_tag(node.tag() | EMPTY_TAG), Ordering::SeqCst);
                         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         return None; // EMPTY
                     }
