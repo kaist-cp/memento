@@ -1,16 +1,19 @@
 //! Atomic update memento collections
 
-use std::{marker::PhantomData, sync::atomic::Ordering};
+use std::{
+    marker::PhantomData,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
-    pepoch::{PAtomic, PDestroyable, POwned, PShared},
+    pepoch::{atomic::Pointer, PAtomic, PDestroyable, POwned, PShared},
     persistent::Memento,
     plocation::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
-        PoolHandle,
+        AsPPtr, PoolHandle,
     },
 };
 
@@ -21,22 +24,25 @@ pub trait Traversable<T> {
 }
 
 /// TODO: doc
-pub trait Acked {
+pub trait Ackable {
+    /// TODO: doc
+    fn ack(&self);
+
     /// TODO: doc
     fn acked(&self) -> bool;
 }
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct Insert<O, T: Acked + Collectable> {
+pub struct Insert<O, T: Ackable + Collectable> {
     new: PAtomic<T>,
     _marker: PhantomData<*const O>,
 }
 
-unsafe impl<O, T: Acked + Collectable + Send + Sync> Send for Insert<O, T> {}
-unsafe impl<O, T: Acked + Collectable + Send + Sync> Sync for Insert<O, T> {}
+unsafe impl<O, T: Ackable + Collectable + Send + Sync> Send for Insert<O, T> {}
+unsafe impl<O, T: Ackable + Collectable + Send + Sync> Sync for Insert<O, T> {}
 
-impl<O, T: Acked + Collectable> Default for Insert<O, T> {
+impl<O, T: Ackable + Collectable> Default for Insert<O, T> {
     fn default() -> Self {
         Self {
             new: Default::default(),
@@ -45,7 +51,7 @@ impl<O, T: Acked + Collectable> Default for Insert<O, T> {
     }
 }
 
-impl<O, T: Acked + Collectable> Collectable for Insert<O, T> {
+impl<O, T: Ackable + Collectable> Collectable for Insert<O, T> {
     fn filter(insert: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
@@ -58,7 +64,7 @@ impl<O, T: Acked + Collectable> Collectable for Insert<O, T> {
     }
 }
 
-impl<O, T: Acked + Collectable> Drop for Insert<O, T> {
+impl<O, T: Ackable + Collectable> Drop for Insert<O, T> {
     fn drop(&mut self) {
         let guard = unsafe { epoch::unprotected() };
         let new = self.new.load(Ordering::SeqCst, guard);
@@ -69,7 +75,7 @@ impl<O, T: Acked + Collectable> Drop for Insert<O, T> {
 impl<O, T> Memento for Insert<O, T>
 where
     O: 'static + Traversable<T>,
-    T: 'static + Acked + Collectable,
+    T: 'static + Ackable + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (T, &'o PAtomic<T>, fn(&mut T, PShared<'_, T>));
@@ -83,11 +89,11 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        (new, target, before_cas): Self::Input<'o>,
+        (new, point, before_cas): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        self.insert(new, target, obj, before_cas, guard, pool)
+        self.insert(obj, new, point, before_cas, guard, pool)
     }
 
     fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
@@ -110,7 +116,7 @@ where
         }
     }
 
-    fn set_recovery(&mut self, _pool: &'static PoolHandle) {
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
         let new = self.new.load(Ordering::SeqCst, guard);
 
@@ -125,16 +131,18 @@ where
 impl<O, T> Insert<O, T>
 where
     O: Traversable<T>,
-    T: Acked + Collectable,
+    T: Ackable + Collectable,
 {
     const DEFAULT: usize = 0;
+
+    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
     const RECOVERY: usize = 1;
 
     fn insert<F>(
         &self,
-        new: T,
-        target: &PAtomic<T>,
         obj: &O,
+        new: T,
+        point: &PAtomic<T>,
         before_cas: F,
         guard: &Guard,
         pool: &PoolHandle,
@@ -146,8 +154,9 @@ where
 
         if n.is_null() {
             let own = POwned::new(new, pool).into_shared(guard);
+            persist_obj(unsafe { own.deref(pool) }, true);
             self.new.store(own, Ordering::SeqCst);
-            persist_obj(&self.new, true);
+            persist_obj(&self.new, false);
             n = own;
         } else if n.tag() & Self::RECOVERY == Self::RECOVERY {
             // 복구 로직 실행
@@ -161,15 +170,245 @@ where
         }
 
         let mine_ref = unsafe { n.deref_mut(pool) };
-        let old = target.load(Ordering::SeqCst, guard);
+        let old = point.load(Ordering::SeqCst, guard);
 
         before_cas(mine_ref, old);
 
-        target
+        point
             .compare_exchange(old, n, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| {
-                persist_obj(target, true);
+                persist_obj(point, true);
             })
             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
+    }
+}
+
+/// TODO: doc
+pub trait Deleted: Sized {
+    /// TODO: doc
+    fn owner(&self) -> &AtomicUsize;
+
+    /// TODO: doc
+    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self>;
+}
+
+/// TODO: doc
+#[derive(Debug)]
+pub struct Delete<O, T: Ackable + Deleted + Collectable> {
+    target: PAtomic<T>,
+    _marker: PhantomData<*const O>,
+}
+
+unsafe impl<O, T: Ackable + Deleted + Collectable + Send + Sync> Send for Delete<O, T> {}
+unsafe impl<O, T: Ackable + Deleted + Collectable + Send + Sync> Sync for Delete<O, T> {}
+
+impl<O, T: Ackable + Deleted + Collectable> Default for Delete<O, T> {
+    fn default() -> Self {
+        Self {
+            target: Default::default(),
+            _marker: Default::default(),
+        }
+    }
+}
+
+impl<O, T: Ackable + Deleted + Collectable> Collectable for Delete<O, T> {
+    fn filter(delete: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut target = delete.target.load(Ordering::SeqCst, guard);
+        if !target.is_null() {
+            let target_ref = unsafe { target.deref_mut(pool) };
+            T::mark(target_ref, gc);
+        }
+    }
+}
+
+impl<O, T: Ackable + Deleted + Collectable> Drop for Delete<O, T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let target = self.target.load(Ordering::SeqCst, guard);
+        assert!(target.is_null(), "reset 되어있지 않음.")
+    }
+}
+
+impl<O, T> Memento for Delete<O, T>
+where
+    O: 'static + Traversable<T>,
+    T: 'static + Ackable + Deleted + Collectable,
+{
+    type Object<'o> = &'o O;
+    type Input<'o> = &'o PAtomic<T>;
+    type Output<'o>
+    where
+        O: 'o,
+        T: 'o,
+    = Option<&'o T>;
+    type Error = ();
+
+    fn run<'o, 'g>(
+        &'o mut self,
+        obj: Self::Object<'o>,
+        point: Self::Input<'o>,
+        guard: &'o mut Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error> {
+        self.delete(obj, point, guard, pool)
+    }
+
+    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        let target = self.target.load(Ordering::SeqCst, guard);
+
+        if target.tag() == Self::EMPTY {
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+            return;
+        }
+
+        if !target.is_null() {
+            // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+            // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+            self.target.store(PShared::null(), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+
+            // crash-free execution이지만 try이니 owner가 내가 아닐 수 있음
+            // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
+            unsafe {
+                if target.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
+                    guard.defer_pdestroy(target);
+                }
+            }
+        }
+    }
+
+    fn set_recovery(&mut self, _: &'static PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+        let target = self.target.load(Ordering::SeqCst, guard);
+
+        let tag = target.tag();
+        if tag & Self::EMPTY != Self::EMPTY && tag & Self::RECOVERY != Self::RECOVERY {
+            self.target
+                .store(target.with_tag(Self::RECOVERY), Ordering::SeqCst);
+            // 복구해야 한다는 표시이므로 persist 필요 없음
+        }
+    }
+}
+
+impl<O, T> Delete<O, T>
+where
+    O: Traversable<T>,
+    T: Ackable + Deleted + Collectable,
+{
+    const DEFAULT: usize = 0;
+
+    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
+    const RECOVERY: usize = 1;
+
+    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
+    const EMPTY: usize = 2;
+
+    fn delete<'g>(
+        &self,
+        obj: &O,
+        point: &PAtomic<T>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Option<&'g T>, ()> {
+        let target = self.target.load(Ordering::SeqCst, guard);
+
+        if target.tag() & Self::EMPTY == Self::EMPTY {
+            // post-crash execution (empty)
+            return Ok(None);
+        }
+
+        let my_id = self.id(pool);
+
+        if !target.is_null() {
+            // post-crash execution (trying)
+            let target_ref = unsafe { target.deref(pool) };
+
+            // target이 내가 pop한 게 맞는지 확인
+            if target_ref.owner().load(Ordering::SeqCst) == my_id {
+                return Ok(Some(target_ref));
+            };
+
+            if target.tag() & Self::RECOVERY == Self::RECOVERY {
+                // 복구 로직 실행
+                self.target
+                    .store(target.with_tag(Self::DEFAULT), Ordering::SeqCst); // 복구 플래그 해제 (복구와 관련된 것이므로 persist 필요 없음)
+
+                // target이 obj에서 빠지긴 했는지 확인
+                if !obj.search(target, guard, pool) {
+                    // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
+                    // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
+                    if target_ref
+                        .owner()
+                        .compare_exchange(
+                            Self::no_owner(),
+                            my_id,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        persist_obj(target_ref.owner(), true);
+                        return Ok(Some(target_ref));
+                    }
+                }
+            }
+        }
+
+        let target = point.load(Ordering::SeqCst, guard);
+        if target.is_null() {
+            // TODO: Make generic `deletable()`
+            // empty
+            self.target
+                .store(PShared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
+            persist_obj(&self.target, true);
+            return Ok(None);
+        };
+
+        let target_ref = unsafe { target.deref(pool) };
+
+        // 우선 내가 target을 가리키고
+        self.target.store(target, Ordering::SeqCst);
+        persist_obj(&self.target, false);
+
+        // target을 ack해주고
+        target_ref.ack();
+
+        // point를 next로 바꿈
+        let next = target_ref.next(guard);
+        if point
+            .compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard)
+            .is_err()
+        {
+            return Err(());
+        }
+
+        persist_obj(point, true);
+
+        // top node에 내 이름 새겨넣음
+        // CAS인 이유: pop 복구 중인 스레드와 경합이 일어날 수 있음
+        target_ref
+            .owner()
+            .compare_exchange(Self::no_owner(), my_id, Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| {
+                persist_obj(target_ref.owner(), true);
+                Some(target_ref)
+            })
+            .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
+    }
+
+    #[inline]
+    fn id(&self, pool: &PoolHandle) -> usize {
+        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
+        unsafe { self.as_pptr(pool).into_offset() }
+    }
+
+    #[inline]
+    fn no_owner() -> usize {
+        let null = PShared::<Self>::null();
+        null.into_usize()
     }
 }

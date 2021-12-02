@@ -106,7 +106,7 @@ pub trait Memento: Default + Collectable {
         &'o mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &'o mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error>;
 
