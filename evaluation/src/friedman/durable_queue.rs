@@ -65,20 +65,20 @@ impl<T: Clone> PDefault for DurableQueue<T> {
 
 impl<T: Clone> DurableQueue<T> {
     fn enqueue(&self, val: T, guard: &mut Guard, pool: &'static PoolHandle) {
-        let node = POwned::new(Node::new(val), pool).into_shared(&guard);
+        let node = POwned::new(Node::new(val), pool).into_shared(guard);
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let backoff = Backoff::new();
         loop {
-            let last = self.tail.load(Ordering::SeqCst, &guard);
+            let last = self.tail.load(Ordering::SeqCst, guard);
             let last_ref = unsafe { last.deref(pool) };
-            let next = last_ref.next.load(Ordering::SeqCst, &guard);
+            let next = last_ref.next.load(Ordering::SeqCst, guard);
 
-            if last == self.tail.load(Ordering::SeqCst, &guard) {
+            if last == self.tail.load(Ordering::SeqCst, guard) {
                 if next.is_null() {
                     if last_ref
                         .next
-                        .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst, &guard)
+                        .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst, guard)
                         .is_ok()
                     {
                         persist_obj(&last_ref.next, true);
@@ -87,7 +87,7 @@ impl<T: Clone> DurableQueue<T> {
                             node,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                         return;
                     }
@@ -98,7 +98,7 @@ impl<T: Clone> DurableQueue<T> {
                         next,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        &guard,
+                        guard,
                     );
                 };
             }
@@ -130,12 +130,12 @@ impl<T: Clone> DurableQueue<T> {
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         let backoff = Backoff::new();
         loop {
-            let first = self.head.load(Ordering::SeqCst, &guard);
-            let last = self.tail.load(Ordering::SeqCst, &guard);
+            let first = self.head.load(Ordering::SeqCst, guard);
+            let last = self.tail.load(Ordering::SeqCst, guard);
             let first_ref = unsafe { first.deref(pool) };
-            let next = first_ref.next.load(Ordering::SeqCst, &guard);
+            let next = first_ref.next.load(Ordering::SeqCst, guard);
 
-            if first == self.head.load(Ordering::SeqCst, &guard) {
+            if first == self.head.load(Ordering::SeqCst, guard) {
                 if first == last {
                     if next.is_null() {
                         // TODO: atomic data?
@@ -150,7 +150,7 @@ impl<T: Clone> DurableQueue<T> {
                         next,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        &guard,
+                        guard,
                     );
                 } else {
                     // NOTE: 여기서 Durable 큐가 우리 큐랑 persist하는 시점은 다르지만 persist하는 총 횟수는 똑같음
@@ -179,18 +179,17 @@ impl<T: Clone> DurableQueue<T> {
                             next,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                         guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         unsafe { guard.defer_pdestroy(first) };
                         return;
                     } else {
                         let deq_tid = next_ref.deq_tid.load(Ordering::SeqCst);
-                        let mut addr =
-                            self.ret_val[deq_tid as usize].load(Ordering::SeqCst, &guard);
+                        let mut addr = self.ret_val[deq_tid as usize].load(Ordering::SeqCst, guard);
 
                         // Same context
-                        if self.head.load(Ordering::SeqCst, &guard) == first {
+                        if self.head.load(Ordering::SeqCst, guard) == first {
                             persist_obj(&next_ref.deq_tid, true);
                             let addr_ref = unsafe { addr.deref_mut(pool) };
                             *addr_ref = val;
@@ -200,7 +199,7 @@ impl<T: Clone> DurableQueue<T> {
                                 next,
                                 Ordering::SeqCst,
                                 Ordering::SeqCst,
-                                &guard,
+                                guard,
                             );
                         }
                     }

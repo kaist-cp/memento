@@ -112,15 +112,15 @@ impl<T: Clone> DSSQueue<T> {
     }
 
     fn exec_enqueue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) {
-        let node = self.x[tid].load(Ordering::SeqCst, &guard);
+        let node = self.x[tid].load(Ordering::SeqCst, guard);
 
         let backoff = Backoff::new();
         loop {
-            let last = self.tail.load(Ordering::SeqCst, &guard);
+            let last = self.tail.load(Ordering::SeqCst, guard);
             let last_ref = unsafe { last.deref(pool) };
-            let next = last_ref.next.load(Ordering::SeqCst, &guard);
+            let next = last_ref.next.load(Ordering::SeqCst, guard);
 
-            if last == self.tail.load(Ordering::SeqCst, &guard) {
+            if last == self.tail.load(Ordering::SeqCst, guard) {
                 if next.is_null() {
                     if last_ref
                         .next
@@ -129,7 +129,7 @@ impl<T: Clone> DSSQueue<T> {
                             node,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         )
                         .is_ok()
                     {
@@ -154,7 +154,7 @@ impl<T: Clone> DSSQueue<T> {
                             node,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                         return;
                     }
@@ -165,7 +165,7 @@ impl<T: Clone> DSSQueue<T> {
                         next,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        &guard,
+                        guard,
                     );
                 };
             }
@@ -185,11 +185,11 @@ impl<T: Clone> DSSQueue<T> {
         if (x_tid.tag() & ENQ_COMPL_TAG) != 0 {
             // enqueue was prepared and took effect
             // "Enq 됨"
-            return (value, true);
+            (value, true)
         } else {
             // enqueue was prepared and did not take effect
             // "아직 Enq 되지 못함"
-            return (value, false);
+            (value, false)
         }
     }
 
@@ -201,12 +201,12 @@ impl<T: Clone> DSSQueue<T> {
     fn exec_dequeue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) -> Option<T> {
         let backoff = Backoff::new();
         loop {
-            let first = self.head.load(Ordering::SeqCst, &guard);
-            let last = self.tail.load(Ordering::SeqCst, &guard);
+            let first = self.head.load(Ordering::SeqCst, guard);
+            let last = self.tail.load(Ordering::SeqCst, guard);
             let first_ref = unsafe { first.deref(pool) };
-            let next = first_ref.next.load(Ordering::SeqCst, &guard);
+            let next = first_ref.next.load(Ordering::SeqCst, guard);
 
-            if first == self.head.load(Ordering::SeqCst, &guard) {
+            if first == self.head.load(Ordering::SeqCst, guard) {
                 if first == last {
                     // empty queue
                     if next.is_null() {
@@ -225,7 +225,7 @@ impl<T: Clone> DSSQueue<T> {
                         next,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                        &guard,
+                        guard,
                     );
                 } else {
                     // non-empty queue
@@ -244,11 +244,11 @@ impl<T: Clone> DSSQueue<T> {
                             next,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                         guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         return Some(unsafe { (*next_ref.val.as_ptr()).clone() });
-                    } else if self.head.load(Ordering::SeqCst, &guard) == first {
+                    } else if self.head.load(Ordering::SeqCst, guard) == first {
                         // help another dequeueing thread
                         persist_obj(&next_ref.deq_tid, true);
                         let _ = self.head.compare_exchange(
@@ -256,7 +256,7 @@ impl<T: Clone> DSSQueue<T> {
                             next,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            &guard,
+                            guard,
                         );
                     }
                 }
@@ -275,24 +275,24 @@ impl<T: Clone> DSSQueue<T> {
         if x_tid == PShared::null().with_tag(DEQ_PREP_TAG) {
             // dequeue was prepared but did not take effect
             // "준비는 했지만 실행을 안함"
-            return (None, false);
+            (None, false)
         } else if x_tid == PShared::null().with_tag(DEQ_PREP_TAG | EMPTY_TAG) {
             // empty queue
             // "EMPTY로 성공"
-            return (None, true);
+            (None, true)
         } else {
             let x_tid_ref = unsafe { x_tid.deref(pool) };
-            let next = x_tid_ref.next.load(Ordering::SeqCst, &guard);
+            let next = x_tid_ref.next.load(Ordering::SeqCst, guard);
             let next_ref = unsafe { next.deref(pool) };
             if next_ref.deq_tid.load(Ordering::SeqCst) == tid as isize {
                 // non-empty queue
                 // "Deq 성공"
                 let value = unsafe { (*next_ref.val.as_ptr()).clone() };
-                return (Some(value), true);
+                (Some(value), true)
             } else {
                 // X holds a node pointer, crashed before completing dequeue
                 // "포인팅했지만 내가 Deq 하지 못함"
-                return (None, false);
+                (None, false)
             }
         }
     }
@@ -304,20 +304,20 @@ impl<T: Clone> DSSQueue<T> {
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> (Option<(_OpResolved, Option<T>)>, bool) {
-        let x_tid = self.x[tid].load(Ordering::SeqCst, &guard);
+        let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
         if (x_tid.tag() & ENQ_PREP_TAG) != 0 {
             // Enq를 준비했었음. 성공했는지는 resolve_enqueue로 확인
             let (value, completed) = self._resolve_enqueue(tid, guard, pool);
             // ((Enq, Enq 하려던(혹은 이미 한) 값), Enq 성공여부)
-            return (Some((_OpResolved::Enqueue, Some(value))), completed);
+            (Some((_OpResolved::Enqueue, Some(value))), completed)
         } else if (x_tid.tag() & DEQ_PREP_TAG) != 0 {
             // Deq를 준비했었음. 성공했는지는 resolve_deqqueue로 확인
             let (value, completed) = self._resolve_dequeue(tid, guard, pool);
             // ((Deq, Deq 한 값), Deq 성공여부)
-            return (Some((_OpResolved::Dequeue, value)), completed);
+            (Some((_OpResolved::Dequeue, value)), completed)
         } else {
             // no operation was prepared
-            return (None, false);
+            (None, false)
         }
     }
 }
