@@ -406,8 +406,9 @@ where
         unsafe { self.as_pptr(pool).into_offset() }
     }
 
+    /// TODO: doc
     #[inline]
-    fn no_owner() -> usize {
+    pub fn no_owner() -> usize {
         let null = PShared::<Self>::null();
         null.into_usize()
     }
