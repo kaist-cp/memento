@@ -143,7 +143,8 @@ impl<T: Clone> DSSQueue<T> {
                         // TODO: KSC 실험결과에서 우리 큐가 살짝 더 좋게 나온 이유는 이것 때문일 수도?
                         //
                         // ```
-                        let _ = self.x[tid].fetch_or(ENQ_COMPL_TAG, Ordering::SeqCst, &guard);
+                        self.x[tid]
+                            .store(node.with_tag(node.tag() | ENQ_COMPL_TAG), Ordering::Relaxed);
                         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
                         // ```
@@ -210,7 +211,8 @@ impl<T: Clone> DSSQueue<T> {
                     // empty queue
                     if next.is_null() {
                         // nothing new appended at tail
-                        let _ = self.x[tid].fetch_or(EMPTY_TAG, Ordering::SeqCst, &guard);
+                        let node = self.x[tid].load(Ordering::Relaxed, guard);
+                        self.x[tid].store(node.with_tag(node.tag() | EMPTY_TAG), Ordering::Relaxed);
                         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         return None; // EMPTY
                     }
