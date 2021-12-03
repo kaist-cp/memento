@@ -90,22 +90,22 @@ impl<T: Clone> Collectable for Enqueue<T> {
 
 impl<T: 'static + Clone> Memento for Enqueue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input = T;
+    type Input<'o> = T;
     type Output<'o> = ();
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        value: Self::Input,
-        guard: &mut Guard,
+        value: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         queue.enqueue(self, value, guard, pool);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
         let mine = self.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             self.mine.store(PShared::null(), Ordering::SeqCst);
@@ -157,21 +157,21 @@ impl<T: Clone> Collectable for Dequeue<T> {
 
 impl<T: 'static + Clone> Memento for Dequeue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Option<T>;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        (): Self::Input,
-        guard: &mut Guard,
+        (): Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(queue.dequeue(self, guard, pool))
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
 
         if target.tag() == Queue::<T>::EMPTY {
@@ -241,15 +241,15 @@ impl<T: Clone> Collectable for DequeueSome<T> {
 
 impl<T: 'static + Clone> Memento for DequeueSome<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = T;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        (): Self::Input,
-        guard: &mut Guard,
+        (): Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
@@ -260,7 +260,7 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
         }
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.deq.reset(nested, guard, pool);
     }
 
@@ -576,7 +576,7 @@ mod test {
 
     impl Memento for EnqDeq {
         type Object<'o> = &'o Queue<usize>;
-        type Input = usize; // tid(=mid)
+        type Input<'o> = usize; // tid(=mid)
         type Output<'o> = ();
         type Error = !;
 
@@ -584,8 +584,8 @@ mod test {
         fn run<'o>(
             &'o mut self,
             queue: Self::Object<'o>,
-            tid: Self::Input,
-            guard: &mut Guard,
+            tid: Self::Input<'o>,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             match tid {
@@ -627,7 +627,7 @@ mod test {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
 

@@ -14,7 +14,7 @@
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
 #![deny(unaligned_references)]
-// #![deny(unused_crate_dependencies)] // TODO: obj 주석 해제하면서 이 주석도 같이 해제
+#![deny(unused_crate_dependencies)]
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
@@ -36,6 +36,7 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
+pub mod atomic_update;
 pub mod elim_stack;
 pub mod exchanger;
 pub mod list;

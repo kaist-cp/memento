@@ -24,7 +24,7 @@ pub trait RawLock: Default + Send + Sync + Collectable {
     /// Lock operation을 수행하는 Memento
     type Lock: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input = (),
+        Input<'o> = (),
         Output<'o> = Self::Token,
         Error = !,
     >;
@@ -35,7 +35,7 @@ pub trait RawLock: Default + Send + Sync + Collectable {
     // TODO: Output에 Frozen을 강제해야 할 수도 있음. MutexGuard 인터페이스 없이 RawLock만으로는 critical section의 mutex 보장 못함.
     type Unlock: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input = Self::Token,
+        Input<'o> = Self::Token,
         Output<'o> = (),
         Error = !,
     >;
@@ -123,15 +123,15 @@ impl<L: RawLock, T> Collectable for Lock<L, T> {
 
 impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
     type Object<'o> = &'o Mutex<L, T>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Frozen<MutexGuard<'o, L, T>>;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         mtx: Self::Object<'o>,
-        (): Self::Input,
-        guard: &mut Guard,
+        (): Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let token = self.lock.run(&mtx.lock, (), guard, pool).unwrap();
@@ -144,7 +144,7 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         }))
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         // `MutexGuard`가 살아있을 때 이 함수 호출은 컴파일 타임에 막아짐.
         self.lock.reset(nested, guard, pool);
     }
@@ -171,10 +171,10 @@ pub struct MutexGuard<'l, L: RawLock, T> {
 
 impl<L: RawLock, T> Drop for MutexGuard<'_, L, T> {
     fn drop(&mut self) {
-        let mut guard = epoch::pin(); // TODO: run에서 쓰인 guard 안 받고 이래도 되나
+        let guard = epoch::pin(); // TODO: run에서 쓰인 guard 안 받고 이래도 되나
         let _ = self
             .unlock
-            .run(&self.mtx.lock, self.token.clone(), &mut guard, self.pool);
+            .run(&self.mtx.lock, self.token.clone(), &guard, self.pool);
     }
 }
 
@@ -248,15 +248,15 @@ pub(crate) mod tests {
         L: 'static + RawLock,
     {
         type Object<'o> = &'o Mutex<L, usize>;
-        type Input = usize;
+        type Input<'o> = usize;
         type Output<'o> = usize;
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
             count: Self::Object<'o>,
-            rhs: Self::Input,
-            guard: &mut Guard,
+            rhs: Self::Input<'o>,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             if let State::Resetting = self.state {
@@ -287,7 +287,7 @@ pub(crate) mod tests {
             }
         } // Unlock when `cnt` is dropped
 
-        fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
             if !nested {
                 self.state = State::Resetting;
             }
@@ -348,7 +348,7 @@ pub(crate) mod tests {
         L::Unlock: Send,
     {
         type Object<'o> = &'o Mutex<L, usize>;
-        type Input = usize; // tid(mid)
+        type Input<'o> = usize; // tid(mid)
         type Output<'o>
         where
             L: 'o,
@@ -358,8 +358,8 @@ pub(crate) mod tests {
         fn run<'o>(
             &'o mut self,
             x: Self::Object<'o>,
-            tid: Self::Input,
-            guard: &mut Guard,
+            tid: Self::Input<'o>,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             match tid {
@@ -393,7 +393,7 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
             todo!()
         }
 

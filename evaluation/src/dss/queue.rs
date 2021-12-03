@@ -111,7 +111,7 @@ impl<T: Clone> DSSQueue<T> {
         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
-    fn exec_enqueue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn exec_enqueue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) {
         let node = self.x[tid].load(Ordering::SeqCst, guard);
 
         let backoff = Backoff::new();
@@ -176,7 +176,7 @@ impl<T: Clone> DSSQueue<T> {
     fn _resolve_enqueue(
         &self,
         tid: usize,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> (T, bool) {
         let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
@@ -198,7 +198,7 @@ impl<T: Clone> DSSQueue<T> {
         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
-    fn exec_dequeue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) -> Option<T> {
+    fn exec_dequeue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) -> Option<T> {
         let backoff = Backoff::new();
         loop {
             let first = self.head.load(Ordering::SeqCst, guard);
@@ -268,7 +268,7 @@ impl<T: Clone> DSSQueue<T> {
     fn _resolve_dequeue(
         &self,
         tid: usize,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> (Option<T>, bool) {
         let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
@@ -301,7 +301,7 @@ impl<T: Clone> DSSQueue<T> {
     fn _resolve(
         &self,
         tid: usize,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> (Option<(_OpResolved, Option<T>)>, bool) {
         let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
@@ -326,7 +326,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     type EnqInput = (T, usize); // input, tid
     type DeqInput = usize; // tid
 
-    fn enqueue(&self, (input, tid): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, (input, tid): Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
         // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_enqueue(input, tid, pool);
         self.exec_enqueue(tid, guard, pool);
@@ -334,7 +334,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
         // 다음 prep으로 x[tid]를 덮어씌우더라도 여기서 x[tid]가 가리키는 노드는 free하면 안됨. 이미 enq된 노드임
     }
 
-    fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
         // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_dequeue(tid);
         let val = self.exec_dequeue(tid, guard, pool);
@@ -368,7 +368,7 @@ impl PDefault for TestDSSQueue {
         // 초기 노드 삽입
         for i in 0..QUEUE_INIT_SIZE {
             queue.prep_enqueue(i, 0, pool);
-            queue.exec_enqueue(0, &mut guard, pool);
+            queue.exec_enqueue(0, &guard, pool);
         }
         Self { queue }
     }
@@ -387,15 +387,15 @@ impl TestNOps for DSSQueueEnqDeqPair {}
 
 impl Memento for DSSQueueEnqDeqPair {
     type Object<'o> = &'o TestDSSQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
-        guard: &mut Guard,
+        tid: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -415,7 +415,7 @@ impl Memento for DSSQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 
@@ -437,15 +437,15 @@ impl TestNOps for DSSQueueEnqDeqProb {}
 
 impl Memento for DSSQueueEnqDeqProb {
     type Object<'o> = &'o TestDSSQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
-        guard: &mut Guard,
+        tid: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -466,7 +466,7 @@ impl Memento for DSSQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 

@@ -86,22 +86,22 @@ where
     K: Eq,
 {
     type Object<'o> = &'o List<K, V>;
-    type Input = (K, V);
+    type Input<'o> = (K, V);
     type Output<'o> = ();
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         list: Self::Object<'o>,
-        (key, value): Self::Input,
-        guard: &mut Guard,
+        (key, value): Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         list.insert_front(self, key, value, guard, pool);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _pool: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
@@ -152,21 +152,21 @@ where
     K: Eq,
 {
     type Object<'o> = &'o List<K, V>;
-    type Input = K;
+    type Input<'o> = K;
     type Output<'o> = bool; // TODO: PoolHandle에 관한 디자인 합의 이후 Option<&'g V>로 바꾸기 (lifetime issue)
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         list: Self::Object<'o>,
-        key: Self::Input,
-        guard: &mut Guard,
+        key: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(list.remove(self, &key, guard, pool))
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
         if !target.is_null() {
             self.target.store(PShared::null(), Ordering::SeqCst);

@@ -35,15 +35,15 @@ impl Collectable for EnqueuePipeQ {
 
 impl Memento for EnqueuePipeQ {
     type Object<'o> = &'o PipeQueue;
-    type Input = usize;
+    type Input<'o> = usize;
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         pipeq: Self::Object<'o>,
-        value: Self::Input,
-        guard: &mut Guard,
+        value: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         if self.resetting {
@@ -59,7 +59,7 @@ impl Memento for EnqueuePipeQ {
             .map_err(|_| ())
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         if !nested {
             self.resetting = true;
             persist_obj(&self.resetting, true);
@@ -92,22 +92,22 @@ impl Collectable for DequeuePipeQ {
 
 impl Memento for DequeuePipeQ {
     type Object<'o> = &'o PipeQueue;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Option<usize>;
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         pipeq: Self::Object<'o>,
-        _: Self::Input,
-        guard: &mut Guard,
+        _: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let ret = self.deq.run(&pipeq.q2, (), guard, pool);
         Ok(ret.unwrap())
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.deq.reset(nested, guard, pool);
     }
 
@@ -127,12 +127,12 @@ impl TestQueue for PipeQueue {
     type EnqInput = (&'static mut EnqueuePipeQ, usize); // Memento, input
     type DeqInput = &'static mut DequeuePipeQ; // Memento
 
-    fn enqueue(&self, (enq, input): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, (enq, input): Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
         let _ = enq.run(self, input, guard, pool);
         enq.reset(false, guard, pool);
     }
 
-    fn dequeue(&self, deq: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, deq: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
         let _ = deq.run(self, (), guard, pool);
         deq.reset(false, guard, pool);
     }
@@ -162,8 +162,8 @@ impl PDefault for TestPipeQueue {
         // 초기 노드 삽입
         let mut enq_init = EnqueuePipeQ::default();
         for i in 0..QUEUE_INIT_SIZE {
-            let _ = enq_init.run(&pipeq, i, &mut guard, pool);
-            enq_init.reset(false, &mut guard, pool);
+            let _ = enq_init.run(&pipeq, i, &guard, pool);
+            enq_init.reset(false, &guard, pool);
         }
 
         Self { pipeq }
@@ -195,15 +195,15 @@ impl TestNOps for MementoPipeQueueEnqDeqPair {}
 
 impl Memento for MementoPipeQueueEnqDeqPair {
     type Object<'o> = &'o TestPipeQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
-        guard: &mut Guard,
+        tid: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.pipeq;
@@ -229,7 +229,7 @@ impl Memento for MementoPipeQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 
@@ -262,15 +262,15 @@ impl TestNOps for MementoPipeQueueEnqDeqProb {}
 
 impl Memento for MementoPipeQueueEnqDeqProb {
     type Object<'o> = &'o TestPipeQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
-        guard: &mut Guard,
+        tid: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.pipeq;
@@ -297,7 +297,7 @@ impl Memento for MementoPipeQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 

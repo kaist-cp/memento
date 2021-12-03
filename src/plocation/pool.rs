@@ -74,7 +74,7 @@ impl PoolHandle {
     pub fn execute<O, M>(&'static self)
     where
         O: PDefault + Send + Sync,
-        for<'o> M: Memento<Object<'o> = &'o O, Input = usize> + Send + Sync,
+        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize> + Send + Sync,
     {
         // root obj 얻기
         let o = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
@@ -96,9 +96,9 @@ impl PoolHandle {
                             let hanlder = scope.spawn(move |_| {
                                 let m = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let mut g = epoch::old_guard(mid);
+                                let g = epoch::old_guard(mid);
                                 m.set_recovery(self);
-                                let _ = m.run(o, mid, &mut g, self);
+                                let _ = m.run(o, mid, &g, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
@@ -212,7 +212,7 @@ impl Pool {
     ) -> Result<&'static PoolHandle, Error>
     where
         O: PDefault,
-        for<'o> M: Memento<Object<'o> = &'o O, Input = usize>,
+        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize>,
     {
         // 파일 이미 있으면 에러 반환
         // - Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성하기 때문에, 그 중 하나인 "_basemd"를 붙여 확인
@@ -291,7 +291,7 @@ impl Pool {
     pub unsafe fn open<O, M>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error>
     where
         O: PDefault,
-        for<'o> M: Memento<Object<'o> = &'o O, Input = usize>,
+        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize>,
     {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
@@ -396,15 +396,15 @@ mod tests {
 
     impl Memento for RootMemento {
         type Object<'o> = &'o DummyRootObj;
-        type Input = usize; // tid(mid)
+        type Input<'o> = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
             _: Self::Object<'o>,
-            _: Self::Input,
-            _: &mut Guard,
+            _: Self::Input<'o>,
+            _: &Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             if self.flag {
@@ -418,7 +418,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             // no-op
         }
 

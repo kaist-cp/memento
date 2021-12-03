@@ -40,12 +40,12 @@ pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
 
 pub trait TestNOps {
     /// `duration`초 동안의 `op` 실행횟수 계산
-    fn test_nops<'f, F: Fn(usize, &mut Guard)>(
+    fn test_nops<'f, F: Fn(usize, &Guard)>(
         &self,
         op: &'f F,
         tid: usize,
         duration: f64,
-        guard: &mut Guard,
+        guard: &Guard,
     ) -> usize
     where
         &'f F: Send,
@@ -172,8 +172,8 @@ pub mod queue {
         type EnqInput;
         type DeqInput;
 
-        fn enqueue(&self, input: Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle);
-        fn dequeue(&self, input: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle);
+        fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &'static PoolHandle);
+        fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle);
     }
 
     pub fn enq_deq_prob<Q: TestQueue>(
@@ -181,7 +181,7 @@ pub mod queue {
         enq: Q::EnqInput,
         deq: Q::DeqInput,
         prob: u32,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) {
         if pick(prob) {
@@ -195,7 +195,7 @@ pub mod queue {
         q: &Q,
         enq: Q::EnqInput,
         deq: Q::DeqInput,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) {
         q.enqueue(enq, guard, pool);

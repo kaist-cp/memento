@@ -84,21 +84,21 @@ where
     S: 'static + Stack<T>,
 {
     type Object<'o> = &'o ElimStack<T, S>;
-    type Input = T;
+    type Input<'o> = T;
     type Output<'o> = ();
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        value: Self::Input,
-        guard: &mut Guard,
+        value: Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         stack.try_push(self, value, guard, pool)
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
             persist_obj(&self.state, true);
@@ -162,21 +162,21 @@ where
     S: 'static + Stack<T>,
 {
     type Object<'o> = &'o ElimStack<T, S>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Option<T>;
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (): Self::Input,
-        guard: &mut Guard,
+        (): Self::Input<'o>,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         stack.try_pop(self, guard, pool)
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
             persist_obj(&self.state, true);
@@ -246,7 +246,7 @@ where
         &self,
         client: &mut TryPush<T, S>,
         value: T,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), TryFail> {
         if let State::Resetting = client.state {
@@ -296,7 +296,7 @@ where
     fn try_pop(
         &self,
         client: &mut TryPop<T, S>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Option<T>, TryFail> {
         if let State::Resetting = client.state {
