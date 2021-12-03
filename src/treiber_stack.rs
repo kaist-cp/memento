@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::atomic::AtomicBool;
 
 use crate::atomic_update::{self, Delete, Insert, Traversable};
-use crate::pepoch::{self as epoch, Guard, PAtomic, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PShared, POwned};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
@@ -113,10 +113,13 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
+        // TODO: 매번 동적할당 하지 않게끔 하기 -> `TryPushInner` 두기
+        let node = POwned::new(Node::from(value), pool).into_shared(guard);
+
         self.insert
             .run(
                 stack,
-                (Node::from(value), &stack.top, Self::before_cas),
+                (node, &stack.top, Self::before_cas),
                 guard,
                 pool,
             )
@@ -129,8 +132,8 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         self.insert.reset(nested, guard, pool);
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
-        self.insert.set_recovery(pool);
+    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
+        self.insert.recover(object, pool);
     }
 }
 
@@ -188,8 +191,8 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         self.delete.reset(nested, guard, pool);
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
-        self.delete.set_recovery(pool);
+    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
+        self.delete.recover(object, pool);
     }
 }
 

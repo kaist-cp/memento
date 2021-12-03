@@ -77,7 +77,7 @@ impl PoolHandle {
         for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize> + Send + Sync,
     {
         // root obj 얻기
-        let o = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
+        let root_obj = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
 
         // root memento(들)의 개수 얻기
         let nr_memento = unsafe { *(RP_get_root_c(IX_NR_MEMENTO) as *mut usize) };
@@ -94,11 +94,11 @@ impl PoolHandle {
                         loop {
                             // memento 실행
                             let hanlder = scope.spawn(move |_| {
-                                let m = unsafe { (m_addr as *mut M).as_mut().unwrap() };
+                                let root_memento = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let g = epoch::old_guard(mid);
-                                m.set_recovery(self);
-                                let _ = m.run(o, mid, &g, self);
+                                let guard = epoch::old_guard(mid);
+                                root_memento.recover(root_obj, self);
+                                let _ = root_memento.run(root_obj, mid, &guard, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
@@ -422,7 +422,7 @@ mod tests {
             // no-op
         }
 
-        fn set_recovery(&mut self, _: &'static PoolHandle) {}
+        fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
     }
 
     impl TestRootMemento<DummyRootObj> for RootMemento {}

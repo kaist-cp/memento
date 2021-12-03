@@ -8,7 +8,7 @@ use std::{
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
-    pepoch::{atomic::Pointer, PAtomic, PDestroyable, POwned, PShared},
+    pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
     persistent::Memento,
     plocation::{
         ll::persist_obj,
@@ -85,7 +85,7 @@ where
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
-        T,
+        PShared<'o, T>,
         &'o PAtomic<T>,
         fn(&mut T, PShared<'_, T>) -> bool, // bool 리턴값은 계속 진행할지 여부
     );
@@ -98,12 +98,12 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
+        _: Self::Object<'o>,
         (new, point, before_cas): Self::Input<'o>,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        self.insert(obj, new, point, before_cas, guard, pool)
+        self.insert(new, point, before_cas, guard, pool)
     }
 
     fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
@@ -126,14 +126,15 @@ where
         }
     }
 
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
+    fn recover<'o>(&mut self, obj: Self::Object<'o>, pool: &'static PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
         let new = self.new.load(Ordering::SeqCst, guard);
 
-        if new.tag() & Self::RECOVERY != Self::RECOVERY {
+        if !new.is_null() && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked()) {
+            // (2) obj 안에 n이 있으면 삽입된 것이다 (Direct tracking)
+            // (3) acked 되었다면 삽입된 것이다
             self.new
-                .store(new.with_tag(Self::RECOVERY), Ordering::SeqCst);
-            // 복구해야 한다는 표시이므로 persist 필요 없음
+                .store(new.with_tag(Self::COMPLETE), Ordering::SeqCst);
         }
     }
 }
@@ -143,15 +144,12 @@ where
     O: Traversable<T>,
     T: Node + Collectable,
 {
-    const DEFAULT: usize = 0;
-
     /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
-    const RECOVERY: usize = 1;
+    const COMPLETE: usize = 1;
 
     fn insert<F>(
         &self,
-        obj: &O,
-        new: T,
+        new: PShared<'_, T>,
         point: &PAtomic<T>,
         before_cas: F,
         guard: &Guard,
@@ -163,20 +161,13 @@ where
         let mut n = self.new.load(Ordering::SeqCst, guard);
 
         if n.is_null() {
-            let own = POwned::new(new, pool).into_shared(guard);
-            persist_obj(unsafe { own.deref(pool) }, true);
-            self.new.store(own, Ordering::SeqCst);
+            self.new.store(new, Ordering::SeqCst);
             persist_obj(&self.new, false);
-            n = own;
-        } else if n.tag() & Self::RECOVERY == Self::RECOVERY {
-            // 복구 로직 실행
-            self.new.store(n.with_tag(Self::DEFAULT), Ordering::SeqCst); // 복구 플래그 해제 (복구와 관련된 것이므로 persist 필요 없음)
-
-            if obj.search(n, guard, pool) || unsafe { n.deref(pool) }.acked() {
-                // (2) obj 안에 n이 있으면 삽입된 것이다 (Direct tracking)
-                // (3) acked 되었다면 삽입된 것이다
-                return Ok(());
-            }
+            n = new;
+        } else if n.tag() & Self::COMPLETE == Self::COMPLETE {
+            return Ok(());
+        } else if n.as_ptr() != new.as_ptr() {
+            unsafe { guard.defer_pdestroy(new) };
         }
 
         let mine_ref = unsafe { n.deref_mut(pool) };
@@ -285,7 +276,7 @@ where
         }
     }
 
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
+    fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
         let target = self.target.load(Ordering::SeqCst, guard);
 

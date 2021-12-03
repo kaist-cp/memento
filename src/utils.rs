@@ -76,7 +76,7 @@ pub mod tests {
             // no-op
         }
 
-        fn set_recovery(&mut self, _: &'static PoolHandle) {}
+        fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
     }
 
     /// test에 사용하기 위한 더미용 PoolHandle 얻기

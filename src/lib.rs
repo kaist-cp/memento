@@ -14,13 +14,13 @@
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
 #![deny(unaligned_references)]
-#![deny(unused_crate_dependencies)]
+// #![deny(unused_crate_dependencies)]
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
@@ -37,15 +37,15 @@
 
 // Persistent objects collection
 pub mod atomic_update;
-pub mod elim_stack;
-pub mod exchanger;
-pub mod list;
-pub mod lock;
+// pub mod elim_stack;
+// pub mod exchanger;
+// pub mod list;
+// pub mod lock;
 pub mod persistent;
-pub mod pipe;
-pub mod queue;
+// pub mod pipe;
+// pub mod queue;
 pub mod stack;
-pub mod ticket_lock;
+// pub mod ticket_lock;
 pub mod treiber_stack;
 
 // Persistent location

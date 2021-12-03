@@ -95,8 +95,8 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         self.try_push.reset(true, guard, pool);
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
-        self.try_push.set_recovery(pool);
+    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
+        self.try_push.recover(object, pool);
     }
 }
 
@@ -155,8 +155,8 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         self.try_pop.reset(true, guard, pool);
     }
 
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
-        self.try_pop.set_recovery(pool);
+    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
+        self.try_pop.recover(object, pool);
     }
 }
 
@@ -275,13 +275,13 @@ pub(crate) mod tests {
             todo!("reset test")
         }
 
-        fn set_recovery(&mut self, pool: &'static PoolHandle) {
+        fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
             for push in self.pushes.iter_mut() {
-                push.set_recovery(pool);
+                push.recover(object, pool);
             }
 
             for pop in self.pops.iter_mut() {
-                pop.set_recovery(pool);
+                pop.recover(object, pool);
             }
         }
     }
