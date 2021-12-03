@@ -1,73 +1,13 @@
 //! Persistent stack based on Treiber stack
 
-use core::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
-use crate::atomic_update::{self, Delete, Insert, Traversable};
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
+use crate::atomic_update::{Delete, Insert, Traversable};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
 use crate::stack::*;
-
-// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
-#[derive(Debug)]
-struct Node<T: Clone> {
-    data: T,
-    next: PAtomic<Node<T>>,
-
-    /// push 되었는지 여부
-    // 이게 없으면, pop()에서 node 뺀 후 popper 등록 전에 crash 났을 때, 노드가 이미 push 되었었다는 걸 알 수 없음
-    pushed: AtomicBool,
-
-    /// 누가 pop 했는지 식별
-    // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
-    popper: AtomicUsize,
-}
-
-impl<T: Clone> From<T> for Node<T> {
-    fn from(value: T) -> Self {
-        Self {
-            data: value,
-            next: PAtomic::null(),
-            pushed: AtomicBool::new(false),
-            popper: AtomicUsize::new(Delete::<TreiberStack<T>, _>::no_owner()),
-        }
-    }
-}
-
-impl<T: Clone> atomic_update::Node for Node<T> {
-    fn ack(&self) {
-        self.pushed.store(true, Ordering::SeqCst);
-    }
-
-    fn acked(&self) -> bool {
-        self.pushed.load(Ordering::SeqCst)
-    }
-
-    fn owner(&self) -> &AtomicUsize {
-        &self.popper
-    }
-
-    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self> {
-        self.next.load(Ordering::SeqCst, guard)
-    }
-}
-
-unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}
-
-impl<T: Clone> Collectable for Node<T> {
-    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut next = node.next.load(Ordering::SeqCst, guard);
-        if !next.is_null() {
-            let next_ref = unsafe { next.deref_mut(pool) };
-            Node::<T>::mark(next_ref, gc);
-        }
-    }
-}
 
 /// TreiberStack의 try push operation
 #[derive(Debug)]
@@ -102,20 +42,17 @@ impl<T: Clone> TryPush<T> {
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = T;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        value: Self::Input<'o>,
+        node: Self::Input<'o>,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        // TODO: 매번 동적할당 하지 않게끔 하기 -> `TryPushInner` 두기 -> 노드를 받는 `TryPush`로 만들기
-        let node = POwned::new(Node::from(value), pool).into_shared(guard);
-
         self.insert
             .run(stack, (node, &stack.top, Self::before_cas), guard, pool)
             .map_err(|_| TryFail)

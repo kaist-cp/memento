@@ -1,14 +1,82 @@
 //! Persistent Stack
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 use crossbeam_epoch::Guard;
 
+use crate::atomic_update::{self, Delete};
+use crate::pepoch::{self as epoch, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::PoolHandle;
+use crate::treiber_stack::TreiberStack;
 
 /// Stack의 try push/pop 실패
 #[derive(Debug, Clone)]
 pub struct TryFail;
+
+/// TODO: doc
+// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
+#[derive(Debug)]
+pub struct Node<T: Clone> {
+    /// TODO: doc
+    pub data: T,
+
+    /// TODO: doc
+    pub next: PAtomic<Node<T>>,
+
+    /// push 되었는지 여부
+    // 이게 없으면, pop()에서 node 뺀 후 popper 등록 전에 crash 났을 때, 노드가 이미 push 되었었다는 걸 알 수 없음
+    pushed: AtomicBool,
+
+    /// 누가 pop 했는지 식별
+    // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
+    popper: AtomicUsize,
+}
+
+impl<T: Clone> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: value,
+            next: PAtomic::null(),
+            pushed: AtomicBool::new(false),
+            popper: AtomicUsize::new(Delete::<TreiberStack<T>, _>::no_owner()),
+        }
+    }
+}
+
+impl<T: Clone> atomic_update::Node for Node<T> {
+    fn ack(&self) {
+        self.pushed.store(true, Ordering::SeqCst);
+    }
+
+    fn acked(&self) -> bool {
+        self.pushed.load(Ordering::SeqCst)
+    }
+
+    fn owner(&self) -> &AtomicUsize {
+        &self.popper
+    }
+
+    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self> {
+        self.next.load(Ordering::SeqCst, guard)
+    }
+}
+
+unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}
+
+impl<T: Clone> Collectable for Node<T> {
+    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next_ref = unsafe { next.deref_mut(pool) };
+            Node::<T>::mark(next_ref, gc);
+        }
+    }
+}
 
 /// Persistent stack trait
 pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
@@ -16,7 +84,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     type TryPush: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = T,
+        Input<'o> = PShared<'o, Node<T>>,
         Output<'o> = (),
         Error = TryFail,
     >;
@@ -83,9 +151,11 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
+        let node = POwned::new(Node::from(value), pool).into_shared(guard);
+
         while self
             .try_push
-            .run(stack, value.clone(), guard, pool)
+            .run(stack, node, guard, pool)
             .is_err()
         {}
         Ok(())
