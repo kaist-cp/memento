@@ -73,7 +73,7 @@ impl<O, T: Node + Collectable> Collectable for Insert<O, T> {
 impl<O, T: Node + Collectable> Drop for Insert<O, T> {
     fn drop(&mut self) {
         let guard = unsafe { epoch::unprotected() };
-        let new = self.new.load(Ordering::SeqCst, guard);
+        let new = self.new.load(Ordering::Relaxed, guard);
         assert!(new.is_null(), "reset 되어있지 않음.")
     }
 }
@@ -107,9 +107,9 @@ where
     }
 
     fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
-        let mut new = self.new.load(Ordering::SeqCst, guard);
+        let mut new = self.new.load(Ordering::Relaxed, guard);
         if !new.is_null() {
-            self.new.store(PShared::null(), Ordering::SeqCst);
+            self.new.store(PShared::null(), Ordering::Relaxed);
             persist_obj(&self.new, true);
 
             // crash-free execution이지만 try성 CAS라서 insert 실패했을 수 있음
@@ -128,13 +128,13 @@ where
 
     fn recover<'o>(&mut self, obj: Self::Object<'o>, pool: &'static PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
-        let new = self.new.load(Ordering::SeqCst, guard);
+        let new = self.new.load(Ordering::Relaxed, guard);
 
         if !new.is_null() && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked()) {
             // (2) obj 안에 n이 있으면 삽입된 것이다 (Direct tracking)
             // (3) acked 되었다면 삽입된 것이다
             self.new
-                .store(new.with_tag(Self::COMPLETE), Ordering::SeqCst);
+                .store(new.with_tag(Self::COMPLETE), Ordering::Relaxed);
         }
     }
 }
@@ -158,10 +158,10 @@ where
     where
         F: Fn(&mut T, PShared<'_, T>) -> bool,
     {
-        let mut n = self.new.load(Ordering::SeqCst, guard);
+        let mut n = self.new.load(Ordering::Relaxed, guard);
 
         if n.is_null() {
-            self.new.store(new, Ordering::SeqCst);
+            self.new.store(new, Ordering::Relaxed);
             persist_obj(&self.new, false);
             n = new;
         } else if n.tag() & Self::COMPLETE == Self::COMPLETE {
@@ -222,7 +222,7 @@ impl<O, T: Node + Collectable> Collectable for Delete<O, T> {
 impl<O, T: Node + Collectable> Drop for Delete<O, T> {
     fn drop(&mut self) {
         let guard = unsafe { epoch::unprotected() };
-        let target = self.target.load(Ordering::SeqCst, guard);
+        let target = self.target.load(Ordering::Relaxed, guard);
         assert!(target.is_null(), "reset 되어있지 않음.")
     }
 }
@@ -238,7 +238,7 @@ where
     where
         O: 'o,
         T: 'o,
-    = Option<&'o T>;
+    = Option<PShared<'o, T>>;
     type Error = ();
 
     fn run<'o>(
@@ -255,7 +255,7 @@ where
         let target = self.target.load(Ordering::SeqCst, guard);
 
         if target.tag() == Self::EMPTY {
-            self.target.store(PShared::null(), Ordering::SeqCst);
+            self.target.store(PShared::null(), Ordering::Relaxed);
             persist_obj(&self.target, true);
             return;
         }
@@ -263,7 +263,7 @@ where
         if !target.is_null() {
             // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
             // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-            self.target.store(PShared::null(), Ordering::SeqCst);
+            self.target.store(PShared::null(), Ordering::Relaxed);
             persist_obj(&self.target, true);
 
             // crash-free execution이지만 try이니 owner가 내가 아닐 수 있음
@@ -276,16 +276,46 @@ where
         }
     }
 
-    fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {
+    fn recover<'o>(&mut self, obj: Self::Object<'o>, pool: &'static PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
-        let target = self.target.load(Ordering::SeqCst, guard);
+        let target = self.target.load(Ordering::Relaxed, guard);
 
-        let tag = target.tag();
-        if tag & Self::EMPTY != Self::EMPTY && tag & Self::RECOVERY != Self::RECOVERY {
-            self.target
-                .store(target.with_tag(Self::RECOVERY), Ordering::SeqCst);
-            // 복구해야 한다는 표시이므로 persist 필요 없음
+        if target.is_null() || target.tag() & Self::EMPTY == Self::EMPTY {
+            return;
         }
+
+        let target_ref = unsafe { target.deref(pool) };
+        let owner = target_ref.owner().load(Ordering::SeqCst);
+
+        // target이 내가 pop한 게 맞는지 확인
+        if owner == self.id(pool) {
+            self.target.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+            return;
+        };
+
+        // target이 obj에서 빠지긴 했는지 확인
+        if !obj.search(target, guard, pool) {
+            // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
+            // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
+            if owner == Self::no_owner()
+                && target_ref
+                    .owner()
+                    .compare_exchange(
+                        Self::no_owner(),
+                        self.id(pool),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+            {
+                persist_obj(target_ref.owner(), true);
+                self.target.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                return;
+            }
+        }
+
+        self.target.store(PShared::null(), Ordering::Relaxed);
+        // 기존에 들고 있던 건 의미 없다는 걸 다음 실행에서도 알 수 있으므로 null로 바꾸는 건 persist 필요 없음
     }
 }
 
@@ -294,63 +324,29 @@ where
     O: Traversable<T>,
     T: Node + Collectable,
 {
-    const DEFAULT: usize = 0;
-
     /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
-    const RECOVERY: usize = 1;
+    const COMPLETE: usize = 1;
 
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
     fn delete<'g>(
         &self,
-        obj: &O,
+        _: &O,
         point: &PAtomic<T>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Option<&'g T>, ()> {
-        let target = self.target.load(Ordering::SeqCst, guard);
+    ) -> Result<Option<PShared<'g, T>>, ()> {
+        let target = self.target.load(Ordering::Relaxed, guard);
 
         if target.tag() & Self::EMPTY == Self::EMPTY {
             // post-crash execution (empty)
             return Ok(None);
         }
 
-        let my_id = self.id(pool);
-
-        if !target.is_null() {
+        if target.tag() & Self::COMPLETE == Self::COMPLETE {
             // post-crash execution (trying)
-            let target_ref = unsafe { target.deref(pool) };
-
-            // target이 내가 pop한 게 맞는지 확인
-            if target_ref.owner().load(Ordering::SeqCst) == my_id {
-                return Ok(Some(target_ref));
-            };
-
-            if target.tag() & Self::RECOVERY == Self::RECOVERY {
-                // 복구 로직 실행
-                self.target
-                    .store(target.with_tag(Self::DEFAULT), Ordering::SeqCst); // 복구 플래그 해제 (복구와 관련된 것이므로 persist 필요 없음)
-
-                // target이 obj에서 빠지긴 했는지 확인
-                if !obj.search(target, guard, pool) {
-                    // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
-                    // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
-                    if target_ref
-                        .owner()
-                        .compare_exchange(
-                            Self::no_owner(),
-                            my_id,
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        )
-                        .is_ok()
-                    {
-                        persist_obj(target_ref.owner(), true);
-                        return Ok(Some(target_ref));
-                    }
-                }
-            }
+            return Ok(Some(target));
         }
 
         let target = point.load(Ordering::SeqCst, guard);
@@ -358,7 +354,7 @@ where
             // TODO: Make generic `deletable()`
             // empty
             self.target
-                .store(PShared::null().with_tag(Self::EMPTY), Ordering::SeqCst);
+                .store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
             persist_obj(&self.target, true);
             return Ok(None);
         };
@@ -366,7 +362,7 @@ where
         let target_ref = unsafe { target.deref(pool) };
 
         // 우선 내가 target을 가리키고
-        self.target.store(target, Ordering::SeqCst);
+        self.target.store(target, Ordering::Relaxed);
         persist_obj(&self.target, false);
 
         // target을 ack해주고
@@ -387,17 +383,18 @@ where
         // CAS인 이유: pop 복구 중인 스레드와 경합이 일어날 수 있음
         target_ref
             .owner()
-            .compare_exchange(Self::no_owner(), my_id, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(Self::no_owner(), self.id(pool), Ordering::SeqCst, Ordering::SeqCst)
             .map(|_| {
                 persist_obj(target_ref.owner(), true);
-                Some(target_ref)
+                self.target.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                Some(target)
             })
             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
     }
 
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
-        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
+        // 풀 열릴 때마다 주소 바뀌니 상대주소로 식별해야 함
         unsafe { self.as_pptr(pool).into_offset() }
     }
 

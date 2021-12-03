@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::atomic::AtomicBool;
 
 use crate::atomic_update::{self, Delete, Insert, Traversable};
-use crate::pepoch::{self as epoch, Guard, PAtomic, PShared, POwned};
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
@@ -113,16 +113,11 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        // TODO: 매번 동적할당 하지 않게끔 하기 -> `TryPushInner` 두기
+        // TODO: 매번 동적할당 하지 않게끔 하기 -> `TryPushInner` 두기 -> 노드를 받는 `TryPush`로 만들기
         let node = POwned::new(Node::from(value), pool).into_shared(guard);
 
         self.insert
-            .run(
-                stack,
-                (node, &stack.top, Self::before_cas),
-                guard,
-                pool,
-            )
+            .run(stack, (node, &stack.top, Self::before_cas), guard, pool)
             .map_err(|_| TryFail)
     }
 
@@ -181,7 +176,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.delete
             .run(stack, &stack.top, guard, pool)
-            .map(|ret| ret.map(|popped| popped.data.clone()))
+            .map(|ret| ret.map(|popped| unsafe { popped.deref(pool) }.data.clone()))
             .map_err(|_| TryFail)
     }
 
