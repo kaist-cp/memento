@@ -64,7 +64,7 @@ impl<T: Clone> PDefault for DurableQueue<T> {
 }
 
 impl<T: Clone> DurableQueue<T> {
-    fn enqueue(&self, val: T, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, val: T, guard: &Guard, pool: &'static PoolHandle) {
         let node = POwned::new(Node::new(val), pool).into_shared(guard);
         persist_obj(unsafe { node.deref(pool) }, true);
 
@@ -107,7 +107,7 @@ impl<T: Clone> DurableQueue<T> {
         }
     }
 
-    fn dequeue(&self, tid: usize, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) {
         // NOTE: Durable 큐의 하자 (1/1)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Durable 큐: deq한 값을 가리킬 포인터 할당 및 persist
@@ -215,11 +215,11 @@ impl<T: Clone> TestQueue for DurableQueue<T> {
     type EnqInput = T; // input
     type DeqInput = usize; // tid
 
-    fn enqueue(&self, input: Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
         self.enqueue(input, guard, pool);
     }
 
-    fn dequeue(&self, tid: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
         self.dequeue(tid, guard, pool);
     }
 }
@@ -242,7 +242,7 @@ impl PDefault for TestDurableQueue {
 
         // 초기 노드 삽입
         for i in 0..QUEUE_INIT_SIZE {
-            queue.enqueue(i, &mut guard, pool);
+            queue.enqueue(i, &guard, pool);
         }
         Self { queue }
     }
@@ -270,7 +270,7 @@ impl Memento for DurableQueueEnqDeqPair {
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -290,7 +290,7 @@ impl Memento for DurableQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 
@@ -321,7 +321,7 @@ impl Memento for DurableQueueEnqDeqProb {
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -344,7 +344,7 @@ impl Memento for DurableQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 

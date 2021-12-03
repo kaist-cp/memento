@@ -80,7 +80,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         while self
@@ -91,7 +91,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_push.reset(true, guard, pool);
     }
 
@@ -141,7 +141,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
@@ -151,7 +151,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         }
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_pop.reset(true, guard, pool);
     }
 
@@ -176,7 +176,6 @@ pub(crate) mod tests {
     use super::*;
     use crate::plocation::PoolHandle;
     use crate::utils::tests::*;
-    use crossbeam_epoch::{self as epoch};
 
     pub(crate) struct PushPop<S: Stack<usize>, const NR_THREAD: usize, const COUNT: usize> {
         pushes: [S::Push; COUNT],
@@ -231,7 +230,7 @@ pub(crate) mod tests {
             &'o mut self,
             stack: Self::Object<'o>,
             tid: Self::Input<'o>,
-            guard: &mut Guard,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             match tid {
@@ -241,9 +240,8 @@ pub(crate) mod tests {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check empty
-                    let mut guard = epoch::pin();
                     assert!(S::Pop::default()
-                        .run(stack, (), &mut guard, pool)
+                        .run(stack, (), guard, pool)
                         .unwrap()
                         .is_none());
 
@@ -273,7 +271,7 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
 

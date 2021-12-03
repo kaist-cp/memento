@@ -123,13 +123,13 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         &'o mut self,
         xchg: Self::Object<'o>,
         (value, timeout, cond): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         xchg.exchange(self, value, Timeout::Limited(timeout), cond, guard, pool)
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
@@ -190,7 +190,7 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         &'o mut self,
         xchg: Self::Object<'o>,
         (value, cond): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(xchg
@@ -198,7 +198,7 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
@@ -458,7 +458,7 @@ mod tests {
             &'o mut self,
             xchg: Self::Object<'o>,
             tid: Self::Input<'o>,
-            guard: &mut Guard,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             // `move` for `tid`
@@ -471,7 +471,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
 
@@ -525,7 +525,7 @@ mod tests {
             &'o mut self,
             xchgs: Self::Object<'o>,
             tid: Self::Input<'o>,
-            guard: &mut Guard,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             // Alias
@@ -574,7 +574,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
 
@@ -651,7 +651,7 @@ mod tests {
     //         &'o mut self,
     //         (): Self::Object<'o>,
     //         (): Self::Input<'o>,
-    //         guard: &mut Guard,
+    //         guard: &Guard,
     //         pool: &'static PoolHandle,
     //     ) -> Result<Self::Output<'o>, Self::Error> {
     //         let unfinished = &Unfinished::default();
@@ -673,7 +673,7 @@ mod tests {
     //                         if let Err(_) = exchange.run(
     //                             xchg,
     //                             (tid, Duration::milliseconds(500), |_| true),
-    //                             &mut guard,
+    //                             &Guard,
     //                             pool,
     //                         ) {
     //                             // 긴 시간 동안 exchange 안 되면 혼자 남은 것으로 판단
@@ -741,7 +741,7 @@ mod tests {
     //         Ok(())
     //     }
 
-    //     fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
+    //     fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
     //         todo!("reset test")
     //     }
     // }

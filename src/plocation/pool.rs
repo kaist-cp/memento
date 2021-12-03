@@ -96,9 +96,9 @@ impl PoolHandle {
                             let hanlder = scope.spawn(move |_| {
                                 let m = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let mut g = epoch::old_guard(mid);
+                                let g = epoch::old_guard(mid);
                                 m.set_recovery(self);
-                                let _ = m.run(o, mid, &mut g, self);
+                                let _ = m.run(o, mid, &g, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
@@ -404,7 +404,7 @@ mod tests {
             &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
-            _: &mut Guard,
+            _: &Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             if self.flag {
@@ -418,7 +418,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             // no-op
         }
 

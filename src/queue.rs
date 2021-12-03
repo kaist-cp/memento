@@ -98,14 +98,14 @@ impl<T: 'static + Clone> Memento for Enqueue<T> {
         &'o mut self,
         queue: Self::Object<'o>,
         value: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         queue.enqueue(self, value, guard, pool);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
         let mine = self.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             self.mine.store(PShared::null(), Ordering::SeqCst);
@@ -165,13 +165,13 @@ impl<T: 'static + Clone> Memento for Dequeue<T> {
         &'o mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(queue.dequeue(self, guard, pool))
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
 
         if target.tag() == Queue::<T>::EMPTY {
@@ -249,7 +249,7 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
         &'o mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         loop {
@@ -260,7 +260,7 @@ impl<T: 'static + Clone> Memento for DequeueSome<T> {
         }
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.deq.reset(nested, guard, pool);
     }
 
@@ -585,7 +585,7 @@ mod test {
             &'o mut self,
             queue: Self::Object<'o>,
             tid: Self::Input<'o>,
-            guard: &mut Guard,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             match tid {
@@ -627,7 +627,7 @@ mod test {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
 

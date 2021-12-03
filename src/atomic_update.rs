@@ -100,13 +100,13 @@ where
         &'o mut self,
         obj: Self::Object<'o>,
         (new, point, before_cas): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.insert(obj, new, point, before_cas, guard, pool)
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
         let mut new = self.new.load(Ordering::SeqCst, guard);
         if !new.is_null() {
             self.new.store(PShared::null(), Ordering::SeqCst);
@@ -250,17 +250,17 @@ where
     = Option<&'o T>;
     type Error = ();
 
-    fn run<'o, 'g>(
+    fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
         point: Self::Input<'o>,
-        guard: &'o mut Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.delete(obj, point, guard, pool)
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
 
         if target.tag() == Self::EMPTY {

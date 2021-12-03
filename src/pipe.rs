@@ -73,7 +73,7 @@ where
         &'o mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         if self.resetting {
@@ -85,7 +85,7 @@ where
         self.to.run(to_obj, v, guard, pool).map_err(|_| ())
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         if !nested {
             self.resetting = true;
             persist_obj(&self.resetting, true);
@@ -181,7 +181,7 @@ mod tests {
             &'o mut self,
             q_arr: Self::Object<'o>,
             tid: Self::Input<'o>,
-            guard: &mut Guard,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             let (q1, q2) = (&q_arr[0], &q_arr[1]);
@@ -211,7 +211,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &mut Guard, _: &PoolHandle) {
+        fn reset(&mut self, _: bool, _: &Guard, _: &PoolHandle) {
             todo!("reset test")
         }
 

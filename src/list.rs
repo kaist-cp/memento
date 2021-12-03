@@ -94,14 +94,14 @@ where
         &'o mut self,
         list: Self::Object<'o>,
         (key, value): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         list.insert_front(self, key, value, guard, pool);
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, _pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, _pool: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
@@ -160,13 +160,13 @@ where
         &'o mut self,
         list: Self::Object<'o>,
         key: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         Ok(list.remove(self, &key, guard, pool))
     }
 
-    fn reset(&mut self, _: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
         if !target.is_null() {
             self.target.store(PShared::null(), Ordering::SeqCst);

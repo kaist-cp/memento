@@ -95,7 +95,7 @@ impl<T: Clone> LogQueue<T> {
         val: T,
         tid: usize,
         op_num: &mut usize,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) {
         // NOTE: Log 큐의 하자 (1/2)
@@ -172,7 +172,7 @@ impl<T: Clone> LogQueue<T> {
         &self,
         tid: usize,
         op_num: &mut usize,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) {
         // NOTE: Log 큐의 하자 (2/2)
@@ -298,7 +298,7 @@ impl<T: Clone> TestQueue for LogQueue<T> {
     fn enqueue(
         &self,
         (input, tid, op_num): Self::EnqInput,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) {
         self.enqueue(input, tid, op_num, guard, pool);
@@ -306,7 +306,7 @@ impl<T: Clone> TestQueue for LogQueue<T> {
         persist_obj(op_num, true);
     }
 
-    fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
         self.dequeue(tid, op_num, guard, pool);
         *op_num += 1;
         persist_obj(op_num, true);
@@ -331,7 +331,7 @@ impl PDefault for TestLogQueue {
 
         // 초기 노드 삽입
         for i in 0..QUEUE_INIT_SIZE {
-            queue.enqueue(i, 0, &mut 0, &mut guard, pool);
+            queue.enqueue(i, 0, &mut 0, &guard, pool);
         }
         Self { queue }
     }
@@ -362,7 +362,7 @@ impl Memento for LogQueueEnqDeqPair {
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -386,7 +386,7 @@ impl Memento for LogQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 
@@ -420,7 +420,7 @@ impl Memento for LogQueueEnqDeqProb {
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -445,7 +445,7 @@ impl Memento for LogQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 

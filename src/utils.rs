@@ -66,13 +66,13 @@ pub mod tests {
             &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
-            _: &mut Guard,
+            _: &Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             // no-op
         }
 

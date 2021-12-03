@@ -110,7 +110,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.insert
@@ -123,7 +123,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         // 원래 하위 memento를 reset할 경우 reset flag를 쓰는 게 도리에 맞으나
         // `Insert`의 `reset()`이 atomic 하므로 안 써도 됨
         self.insert.reset(nested, guard, pool);
@@ -173,7 +173,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.delete
@@ -182,7 +182,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         // 원래 하위 memento를 reset할 경우 reset flag를 쓰는 게 도리에 맞으나
         // `Delete`의 `reset()`이 atomic 하므로 안 써도 됨
         self.delete.reset(nested, guard, pool);

@@ -13,14 +13,14 @@ impl<T: 'static + Clone> TestQueue for Queue<T> {
     type EnqInput = (&'static mut Enqueue<T>, T); // Memento, input
     type DeqInput = &'static mut Dequeue<T>; // Memento
 
-    fn enqueue(&self, (enq, input): Self::EnqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, (enq, input): Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
         let _ = enq.run(self, input, guard, pool);
 
         // TODO: custom logic 추상화
         enq.reset(false, guard, pool);
     }
 
-    fn dequeue(&self, deq: Self::DeqInput, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, deq: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
         let _ = deq.run(self, (), guard, pool);
         deq.reset(false, guard, pool);
     }
@@ -46,8 +46,8 @@ impl PDefault for TestMementoQueue {
         // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..QUEUE_INIT_SIZE {
-            let _ = push_init.run(&queue, i, &mut guard, pool);
-            push_init.reset(false, &mut guard, pool);
+            let _ = push_init.run(&queue, i, &guard, pool);
+            push_init.reset(false, &guard, pool);
         }
         Self { queue }
     }
@@ -86,7 +86,7 @@ impl Memento for MementoQueueEnqDeqPair {
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -113,7 +113,7 @@ impl Memento for MementoQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 
@@ -155,7 +155,7 @@ impl Memento for MementoQueueEnqDeqProb {
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let q = &queue.queue;
@@ -183,7 +183,7 @@ impl Memento for MementoQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &mut Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 

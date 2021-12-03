@@ -131,7 +131,7 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         &'o mut self,
         mtx: Self::Object<'o>,
         (): Self::Input<'o>,
-        guard: &mut Guard,
+        guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         let token = self.lock.run(&mtx.lock, (), guard, pool).unwrap();
@@ -144,7 +144,7 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         }))
     }
 
-    fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         // `MutexGuard`가 살아있을 때 이 함수 호출은 컴파일 타임에 막아짐.
         self.lock.reset(nested, guard, pool);
     }
@@ -171,10 +171,10 @@ pub struct MutexGuard<'l, L: RawLock, T> {
 
 impl<L: RawLock, T> Drop for MutexGuard<'_, L, T> {
     fn drop(&mut self) {
-        let mut guard = epoch::pin(); // TODO: run에서 쓰인 guard 안 받고 이래도 되나
+        let guard = epoch::pin(); // TODO: run에서 쓰인 guard 안 받고 이래도 되나
         let _ = self
             .unlock
-            .run(&self.mtx.lock, self.token.clone(), &mut guard, self.pool);
+            .run(&self.mtx.lock, self.token.clone(), &guard, self.pool);
     }
 }
 
@@ -256,7 +256,7 @@ pub(crate) mod tests {
             &'o mut self,
             count: Self::Object<'o>,
             rhs: Self::Input<'o>,
-            guard: &mut Guard,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             if let State::Resetting = self.state {
@@ -287,7 +287,7 @@ pub(crate) mod tests {
             }
         } // Unlock when `cnt` is dropped
 
-        fn reset(&mut self, nested: bool, guard: &mut Guard, pool: &'static PoolHandle) {
+        fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
             if !nested {
                 self.state = State::Resetting;
             }
@@ -359,7 +359,7 @@ pub(crate) mod tests {
             &'o mut self,
             x: Self::Object<'o>,
             tid: Self::Input<'o>,
-            guard: &mut Guard,
+            guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             match tid {
@@ -393,7 +393,7 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool, _guard: &mut Guard, _pool: &'static PoolHandle) {
+        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
             todo!()
         }
 
