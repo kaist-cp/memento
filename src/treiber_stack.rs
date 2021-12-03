@@ -3,11 +3,11 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::atomic::AtomicBool;
 
-use crate::atomic_update::{Ackable, Delete, Deleted, Insert, Traversable};
+use crate::atomic_update::{self, Delete, Insert, Traversable};
 use crate::pepoch::{self as epoch, Guard, PAtomic, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
-use crate::plocation::{ll::*, pool::*, AsPPtr};
+use crate::plocation::{ll::*, pool::*};
 use crate::stack::*;
 
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
@@ -36,7 +36,7 @@ impl<T: Clone> From<T> for Node<T> {
     }
 }
 
-impl<T: Clone> Ackable for Node<T> {
+impl<T: Clone> atomic_update::Node for Node<T> {
     fn ack(&self) {
         self.pushed.store(true, Ordering::SeqCst);
     }
@@ -44,9 +44,7 @@ impl<T: Clone> Ackable for Node<T> {
     fn acked(&self) -> bool {
         self.pushed.load(Ordering::SeqCst)
     }
-}
 
-impl<T: Clone> Deleted for Node<T> {
     fn owner(&self) -> &AtomicUsize {
         &self.popper
     }
@@ -95,9 +93,10 @@ impl<T: Clone> Collectable for TryPush<T> {
 }
 
 impl<T: Clone> TryPush<T> {
-    fn before_cas(mine: &mut Node<T>, oldtop: PShared<'_, Node<T>>) {
+    fn before_cas(mine: &mut Node<T>, oldtop: PShared<'_, Node<T>>) -> bool {
         mine.next.store(oldtop, Ordering::SeqCst);
         persist_obj(&mine.next, false);
+        true
     }
 }
 
@@ -265,7 +264,7 @@ mod tests {
     use super::*;
     use crate::{stack::tests::*, utils::tests::*};
 
-    const NR_THREAD: usize = 4;
+    const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;

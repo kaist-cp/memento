@@ -24,25 +24,31 @@ pub trait Traversable<T> {
 }
 
 /// TODO: doc
-pub trait Ackable {
+pub trait Node: Sized {
     /// TODO: doc
     fn ack(&self);
 
     /// TODO: doc
     fn acked(&self) -> bool;
+
+    /// TODO: doc
+    fn owner(&self) -> &AtomicUsize;
+
+    /// TODO: doc
+    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self>;
 }
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct Insert<O, T: Ackable + Collectable> {
+pub struct Insert<O, T: Node + Collectable> {
     new: PAtomic<T>,
     _marker: PhantomData<*const O>,
 }
 
-unsafe impl<O, T: Ackable + Collectable + Send + Sync> Send for Insert<O, T> {}
-unsafe impl<O, T: Ackable + Collectable + Send + Sync> Sync for Insert<O, T> {}
+unsafe impl<O, T: Node + Collectable + Send + Sync> Send for Insert<O, T> {}
+unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Insert<O, T> {}
 
-impl<O, T: Ackable + Collectable> Default for Insert<O, T> {
+impl<O, T: Node + Collectable> Default for Insert<O, T> {
     fn default() -> Self {
         Self {
             new: Default::default(),
@@ -51,7 +57,7 @@ impl<O, T: Ackable + Collectable> Default for Insert<O, T> {
     }
 }
 
-impl<O, T: Ackable + Collectable> Collectable for Insert<O, T> {
+impl<O, T: Node + Collectable> Collectable for Insert<O, T> {
     fn filter(insert: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
@@ -64,7 +70,7 @@ impl<O, T: Ackable + Collectable> Collectable for Insert<O, T> {
     }
 }
 
-impl<O, T: Ackable + Collectable> Drop for Insert<O, T> {
+impl<O, T: Node + Collectable> Drop for Insert<O, T> {
     fn drop(&mut self) {
         let guard = unsafe { epoch::unprotected() };
         let new = self.new.load(Ordering::SeqCst, guard);
@@ -75,10 +81,14 @@ impl<O, T: Ackable + Collectable> Drop for Insert<O, T> {
 impl<O, T> Memento for Insert<O, T>
 where
     O: 'static + Traversable<T>,
-    T: 'static + Ackable + Collectable,
+    T: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
-    type Input<'o> = (T, &'o PAtomic<T>, fn(&mut T, PShared<'_, T>));
+    type Input<'o> = (
+        T,
+        &'o PAtomic<T>,
+        fn(&mut T, PShared<'_, T>) -> bool, // bool 리턴값은 계속 진행할지 여부
+    );
     type Output<'o>
     where
         O: 'o,
@@ -131,7 +141,7 @@ where
 impl<O, T> Insert<O, T>
 where
     O: Traversable<T>,
-    T: Ackable + Collectable,
+    T: Node + Collectable,
 {
     const DEFAULT: usize = 0;
 
@@ -148,7 +158,7 @@ where
         pool: &PoolHandle,
     ) -> Result<(), ()>
     where
-        F: Fn(&mut T, PShared<'_, T>),
+        F: Fn(&mut T, PShared<'_, T>) -> bool,
     {
         let mut n = self.new.load(Ordering::SeqCst, guard);
 
@@ -172,37 +182,31 @@ where
         let mine_ref = unsafe { n.deref_mut(pool) };
         let old = point.load(Ordering::SeqCst, guard);
 
-        before_cas(mine_ref, old);
+        if !before_cas(mine_ref, old) {
+            return Err(());
+        }
 
-        point
+        let ret = point
             .compare_exchange(old, n, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| {
-                persist_obj(point, true);
-            })
-            .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
+            .map(|_| ())
+            .map_err(|_| ());
+
+        persist_obj(point, true); // TODO: stack에서는 성공한 놈만 해도 될지도?
+        ret
     }
 }
 
 /// TODO: doc
-pub trait Deleted: Sized {
-    /// TODO: doc
-    fn owner(&self) -> &AtomicUsize;
-
-    /// TODO: doc
-    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self>;
-}
-
-/// TODO: doc
 #[derive(Debug)]
-pub struct Delete<O, T: Ackable + Deleted + Collectable> {
+pub struct Delete<O, T: Node + Collectable> {
     target: PAtomic<T>,
     _marker: PhantomData<*const O>,
 }
 
-unsafe impl<O, T: Ackable + Deleted + Collectable + Send + Sync> Send for Delete<O, T> {}
-unsafe impl<O, T: Ackable + Deleted + Collectable + Send + Sync> Sync for Delete<O, T> {}
+unsafe impl<O, T: Node + Collectable + Send + Sync> Send for Delete<O, T> {}
+unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Delete<O, T> {}
 
-impl<O, T: Ackable + Deleted + Collectable> Default for Delete<O, T> {
+impl<O, T: Node + Collectable> Default for Delete<O, T> {
     fn default() -> Self {
         Self {
             target: Default::default(),
@@ -211,7 +215,7 @@ impl<O, T: Ackable + Deleted + Collectable> Default for Delete<O, T> {
     }
 }
 
-impl<O, T: Ackable + Deleted + Collectable> Collectable for Delete<O, T> {
+impl<O, T: Node + Collectable> Collectable for Delete<O, T> {
     fn filter(delete: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
@@ -224,7 +228,7 @@ impl<O, T: Ackable + Deleted + Collectable> Collectable for Delete<O, T> {
     }
 }
 
-impl<O, T: Ackable + Deleted + Collectable> Drop for Delete<O, T> {
+impl<O, T: Node + Collectable> Drop for Delete<O, T> {
     fn drop(&mut self) {
         let guard = unsafe { epoch::unprotected() };
         let target = self.target.load(Ordering::SeqCst, guard);
@@ -235,7 +239,7 @@ impl<O, T: Ackable + Deleted + Collectable> Drop for Delete<O, T> {
 impl<O, T> Memento for Delete<O, T>
 where
     O: 'static + Traversable<T>,
-    T: 'static + Ackable + Deleted + Collectable,
+    T: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = &'o PAtomic<T>;
@@ -297,7 +301,7 @@ where
 impl<O, T> Delete<O, T>
 where
     O: Traversable<T>,
-    T: Ackable + Deleted + Collectable,
+    T: Node + Collectable,
 {
     const DEFAULT: usize = 0;
 
