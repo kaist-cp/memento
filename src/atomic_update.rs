@@ -87,7 +87,7 @@ where
     type Input<'o> = (
         PShared<'o, T>,
         &'o PAtomic<T>,
-        fn(&mut T, PShared<'_, T>) -> bool, // bool 리턴값은 계속 진행할지 여부
+        fn(&mut T, PShared<'_, T>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
     where
@@ -233,7 +233,10 @@ where
     T: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
-    type Input<'o> = &'o PAtomic<T>;
+    type Input<'o> = (
+        &'o PAtomic<T>,
+        fn(PShared<'_, T>, &O) -> bool, // empty check
+    );
     type Output<'o>
     where
         O: 'o,
@@ -244,11 +247,11 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        point: Self::Input<'o>,
+        (point, is_empty): Self::Input<'o>,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        self.delete(obj, point, guard, pool)
+        self.delete(obj, point, is_empty, guard, pool)
     }
 
     fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
@@ -289,7 +292,8 @@ where
 
         // target이 내가 pop한 게 맞는지 확인
         if owner == self.id(pool) {
-            self.target.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+            self.target
+                .store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
             return;
         };
 
@@ -309,7 +313,8 @@ where
                     .is_ok()
             {
                 persist_obj(target_ref.owner(), true);
-                self.target.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                self.target
+                    .store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                 return;
             }
         }
@@ -330,13 +335,17 @@ where
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
-    fn delete<'g>(
+    fn delete<'g, F>(
         &self,
-        _: &O,
+        obj: &O,
         point: &PAtomic<T>,
+        is_empty: F,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Option<PShared<'g, T>>, ()> {
+    ) -> Result<Option<PShared<'g, T>>, ()>
+    where
+        F: Fn(PShared<'_, T>, &O) -> bool,
+    {
         let target = self.target.load(Ordering::Relaxed, guard);
 
         if target.tag() & Self::EMPTY == Self::EMPTY {
@@ -350,9 +359,7 @@ where
         }
 
         let target = point.load(Ordering::SeqCst, guard);
-        if target.is_null() {
-            // TODO: Make generic `deletable()`
-            // empty
+        if is_empty(target, obj) {
             self.target
                 .store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
             persist_obj(&self.target, true);
@@ -383,10 +390,16 @@ where
         // CAS인 이유: pop 복구 중인 스레드와 경합이 일어날 수 있음
         target_ref
             .owner()
-            .compare_exchange(Self::no_owner(), self.id(pool), Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(
+                Self::no_owner(),
+                self.id(pool),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
             .map(|_| {
                 persist_obj(target_ref.owner(), true);
-                self.target.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                self.target
+                    .store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                 Some(target)
             })
             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?

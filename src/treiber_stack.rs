@@ -175,7 +175,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.delete
-            .run(stack, &stack.top, guard, pool)
+            .run(stack, (&stack.top, Self::is_empty), guard, pool)
             .map(|ret| ret.map(|popped| unsafe { popped.deref(pool) }.data.clone()))
             .map_err(|_| TryFail)
     }
@@ -188,6 +188,12 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
 
     fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
         self.delete.recover(object, pool);
+    }
+}
+
+impl<T: Clone> TryPop<T> {
+    fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>) -> bool {
+        target.is_null()
     }
 }
 
