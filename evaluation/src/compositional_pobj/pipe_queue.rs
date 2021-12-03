@@ -35,14 +35,14 @@ impl Collectable for EnqueuePipeQ {
 
 impl Memento for EnqueuePipeQ {
     type Object<'o> = &'o PipeQueue;
-    type Input = usize;
+    type Input<'o> = usize;
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         pipeq: Self::Object<'o>,
-        value: Self::Input,
+        value: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -92,14 +92,14 @@ impl Collectable for DequeuePipeQ {
 
 impl Memento for DequeuePipeQ {
     type Object<'o> = &'o PipeQueue;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Option<usize>;
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         pipeq: Self::Object<'o>,
-        _: Self::Input,
+        _: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -195,14 +195,14 @@ impl TestNOps for MementoPipeQueueEnqDeqPair {}
 
 impl Memento for MementoPipeQueueEnqDeqPair {
     type Object<'o> = &'o TestPipeQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
+        tid: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -262,14 +262,14 @@ impl TestNOps for MementoPipeQueueEnqDeqProb {}
 
 impl Memento for MementoPipeQueueEnqDeqProb {
     type Object<'o> = &'o TestPipeQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
+        tid: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {

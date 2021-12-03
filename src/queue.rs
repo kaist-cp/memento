@@ -90,14 +90,14 @@ impl<T: Clone> Collectable for Enqueue<T> {
 
 impl<T: 'static + Clone> Memento for Enqueue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input = T;
+    type Input<'o> = T;
     type Output<'o> = ();
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        value: Self::Input,
+        value: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -157,14 +157,14 @@ impl<T: Clone> Collectable for Dequeue<T> {
 
 impl<T: 'static + Clone> Memento for Dequeue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Option<T>;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        (): Self::Input,
+        (): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -241,14 +241,14 @@ impl<T: Clone> Collectable for DequeueSome<T> {
 
 impl<T: 'static + Clone> Memento for DequeueSome<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = T;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        (): Self::Input,
+        (): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -576,7 +576,7 @@ mod test {
 
     impl Memento for EnqDeq {
         type Object<'o> = &'o Queue<usize>;
-        type Input = usize; // tid(=mid)
+        type Input<'o> = usize; // tid(=mid)
         type Output<'o> = ();
         type Error = !;
 
@@ -584,7 +584,7 @@ mod test {
         fn run<'o>(
             &'o mut self,
             queue: Self::Object<'o>,
-            tid: Self::Input,
+            tid: Self::Input<'o>,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {

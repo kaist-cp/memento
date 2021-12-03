@@ -387,14 +387,14 @@ impl TestNOps for DSSQueueEnqDeqPair {}
 
 impl Memento for DSSQueueEnqDeqPair {
     type Object<'o> = &'o TestDSSQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
+        tid: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -437,14 +437,14 @@ impl TestNOps for DSSQueueEnqDeqProb {}
 
 impl Memento for DSSQueueEnqDeqProb {
     type Object<'o> = &'o TestDSSQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
+        tid: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {

@@ -89,14 +89,14 @@ impl Collectable for Lock {
 
 impl Memento for Lock {
     type Object<'o> = &'o TicketLock;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = usize; // ticket
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         lock: Self::Object<'o>,
-        _: Self::Input,
+        _: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -140,14 +140,14 @@ impl Collectable for Unlock {
 
 impl Memento for Unlock {
     type Object<'l> = &'l TicketLock;
-    type Input = usize;
+    type Input<'o> = usize;
     type Output<'l> = ();
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         lock: Self::Object<'o>,
-        ticket: Self::Input,
+        ticket: Self::Input<'o>,
         _: &mut Guard,
         _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {

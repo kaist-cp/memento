@@ -24,7 +24,7 @@ pub trait RawLock: Default + Send + Sync + Collectable {
     /// Lock operation을 수행하는 Memento
     type Lock: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input = (),
+        Input<'o> = (),
         Output<'o> = Self::Token,
         Error = !,
     >;
@@ -35,7 +35,7 @@ pub trait RawLock: Default + Send + Sync + Collectable {
     // TODO: Output에 Frozen을 강제해야 할 수도 있음. MutexGuard 인터페이스 없이 RawLock만으로는 critical section의 mutex 보장 못함.
     type Unlock: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input = Self::Token,
+        Input<'o> = Self::Token,
         Output<'o> = (),
         Error = !,
     >;
@@ -123,14 +123,14 @@ impl<L: RawLock, T> Collectable for Lock<L, T> {
 
 impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
     type Object<'o> = &'o Mutex<L, T>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Frozen<MutexGuard<'o, L, T>>;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         mtx: Self::Object<'o>,
-        (): Self::Input,
+        (): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -248,14 +248,14 @@ pub(crate) mod tests {
         L: 'static + RawLock,
     {
         type Object<'o> = &'o Mutex<L, usize>;
-        type Input = usize;
+        type Input<'o> = usize;
         type Output<'o> = usize;
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
             count: Self::Object<'o>,
-            rhs: Self::Input,
+            rhs: Self::Input<'o>,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
@@ -348,7 +348,7 @@ pub(crate) mod tests {
         L::Unlock: Send,
     {
         type Object<'o> = &'o Mutex<L, usize>;
-        type Input = usize; // tid(mid)
+        type Input<'o> = usize; // tid(mid)
         type Output<'o>
         where
             L: 'o,
@@ -358,7 +358,7 @@ pub(crate) mod tests {
         fn run<'o>(
             &'o mut self,
             x: Self::Object<'o>,
-            tid: Self::Input,
+            tid: Self::Input<'o>,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {

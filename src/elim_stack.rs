@@ -84,14 +84,14 @@ where
     S: 'static + Stack<T>,
 {
     type Object<'o> = &'o ElimStack<T, S>;
-    type Input = T;
+    type Input<'o> = T;
     type Output<'o> = ();
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        value: Self::Input,
+        value: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -162,14 +162,14 @@ where
     S: 'static + Stack<T>,
 {
     type Object<'o> = &'o ElimStack<T, S>;
-    type Input = ();
+    type Input<'o> = ();
     type Output<'o> = Option<T>;
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (): Self::Input,
+        (): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {

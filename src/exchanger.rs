@@ -115,14 +115,14 @@ impl<T: Clone> Collectable for TryExchange<T> {
 
 impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input = (T, Duration, ExchangeCond<T>);
+    type Input<'o> = (T, Duration, ExchangeCond<T>);
     type Output<'o> = T;
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         xchg: Self::Object<'o>,
-        (value, timeout, cond): Self::Input,
+        (value, timeout, cond): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -182,14 +182,14 @@ impl<T: Clone> Collectable for Exchange<T> {
 
 impl<T: 'static + Clone> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input = (T, ExchangeCond<T>);
+    type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T;
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         xchg: Self::Object<'o>,
-        (value, cond): Self::Input,
+        (value, cond): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -450,14 +450,14 @@ mod tests {
 
     impl Memento for ExchangeOnce {
         type Object<'o> = &'o Exchanger<usize>;
-        type Input = usize; // tid(mid)
+        type Input<'o> = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
             xchg: Self::Object<'o>,
-            tid: Self::Input,
+            tid: Self::Input<'o>,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
@@ -515,7 +515,7 @@ mod tests {
 
     impl Memento for RotateLeft {
         type Object<'o> = &'o [Exchanger<usize>; 2];
-        type Input = usize;
+        type Input<'o> = usize;
         type Output<'o> = ();
         type Error = !;
 
@@ -524,7 +524,7 @@ mod tests {
         fn run<'o>(
             &'o mut self,
             xchgs: Self::Object<'o>,
-            tid: Self::Input,
+            tid: Self::Input<'o>,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
@@ -643,14 +643,14 @@ mod tests {
 
     // impl Memento for ExchangeMany {
     //     type Object<'o> = ();
-    //     type Input = ();
+    //     type Input<'o> = ();
     //     type Output<'o> = ();
     //     type Error = ();
 
     //     fn run<'o>(
     //         &'o mut self,
     //         (): Self::Object<'o>,
-    //         (): Self::Input,
+    //         (): Self::Input<'o>,
     //         guard: &mut Guard,
     //         pool: &'static PoolHandle,
     //     ) -> Result<Self::Output<'o>, Self::Error> {

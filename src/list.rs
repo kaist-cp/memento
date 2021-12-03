@@ -86,14 +86,14 @@ where
     K: Eq,
 {
     type Object<'o> = &'o List<K, V>;
-    type Input = (K, V);
+    type Input<'o> = (K, V);
     type Output<'o> = ();
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         list: Self::Object<'o>,
-        (key, value): Self::Input,
+        (key, value): Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -152,14 +152,14 @@ where
     K: Eq,
 {
     type Object<'o> = &'o List<K, V>;
-    type Input = K;
+    type Input<'o> = K;
     type Output<'o> = bool; // TODO: PoolHandle에 관한 디자인 합의 이후 Option<&'g V>로 바꾸기 (lifetime issue)
     type Error = !;
 
     fn run<'o>(
         &'o mut self,
         list: Self::Object<'o>,
-        key: Self::Input,
+        key: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {

@@ -15,10 +15,10 @@ use crate::{
 ///
 /// - `'o`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
 #[derive(Debug)]
-pub struct Pipe<Op1, Op2>
+pub struct Pipe<Op1, T, Op2>
 where
-    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input>,
-    Op2: Memento,
+    for<'o> Op1: 'static + Memento<Output<'o> = T>,
+    for<'o> Op2: 'static + Memento<Input<'o> = T>,
 {
     /// 먼저 실행될 op. `Pipe` op의 input은 `from` op의 input과 같음
     from: Op1,
@@ -30,10 +30,10 @@ where
     resetting: bool,
 }
 
-impl<Op1, Op2> Default for Pipe<Op1, Op2>
+impl<Op1, T, Op2> Default for Pipe<Op1, T, Op2>
 where
-    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input>,
-    Op2: Memento,
+    for<'o> Op1: 'static + Memento<Output<'o> = T>,
+    for<'o> Op2: 'static + Memento<Input<'o> = T>,
 {
     fn default() -> Self {
         Self {
@@ -44,10 +44,10 @@ where
     }
 }
 
-impl<Op1, Op2> Collectable for Pipe<Op1, Op2>
+impl<Op1, T, Op2> Collectable for Pipe<Op1, T, Op2>
 where
-    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input>,
-    Op2: Memento,
+    for<'o> Op1: 'static + Memento<Output<'o> = T>,
+    for<'o> Op2: 'static + Memento<Input<'o> = T>,
 {
     fn filter(pipe: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Op1::filter(&mut pipe.from, gc, pool);
@@ -55,23 +55,24 @@ where
     }
 }
 
-impl<Op1, Op2> Memento for Pipe<Op1, Op2>
+impl<Op1, T, Op2> Memento for Pipe<Op1, T, Op2>
 where
-    for<'o> Op1: Memento<Output<'o> = Op2::Input>,
-    Op2: Memento,
+    for<'o> Op1: 'static + Memento<Output<'o> = T>,
+    for<'o> Op2: 'static + Memento<Input<'o> = T>,
 {
     type Object<'o> = (Op1::Object<'o>, Op2::Object<'o>);
-    type Input = Op1::Input;
+    type Input<'o> = Op1::Input<'o>;
     type Output<'o>
     where
         Op2: 'o,
+        T: 'o,
     = Op2::Output<'o>;
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         (from_obj, to_obj): Self::Object<'o>,
-        init: Self::Input,
+        init: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -105,10 +106,10 @@ where
     }
 }
 
-impl<Op1, Op2> Drop for Pipe<Op1, Op2>
+impl<Op1, T, Op2> Drop for Pipe<Op1, T, Op2>
 where
-    for<'o> Op1: Memento<Output<'o> = Op2::Input>,
-    Op2: Memento,
+    for<'o> Op1: 'static + Memento<Output<'o> = T>,
+    for<'o> Op2: Memento<Input<'o> = T>,
 {
     fn drop(&mut self) {
         // TODO: "하위 Memento들이 reset 되어있지않으면 panic"
@@ -140,7 +141,7 @@ mod tests {
     }
 
     struct Transfer {
-        pipes: [Pipe<DequeueSome<usize>, Enqueue<usize>>; COUNT],
+        pipes: [Pipe<DequeueSome<usize>, usize, Enqueue<usize>>; COUNT],
         suppliers: [Enqueue<usize>; COUNT],
         consumers: [DequeueSome<usize>; COUNT],
     }
@@ -172,14 +173,14 @@ mod tests {
 
     impl Memento for Transfer {
         type Object<'o> = &'o [Queue<usize>; 2];
-        type Input = usize; // tid(mid)
+        type Input<'o> = usize; // tid(mid)
         type Output<'o> = ();
         type Error = !;
 
         fn run<'o>(
             &'o mut self,
             q_arr: Self::Object<'o>,
-            tid: Self::Input,
+            tid: Self::Input<'o>,
             guard: &mut Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {

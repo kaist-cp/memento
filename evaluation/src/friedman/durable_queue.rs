@@ -262,14 +262,14 @@ impl TestNOps for DurableQueueEnqDeqPair {}
 
 impl Memento for DurableQueueEnqDeqPair {
     type Object<'o> = &'o TestDurableQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
+        tid: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
@@ -313,14 +313,14 @@ impl TestNOps for DurableQueueEnqDeqProb {}
 
 impl Memento for DurableQueueEnqDeqProb {
     type Object<'o> = &'o TestDurableQueue;
-    type Input = usize; // tid
+    type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input,
+        tid: Self::Input<'o>,
         guard: &mut Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
