@@ -84,10 +84,10 @@ impl PoolHandle {
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
-            // mid번째 스레드가 mid번째 memento를 성공할때까지 반복
-            for mid in 0..nr_memento {
-                // mid번째 root memento 얻기
-                let m_addr = unsafe { RP_get_root_c(IX_MEMENTO_START + mid as u64) as usize };
+            // tid번째 스레드가 tid번째 memento를 성공할때까지 반복
+            for tid in 0..nr_memento {
+                // tid번째 root memento 얻기
+                let m_addr = unsafe { RP_get_root_c(IX_MEMENTO_START + tid as u64) as usize };
 
                 let _ = scope.spawn(move |_| {
                     thread::scope(|scope| {
@@ -96,18 +96,16 @@ impl PoolHandle {
                             let hanlder = scope.spawn(move |_| {
                                 let root_memento = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let guard = epoch::old_guard(mid);
-                                // root_memento.recover(root_obj, self);
-                                let _ = root_memento.run(root_obj, mid, true, &guard, self);
+                                let guard = epoch::old_guard(tid);
+                                let _ = root_memento.run(root_obj, tid, true, &guard, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
                             // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
                             match hanlder.join() {
                                 Ok(_) => break,
-                                Err(_) => {
-                                    todo!("뭔가 할 게 있나?")
-                                }
+                                Err(_) => break,
+                                // println!("PANIC: Root memento No.{} re-executed.", tid),
                             }
                         }
                     })
@@ -396,7 +394,7 @@ mod tests {
 
     impl Memento for RootMemento {
         type Object<'o> = &'o DummyRootObj;
-        type Input<'o> = usize; // tid(mid)
+        type Input<'o> = usize; // tid
         type Output<'o> = ();
         type Error = !;
 

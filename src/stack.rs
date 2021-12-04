@@ -86,7 +86,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     type TryPush: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = PShared<'o, Node<T>>,
+        Input<'o> = (PShared<'o, Node<T>>, &'o PAtomic<Node<T>>),
         Output<'o> = (),
         Error = TryFail,
     >;
@@ -101,7 +101,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
     type TryPop: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = (),
+        Input<'o> = &'o PAtomic<Node<T>>,
         Output<'o> = Option<T>,
         Error = TryFail,
     >;
@@ -120,12 +120,14 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
 pub struct Push<T: 'static + Clone, S: Stack<T>> {
+    node: PAtomic<Node<T>>,
     try_push: S::TryPush,
 }
 
 impl<T: Clone, S: Stack<T>> Default for Push<T, S> {
     fn default() -> Self {
         Self {
+            node: Default::default(),
             try_push: Default::default(),
         }
     }
@@ -133,7 +135,24 @@ impl<T: Clone, S: Stack<T>> Default for Push<T, S> {
 
 impl<T: Clone, S: Stack<T>> Collectable for Push<T, S> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = push.node.load(Ordering::Relaxed, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<T>::mark(node_ref, gc);
+        }
+
         S::TryPush::filter(&mut push.try_push, gc, pool);
+    }
+}
+
+impl<T: Clone, S: Stack<T>> Drop for Push<T, S> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let node = self.node.load(Ordering::Relaxed, guard);
+        assert!(node.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -150,27 +169,44 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         &'o mut self,
         stack: Self::Object<'o>,
         value: Self::Input<'o>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        let node = POwned::new(Node::from(value), pool).into_shared(guard);
+        let node = if rec {
+            let node = self.node.load(Ordering::Relaxed, guard);
+            if !node.is_null() {
+                if self
+                    .try_push
+                    .run(stack, (node, &self.node), rec, guard, pool)
+                    .is_ok()
+                {
+                    return Ok(());
+                }
+                node
+            } else {
+                let node = POwned::new(Node::from(value), pool).into_shared(guard);
+                self.node.store(node, Ordering::Relaxed);
+                persist_obj(&self.node, true);
+                node
+            }
+        } else {
+            let node = POwned::new(Node::from(value), pool).into_shared(guard);
+            self.node.store(node, Ordering::Relaxed);
+            persist_obj(&self.node, true);
+            node
+        };
 
-        while self.try_push.run(stack, node, guard, pool).is_err() {}
+        while self
+            .try_push
+            .run(stack, (node, &self.node), false, guard, pool)
+            .is_err()
+        {}
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_push.reset(true, guard, pool);
-    }
-
-    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
-        self.try_push.recover(object, pool);
-    }
-}
-
-impl<T: Clone, S: Stack<T>> Drop for Push<T, S> {
-    fn drop(&mut self) {
-        // TODO: try_push가 reset 되어있지 않으면 panic
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+        self.try_push.reset(nested, guard, pool);
     }
 }
 
@@ -179,12 +215,14 @@ unsafe impl<T: 'static + Clone, S: Stack<T>> Send for Push<T, S> where S::TryPus
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
 pub struct Pop<T: 'static + Clone, S: Stack<T>> {
+    mine: PAtomic<Node<T>>,
     try_pop: S::TryPop,
 }
 
 impl<T: Clone, S: Stack<T>> Default for Pop<T, S> {
     fn default() -> Self {
         Self {
+            mine: Default::default(),
             try_pop: Default::default(),
         }
     }
@@ -192,6 +230,15 @@ impl<T: Clone, S: Stack<T>> Default for Pop<T, S> {
 
 impl<T: Clone, S: Stack<T>> Collectable for Pop<T, S> {
     fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut mine = pop.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            let mine_ref = unsafe { mine.deref_mut(pool) };
+            Node::<T>::mark(mine_ref, gc);
+        }
+
         S::TryPop::filter(&mut pop.try_pop, gc, pool);
     }
 }
@@ -209,28 +256,57 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         &'o mut self,
         stack: Self::Object<'o>,
         (): Self::Input<'o>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
+        if let Ok(v) = self.try_pop.run(stack, &self.mine, rec, guard, pool) {
+            return Ok(v);
+        }
+
         loop {
-            if let Ok(v) = self.try_pop.run(stack, (), guard, pool) {
+            if let Ok(v) = self.try_pop.run(stack, &self.mine, false, guard, pool) {
                 return Ok(v);
             }
         }
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_pop.reset(true, guard, pool);
-    }
+    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO: Pop은 EMPTY 같은 게 뭔지 모름
+        // reset도 arg를 넘겨서 아랫놈이 하게 해야 할지도...
 
-    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
-        self.try_pop.recover(object, pool);
+        // let mine = self.mine.load(Ordering::SeqCst, guard);
+
+        // if mine.tag() == Self::EMPTY {
+        //     self.target.store(PShared::null(), Ordering::Relaxed);
+        //     persist_obj(&self.target, true);
+        //     return;
+        // }
+
+        // if !mine.is_null() {
+        //     // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+        //     // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+        //     self.target.store(PShared::null(), Ordering::Relaxed);
+        //     persist_obj(&self.target, true);
+
+        //     // crash-free execution이지만 try이니 owner가 내가 아닐 수 있음
+        //     // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
+        //     unsafe {
+        //         if mine.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
+        //             guard.defer_pdestroy(mine);
+        //         }
+        //     }
+        // }
+
+        self.try_pop.reset(nested, guard, pool);
     }
 }
 
 impl<T: Clone, S: Stack<T>> Drop for Pop<T, S> {
     fn drop(&mut self) {
-        // TODO: try_pop이 reset 되어있지 않으면 panic
+        let guard = unsafe { epoch::unprotected() };
+        let mine = self.mine.load(Ordering::Relaxed, guard);
+        assert!(mine.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -298,6 +374,7 @@ pub(crate) mod tests {
             &'o mut self,
             stack: Self::Object<'o>,
             tid: Self::Input<'o>,
+            rec: bool,
             guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
@@ -309,7 +386,7 @@ pub(crate) mod tests {
 
                     // Check empty
                     assert!(S::Pop::default()
-                        .run(stack, (), guard, pool)
+                        .run(stack, (), rec, guard, pool)
                         .unwrap()
                         .is_none());
 
@@ -323,13 +400,16 @@ pub(crate) mod tests {
                 _ => {
                     // push; pop;
                     for i in 0..COUNT {
-                        let _ = self.pushes[i].run(stack, tid, guard, pool);
-                        assert!(self.pops[i].run(stack, (), guard, pool).unwrap().is_some());
+                        let _ = self.pushes[i].run(stack, tid, rec, guard, pool);
+                        assert!(self.pops[i]
+                            .run(stack, (), rec, guard, pool)
+                            .unwrap()
+                            .is_some());
                     }
 
                     // pop 결과를 실험결과에 전달
                     for pop in self.pops.as_mut() {
-                        let ret = pop.run(stack, (), guard, pool).unwrap().unwrap();
+                        let ret = pop.run(stack, (), rec, guard, pool).unwrap().unwrap();
                         let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
                     }
 
@@ -341,16 +421,6 @@ pub(crate) mod tests {
 
         fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
-        }
-
-        fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
-            for push in self.pushes.iter_mut() {
-                push.recover(object, pool);
-            }
-
-            for pop in self.pops.iter_mut() {
-                pop.recover(object, pool);
-            }
         }
     }
 

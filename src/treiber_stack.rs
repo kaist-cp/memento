@@ -42,36 +42,31 @@ impl<T: Clone> TryPush<T> {
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = PShared<'o, Node<T>>;
+    type Input<'o> = (PShared<'o, Node<T>>, &'o PAtomic<Node<T>>);
     type Output<'o> = ();
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        node: Self::Input<'o>,
+        (node, node_loc): Self::Input<'o>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.insert
-            .run(stack, (node, &stack.top, Self::before_cas), guard, pool)
+            .run(
+                stack,
+                (node, node_loc, &stack.top, Self::before_cas),
+                rec,
+                guard,
+                pool,
+            )
             .map_err(|_| TryFail)
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        // 원래 하위 memento를 reset할 경우 reset flag를 쓰는 게 도리에 맞으나
-        // `Insert`의 `reset()`이 atomic 하므로 안 써도 됨
         self.insert.reset(nested, guard, pool);
-    }
-
-    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
-        self.insert.recover(object, pool);
-    }
-}
-
-impl<T: Clone> Drop for TryPush<T> {
-    fn drop(&mut self) {
-        // TODO: "하위 메멘토의 `is_reset()`이 필요함"
     }
 }
 
@@ -100,43 +95,38 @@ impl<T: Clone> Collectable for TryPop<T> {
 
 impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = ();
+    type Input<'o> = &'o PAtomic<Node<T>>;
     type Output<'o> = Option<T>;
     type Error = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (): Self::Input<'o>,
+        mine_loc: Self::Input<'o>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
         self.delete
-            .run(stack, (&stack.top, Self::is_empty), guard, pool)
+            .run(
+                stack,
+                (mine_loc, &stack.top, Self::is_empty),
+                rec,
+                guard,
+                pool,
+            )
             .map(|ret| ret.map(|popped| unsafe { popped.deref(pool) }.data.clone()))
             .map_err(|_| TryFail)
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        // 원래 하위 memento를 reset할 경우 reset flag를 쓰는 게 도리에 맞으나
-        // `Delete`의 `reset()`이 atomic 하므로 안 써도 됨
         self.delete.reset(nested, guard, pool);
-    }
-
-    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle) {
-        self.delete.recover(object, pool);
     }
 }
 
 impl<T: Clone> TryPop<T> {
     fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>) -> bool {
         target.is_null()
-    }
-}
-
-impl<T: Clone> Drop for TryPop<T> {
-    fn drop(&mut self) {
-        // TODO: "하위 메멘토의 `is_reset()`이 필요함"
     }
 }
 
