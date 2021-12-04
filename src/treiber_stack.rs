@@ -124,7 +124,15 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     }
 }
 
+impl<T: Clone> DeallocNode<T> for TryPop<T> {
+    #[inline]
+    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
+        self.delete.dealloc(target, guard, pool);
+    }
+}
+
 impl<T: Clone> TryPop<T> {
+    #[inline]
     fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>) -> bool {
         target.is_null()
     }

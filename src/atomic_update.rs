@@ -40,6 +40,16 @@ pub trait Node: Sized {
 
 /// TODO: doc
 #[derive(Debug)]
+pub enum InsertErr {
+    /// TODO: doc
+    AbortedBeforeCAS,
+
+    /// TODO: doc
+    CASFailure,
+}
+
+/// TODO: doc
+#[derive(Debug)]
 pub struct Insert<O, T: Node + Collectable> {
     _marker: PhantomData<*const (O, T)>,
 }
@@ -76,7 +86,7 @@ where
         O: 'o,
         T: 'o,
     = ();
-    type Error = ();
+    type Error = InsertErr;
 
     fn run<'o>(
         &'o mut self,
@@ -113,13 +123,13 @@ where
         let old = point.load(Ordering::SeqCst, guard);
 
         if !before_cas(new_ref, old) {
-            return Err(());
+            return Err(InsertErr::AbortedBeforeCAS);
         }
 
         let ret = point
             .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| ())
-            .map_err(|_| ());
+            .map_err(|_| InsertErr::CASFailure);
 
         persist_obj(point, true); // TODO: stack에서는 성공한 놈만 해도 될지도?
         ret
@@ -283,30 +293,7 @@ where
             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
-        // let target = self.target.load(Ordering::SeqCst, guard);
-
-        // if target.tag() == Self::EMPTY {
-        //     self.target.store(PShared::null(), Ordering::Relaxed);
-        //     persist_obj(&self.target, true);
-        //     return;
-        // }
-
-        // if !target.is_null() {
-        //     // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        //     // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        //     self.target.store(PShared::null(), Ordering::Relaxed);
-        //     persist_obj(&self.target, true);
-
-        //     // crash-free execution이지만 try이니 owner가 내가 아닐 수 있음
-        //     // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
-        //     unsafe {
-        //         if target.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
-        //             guard.defer_pdestroy(target);
-        //         }
-        //     }
-        // }
-    }
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
 impl<O, T> Delete<O, T>
@@ -319,6 +306,21 @@ where
 
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
+
+    /// TODO: doc
+    pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
+        if target.is_null() || target.tag() == Self::EMPTY {
+            return;
+        }
+
+        // owner가 내가 아닐 수 있음
+        // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
+        unsafe {
+            if target.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
+                guard.defer_pdestroy(target);
+            }
+        }
+    }
 
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {

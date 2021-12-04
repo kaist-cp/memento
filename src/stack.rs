@@ -80,6 +80,12 @@ impl<T: Clone> Collectable for Node<T> {
     }
 }
 
+/// TODO: doc
+pub trait DeallocNode<T: Clone> {
+    /// TODO: doc
+    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle);
+}
+
 /// Persistent stack trait
 pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try push 연산을 위한 Persistent op.
@@ -100,11 +106,11 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try pop의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     /// Try pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
     type TryPop: for<'o> Memento<
-        Object<'o> = &'o Self,
-        Input<'o> = &'o PAtomic<Node<T>>,
-        Output<'o> = Option<T>,
-        Error = TryFail,
-    >;
+            Object<'o> = &'o Self,
+            Input<'o> = &'o PAtomic<Node<T>>,
+            Output<'o> = Option<T>,
+            Error = TryFail,
+        > + DeallocNode<T>;
 
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
@@ -272,31 +278,13 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO: Pop은 EMPTY 같은 게 뭔지 모름
-        // reset도 arg를 넘겨서 아랫놈이 하게 해야 할지도...
+        let mine = self.mine.load(Ordering::Relaxed, guard);
 
-        // let mine = self.mine.load(Ordering::SeqCst, guard);
-
-        // if mine.tag() == Self::EMPTY {
-        //     self.target.store(PShared::null(), Ordering::Relaxed);
-        //     persist_obj(&self.target, true);
-        //     return;
-        // }
-
-        // if !mine.is_null() {
-        //     // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        //     // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        //     self.target.store(PShared::null(), Ordering::Relaxed);
-        //     persist_obj(&self.target, true);
-
-        //     // crash-free execution이지만 try이니 owner가 내가 아닐 수 있음
-        //     // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
-        //     unsafe {
-        //         if mine.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
-        //             guard.defer_pdestroy(mine);
-        //         }
-        //     }
-        // }
+        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+        self.mine.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.mine, true);
+        self.try_pop.dealloc(mine, guard, pool);
 
         self.try_pop.reset(nested, guard, pool);
     }
