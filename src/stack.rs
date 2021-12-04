@@ -7,6 +7,7 @@ use crossbeam_epoch::Guard;
 use crate::atomic_update::{self, Delete};
 use crate::pepoch::{self as epoch, PAtomic, POwned, PShared};
 use crate::persistent::*;
+use crate::plocation::ll::persist_obj;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::PoolHandle;
 use crate::treiber_stack::TreiberStack;
@@ -48,6 +49,7 @@ impl<T: Clone> From<T> for Node<T> {
 impl<T: Clone> atomic_update::Node for Node<T> {
     fn ack(&self) {
         self.pushed.store(true, Ordering::SeqCst);
+        persist_obj(&self.pushed, true);
     }
 
     fn acked(&self) -> bool {
@@ -153,11 +155,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     ) -> Result<Self::Output<'o>, Self::Error> {
         let node = POwned::new(Node::from(value), pool).into_shared(guard);
 
-        while self
-            .try_push
-            .run(stack, node, guard, pool)
-            .is_err()
-        {}
+        while self.try_push.run(stack, node, guard, pool).is_err() {}
         Ok(())
     }
 

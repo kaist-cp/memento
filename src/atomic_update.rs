@@ -120,7 +120,7 @@ where
             //  - 만약 최적화하며 push CAS 성공 후 inserted=true를 안하게 바꾼다면, 여기서는 inserted 대신 Token에 담겨있는 Ok or Err 정보로 성공여부 판단해야함 (혹은 Direct tracking..)
             unsafe {
                 if new.deref_mut(pool).acked() {
-                    guard.defer_pdestroy(new);
+                    guard.defer_pdestroy(new); // TODO: insert한 놈이 ack 스스로 안 하므로 바꿔야 함
                 }
             }
         }
