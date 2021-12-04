@@ -44,9 +44,9 @@ pub mod atomic_update;
 pub mod persistent;
 // pub mod pipe;
 // pub mod queue;
-pub mod stack;
+// pub mod stack;
 // pub mod ticket_lock;
-pub mod treiber_stack;
+// pub mod treiber_stack;
 
 // Persistent location
 pub mod plocation;

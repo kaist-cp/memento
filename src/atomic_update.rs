@@ -41,8 +41,7 @@ pub trait Node: Sized {
 /// TODO: doc
 #[derive(Debug)]
 pub struct Insert<O, T: Node + Collectable> {
-    new: PAtomic<T>,
-    _marker: PhantomData<*const O>,
+    _marker: PhantomData<*const (O, T)>,
 }
 
 unsafe impl<O, T: Node + Collectable + Send + Sync> Send for Insert<O, T> {}
@@ -51,7 +50,6 @@ unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Insert<O, T> {}
 impl<O, T: Node + Collectable> Default for Insert<O, T> {
     fn default() -> Self {
         Self {
-            new: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -59,22 +57,22 @@ impl<O, T: Node + Collectable> Default for Insert<O, T> {
 
 impl<O, T: Node + Collectable> Collectable for Insert<O, T> {
     fn filter(insert: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
+        // let guard = unsafe { epoch::unprotected() };
 
-        // Mark ptr if valid
-        let mut new = insert.new.load(Ordering::SeqCst, guard);
-        if !new.is_null() {
-            let new_ref = unsafe { new.deref_mut(pool) };
-            T::mark(new_ref, gc);
-        }
+        // // Mark ptr if valid
+        // let mut new = insert.new.load(Ordering::SeqCst, guard);
+        // if !new.is_null() {
+        //     let new_ref = unsafe { new.deref_mut(pool) };
+        //     T::mark(new_ref, gc);
+        // }
     }
 }
 
 impl<O, T: Node + Collectable> Drop for Insert<O, T> {
     fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let new = self.new.load(Ordering::Relaxed, guard);
-        assert!(new.is_null(), "reset 되어있지 않음.")
+        // let guard = unsafe { epoch::unprotected() };
+        // let new = self.new.load(Ordering::Relaxed, guard);
+        // assert!(new.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -87,6 +85,7 @@ where
     type Input<'o> = (
         PShared<'o, T>,
         &'o PAtomic<T>,
+        &'o PAtomic<T>,
         fn(&mut T, PShared<'_, T>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
@@ -98,44 +97,50 @@ where
 
     fn run<'o>(
         &'o mut self,
-        _: Self::Object<'o>,
-        (new, point, before_cas): Self::Input<'o>,
+        obj: Self::Object<'o>,
+        (new, new_loc, point, before_cas): Self::Input<'o>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error> {
-        self.insert(new, point, before_cas, guard, pool)
+        if rec {
+            if new.tag() & Self::COMPLETE == Self::COMPLETE {
+                return Ok(());
+            }
+
+            if !new.is_null()
+                && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked())
+            {
+                // (2) obj 안에 n이 있으면 삽입된 것이다 (Direct tracking)
+                // (3) acked 되었다면 삽입된 것이다
+                new_loc.store(new.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                // 성공 여부이므로 굳이 persist 안 해도 됨
+
+                return Ok(());
+            }
+        }
+
+        self.insert(new, new_loc, point, before_cas, guard, pool)
     }
 
     fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
-        let mut new = self.new.load(Ordering::Relaxed, guard);
-        if !new.is_null() {
-            self.new.store(PShared::null(), Ordering::Relaxed);
-            persist_obj(&self.new, true);
+        // let mut new = self.new.load(Ordering::Relaxed, guard);
+        // if !new.is_null() {
+        //     self.new.store(PShared::null(), Ordering::Relaxed);
+        //     persist_obj(&self.new, true);
 
-            // crash-free execution이지만 try성 CAS라서 insert 실패했을 수 있음
-            // 따라서 inserted 플래그로 (1) 성공여부 확인후, (2) insert 되지 않았으면 free
-            //
-            // NOTE:
-            //  - 현재는 insert CAS 성공 후 inserted=true로 설정해주니까, 성공했다면 inserted=true가 보장됨
-            //  - 만약 최적화하며 push CAS 성공 후 inserted=true를 안하게 바꾼다면, 여기서는 inserted 대신 Token에 담겨있는 Ok or Err 정보로 성공여부 판단해야함 (혹은 Direct tracking..)
-            unsafe {
-                if new.deref_mut(pool).acked() {
-                    guard.defer_pdestroy(new); // TODO: insert한 놈이 ack 스스로 안 하므로 바꿔야 함
-                }
-            }
-        }
-    }
-
-    fn recover<'o>(&mut self, obj: Self::Object<'o>, pool: &'static PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-        let new = self.new.load(Ordering::Relaxed, guard);
-
-        if !new.is_null() && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked()) {
-            // (2) obj 안에 n이 있으면 삽입된 것이다 (Direct tracking)
-            // (3) acked 되었다면 삽입된 것이다
-            self.new
-                .store(new.with_tag(Self::COMPLETE), Ordering::Relaxed);
-        }
+        //     // crash-free execution이지만 try성 CAS라서 insert 실패했을 수 있음
+        //     // 따라서 inserted 플래그로 (1) 성공여부 확인후, (2) insert 되지 않았으면 free
+        //     //
+        //     // NOTE:
+        //     //  - 현재는 insert CAS 성공 후 inserted=true로 설정해주니까, 성공했다면 inserted=true가 보장됨
+        //     //  - 만약 최적화하며 push CAS 성공 후 inserted=true를 안하게 바꾼다면, 여기서는 inserted 대신 Token에 담겨있는 Ok or Err 정보로 성공여부 판단해야함 (혹은 Direct tracking..)
+        //     unsafe {
+        //         if new.deref_mut(pool).acked() {
+        //             guard.defer_pdestroy(new); // TODO: insert한 놈이 ack 스스로 안 하므로 바꿔야 함
+        //         }
+        //     }
+        // }
     }
 }
 
@@ -149,36 +154,42 @@ where
 
     fn insert<F>(
         &self,
-        new: PShared<'_, T>,
+        mut new: PShared<'_, T>,
+        new_loc: &PAtomic<T>,
         point: &PAtomic<T>,
         before_cas: F,
         guard: &Guard,
-        pool: &PoolHandle,
+        pool: &'static PoolHandle,
     ) -> Result<(), ()>
     where
         F: Fn(&mut T, PShared<'_, T>) -> bool,
     {
-        let mut n = self.new.load(Ordering::Relaxed, guard);
+        // let mut n = self.new.load(Ordering::Relaxed, guard);
 
-        if n.is_null() {
-            self.new.store(new, Ordering::Relaxed);
-            persist_obj(&self.new, false);
-            n = new;
-        } else if n.tag() & Self::COMPLETE == Self::COMPLETE {
-            return Ok(());
-        } else if n.as_ptr() != new.as_ptr() {
-            unsafe { guard.defer_pdestroy(new) };
-        }
+        // if n.is_null() {
+        //     self.new.store(new, Ordering::Relaxed);
+        //     persist_obj(&self.new, false);
+        //     n = new;
+        // } else if n.tag() & Self::COMPLETE == Self::COMPLETE {
+        //     return Ok(());
+        // } else if n.as_ptr() != new.as_ptr() {
+        //     unsafe { guard.defer_pdestroy(new) };
+        // }
 
-        let mine_ref = unsafe { n.deref_mut(pool) };
+        let new_ref = unsafe { new.deref_mut(pool) };
+
+        // if new_ref.acked() {
+        //     return Ok(());
+        // }
+
         let old = point.load(Ordering::SeqCst, guard);
 
-        if !before_cas(mine_ref, old) {
+        if !before_cas(new_ref, old) {
             return Err(());
         }
 
         let ret = point
-            .compare_exchange(old, n, Ordering::SeqCst, Ordering::SeqCst, guard)
+            .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| ())
             .map_err(|_| ());
 

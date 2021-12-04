@@ -106,6 +106,7 @@ pub trait Memento: Default + Collectable {
         &'o mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
+        rec: bool, // TODO: template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error>;
@@ -125,7 +126,7 @@ pub trait Memento: Default + Collectable {
     /// Recovery할 때만 필요한 로직을 포함하는 memento가 해당 로직을 수행하도록 셋팅
     ///
     /// 프로그램 시작할 때 root에서 set_recovery를 호출
-    fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle);
+    // fn recover<'o>(&mut self, object: Self::Object<'o>, pool: &'static PoolHandle);
 }
 
 /// TODO: doc
