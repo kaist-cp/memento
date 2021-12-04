@@ -98,7 +98,7 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        (new, new_loc, point, before_cas): Self::Input<'o>,
+        (mut new, new_loc, point, before_cas): Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,

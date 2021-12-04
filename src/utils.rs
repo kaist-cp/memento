@@ -66,6 +66,7 @@ pub mod tests {
             &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
+            _: bool,
             _: &Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
@@ -76,7 +77,7 @@ pub mod tests {
             // no-op
         }
 
-        fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
+        // fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
     }
 
     /// test에 사용하기 위한 더미용 PoolHandle 얻기

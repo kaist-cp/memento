@@ -97,8 +97,8 @@ impl PoolHandle {
                                 let root_memento = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                                 let guard = epoch::old_guard(mid);
-                                root_memento.recover(root_obj, self);
-                                let _ = root_memento.run(root_obj, mid, &guard, self);
+                                // root_memento.recover(root_obj, self);
+                                let _ = root_memento.run(root_obj, mid, true, &guard, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
@@ -404,6 +404,7 @@ mod tests {
             &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
+            _: bool,
             _: &Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
@@ -422,7 +423,7 @@ mod tests {
             // no-op
         }
 
-        fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
+        // fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
     }
 
     impl TestRootMemento<DummyRootObj> for RootMemento {}
