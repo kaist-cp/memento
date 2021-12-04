@@ -40,12 +40,12 @@ pub trait Node: Sized {
 
 /// TODO: doc
 #[derive(Debug)]
-pub enum InsertErr {
+pub enum InsertErr<'g, T> {
     /// TODO: doc
     AbortedBeforeCAS,
 
     /// TODO: doc
-    CASFailure,
+    CASFailure(PShared<'g, T>),
 }
 
 /// TODO: doc
@@ -86,16 +86,16 @@ where
         O: 'o,
         T: 'o,
     = ();
-    type Error = InsertErr;
+    type Error<'o> = InsertErr<'o, T>;
 
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
         (mut new, new_loc, point, before_cas): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
             if new.tag() & Self::COMPLETE == Self::COMPLETE {
                 // TODO
@@ -129,7 +129,7 @@ where
         let ret = point
             .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| ())
-            .map_err(|_| InsertErr::CASFailure);
+            .map_err(|e| InsertErr::CASFailure(e.current));
 
         persist_obj(point, true); // TODO: stack에서는 성공한 놈만 해도 될지도?
         ret
@@ -179,14 +179,14 @@ where
     type Input<'o> = (
         &'o PAtomic<T>,
         &'o PAtomic<T>,
-        fn(PShared<'_, T>, &O) -> bool, // empty check
+        fn(PShared<'_, T>, &O, &Guard) -> bool, // empty check
     );
     type Output<'o>
     where
         O: 'o,
         T: 'o,
     = Option<PShared<'o, T>>;
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
@@ -195,7 +195,7 @@ where
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
             let target = target_loc.load(Ordering::Relaxed, guard);
 
@@ -249,7 +249,7 @@ where
 
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
-        if is_empty(target, obj) {
+        if is_empty(target, obj, guard) {
             target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
             persist_obj(&target_loc, true);
             return Ok(None);
@@ -266,14 +266,12 @@ where
 
         // point를 next로 바꿈
         let next = target_ref.next(guard);
-        if point
-            .compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .is_err()
-        {
+        let res = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        persist_obj(point, true);
+
+        if res.is_err() {
             return Err(());
         }
-
-        persist_obj(point, true);
 
         // top node에 내 이름 새겨넣음
         // CAS인 이유: pop 복구 중인 스레드와 경합이 일어날 수 있음

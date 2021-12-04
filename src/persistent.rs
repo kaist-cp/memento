@@ -90,7 +90,9 @@ pub trait Memento: Default + Collectable {
         Self: 'o;
 
     /// Persistent op이 적용되지 않았을 때 발생하는 Error type
-    type Error;
+    type Error<'o>
+    where
+        Self: 'o;
 
     /// Persistent op 동작 함수 (idempotent)
     ///
@@ -109,7 +111,7 @@ pub trait Memento: Default + Collectable {
         rec: bool, // TODO: template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error>;
+    ) -> Result<Self::Output<'o>, Self::Error<'o>>;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
     ///

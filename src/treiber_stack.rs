@@ -44,7 +44,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
     type Input<'o> = (PShared<'o, Node<T>>, &'o PAtomic<Node<T>>);
     type Output<'o> = ();
-    type Error = TryFail;
+    type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
@@ -53,7 +53,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.insert
             .run(
                 stack,
@@ -97,7 +97,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'o> = &'o TreiberStack<T>;
     type Input<'o> = &'o PAtomic<Node<T>>;
     type Output<'o> = Option<T>;
-    type Error = TryFail;
+    type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
@@ -106,7 +106,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
             .run(
                 stack,
@@ -124,7 +124,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     }
 }
 
-impl<T: Clone> DeallocNode<T> for TryPop<T> {
+impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
     #[inline]
     fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
         self.delete.dealloc(target, guard, pool);
@@ -133,7 +133,7 @@ impl<T: Clone> DeallocNode<T> for TryPop<T> {
 
 impl<T: Clone> TryPop<T> {
     #[inline]
-    fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>) -> bool {
+    fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>, _: &Guard) -> bool {
         target.is_null()
     }
 }

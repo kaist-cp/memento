@@ -81,9 +81,9 @@ impl<T: Clone> Collectable for Node<T> {
 }
 
 /// TODO: doc
-pub trait DeallocNode<T: Clone> {
+pub trait DeallocNode<T: Clone, N: atomic_update::Node> {
     /// TODO: doc
-    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle);
+    fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle);
 }
 
 /// Persistent stack trait
@@ -94,12 +94,12 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
         Object<'o> = &'o Self,
         Input<'o> = (PShared<'o, Node<T>>, &'o PAtomic<Node<T>>),
         Output<'o> = (),
-        Error = TryFail,
+        Error<'o> = TryFail,
     >;
 
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
-    type Push: for<'o> Memento<Object<'o> = &'o Self, Input<'o> = T, Output<'o> = (), Error = !> =
+    type Push: for<'o> Memento<Object<'o> = &'o Self, Input<'o> = T, Output<'o> = (), Error<'o> = !> =
         Push<T, Self>;
 
     /// Try pop 연산을 위한 Persistent op.
@@ -109,8 +109,8 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
             Object<'o> = &'o Self,
             Input<'o> = &'o PAtomic<Node<T>>,
             Output<'o> = Option<T>,
-            Error = TryFail,
-        > + DeallocNode<T>;
+            Error<'o> = TryFail,
+        > + DeallocNode<T, Node<T>>;
 
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
@@ -119,7 +119,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
         Object<'o> = &'o Self,
         Input<'o> = (),
         Output<'o> = Option<T>,
-        Error = !,
+        Error<'o> = !,
     > = Pop<T, Self>;
 }
 
@@ -159,6 +159,7 @@ impl<T: Clone, S: Stack<T>> Drop for Push<T, S> {
         let guard = unsafe { epoch::unprotected() };
         let node = self.node.load(Ordering::Relaxed, guard);
         assert!(node.is_null(), "reset 되어있지 않음.")
+        // TODO: trypush의 리셋여부 파악?
     }
 }
 
@@ -169,7 +170,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     where
         T: 'o,
     = ();
-    type Error = !;
+    type Error<'o> = !;
 
     fn run<'o>(
         &'o mut self,
@@ -178,7 +179,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
             if !node.is_null() {
@@ -256,7 +257,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
     where
         T: 'o,
     = Option<T>;
-    type Error = !;
+    type Error<'o> = !;
 
     fn run<'o>(
         &'o mut self,
@@ -265,7 +266,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if let Ok(v) = self.try_pop.run(stack, &self.mine, rec, guard, pool) {
             return Ok(v);
         }
@@ -295,6 +296,7 @@ impl<T: Clone, S: Stack<T>> Drop for Pop<T, S> {
         let guard = unsafe { epoch::unprotected() };
         let mine = self.mine.load(Ordering::Relaxed, guard);
         assert!(mine.is_null(), "reset 되어있지 않음.")
+        // TODO: trypop의 리셋여부 파악?
     }
 }
 
@@ -351,7 +353,7 @@ pub(crate) mod tests {
         type Object<'o> = &'o S;
         type Input<'o> = usize; // tid(mid)
         type Output<'o> = ();
-        type Error = !;
+        type Error<'o> = !;
 
         /// push_pop을 반복하는 Concurrent stack test
         ///
@@ -365,7 +367,7 @@ pub(crate) mod tests {
             rec: bool,
             guard: &Guard,
             pool: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error> {
+        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             match tid {
                 // T0: 다른 스레드들의 실행결과를 확인
                 0 => {

@@ -395,7 +395,7 @@ mod tests {
         type Object<'o> = &'o DummyRootObj;
         type Input<'o> = usize; // tid
         type Output<'o> = ();
-        type Error = !;
+        type Error<'o> = !;
 
         fn run<'o>(
             &'o mut self,
@@ -404,7 +404,7 @@ mod tests {
             _: bool,
             _: &Guard,
             _: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error> {
+        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             if self.flag {
                 debug!("check inv");
                 assert_eq!(self.value, 42);
