@@ -264,15 +264,16 @@ impl Memento for DurableQueueEnqDeqPair {
     type Object<'o> = &'o TestDurableQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
 
@@ -293,10 +294,6 @@ impl Memento for DurableQueueEnqDeqPair {
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
-        // no-op
-    }
 }
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
@@ -315,15 +312,16 @@ impl Memento for DurableQueueEnqDeqProb {
     type Object<'o> = &'o TestDurableQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
@@ -345,10 +343,6 @@ impl Memento for DurableQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }

@@ -168,13 +168,7 @@ impl<T: Clone> LogQueue<T> {
         }
     }
 
-    fn dequeue(
-        &self,
-        tid: usize,
-        op_num: &mut usize,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) {
+    fn dequeue(&self, tid: usize, op_num: &mut usize, guard: &Guard, pool: &'static PoolHandle) {
         // NOTE: Log 큐의 하자 (2/2)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Log 큐: deq 로그 할당 및 persist
@@ -356,15 +350,16 @@ impl Memento for LogQueueEnqDeqPair {
     type Object<'o> = &'o TestLogQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
 
@@ -389,10 +384,6 @@ impl Memento for LogQueueEnqDeqPair {
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
-        // no-op
-    }
 }
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
@@ -414,15 +405,16 @@ impl Memento for LogQueueEnqDeqProb {
     type Object<'o> = &'o TestLogQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
@@ -446,10 +438,6 @@ impl Memento for LogQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }

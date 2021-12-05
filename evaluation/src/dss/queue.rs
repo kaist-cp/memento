@@ -173,12 +173,7 @@ impl<T: Clone> DSSQueue<T> {
         }
     }
 
-    fn _resolve_enqueue(
-        &self,
-        tid: usize,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> (T, bool) {
+    fn _resolve_enqueue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) -> (T, bool) {
         let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
         let node_ref = unsafe { x_tid.deref(pool) };
         let value = unsafe { (*node_ref.val.as_ptr()).clone() };
@@ -389,15 +384,16 @@ impl Memento for DSSQueueEnqDeqPair {
     type Object<'o> = &'o TestDSSQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
 
@@ -418,10 +414,6 @@ impl Memento for DSSQueueEnqDeqPair {
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
-        // no-op
-    }
 }
 
 #[derive(Default, Debug)]
@@ -439,15 +431,16 @@ impl Memento for DSSQueueEnqDeqProb {
     type Object<'o> = &'o TestDSSQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
@@ -467,10 +460,6 @@ impl Memento for DSSQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
