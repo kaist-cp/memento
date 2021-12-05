@@ -43,6 +43,9 @@ pub enum InsertErr<'g, T> {
 
     /// TODO: doc
     CASFailure(PShared<'g, T>),
+
+    /// TODO: doc
+    RecFail,
 }
 
 /// TODO: doc
@@ -128,7 +131,7 @@ impl<O: Traversable<T>, T: Node + Collectable> Insert<O, T> {
             return Ok(());
         }
 
-        Err(InsertErr::AbortedBeforeCAS)
+        Err(InsertErr::RecFail)
     }
 }
 

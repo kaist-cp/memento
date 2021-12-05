@@ -230,23 +230,18 @@ impl<T: Clone> Memento for Enqueue<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
-            if !node.is_null() {
-                if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
-                    return Ok(());
-                }
-                node
+            if node.is_null() {
+                self.new_node(value, guard, pool)
             } else {
-                let node = POwned::new(NodeOpt::from(value), pool).into_shared(guard);
-                self.node.store(node, Ordering::Relaxed);
-                persist_obj(&self.node, true);
                 node
             }
         } else {
-            let node = POwned::new(NodeOpt::from(value), pool).into_shared(guard);
-            self.node.store(node, Ordering::Relaxed);
-            persist_obj(&self.node, true);
-            node
+            self.new_node(value, guard, pool)
         };
+
+        if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
+            return Ok(());
+        }
 
         while self.try_enq.run(queue, node, false, guard, pool).is_err() {}
         Ok(())
@@ -254,6 +249,16 @@ impl<T: Clone> Memento for Enqueue<T> {
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_enq.reset(nested, guard, pool);
+    }
+}
+
+impl<T: Clone> Enqueue<T> {
+    #[inline]
+    fn new_node<'g>(&self, value: T, guard: &'g Guard, pool: &'static PoolHandle) -> PShared<'g, NodeOpt<T>>{
+        let node = POwned::new(NodeOpt::from(value), pool).into_shared(guard);
+        self.node.store(node, Ordering::Relaxed);
+        persist_obj(&self.node, true);
+        node
     }
 }
 
