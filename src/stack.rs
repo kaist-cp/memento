@@ -59,10 +59,6 @@ impl<T: Clone> atomic_update::Node for Node<T> {
     fn owner(&self) -> &AtomicUsize {
         &self.popper
     }
-
-    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self> {
-        self.next.load(Ordering::SeqCst, guard)
-    }
 }
 
 unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}

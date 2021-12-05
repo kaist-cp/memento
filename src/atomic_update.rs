@@ -33,9 +33,6 @@ pub trait Node: Sized {
 
     /// TODO: doc
     fn owner(&self) -> &AtomicUsize;
-
-    /// TODO: doc
-    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self>;
 }
 
 /// TODO: doc
@@ -163,7 +160,7 @@ where
     type Input<'o> = (
         &'o PAtomic<T>,
         &'o PAtomic<T>,
-        fn(PShared<'_, T>, &O, &Guard, &PoolHandle) -> Option<bool>, // Some(true, false): empty or not, None: need retry
+        fn(PShared<'_, T>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, T>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
     type Output<'o>
     where
@@ -175,7 +172,7 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        (target_loc, point, is_empty): Self::Input<'o>,
+        (target_loc, point, get_next): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -233,27 +230,27 @@ where
 
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
-        match is_empty(target, obj, guard, pool) {
-            Some(true) => {
+
+        let next = match get_next(target, obj, guard, pool) {
+            Ok(Some(n)) => n,
+            Ok(None) => {
                 target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
                 persist_obj(&target_loc, true);
                 return Ok(None);
             }
-            Some(false) => (),
-            None => return Err(()),
+            Err(()) => return Err(()),
         };
-
-        let target_ref = unsafe { target.deref(pool) };
 
         // 우선 내가 target을 가리키고
         target_loc.store(target, Ordering::Relaxed);
-        persist_obj(&target_loc, false);
+        persist_obj(target_loc, false);
 
         // target을 ack해주고
+        let target_ref = unsafe { target.deref(pool) };
         target_ref.ack();
 
         // point를 next로 바꿈
-        let next = target_ref.next(guard);
+        // let next = target_ref.next(guard);
         let res = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         persist_obj(point, true);
 

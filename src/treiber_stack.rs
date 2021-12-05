@@ -110,7 +110,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         self.delete
             .run(
                 stack,
-                (mine_loc, &stack.top, Self::is_empty),
+                (mine_loc, &stack.top, Self::get_next),
                 rec,
                 guard,
                 pool,
@@ -133,8 +133,14 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
 
 impl<T: Clone> TryPop<T> {
     #[inline]
-    fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>, _: &Guard, _: &PoolHandle) -> Option<bool> {
-        Some(target.is_null())
+    fn get_next<'g>(target: PShared<'_, Node<T>>, _: &TreiberStack<T>, guard: &'g Guard, pool: &PoolHandle) -> Result<Option<PShared<'g, Node<T>>>, ()> {
+        if target.is_null() {
+            return Ok(None);
+        }
+
+        let target_ref = unsafe { target.deref(pool) };
+        let next = target_ref.next.load(Ordering::SeqCst, guard);
+        Ok(Some(next))
     }
 }
 

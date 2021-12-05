@@ -78,10 +78,6 @@ impl<T: Clone> atomic_update::Node for Node<T> {
     fn owner(&self) -> &AtomicUsize {
         &self.dequeuer
     }
-
-    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self> {
-        self.next.load(Ordering::SeqCst, guard)
-    }
 }
 
 /// TODO: doc
@@ -302,7 +298,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete
             .run(
                 queue,
-                (mine_loc, &queue.head, Self::is_empty),
+                (mine_loc, &queue.head, Self::get_next),
                 rec,
                 guard,
                 pool,
@@ -332,22 +328,22 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryDequeue<T> {
 }
 
 impl<T: Clone> TryDequeue<T> {
-    fn is_empty(
+    fn get_next<'g>(
         head: PShared<'_, Node<T>>,
         queue: &ComposedQueue<T>,
-        guard: &Guard,
+        guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Option<bool> {
+    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
 
         if next.is_null() {
-            return Some(true);
+            return Ok(None);
         }
 
         let tail = queue.tail.load(Ordering::SeqCst, guard);
         if head != tail {
-            return Some(false);
+            return Ok(Some(next));
         }
 
         let tail_ref = unsafe { tail.deref(pool) };
@@ -357,7 +353,7 @@ impl<T: Clone> TryDequeue<T> {
             .tail
             .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-        None
+        Err(())
 
         // TODO: 왜 아래 로직으로 했을 때 버그가 나는지 생각
         // 두 번째 실행해서 테일->헤드가 됨
