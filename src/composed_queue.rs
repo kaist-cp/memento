@@ -168,6 +168,26 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.insert.reset(nested, guard, pool);
     }
+
+    fn result<'o>(
+        &'o mut self,
+        queue: Self::Object<'o>,
+        node: Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        let tail = queue.tail.load(Ordering::SeqCst, guard);
+        let tail_ref = unsafe { tail.deref(pool) }; // TODO: filter 에서 tail align 해야 함
+
+        match self
+            .insert
+            .result(queue, (node, &tail_ref.next, Self::before_cas), guard, pool)
+        {
+            Some(Ok(())) => Some(Ok(())),
+            Some(Err(e)) => Some(Err(TryFail)),
+            None => None,
+        }
+    }
 }
 
 /// Queue의 enqueue
@@ -254,6 +274,22 @@ impl<T: Clone> Memento for Enqueue<T> {
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_enq.reset(nested, guard, pool);
     }
+
+    fn result<'o>(
+        &'o mut self,
+        queue: Self::Object<'o>,
+        _: Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        let node = self.node.load(Ordering::Relaxed, guard);
+
+        match self.try_enq.result(queue, node, guard, pool) {
+            Some(Ok(())) => Some(Ok(())),
+            Some(Err(_)) => None,
+            None => None,
+        }
+    }
 }
 
 unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
@@ -317,6 +353,29 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.delete.reset(nested, guard, pool);
+    }
+
+    fn result<'o>(
+        &'o mut self,
+        queue: Self::Object<'o>,
+        mine_loc: Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        match self
+            .delete
+            .result(queue, (mine_loc, &queue.head, Self::get_next), guard, pool)
+        {
+            Some(Ok(res)) => Some(Ok(res.map(|popped| {
+                let next = unsafe { popped.deref(pool) }
+                    .next
+                    .load(Ordering::SeqCst, guard);
+                let next_ref = unsafe { next.deref(pool) };
+                unsafe { (*next_ref.data.as_ptr()).clone() }
+            }))),
+            Some(Err(e)) => Some(Err(TryFail)),
+            None => None,
+        }
     }
 }
 
@@ -427,6 +486,20 @@ impl<T: Clone> Memento for Dequeue<T> {
         self.try_deq.dealloc(mine, guard, pool);
 
         self.try_deq.reset(nested, guard, pool);
+    }
+
+    fn result<'o>(
+        &'o mut self,
+        queue: Self::Object<'o>,
+        (): Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        match self.try_deq.result(queue, &self.mine, guard, pool) {
+            Some(Ok(res)) => Some(Ok(res)),
+            Some(Err(_)) => None,
+            None => None,
+        }
     }
 }
 
@@ -585,6 +658,16 @@ mod test {
 
         fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
+        }
+
+        fn result<'o>(
+            &'o mut self,
+            object: Self::Object<'o>,
+            input: Self::Input<'o>,
+            guard: &'o Guard,
+            pool: &'static PoolHandle,
+        ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+            todo!();
         }
     }
 
