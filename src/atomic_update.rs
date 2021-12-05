@@ -131,7 +131,6 @@ where
 /// TODO: doc
 #[derive(Debug)]
 pub struct Delete<O, T: Node + Collectable> {
-    // target: PAtomic<T>,
     _marker: PhantomData<*const (O, T)>,
 }
 
@@ -186,6 +185,7 @@ where
 
             if !target.is_null() {
                 if target.tag() & Self::COMPLETE == Self::COMPLETE {
+                    // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
                     // post-crash execution (trying)
                     return Ok(Some(target));
                 }
@@ -244,7 +244,6 @@ where
         target_ref.ack();
 
         // point를 next로 바꿈
-        // let next = target_ref.next(guard);
         let res = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         persist_obj(point, true);
 
@@ -252,8 +251,8 @@ where
             return Err(());
         }
 
-        // top node에 내 이름 새겨넣음
-        // CAS인 이유: pop 복구 중인 스레드와 경합이 일어날 수 있음
+        // 빼려는 node에 내 이름 새겨넣음
+        // CAS인 이유: delete 복구 중인 스레드와 경합이 일어날 수 있음
         target_ref
             .owner()
             .compare_exchange(
@@ -274,6 +273,158 @@ where
 }
 
 impl<O, T> Delete<O, T>
+where
+    O: Traversable<T>,
+    T: Node + Collectable,
+{
+    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
+    const COMPLETE: usize = 1;
+
+    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
+    const EMPTY: usize = 2;
+
+    /// TODO: doc
+    pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
+        if target.is_null() || target.tag() == Self::EMPTY {
+            return;
+        }
+
+        // owner가 내가 아닐 수 있음
+        // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
+        unsafe {
+            if target.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
+                guard.defer_pdestroy(target);
+            }
+        }
+    }
+
+    #[inline]
+    fn id(&self, pool: &PoolHandle) -> usize {
+        // 풀 열릴 때마다 주소 바뀌니 상대주소로 식별해야 함
+        unsafe { self.as_pptr(pool).into_offset() }
+    }
+
+    /// TODO: doc
+    #[inline]
+    pub fn no_owner() -> usize {
+        let null = PShared::<Self>::null();
+        null.into_usize()
+    }
+}
+
+/// TODO: doc
+// TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+#[derive(Debug)]
+pub struct DeleteOpt<O, T: Node + Collectable> {
+    _marker: PhantomData<*const (O, T)>,
+}
+
+unsafe impl<O, T: Node + Collectable + Send + Sync> Send for DeleteOpt<O, T> {}
+unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for DeleteOpt<O, T> {}
+
+impl<O, T: Node + Collectable> Default for DeleteOpt<O, T> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
+
+impl<O, T: Node + Collectable> Collectable for DeleteOpt<O, T> {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+}
+
+impl<O, T> Memento for DeleteOpt<O, T>
+where
+    O: 'static + Traversable<T>,
+    T: 'static + Node + Collectable,
+{
+    type Object<'o> = &'o O;
+    type Input<'o> = (
+        &'o PAtomic<T>,
+        &'o PAtomic<T>,
+        fn(PShared<'_, T>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, T>>, ()>, // OK(Some or None): next or empty, Err: need retry
+    );
+    type Output<'o>
+    where
+        O: 'o,
+        T: 'o,
+    = Option<PShared<'o, T>>;
+    type Error<'o> = ();
+
+    fn run<'o>(
+        &'o mut self,
+        obj: Self::Object<'o>,
+        (target_loc, point, get_next): Self::Input<'o>,
+        rec: bool,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if rec {
+            let target = target_loc.load(Ordering::Relaxed, guard);
+
+            if target.tag() & Self::EMPTY == Self::EMPTY {
+                // post-crash execution (empty)
+                return Ok(None);
+            }
+
+            if !target.is_null() {
+                if target.tag() & Self::COMPLETE == Self::COMPLETE {
+                    // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
+                    // post-crash execution (trying)
+                    return Ok(Some(target));
+                }
+
+                let target_ref = unsafe { target.deref(pool) };
+                let owner = target_ref.owner().load(Ordering::SeqCst);
+
+                // target이 내가 pop한 게 맞는지 확인
+                if owner == self.id(pool) {
+                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                    return Ok(Some(target));
+                };
+            }
+        }
+
+        // Normal run
+        let target = point.load(Ordering::SeqCst, guard);
+
+        let next = match get_next(target, obj, guard, pool) {
+            Ok(Some(n)) => n,
+            Ok(None) => {
+                target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
+                persist_obj(&target_loc, true);
+                return Ok(None);
+            }
+            Err(()) => return Err(()),
+        };
+
+        // 우선 내가 target을 가리키고
+        target_loc.store(target, Ordering::Relaxed);
+        persist_obj(target_loc, false);
+
+        // 빼려는 node에 내 이름 새겨넣음
+        let target_ref = unsafe { target.deref(pool) };
+        let owner = target_ref.owner();
+        owner
+            .compare_exchange(
+                Self::no_owner(),
+                self.id(pool),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map(|_| {
+                persist_obj(owner, true);
+                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                Some(target)
+            })
+            .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
+    }
+
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+}
+
+impl<O, T> DeleteOpt<O, T>
 where
     O: Traversable<T>,
     T: Node + Collectable,
