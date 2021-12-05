@@ -33,8 +33,9 @@ impl<T: Clone> Collectable for TryPush<T> {
 }
 
 impl<T: Clone> TryPush<T> {
-    fn before_cas(mine: &mut Node<T>, oldtop: PShared<'_, Node<T>>) -> bool {
-        mine.next.store(oldtop, Ordering::SeqCst);
+    #[inline]
+    fn before_cas(mine: &mut Node<T>, old_top: PShared<'_, Node<T>>) -> bool {
+        mine.next.store(old_top, Ordering::SeqCst);
         persist_obj(&mine.next, false);
         true
     }

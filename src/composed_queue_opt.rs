@@ -1,6 +1,6 @@
 //! Persistent queue based on Treiber queue
 
-use crate::atomic_update::{self, Delete, Insert, InsertErr, Traversable, DeleteOpt};
+use crate::atomic_update::{self, DeleteOpt, Insert, InsertErr, Traversable};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::{Backoff, CachePadded};
@@ -36,7 +36,7 @@ impl<T: Clone> Default for NodeOpt<T> {
             data: MaybeUninit::uninit(),
             next: PAtomic::null(),
             enqueued: AtomicBool::new(false),
-            dequeuer: AtomicUsize::new(Delete::<ComposedQueueOpt<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
         }
     }
 }
@@ -47,7 +47,7 @@ impl<T: Clone> From<T> for NodeOpt<T> {
             data: MaybeUninit::new(value),
             next: PAtomic::null(),
             enqueued: AtomicBool::new(false),
-            dequeuer: AtomicUsize::new(Delete::<ComposedQueueOpt<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
         }
     }
 }
@@ -72,7 +72,7 @@ impl<T: Clone> atomic_update::Node for NodeOpt<T> {
     }
 
     fn acked(&self) -> bool {
-        self.owner().load(Ordering::SeqCst) != Delete::<ComposedQueueOpt<T>, Self>::no_owner()
+        self.owner().load(Ordering::SeqCst) != DeleteOpt::<ComposedQueueOpt<T>, Self>::no_owner()
     }
 
     fn owner(&self) -> &AtomicUsize {
@@ -108,8 +108,9 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 }
 
 impl<T: Clone> TryEnqueue<T> {
-    fn before_cas(_: &mut NodeOpt<T>, tail_next: PShared<'_, NodeOpt<T>>) -> bool {
-        tail_next.is_null()
+    #[inline]
+    fn before_cas(_: &mut NodeOpt<T>, old_tail_next: PShared<'_, NodeOpt<T>>) -> bool {
+        old_tail_next.is_null()
     }
 }
 
@@ -298,7 +299,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete_opt
             .run(
                 queue,
-                (mine_loc, &queue.head, Self::get_next), // TODO:  head cachepadded type?
+                (mine_loc, &queue.head, Self::get_next),
                 rec,
                 guard,
                 pool,
@@ -329,56 +330,32 @@ impl<T: Clone> DeallocNode<T, NodeOpt<T>> for TryDequeue<T> {
 
 impl<T: Clone> TryDequeue<T> {
     fn get_next<'g>(
-        head: PShared<'_, NodeOpt<T>>,
+        old_head: PShared<'_, NodeOpt<T>>,
         queue: &ComposedQueueOpt<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, NodeOpt<T>>>, ()> {
-        let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard);
-
-        if next.is_null() {
-            return Ok(None);
-        }
-
+        let old_head_ref = unsafe { old_head.deref(pool) };
+        let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
-        if head != tail {
-            return Ok(Some(next));
+
+        if old_head == tail {
+            if next.is_null() {
+                return Ok(None);
+            }
+
+            let tail_ref = unsafe { tail.deref(pool) };
+            persist_obj(&tail_ref.next, true);
+
+            let _ =
+                queue
+                    .tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+            return Err(());
         }
 
-        let tail_ref = unsafe { tail.deref(pool) };
-        persist_obj(&tail_ref.next, true);
-
-        let _ = queue
-            .tail
-            .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-        Err(())
-
-        // TODO: 왜 아래 로직으로 했을 때 버그가 나는지 생각
-        // 두 번째 실행해서 테일->헤드가 됨
-
-        // let head_ref = unsafe { head.deref(pool) };
-        // let next = head_ref.next.load(Ordering::SeqCst, guard);
-        // let tail = queue.tail.load(Ordering::SeqCst, guard);
-
-        // if head == tail {
-        //     if next.is_null() {
-        //         return Ok(None);
-        //     }
-
-        //     let tail_ref = unsafe { tail.deref(pool) };
-        //     persist_obj(&tail_ref.next, true);
-
-        //     let _ =
-        //         queue
-        //             .tail
-        //             .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-        //     return Err(());
-        // }
-
-        // Ok(Some(next))
+        Ok(Some(next))
     }
 }
 
@@ -587,7 +564,7 @@ mod test {
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ = self.enqs[i].run(queue, tid, rec, guard, pool);
+                        let _ = self.enqs[i].run(queue, tid, rec, guard, pool); // TODO: 두번째 실행에서 run이 아니라 result로 확인하도록 바꿔야 함
                         assert!(self.deqs[i]
                             .run(queue, (), rec, guard, pool)
                             .unwrap()

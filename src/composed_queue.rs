@@ -329,56 +329,32 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryDequeue<T> {
 
 impl<T: Clone> TryDequeue<T> {
     fn get_next<'g>(
-        head: PShared<'_, Node<T>>,
+        old_head: PShared<'_, Node<T>>,
         queue: &ComposedQueue<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
-        let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard);
-
-        if next.is_null() {
-            return Ok(None);
-        }
-
+        let old_head_ref = unsafe { old_head.deref(pool) };
+        let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
-        if head != tail {
-            return Ok(Some(next));
+
+        if old_head == tail {
+            if next.is_null() {
+                return Ok(None);
+            }
+
+            let tail_ref = unsafe { tail.deref(pool) };
+            persist_obj(&tail_ref.next, true);
+
+            let _ =
+                queue
+                    .tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+            return Err(());
         }
 
-        let tail_ref = unsafe { tail.deref(pool) };
-        persist_obj(&tail_ref.next, true);
-
-        let _ = queue
-            .tail
-            .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-        Err(())
-
-        // TODO: 왜 아래 로직으로 했을 때 버그가 나는지 생각
-        // 두 번째 실행해서 테일->헤드가 됨
-
-        // let head_ref = unsafe { head.deref(pool) };
-        // let next = head_ref.next.load(Ordering::SeqCst, guard);
-        // let tail = queue.tail.load(Ordering::SeqCst, guard);
-
-        // if head == tail {
-        //     if next.is_null() {
-        //         return Ok(None);
-        //     }
-
-        //     let tail_ref = unsafe { tail.deref(pool) };
-        //     persist_obj(&tail_ref.next, true);
-
-        //     let _ =
-        //         queue
-        //             .tail
-        //             .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-        //     return Err(());
-        // }
-
-        // Ok(Some(next))
+        Ok(Some(next))
     }
 }
 
