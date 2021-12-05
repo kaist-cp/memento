@@ -1,27 +1,27 @@
 use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
+use memento::composed_queue::*;
 use memento::persistent::*;
 use memento::plocation::pool::*;
 use memento::plocation::ralloc::{Collectable, GarbageCollection};
-use memento::queue::*;
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-impl<T: 'static + Clone> TestQueue for Queue<T> {
+impl<T: 'static + Clone> TestQueue for ComposedQueue<T> {
     type EnqInput = (&'static mut Enqueue<T>, T); // Memento, input
     type DeqInput = &'static mut Dequeue<T>; // Memento
 
     fn enqueue(&self, (enq, input): Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
-        let _ = enq.run(self, input, guard, pool);
+        let _ = enq.run(self, input, false, guard, pool);
 
         // TODO: custom logic 추상화
         enq.reset(false, guard, pool);
     }
 
     fn dequeue(&self, deq: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
-        let _ = deq.run(self, (), guard, pool);
+        let _ = deq.run(self, (), false, guard, pool);
         deq.reset(false, guard, pool);
     }
 }
@@ -29,7 +29,7 @@ impl<T: 'static + Clone> TestQueue for Queue<T> {
 /// 초기화시 세팅한 노드 수만큼 넣어줌
 #[derive(Debug)]
 pub struct TestMementoQueue {
-    queue: Queue<usize>,
+    queue: ComposedQueue<usize>,
 }
 
 impl Collectable for TestMementoQueue {
@@ -40,13 +40,13 @@ impl Collectable for TestMementoQueue {
 
 impl PDefault for TestMementoQueue {
     fn pdefault(pool: &'static PoolHandle) -> Self {
-        let queue = Queue::pdefault(pool);
-        let mut guard = epoch::pin();
+        let queue = ComposedQueue::pdefault(pool);
+        let guard = epoch::pin();
 
         // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..QUEUE_INIT_SIZE {
-            let _ = push_init.run(&queue, i, &guard, pool);
+            let _ = push_init.run(&queue, i, false, &guard, pool);
             push_init.reset(false, &guard, pool);
         }
         Self { queue }
@@ -80,15 +80,16 @@ impl Memento for MementoQueueEnqDeqPair {
     type Object<'o> = &'o TestMementoQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &Guard,
+        _: bool, // TODO: template parameter
+        guard: &'o Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
 
@@ -114,10 +115,6 @@ impl Memento for MementoQueueEnqDeqPair {
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -149,15 +146,16 @@ impl Memento for MementoQueueEnqDeqProb {
     type Object<'o> = &'o TestMementoQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
-        guard: &Guard,
+        _: bool, // TODO: template parameter
+        guard: &'o Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
@@ -184,10 +182,6 @@ impl Memento for MementoQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
