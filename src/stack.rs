@@ -179,11 +179,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
             if !node.is_null() {
-                if self
-                    .try_push
-                    .run(stack, node, rec, guard, pool)
-                    .is_ok()
-                {
+                if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
                     return Ok(());
                 }
                 node
@@ -200,16 +196,28 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
             node
         };
 
-        while self
-            .try_push
-            .run(stack, node, false, guard, pool)
-            .is_err()
-        {}
+        while self.try_push.run(stack, node, false, guard, pool).is_err() {}
         Ok(())
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_push.reset(nested, guard, pool);
+    }
+
+    fn result<'o>(
+        &'o mut self,
+        stack: Self::Object<'o>,
+        _: Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        let node = self.node.load(Ordering::Relaxed, guard);
+
+        match self.try_push.result(stack, node, guard, pool) {
+            Some(Ok(())) => Some(Ok(())),
+            Some(Err(_)) => None,
+            None => None
+        }
     }
 }
 
@@ -284,6 +292,20 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         self.try_pop.dealloc(mine, guard, pool);
 
         self.try_pop.reset(nested, guard, pool);
+    }
+
+    fn result<'o>(
+        &'o mut self,
+        stack: Self::Object<'o>,
+        (): Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        match self.try_pop.result(stack, &self.mine, guard, pool) {
+            Some(Ok(res)) => Some(Ok(res)),
+            Some(Err(_)) => None,
+            None => None
+        }
     }
 }
 
@@ -407,6 +429,16 @@ pub(crate) mod tests {
 
         fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
+        }
+
+        fn result<'o>(
+            &'o mut self,
+            object: Self::Object<'o>,
+            input: Self::Input<'o>,
+            guard: &'o Guard,
+            pool: &'static PoolHandle,
+        ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+            todo!()
         }
     }
 

@@ -88,19 +88,10 @@ where
         &'o mut self,
         obj: Self::Object<'o>,
         (mut new, point, before_cas): Self::Input<'o>,
-        rec: bool,
+        _: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if rec {
-            // TODO: result로 갈 것 같음
-            if !new.is_null()
-                && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked())
-            {
-                return Ok(());
-            }
-        }
-
         // Normal run
         let new_ref = unsafe { new.deref_mut(pool) };
         let old = point.load(Ordering::SeqCst, guard);
@@ -119,13 +110,24 @@ where
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
-}
 
-impl<O, T> Insert<O, T>
-where
-    O: Traversable<T>,
-    T: Node + Collectable,
-{
+    fn result<'o>(
+        &'o mut self,
+        obj: Self::Object<'o>,
+        (mut new, point, before_cas): Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        if new.is_null() {
+            return None;
+        }
+
+        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
+            return Some(Ok(()));
+        }
+
+        Some(Err(InsertErr::AbortedBeforeCAS))
+    }
 }
 
 /// TODO: doc
@@ -175,53 +177,6 @@ where
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if rec {
-            let target = target_loc.load(Ordering::Relaxed, guard);
-
-            if target.tag() & Self::EMPTY == Self::EMPTY {
-                // post-crash execution (empty)
-                return Ok(None);
-            }
-
-            if !target.is_null() {
-                if target.tag() & Self::COMPLETE == Self::COMPLETE {
-                    // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
-                    // post-crash execution (trying)
-                    return Ok(Some(target));
-                }
-
-                let target_ref = unsafe { target.deref(pool) };
-                let owner = target_ref.owner().load(Ordering::SeqCst);
-
-                // target이 내가 pop한 게 맞는지 확인
-                if owner == self.id(pool) {
-                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                    return Ok(Some(target));
-                };
-
-                // target이 obj에서 빠지긴 했는지 확인
-                if !obj.search(target, guard, pool) {
-                    // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
-                    // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
-                    if owner == Self::no_owner()
-                        && target_ref
-                            .owner()
-                            .compare_exchange(
-                                Self::no_owner(),
-                                self.id(pool),
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                            )
-                            .is_ok()
-                    {
-                        persist_obj(target_ref.owner(), true);
-                        target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                        return Ok(Some(target));
-                    }
-                }
-            }
-        }
-
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
@@ -270,6 +225,61 @@ where
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+
+    fn result<'o>(
+        &'o mut self,
+        obj: Self::Object<'o>,
+        (target_loc, point, get_next): Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        let target = target_loc.load(Ordering::Relaxed, guard);
+
+        if target.tag() & Self::EMPTY == Self::EMPTY {
+            // post-crash execution (empty)
+            return Some(Ok(None));
+        }
+
+        if !target.is_null() {
+            if target.tag() & Self::COMPLETE == Self::COMPLETE {
+                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
+                // post-crash execution (trying)
+                return Some(Ok(Some(target)));
+            }
+
+            let target_ref = unsafe { target.deref(pool) };
+            let owner = target_ref.owner().load(Ordering::SeqCst);
+
+            // target이 내가 pop한 게 맞는지 확인
+            if owner == self.id(pool) {
+                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                return Some(Ok(Some(target)));
+            };
+
+            // target이 obj에서 빠지긴 했는지 확인
+            if !obj.search(target, guard, pool) {
+                // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
+                // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
+                if owner == Self::no_owner()
+                    && target_ref
+                        .owner()
+                        .compare_exchange(
+                            Self::no_owner(),
+                            self.id(pool),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                {
+                    persist_obj(target_ref.owner(), true);
+                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                    return Some(Ok(Some(target)));
+                }
+            }
+        }
+
+        None
+    }
 }
 
 impl<O, T> Delete<O, T>
@@ -360,32 +370,6 @@ where
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if rec {
-            let target = target_loc.load(Ordering::Relaxed, guard);
-
-            if target.tag() & Self::EMPTY == Self::EMPTY {
-                // post-crash execution (empty)
-                return Ok(None);
-            }
-
-            if !target.is_null() {
-                if target.tag() & Self::COMPLETE == Self::COMPLETE {
-                    // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
-                    // post-crash execution (trying)
-                    return Ok(Some(target));
-                }
-
-                let target_ref = unsafe { target.deref(pool) };
-                let owner = target_ref.owner().load(Ordering::SeqCst);
-
-                // target이 내가 pop한 게 맞는지 확인
-                if owner == self.id(pool) {
-                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                    return Ok(Some(target));
-                };
-            }
-        }
-
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
@@ -424,7 +408,8 @@ where
             })
             .map_err(|_| {
                 let cur = point.load(Ordering::SeqCst, guard);
-                if cur == target { // same context
+                if cur == target {
+                    // same context
                     persist_obj(owner, true); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
                     let _ = point.compare_exchange(
                         target,
@@ -438,6 +423,40 @@ where
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+
+    fn result<'o>(
+        &'o mut self,
+        _: Self::Object<'o>,
+        (target_loc, _, _): Self::Input<'o>,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+        let target = target_loc.load(Ordering::Relaxed, guard);
+
+        if target.tag() & Self::EMPTY == Self::EMPTY {
+            // post-crash execution (empty)
+            return Some(Ok(None));
+        }
+
+        if !target.is_null() {
+            if target.tag() & Self::COMPLETE == Self::COMPLETE {
+                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
+                // post-crash execution (trying)
+                return Some(Ok(Some(target)));
+            }
+
+            let target_ref = unsafe { target.deref(pool) };
+            let owner = target_ref.owner().load(Ordering::SeqCst);
+
+            // target이 내가 pop한 게 맞는지 확인
+            if owner == self.id(pool) {
+                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                return Some(Ok(Some(target)));
+            };
+        }
+
+        None
+    }
 }
 
 impl<O, T> DeleteOpt<O, T>
