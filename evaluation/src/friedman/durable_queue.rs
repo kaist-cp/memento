@@ -1,7 +1,7 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::persistent::*;
@@ -68,7 +68,6 @@ impl<T: Clone> DurableQueue<T> {
         let node = POwned::new(Node::new(val), pool).into_shared(guard);
         persist_obj(unsafe { node.deref(pool) }, true);
 
-        let backoff = Backoff::new();
         loop {
             let last = self.tail.load(Ordering::SeqCst, guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -102,8 +101,6 @@ impl<T: Clone> DurableQueue<T> {
                     );
                 };
             }
-
-            backoff.snooze();
         }
     }
 
@@ -117,8 +114,8 @@ impl<T: Clone> DurableQueue<T> {
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
 
-        let prev = self.ret_val[tid].load(Ordering::SeqCst, guard);
-        self.ret_val[tid].store(new_ret_val, Ordering::SeqCst);
+        let prev = self.ret_val[tid].load(Ordering::Relaxed, guard);
+        self.ret_val[tid].store(new_ret_val, Ordering::Relaxed);
         persist_obj(&*self.ret_val[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
         // ```
@@ -127,8 +124,6 @@ impl<T: Clone> DurableQueue<T> {
             unsafe { guard.defer_pdestroy(prev) };
         }
 
-        let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
-        let backoff = Backoff::new();
         loop {
             let first = self.head.load(Ordering::SeqCst, guard);
             let last = self.tail.load(Ordering::SeqCst, guard);
@@ -205,8 +200,6 @@ impl<T: Clone> DurableQueue<T> {
                     }
                 }
             }
-
-            backoff.snooze();
         }
     }
 }
