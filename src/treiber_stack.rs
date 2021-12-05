@@ -133,8 +133,8 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
 
 impl<T: Clone> TryPop<T> {
     #[inline]
-    fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>, _: &Guard) -> bool {
-        target.is_null()
+    fn is_empty(target: PShared<'_, Node<T>>, _: &TreiberStack<T>, _: &Guard, _: &PoolHandle) -> Option<bool> {
+        Some(target.is_null())
     }
 }
 

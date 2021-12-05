@@ -96,6 +96,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
+            // TODO: result로 갈 것 같음
             if !new.is_null()
                 && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked())
             {
@@ -128,8 +129,6 @@ where
     O: Traversable<T>,
     T: Node + Collectable,
 {
-    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
-    const COMPLETE: usize = 1;
 }
 
 /// TODO: doc
@@ -164,7 +163,7 @@ where
     type Input<'o> = (
         &'o PAtomic<T>,
         &'o PAtomic<T>,
-        fn(PShared<'_, T>, &O, &Guard) -> bool, // empty check
+        fn(PShared<'_, T>, &O, &Guard, &PoolHandle) -> Option<bool>, // Some(true, false): empty or not, None: need retry
     );
     type Output<'o>
     where
@@ -234,10 +233,14 @@ where
 
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
-        if is_empty(target, obj, guard) {
-            target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
-            persist_obj(&target_loc, true);
-            return Ok(None);
+        match is_empty(target, obj, guard, pool) {
+            Some(true) => {
+                target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
+                persist_obj(&target_loc, true);
+                return Ok(None);
+            }
+            Some(false) => (),
+            None => return Err(()),
         };
 
         let target_ref = unsafe { target.deref(pool) };

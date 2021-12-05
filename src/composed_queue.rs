@@ -132,7 +132,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
-        let tail_ref = unsafe { tail.deref(pool) };
+        let tail_ref = unsafe { tail.deref(pool) }; // TODO: filter 에서 tail align 해야 함
 
         self.insert
             .run(
@@ -234,11 +234,7 @@ impl<T: Clone> Memento for Enqueue<T> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
             if !node.is_null() {
-                if self
-                    .try_enq
-                    .run(queue, node, rec, guard, pool)
-                    .is_ok()
-                {
+                if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
                     return Ok(());
                 }
                 node
@@ -255,11 +251,7 @@ impl<T: Clone> Memento for Enqueue<T> {
             node
         };
 
-        while self
-            .try_enq
-            .run(queue, node, false, guard, pool)
-            .is_err()
-        {}
+        while self.try_enq.run(queue, node, false, guard, pool).is_err() {}
         Ok(())
     }
 
@@ -340,10 +332,57 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryDequeue<T> {
 }
 
 impl<T: Clone> TryDequeue<T> {
-    #[inline]
-    fn is_empty(head: PShared<'_, Node<T>>, queue: &ComposedQueue<T>, guard: &Guard) -> bool {
+    fn is_empty(
+        head: PShared<'_, Node<T>>,
+        queue: &ComposedQueue<T>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Option<bool> {
+        let head_ref = unsafe { head.deref(pool) };
+        let next = head_ref.next.load(Ordering::SeqCst, guard);
+
+        if next.is_null() {
+            return Some(true);
+        }
+
         let tail = queue.tail.load(Ordering::SeqCst, guard);
-        head.as_ptr() == tail.as_ptr()
+        if head != tail {
+            return Some(false);
+        }
+
+        let tail_ref = unsafe { tail.deref(pool) };
+        persist_obj(&tail_ref.next, true);
+
+        let _ = queue
+            .tail
+            .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+        None
+
+        // TODO: 왜 아래 로직으로 했을 때 버그가 나는지 생각
+        // 두 번째 실행해서 테일->헤드가 됨
+
+        // let tail = queue.tail.load(Ordering::SeqCst, guard);
+        // if head == tail {
+        //     let head_ref = unsafe { head.deref(pool) };
+        //     let next = head_ref.next.load(Ordering::SeqCst, guard);
+
+        //     if next.is_null() {
+        //         return Some(true);
+        //     }
+
+        //     let tail_ref = unsafe { tail.deref(pool) };
+        //     persist_obj(&tail_ref.next, true);
+
+        //     let _ =
+        //         queue
+        //             .tail
+        //             .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+        //     return None;
+        // }
+
+        // Some(false)
     }
 }
 
@@ -545,9 +584,8 @@ mod test {
 
                     // Check results
                     assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
-                    for tid in 1..NR_THREAD + 1 {
-                        assert!(RESULTS[tid].load(Ordering::SeqCst) == COUNT);
-                    }
+                    assert!((1..NR_THREAD + 1)
+                        .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
                 // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
                 _ => {
