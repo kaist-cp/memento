@@ -92,7 +92,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     type TryPush: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = (PShared<'o, Node<T>>, &'o PAtomic<Node<T>>),
+        Input<'o> = PShared<'o, Node<T>>,
         Output<'o> = (),
         Error<'o> = TryFail,
     >;
@@ -185,7 +185,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
             if !node.is_null() {
                 if self
                     .try_push
-                    .run(stack, (node, &self.node), rec, guard, pool)
+                    .run(stack, node, rec, guard, pool)
                     .is_ok()
                 {
                     return Ok(());
@@ -206,7 +206,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
 
         while self
             .try_push
-            .run(stack, (node, &self.node), false, guard, pool)
+            .run(stack, node, false, guard, pool)
             .is_err()
         {}
         Ok(())

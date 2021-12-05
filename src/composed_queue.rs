@@ -112,21 +112,21 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 }
 
 impl<T: Clone> TryEnqueue<T> {
-    fn before_cas(_: &mut Node<T>, old: PShared<'_, Node<T>>) -> bool {
-        old.is_null()
+    fn before_cas(_: &mut Node<T>, tail_next: PShared<'_, Node<T>>) -> bool {
+        tail_next.is_null()
     }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Object<'o> = &'o ComposedQueue<T>;
-    type Input<'o> = (PShared<'o, Node<T>>, &'o PAtomic<Node<T>>);
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        (node, node_loc): Self::Input<'o>,
+        node: Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -137,7 +137,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         self.insert
             .run(
                 queue,
-                (node, node_loc, &tail_ref.next, Self::before_cas),
+                (node, &tail_ref.next, Self::before_cas),
                 rec,
                 guard,
                 pool,
@@ -153,6 +153,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
             })
             .map_err(|e| {
                 if let InsertErr::AbortedBeforeCAS = e {
+                    // tail is stale
                     persist_obj(&tail_ref.next, true);
                     let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO: 또 로드 해서 성능 저하. 어쩌면 insert의 로직을 더 줄여야 할 지도 모름.
                     let _ = queue.tail.compare_exchange(
@@ -235,7 +236,7 @@ impl<T: Clone> Memento for Enqueue<T> {
             if !node.is_null() {
                 if self
                     .try_enq
-                    .run(queue, (node, &self.node), rec, guard, pool)
+                    .run(queue, node, rec, guard, pool)
                     .is_ok()
                 {
                     return Ok(());
@@ -256,7 +257,7 @@ impl<T: Clone> Memento for Enqueue<T> {
 
         while self
             .try_enq
-            .run(queue, (node, &self.node), false, guard, pool)
+            .run(queue, node, false, guard, pool)
             .is_err()
         {}
         Ok(())
@@ -340,9 +341,9 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryDequeue<T> {
 
 impl<T: Clone> TryDequeue<T> {
     #[inline]
-    fn is_empty(target: PShared<'_, Node<T>>, queue: &ComposedQueue<T>, guard: &Guard) -> bool {
+    fn is_empty(head: PShared<'_, Node<T>>, queue: &ComposedQueue<T>, guard: &Guard) -> bool {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
-        target.as_ptr() == tail.as_ptr()
+        head.as_ptr() == tail.as_ptr()
     }
 }
 
@@ -517,7 +518,7 @@ mod test {
 
     impl Memento for EnqDeq {
         type Object<'o> = &'o ComposedQueue<usize>;
-        type Input<'o> = usize; // tid(=mid)
+        type Input<'o> = usize; // tid
         type Output<'o> = ();
         type Error<'o> = !;
 
@@ -536,12 +537,10 @@ mod test {
                     // 다른 스레드들이 다 끝날때까지 기다림
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
-                    let mut tmp_deq = Dequeue::<usize>::default();
                     // Check queue is empty
-                    assert!(tmp_deq
-                        .run(queue, (), rec, guard, pool)
-                        .unwrap()
-                        .is_none());
+                    let mut tmp_deq = Dequeue::<usize>::default();
+                    let must_none = tmp_deq.run(queue, (), rec, guard, pool).unwrap();
+                    assert!(must_none.is_none());
                     tmp_deq.reset(false, guard, pool);
 
                     // Check results

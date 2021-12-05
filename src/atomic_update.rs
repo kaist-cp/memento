@@ -78,7 +78,6 @@ where
     type Input<'o> = (
         PShared<'o, T>,
         &'o PAtomic<T>,
-        &'o PAtomic<T>,
         fn(&mut T, PShared<'_, T>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
@@ -91,29 +90,15 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        (mut new, new_loc, point, before_cas): Self::Input<'o>,
+        (mut new, point, before_cas): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            if new.tag() & Self::COMPLETE == Self::COMPLETE {
-                // TODO
-                // (1) run은 성공 후 다시 부르지 않는다는 가정이 있고 (2) rec flag가 있다면
-                // => COMPLETE, EMPTY 표시를 굳이 안 해도 될 것 같음
-                // => memento에 result()도 필요 없을 것 같음
-                // => new_loc도 받을 필요 없을 것 같음
-                return Ok(());
-            }
-
             if !new.is_null()
                 && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked())
             {
-                // (2) obj 안에 n이 있으면 삽입된 것이다 (Direct tracking)
-                // (3) acked 되었다면 삽입된 것이다
-                new_loc.store(new.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                // 성공 여부이므로 굳이 persist 안 해도 됨
-
                 return Ok(());
             }
         }

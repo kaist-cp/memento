@@ -26,9 +26,9 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
 #![deny(unreachable_pub)]
-// #![deny(single_use_lifetimes)] // Allowd due to GAT
-// #![deny(unused_lifetimes)] // Allowd due to GAT
-// #![deny(unstable_features)] // Allowd due to GAT
+// #![deny(single_use_lifetimes)] // Allowed due to GAT
+// #![deny(unused_lifetimes)] // Allowed due to GAT
+// #![deny(unstable_features)] // Allowed due to GAT
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
 #![feature(generic_associated_types)] // to define fields of `Memento`
 #![feature(asm)]

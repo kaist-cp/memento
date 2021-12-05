@@ -42,14 +42,14 @@ impl<T: Clone> TryPush<T> {
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = (PShared<'o, Node<T>>, &'o PAtomic<Node<T>>);
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (node, node_loc): Self::Input<'o>,
+        node: Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -57,7 +57,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         self.insert
             .run(
                 stack,
-                (node, node_loc, &stack.top, Self::before_cas),
+                (node, &stack.top, Self::before_cas),
                 rec,
                 guard,
                 pool,
