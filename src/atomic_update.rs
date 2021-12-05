@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crossbeam_epoch::{self as epoch, Guard};
+use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
@@ -50,14 +50,14 @@ pub enum InsertErr<'g, T> {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct Insert<O, T: Node + Collectable> {
-    _marker: PhantomData<*const (O, T)>,
+pub struct Insert<O, N: Node + Collectable> {
+    _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, T: Node + Collectable + Send + Sync> Send for Insert<O, T> {}
-unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Insert<O, T> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Send for Insert<O, N> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for Insert<O, N> {}
 
-impl<O, T: Node + Collectable> Default for Insert<O, T> {
+impl<O, N: Node + Collectable> Default for Insert<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -65,27 +65,27 @@ impl<O, T: Node + Collectable> Default for Insert<O, T> {
     }
 }
 
-impl<O, T: Node + Collectable> Collectable for Insert<O, T> {
+impl<O, N: Node + Collectable> Collectable for Insert<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, T> Memento for Insert<O, T>
+impl<O, N> Memento for Insert<O, N>
 where
-    O: 'static + Traversable<T>,
-    T: 'static + Node + Collectable,
+    O: 'static + Traversable<N>,
+    N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
-        PShared<'o, T>,
-        &'o PAtomic<T>,
-        fn(&mut T, PShared<'_, T>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
+        PShared<'o, N>,
+        &'o PAtomic<N>,
+        fn(&mut N, PShared<'_, N>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
     where
         O: 'o,
-        T: 'o,
+        N: 'o,
     = ();
-    type Error<'o> = InsertErr<'o, T>;
+    type Error<'o> = InsertErr<'o, N>;
 
     fn run<'o>(
         &'o mut self,
@@ -119,14 +119,14 @@ where
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<O: Traversable<T>, T: Node + Collectable> Insert<O, T> {
+impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
     fn result<'g>(
         &self,
         obj: &O,
-        new: PShared<'g, T>,
+        new: PShared<'g, N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<(), InsertErr<'g, T>> {
+    ) -> Result<(), InsertErr<'g, N>> {
         if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
             return Ok(());
         }
@@ -137,14 +137,14 @@ impl<O: Traversable<T>, T: Node + Collectable> Insert<O, T> {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct Delete<O, T: Node + Collectable> {
-    _marker: PhantomData<*const (O, T)>,
+pub struct Delete<O, N: Node + Collectable> {
+    _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, T: Node + Collectable + Send + Sync> Send for Delete<O, T> {}
-unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Delete<O, T> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Send for Delete<O, N> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for Delete<O, N> {}
 
-impl<O, T: Node + Collectable> Default for Delete<O, T> {
+impl<O, N: Node + Collectable> Default for Delete<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -152,26 +152,26 @@ impl<O, T: Node + Collectable> Default for Delete<O, T> {
     }
 }
 
-impl<O, T: Node + Collectable> Collectable for Delete<O, T> {
+impl<O, N: Node + Collectable> Collectable for Delete<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, T> Memento for Delete<O, T>
+impl<O, N> Memento for Delete<O, N>
 where
-    O: 'static + Traversable<T>,
-    T: 'static + Node + Collectable,
+    O: 'static + Traversable<N>,
+    N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
-        &'o PAtomic<T>,
-        &'o PAtomic<T>,
-        fn(PShared<'_, T>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, T>>, ()>, // OK(Some or None): next or empty, Err: need retry
+        &'o PAtomic<N>,
+        &'o PAtomic<N>,
+        fn(PShared<'_, N>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, N>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
     type Output<'o>
     where
         O: 'o,
-        T: 'o,
-    = Option<PShared<'o, T>>;
+        N: 'o,
+    = Option<PShared<'o, N>>;
     type Error<'o> = ();
 
     fn run<'o>(
@@ -236,10 +236,10 @@ where
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<O, T> Delete<O, T>
+impl<O, N> Delete<O, N>
 where
-    O: Traversable<T>,
-    T: Node + Collectable,
+    O: Traversable<N>,
+    N: Node + Collectable,
 {
     /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
     const COMPLETE: usize = 1;
@@ -250,10 +250,10 @@ where
     fn result<'g>(
         &self,
         obj: &O,
-        target_loc: &PAtomic<T>,
+        target_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Option<PShared<'g, T>>, ()> {
+    ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = target_loc.load(Ordering::Relaxed, guard);
 
         if target.tag() & Self::EMPTY == Self::EMPTY {
@@ -303,7 +303,7 @@ where
     }
 
     /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
+    pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
         if target.is_null() || target.tag() == Self::EMPTY {
             return;
         }
@@ -334,14 +334,14 @@ where
 /// TODO: doc
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
-pub struct DeleteOpt<O, T: Node + Collectable> {
-    _marker: PhantomData<*const (O, T)>,
+pub struct DeleteOpt<O, N: Node + Collectable> {
+    _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, T: Node + Collectable + Send + Sync> Send for DeleteOpt<O, T> {}
-unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for DeleteOpt<O, T> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Send for DeleteOpt<O, N> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for DeleteOpt<O, N> {}
 
-impl<O, T: Node + Collectable> Default for DeleteOpt<O, T> {
+impl<O, N: Node + Collectable> Default for DeleteOpt<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -349,26 +349,26 @@ impl<O, T: Node + Collectable> Default for DeleteOpt<O, T> {
     }
 }
 
-impl<O, T: Node + Collectable> Collectable for DeleteOpt<O, T> {
+impl<O, N: Node + Collectable> Collectable for DeleteOpt<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, T> Memento for DeleteOpt<O, T>
+impl<O, N> Memento for DeleteOpt<O, N>
 where
-    O: 'static + Traversable<T>,
-    T: 'static + Node + Collectable,
+    O: 'static + Traversable<N>,
+    N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
-        &'o PAtomic<T>,
-        &'o PAtomic<T>,
-        fn(PShared<'_, T>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, T>>, ()>, // OK(Some or None): next or empty, Err: need retry
+        &'o PAtomic<N>,
+        &'o PAtomic<N>,
+        fn(PShared<'_, N>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, N>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
     type Output<'o>
     where
         O: 'o,
-        T: 'o,
-    = Option<PShared<'o, T>>;
+        N: 'o,
+    = Option<PShared<'o, N>>;
     type Error<'o> = ();
 
     fn run<'o>(
@@ -438,10 +438,10 @@ where
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<O, T> DeleteOpt<O, T>
+impl<O, N> DeleteOpt<O, N>
 where
-    O: Traversable<T>,
-    T: Node + Collectable,
+    O: Traversable<N>,
+    N: Node + Collectable,
 {
     /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
     const COMPLETE: usize = 1;
@@ -451,10 +451,10 @@ where
 
     fn result<'g>(
         &self,
-        target_loc: &PAtomic<T>,
+        target_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Option<PShared<'g, T>>, ()> {
+    ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = target_loc.load(Ordering::Relaxed, guard);
 
         if target.tag() & Self::EMPTY == Self::EMPTY {
@@ -483,7 +483,7 @@ where
     }
 
     /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
+    pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
         if target.is_null() || target.tag() == Self::EMPTY {
             return;
         }

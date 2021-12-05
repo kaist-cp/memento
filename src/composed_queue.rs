@@ -3,15 +3,14 @@
 use crate::atomic_update::{self, Delete, Insert, InsertErr, Traversable};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_utils::{Backoff, CachePadded};
-use etrace::some_or;
+use crossbeam_utils::CachePadded;
+use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicBool;
-use std::{mem::MaybeUninit, ptr};
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
-use crate::plocation::{ll::*, pool::*, ptr::*};
+use crate::plocation::{ll::*, pool::*};
 
 /// TODO: doc
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
@@ -253,7 +252,12 @@ impl<T: Clone> Memento for Enqueue<T> {
 
 impl<T: Clone> Enqueue<T> {
     #[inline]
-    fn new_node<'g>(&self, value: T, guard: &'g Guard, pool: &'static PoolHandle) -> PShared<'g, Node<T>>{
+    fn new_node<'g>(
+        &self,
+        value: T,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> PShared<'g, Node<T>> {
         let node = POwned::new(Node::from(value), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);

@@ -202,7 +202,12 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
 
 impl<T: Clone, S: Stack<T>> Push<T, S> {
     #[inline]
-    fn new_node<'g>(&self, value: T, guard: &'g Guard, pool: &'static PoolHandle) -> PShared<'g, Node<T>>{
+    fn new_node<'g>(
+        &self,
+        value: T,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> PShared<'g, Node<T>> {
         let node = POwned::new(Node::from(value), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
