@@ -65,15 +65,18 @@ impl<T: Clone> Collectable for Node<T> {
 }
 
 impl<T: Clone> atomic_update::Node for Node<T> {
+    #[inline]
     fn ack(&self) {
         self.enqueued.store(true, Ordering::SeqCst);
         persist_obj(&self.enqueued, true);
     }
 
+    #[inline]
     fn acked(&self) -> bool {
         self.enqueued.load(Ordering::SeqCst)
     }
 
+    #[inline]
     fn owner(&self) -> &AtomicUsize {
         &self.dequeuer
     }

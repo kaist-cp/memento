@@ -5,7 +5,6 @@ use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
-use std::sync::atomic::AtomicBool;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
@@ -22,8 +21,6 @@ pub struct NodeOpt<T: Clone> {
     /// TODO: doc
     pub next: PAtomic<NodeOpt<T>>,
 
-    enqueued: AtomicBool,
-
     /// 누가 dequeue 했는지 식별
     // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
     dequeuer: AtomicUsize,
@@ -34,7 +31,6 @@ impl<T: Clone> Default for NodeOpt<T> {
         Self {
             data: MaybeUninit::uninit(),
             next: PAtomic::null(),
-            enqueued: AtomicBool::new(false),
             dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
         }
     }
@@ -45,7 +41,6 @@ impl<T: Clone> From<T> for NodeOpt<T> {
         Self {
             data: MaybeUninit::new(value),
             next: PAtomic::null(),
-            enqueued: AtomicBool::new(false),
             dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
         }
     }
@@ -65,15 +60,15 @@ impl<T: Clone> Collectable for NodeOpt<T> {
 }
 
 impl<T: Clone> atomic_update::Node for NodeOpt<T> {
-    fn ack(&self) {
-        self.enqueued.store(true, Ordering::SeqCst);
-        persist_obj(&self.enqueued, true);
-    }
+    #[inline]
+    fn ack(&self) {}
 
+    #[inline]
     fn acked(&self) -> bool {
         self.owner().load(Ordering::SeqCst) != DeleteOpt::<ComposedQueueOpt<T>, Self>::no_owner()
     }
 
+    #[inline]
     fn owner(&self) -> &AtomicUsize {
         &self.dequeuer
     }

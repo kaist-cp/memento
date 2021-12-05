@@ -47,15 +47,18 @@ impl<T: Clone> From<T> for Node<T> {
 }
 
 impl<T: Clone> atomic_update::Node for Node<T> {
+    #[inline]
     fn ack(&self) {
         self.pushed.store(true, Ordering::SeqCst);
         persist_obj(&self.pushed, true);
     }
 
+    #[inline]
     fn acked(&self) -> bool {
         self.pushed.load(Ordering::SeqCst)
     }
 
+    #[inline]
     fn owner(&self) -> &AtomicUsize {
         &self.popper
     }
