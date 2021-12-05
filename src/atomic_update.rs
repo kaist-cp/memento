@@ -415,10 +415,26 @@ where
             )
             .map(|_| {
                 persist_obj(owner, true);
+                let _ =
+                    point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+                guard.defer_persist(point);
+
                 target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                 Some(target)
             })
-            .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
+            .map_err(|_| {
+                let cur = point.load(Ordering::SeqCst, guard);
+                if cur == target { // same context
+                    persist_obj(owner, true); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
+                    let _ = point.compare_exchange(
+                        target,
+                        next,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                }
+            })
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
