@@ -74,6 +74,7 @@ pub fn get_total_nops() -> usize {
 #[derive(Debug)]
 pub enum TestTarget {
     MementoQueue(TestKind),
+    MementoQueueOpt(TestKind),
     MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
@@ -165,7 +166,10 @@ pub mod queue {
         //     DurableQueueEnqDeqPair, DurableQueueEnqDeqProb, LogQueueEnqDeqPair, LogQueueEnqDeqProb,
         //     TestDurableQueue, TestLogQueue,
         // },
-        compositional_pobj::{MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, TestMementoQueue},
+        compositional_pobj::{
+            MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, MementoQueueOptEnqDeqPair,
+            MementoQueueOptEnqDeqProb, TestMementoQueue, TestMementoQueueOpt,
+        },
     };
 
     use super::{pick, Opt, TestKind, TestTarget};
@@ -213,6 +217,20 @@ pub mod queue {
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
                     get_nops::<TestMementoQueue, MementoQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
+            TestTarget::MementoQueueOpt(kind) => match kind {
+                TestKind::QueuePair => get_nops::<TestMementoQueueOpt, MementoQueueOptEnqDeqPair>(
+                    &opt.filepath,
+                    opt.threads,
+                ),
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    get_nops::<TestMementoQueueOpt, MementoQueueOptEnqDeqProb>(
+                        &opt.filepath,
+                        opt.threads,
+                    )
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },

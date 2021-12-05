@@ -27,6 +27,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
     };
     match target {
         "memento_queue" => TestTarget::MementoQueue(kind),
+        "memento_queue_opt" => TestTarget::MementoQueueOpt(kind),
         "memento_pipe_queue" => TestTarget::MementoPipeQueue(kind),
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
@@ -89,11 +90,12 @@ fn bench(opt: &Opt) -> f64 {
     let target = parse_target(&opt.target, &opt.kind);
 
     let nops = match target {
-        TestTarget::MementoQueue(_) => bench_queue(opt, target),
-        TestTarget::MementoPipeQueue(_) => bench_queue(opt, target),
-        TestTarget::FriedmanDurableQueue(_) => bench_queue(opt, target),
-        TestTarget::FriedmanLogQueue(_) => bench_queue(opt, target),
-        TestTarget::DSSQueue(_) => bench_queue(opt, target),
+        TestTarget::MementoQueue(_)
+        | TestTarget::MementoQueueOpt(_)
+        | TestTarget::MementoPipeQueue(_)
+        | TestTarget::FriedmanDurableQueue(_)
+        | TestTarget::FriedmanLogQueue(_)
+        | TestTarget::DSSQueue(_) => bench_queue(opt, target),
         TestTarget::MementoPipe(_) => {
             // get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
             todo!()
