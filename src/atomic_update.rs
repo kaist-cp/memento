@@ -141,7 +141,6 @@ unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Delete<O, T> {}
 impl<O, T: Node + Collectable> Default for Delete<O, T> {
     fn default() -> Self {
         Self {
-            // target: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -180,17 +179,12 @@ where
         if rec {
             let target = target_loc.load(Ordering::Relaxed, guard);
 
-            if !target.is_null() {
-                // TODO
-                // (1) run은 성공 후 다시 부르지 않는다는 가정이 있고 (2) rec flag가 있다면
-                // => COMPLETE, EMPTY 표시를 굳이 안 해도 될 것 같음
-                // => memento에 result()도 필요 없을 것 같음
-                // => new_loc도 받을 필요 없을 것 같음
-                if target.tag() & Self::EMPTY == Self::EMPTY {
-                    // post-crash execution (empty)
-                    return Ok(None);
-                }
+            if target.tag() & Self::EMPTY == Self::EMPTY {
+                // post-crash execution (empty)
+                return Ok(None);
+            }
 
+            if !target.is_null() {
                 if target.tag() & Self::COMPLETE == Self::COMPLETE {
                     // post-crash execution (trying)
                     return Ok(Some(target));
