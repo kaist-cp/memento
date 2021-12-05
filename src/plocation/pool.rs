@@ -77,37 +77,34 @@ impl PoolHandle {
         for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize> + Send + Sync,
     {
         // root obj 얻기
-        let o = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
+        let root_obj = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
 
         // root memento(들)의 개수 얻기
         let nr_memento = unsafe { *(RP_get_root_c(IX_NR_MEMENTO) as *mut usize) };
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
-            // mid번째 스레드가 mid번째 memento를 성공할때까지 반복
-            for mid in 0..nr_memento {
-                // mid번째 root memento 얻기
-                let m_addr = unsafe { RP_get_root_c(IX_MEMENTO_START + mid as u64) as usize };
+            // tid번째 스레드가 tid번째 memento를 성공할때까지 반복
+            for tid in 0..nr_memento {
+                // tid번째 root memento 얻기
+                let m_addr = unsafe { RP_get_root_c(IX_MEMENTO_START + tid as u64) as usize };
 
                 let _ = scope.spawn(move |_| {
                     thread::scope(|scope| {
                         loop {
                             // memento 실행
                             let hanlder = scope.spawn(move |_| {
-                                let m = unsafe { (m_addr as *mut M).as_mut().unwrap() };
+                                let root_memento = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let g = epoch::old_guard(mid);
-                                m.set_recovery(self);
-                                let _ = m.run(o, mid, &g, self);
+                                let guard = epoch::old_guard(tid);
+                                let _ = root_memento.run(root_obj, tid, true, &guard, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
                             // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
                             match hanlder.join() {
                                 Ok(_) => break,
-                                Err(_) => {
-                                    todo!("뭔가 할 게 있나?")
-                                }
+                                Err(_) => println!("PANIC: Root memento No.{} re-executed.", tid),
                             }
                         }
                     })
@@ -396,17 +393,18 @@ mod tests {
 
     impl Memento for RootMemento {
         type Object<'o> = &'o DummyRootObj;
-        type Input<'o> = usize; // tid(mid)
+        type Input<'o> = usize; // tid
         type Output<'o> = ();
-        type Error = !;
+        type Error<'o> = !;
 
         fn run<'o>(
             &'o mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
+            _: bool,
             _: &Guard,
             _: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error> {
+        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             if self.flag {
                 debug!("check inv");
                 assert_eq!(self.value, 42);
@@ -422,7 +420,7 @@ mod tests {
             // no-op
         }
 
-        fn set_recovery(&mut self, _: &'static PoolHandle) {}
+        // fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
     }
 
     impl TestRootMemento<DummyRootObj> for RootMemento {}

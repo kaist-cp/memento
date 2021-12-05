@@ -1,73 +1,13 @@
 //! Persistent stack based on Treiber stack
 
-use core::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
-use crate::atomic_update::{self, Delete, Insert, Traversable};
+use crate::atomic_update::{Delete, Insert, Traversable};
 use crate::pepoch::{self as epoch, Guard, PAtomic, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
 use crate::stack::*;
-
-// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
-#[derive(Debug)]
-struct Node<T: Clone> {
-    data: T,
-    next: PAtomic<Node<T>>,
-
-    /// push 되었는지 여부
-    // 이게 없으면, pop()에서 node 뺀 후 popper 등록 전에 crash 났을 때, 노드가 이미 push 되었었다는 걸 알 수 없음
-    pushed: AtomicBool,
-
-    /// 누가 pop 했는지 식별
-    // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
-    popper: AtomicUsize,
-}
-
-impl<T: Clone> From<T> for Node<T> {
-    fn from(value: T) -> Self {
-        Self {
-            data: value,
-            next: PAtomic::null(),
-            pushed: AtomicBool::new(false),
-            popper: AtomicUsize::new(Delete::<TreiberStack<T>, _>::no_owner()),
-        }
-    }
-}
-
-impl<T: Clone> atomic_update::Node for Node<T> {
-    fn ack(&self) {
-        self.pushed.store(true, Ordering::SeqCst);
-    }
-
-    fn acked(&self) -> bool {
-        self.pushed.load(Ordering::SeqCst)
-    }
-
-    fn owner(&self) -> &AtomicUsize {
-        &self.popper
-    }
-
-    fn next<'g>(&self, guard: &'g Guard) -> PShared<'g, Self> {
-        self.next.load(Ordering::SeqCst, guard)
-    }
-}
-
-unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}
-
-impl<T: Clone> Collectable for Node<T> {
-    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut next = node.next.load(Ordering::SeqCst, guard);
-        if !next.is_null() {
-            let next_ref = unsafe { next.deref_mut(pool) };
-            Node::<T>::mark(next_ref, gc);
-        }
-    }
-}
 
 /// TreiberStack의 try push operation
 #[derive(Debug)]
@@ -102,21 +42,23 @@ impl<T: Clone> TryPush<T> {
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = T;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
-    type Error = TryFail;
+    type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        value: Self::Input<'o>,
+        node: Self::Input<'o>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.insert
             .run(
                 stack,
-                (Node::from(value), &stack.top, Self::before_cas),
+                (node, &stack.top, Self::before_cas),
+                rec,
                 guard,
                 pool,
             )
@@ -124,19 +66,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        // 원래 하위 memento를 reset할 경우 reset flag를 쓰는 게 도리에 맞으나
-        // `Insert`의 `reset()`이 atomic 하므로 안 써도 됨
         self.insert.reset(nested, guard, pool);
-    }
-
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
-        self.insert.set_recovery(pool);
-    }
-}
-
-impl<T: Clone> Drop for TryPush<T> {
-    fn drop(&mut self) {
-        // TODO: "하위 메멘토의 `is_reset()`이 필요함"
     }
 }
 
@@ -165,37 +95,52 @@ impl<T: Clone> Collectable for TryPop<T> {
 
 impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = ();
+    type Input<'o> = &'o PAtomic<Node<T>>;
     type Output<'o> = Option<T>;
-    type Error = TryFail;
+    type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        (): Self::Input<'o>,
+        mine_loc: Self::Input<'o>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
-            .run(stack, &stack.top, guard, pool)
-            .map(|ret| ret.map(|popped| popped.data.clone()))
+            .run(
+                stack,
+                (mine_loc, &stack.top, Self::get_next),
+                rec,
+                guard,
+                pool,
+            )
+            .map(|ret| ret.map(|popped| unsafe { popped.deref(pool) }.data.clone()))
             .map_err(|_| TryFail)
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        // 원래 하위 memento를 reset할 경우 reset flag를 쓰는 게 도리에 맞으나
-        // `Delete`의 `reset()`이 atomic 하므로 안 써도 됨
         self.delete.reset(nested, guard, pool);
-    }
-
-    fn set_recovery(&mut self, pool: &'static PoolHandle) {
-        self.delete.set_recovery(pool);
     }
 }
 
-impl<T: Clone> Drop for TryPop<T> {
-    fn drop(&mut self) {
-        // TODO: "하위 메멘토의 `is_reset()`이 필요함"
+impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
+    #[inline]
+    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
+        self.delete.dealloc(target, guard, pool);
+    }
+}
+
+impl<T: Clone> TryPop<T> {
+    #[inline]
+    fn get_next<'g>(target: PShared<'_, Node<T>>, _: &TreiberStack<T>, guard: &'g Guard, pool: &PoolHandle) -> Result<Option<PShared<'g, Node<T>>>, ()> {
+        if target.is_null() {
+            return Ok(None);
+        }
+
+        let target_ref = unsafe { target.deref(pool) };
+        let next = target_ref.next.load(Ordering::SeqCst, guard);
+        Ok(Some(next))
     }
 }
 

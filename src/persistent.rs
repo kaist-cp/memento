@@ -90,7 +90,9 @@ pub trait Memento: Default + Collectable {
         Self: 'o;
 
     /// Persistent op이 적용되지 않았을 때 발생하는 Error type
-    type Error;
+    type Error<'o>
+    where
+        Self: 'o;
 
     /// Persistent op 동작 함수 (idempotent)
     ///
@@ -106,9 +108,10 @@ pub trait Memento: Default + Collectable {
         &'o mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
+        rec: bool, // TODO: template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error>;
+    ) -> Result<Self::Output<'o>, Self::Error<'o>>;
 
     /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
     ///
@@ -121,11 +124,6 @@ pub trait Memento: Default + Collectable {
     /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
     /// 알려줄 수 있다.
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle);
-
-    /// Recovery할 때만 필요한 로직을 포함하는 memento가 해당 로직을 수행하도록 셋팅
-    ///
-    /// 프로그램 시작할 때 root에서 set_recovery를 호출
-    fn set_recovery(&mut self, pool: &'static PoolHandle);
 }
 
 /// TODO: doc
