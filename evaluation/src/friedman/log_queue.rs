@@ -1,7 +1,7 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use memento::persistent::*;
@@ -117,8 +117,8 @@ impl<T: Clone> LogQueue<T> {
         persist_obj(node_ref, true);
         persist_obj(log_ref, true);
 
-        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
-        self.logs[tid].store(log, Ordering::SeqCst);
+        let prev = self.logs[tid].load(Ordering::Relaxed, guard);
+        self.logs[tid].store(log, Ordering::Relaxed);
         persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
         // ```
@@ -129,7 +129,6 @@ impl<T: Clone> LogQueue<T> {
             // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
         }
 
-        let backoff = Backoff::new();
         loop {
             let last = self.tail.load(Ordering::SeqCst, guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -163,18 +162,10 @@ impl<T: Clone> LogQueue<T> {
                     );
                 }
             }
-
-            backoff.snooze();
         }
     }
 
-    fn dequeue(
-        &self,
-        tid: usize,
-        op_num: &mut usize,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) {
+    fn dequeue(&self, tid: usize, op_num: &mut usize, guard: &Guard, pool: &'static PoolHandle) {
         // NOTE: Log 큐의 하자 (2/2)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Log 큐: deq 로그 할당 및 persist
@@ -188,8 +179,8 @@ impl<T: Clone> LogQueue<T> {
         let log_ref = unsafe { log.deref_mut(pool) };
         persist_obj(log_ref, true);
 
-        let prev = self.logs[tid].load(Ordering::SeqCst, guard);
-        self.logs[tid].store(log, Ordering::SeqCst);
+        let prev = self.logs[tid].load(Ordering::Relaxed, guard);
+        self.logs[tid].store(log, Ordering::Relaxed);
         persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
         // ```
@@ -200,7 +191,6 @@ impl<T: Clone> LogQueue<T> {
             // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
         }
 
-        let backoff = Backoff::new();
         loop {
             let first = self.head.load(Ordering::SeqCst, guard);
             let first_ref = unsafe { first.deref(pool) };
@@ -285,8 +275,6 @@ impl<T: Clone> LogQueue<T> {
                     }
                 }
             }
-
-            backoff.snooze();
         }
     }
 }
@@ -356,15 +344,16 @@ impl Memento for LogQueueEnqDeqPair {
     type Object<'o> = &'o TestLogQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
 
@@ -389,10 +378,6 @@ impl Memento for LogQueueEnqDeqPair {
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
-        // no-op
-    }
 }
 
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
@@ -414,15 +399,16 @@ impl Memento for LogQueueEnqDeqProb {
     type Object<'o> = &'o TestLogQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
@@ -446,10 +432,6 @@ impl Memento for LogQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }

@@ -4,6 +4,7 @@ use crossbeam_epoch::Guard;
 use memento::persistent::{Memento, PDefault};
 use memento::plocation::Pool;
 use rand::Rng;
+use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
@@ -53,6 +54,7 @@ pub trait TestNOps {
         let mut ops = 0;
         let start = Instant::now();
         let dur = Duration::from_secs_f64(duration);
+        let guard = &mut unsafe { ptr::read(guard) };
         while start.elapsed() < dur {
             op(tid, guard);
             ops += 1;
@@ -72,6 +74,7 @@ pub fn get_total_nops() -> usize {
 #[derive(Debug)]
 pub enum TestTarget {
     MementoQueue(TestKind),
+    MementoQueueOpt(TestKind),
     MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
@@ -96,7 +99,7 @@ fn pick(prob: u32) -> bool {
 fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: PDefault + Send + Sync,
-    M: for<'o> Memento<Object<'o> = &'o O, Input = usize> + Send + Sync,
+    M: for<'o> Memento<Object<'o> = &'o O, Input<'o> = usize> + Send + Sync,
 {
     let _ = Pool::remove(filepath);
 
@@ -156,9 +159,12 @@ pub mod queue {
     use crate::{
         common::{get_nops, PROB},
         compositional_pobj::{
-            MementoPipeQueueEnqDeqPair, MementoPipeQueueEnqDeqProb, MementoQueueEnqDeqPair,
-            MementoQueueEnqDeqProb, TestMementoQueue, TestPipeQueue,
+            MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, MementoQueueOptEnqDeqPair,
+            MementoQueueOptEnqDeqProb, TestMementoQueue, TestMementoQueueOpt,
         },
+        // compositional_pobj::{
+        //     MementoPipeQueueEnqDeqPair, MementoPipeQueueEnqDeqProb, TestPipeQueue,
+        // },
         dss::{DSSQueueEnqDeqPair, DSSQueueEnqDeqProb, TestDSSQueue},
         friedman::{
             DurableQueueEnqDeqPair, DurableQueueEnqDeqProb, LogQueueEnqDeqPair, LogQueueEnqDeqProb,
@@ -214,17 +220,35 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
-            TestTarget::MementoPipeQueue(kind) => match kind {
-                TestKind::QueuePair => get_nops::<TestPipeQueue, MementoPipeQueueEnqDeqPair>(
+            TestTarget::MementoQueueOpt(kind) => match kind {
+                TestKind::QueuePair => get_nops::<TestMementoQueueOpt, MementoQueueOptEnqDeqPair>(
                     &opt.filepath,
                     opt.threads,
                 ),
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
-                    get_nops::<TestPipeQueue, MementoPipeQueueEnqDeqProb>(
+                    get_nops::<TestMementoQueueOpt, MementoQueueOptEnqDeqProb>(
                         &opt.filepath,
                         opt.threads,
                     )
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
+            TestTarget::MementoPipeQueue(kind) => match kind {
+                TestKind::QueuePair => {
+                    todo!()
+                    // get_nops::<TestPipeQueue, MementoPipeQueueEnqDeqPair>(
+                    //     &opt.filepath,
+                    //     opt.threads,
+                    // ),
+                }
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    todo!()
+                    // get_nops::<TestPipeQueue, MementoPipeQueueEnqDeqProb>(
+                    //     &opt.filepath,
+                    //     opt.threads,
+                    // )
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },

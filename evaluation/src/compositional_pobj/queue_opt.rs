@@ -1,7 +1,7 @@
 use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
-use memento::composed_queue::*;
+use memento::composed_queue_opt::*;
 use memento::persistent::*;
 use memento::plocation::pool::*;
 use memento::plocation::ralloc::{Collectable, GarbageCollection};
@@ -9,7 +9,7 @@ use memento::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-impl<T: 'static + Clone> TestQueue for ComposedQueue<T> {
+impl<T: 'static + Clone> TestQueue for ComposedQueueOpt<T> {
     type EnqInput = (&'static mut Enqueue<T>, T); // Memento, input
     type DeqInput = &'static mut Dequeue<T>; // Memento
 
@@ -28,19 +28,19 @@ impl<T: 'static + Clone> TestQueue for ComposedQueue<T> {
 
 /// 초기화시 세팅한 노드 수만큼 넣어줌
 #[derive(Debug)]
-pub struct TestMementoQueue {
-    queue: ComposedQueue<usize>,
+pub struct TestMementoQueueOpt {
+    queue: ComposedQueueOpt<usize>,
 }
 
-impl Collectable for TestMementoQueue {
+impl Collectable for TestMementoQueueOpt {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl PDefault for TestMementoQueue {
+impl PDefault for TestMementoQueueOpt {
     fn pdefault(pool: &'static PoolHandle) -> Self {
-        let queue = ComposedQueue::pdefault(pool);
+        let queue = ComposedQueueOpt::pdefault(pool);
         let guard = epoch::pin();
 
         // 초기 노드 삽입
@@ -54,12 +54,12 @@ impl PDefault for TestMementoQueue {
 }
 
 #[derive(Debug)]
-pub struct MementoQueueEnqDeqPair {
+pub struct MementoQueueOptEnqDeqPair {
     enq: CachePadded<Enqueue<usize>>,
     deq: CachePadded<Dequeue<usize>>,
 }
 
-impl Default for MementoQueueEnqDeqPair {
+impl Default for MementoQueueOptEnqDeqPair {
     fn default() -> Self {
         Self {
             enq: CachePadded::new(Enqueue::<usize>::default()),
@@ -68,16 +68,16 @@ impl Default for MementoQueueEnqDeqPair {
     }
 }
 
-impl Collectable for MementoQueueEnqDeqPair {
+impl Collectable for MementoQueueOptEnqDeqPair {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl TestNOps for MementoQueueEnqDeqPair {}
+impl TestNOps for MementoQueueOptEnqDeqPair {}
 
-impl Memento for MementoQueueEnqDeqPair {
-    type Object<'o> = &'o TestMementoQueue;
+impl Memento for MementoQueueOptEnqDeqPair {
+    type Object<'o> = &'o TestMementoQueueOpt;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error<'o> = ();
@@ -120,12 +120,12 @@ impl Memento for MementoQueueEnqDeqPair {
 }
 
 #[derive(Debug)]
-pub struct MementoQueueEnqDeqProb {
+pub struct MementoQueueOptEnqDeqProb {
     enq: CachePadded<Enqueue<usize>>,
     deq: CachePadded<Dequeue<usize>>,
 }
 
-impl Default for MementoQueueEnqDeqProb {
+impl Default for MementoQueueOptEnqDeqProb {
     fn default() -> Self {
         Self {
             enq: CachePadded::new(Enqueue::<usize>::default()),
@@ -134,16 +134,16 @@ impl Default for MementoQueueEnqDeqProb {
     }
 }
 
-impl Collectable for MementoQueueEnqDeqProb {
+impl Collectable for MementoQueueOptEnqDeqProb {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl TestNOps for MementoQueueEnqDeqProb {}
+impl TestNOps for MementoQueueOptEnqDeqProb {}
 
-impl Memento for MementoQueueEnqDeqProb {
-    type Object<'o> = &'o TestMementoQueue;
+impl Memento for MementoQueueOptEnqDeqProb {
+    type Object<'o> = &'o TestMementoQueueOpt;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error<'o> = ();
@@ -177,7 +177,6 @@ impl Memento for MementoQueueEnqDeqProb {
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-
         Ok(())
     }
 

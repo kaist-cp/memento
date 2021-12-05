@@ -1,7 +1,7 @@
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use memento::persistent::*;
@@ -107,14 +107,13 @@ impl<T: Clone> DSSQueue<T> {
     fn prep_enqueue(&self, val: T, tid: usize, pool: &'static PoolHandle) {
         let node = POwned::new(Node::new(val), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
-        self.x[tid].store(node.with_tag(ENQ_PREP_TAG), Ordering::SeqCst);
+        self.x[tid].store(node.with_tag(ENQ_PREP_TAG), Ordering::Relaxed);
         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
     fn exec_enqueue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) {
-        let node = self.x[tid].load(Ordering::SeqCst, guard);
+        let node = self.x[tid].load(Ordering::Relaxed, guard);
 
-        let backoff = Backoff::new();
         loop {
             let last = self.tail.load(Ordering::SeqCst, guard);
             let last_ref = unsafe { last.deref(pool) };
@@ -144,7 +143,7 @@ impl<T: Clone> DSSQueue<T> {
                         //
                         // ```
                         self.x[tid]
-                            .store(node.with_tag(node.tag() | ENQ_COMPL_TAG), Ordering::SeqCst);
+                            .store(node.with_tag(node.tag() | ENQ_COMPL_TAG), Ordering::Relaxed);
                         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
                         // ```
@@ -169,17 +168,11 @@ impl<T: Clone> DSSQueue<T> {
                     );
                 };
             }
-            backoff.snooze();
         }
     }
 
-    fn _resolve_enqueue(
-        &self,
-        tid: usize,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> (T, bool) {
-        let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
+    fn _resolve_enqueue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) -> (T, bool) {
+        let x_tid = self.x[tid].load(Ordering::Relaxed, guard);
         let node_ref = unsafe { x_tid.deref(pool) };
         let value = unsafe { (*node_ref.val.as_ptr()).clone() };
         if (x_tid.tag() & ENQ_COMPL_TAG) != 0 {
@@ -194,12 +187,11 @@ impl<T: Clone> DSSQueue<T> {
     }
 
     fn prep_dequeue(&self, tid: usize) {
-        self.x[tid].store(PShared::null().with_tag(DEQ_PREP_TAG), Ordering::SeqCst);
+        self.x[tid].store(PShared::null().with_tag(DEQ_PREP_TAG), Ordering::Relaxed);
         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
     fn exec_dequeue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) -> Option<T> {
-        let backoff = Backoff::new();
         loop {
             let first = self.head.load(Ordering::SeqCst, guard);
             let last = self.tail.load(Ordering::SeqCst, guard);
@@ -211,8 +203,8 @@ impl<T: Clone> DSSQueue<T> {
                     // empty queue
                     if next.is_null() {
                         // nothing new appended at tail
-                        let node = self.x[tid].load(Ordering::SeqCst, guard);
-                        self.x[tid].store(node.with_tag(node.tag() | EMPTY_TAG), Ordering::SeqCst);
+                        let node = self.x[tid].load(Ordering::Relaxed, guard);
+                        self.x[tid].store(node.with_tag(node.tag() | EMPTY_TAG), Ordering::Relaxed);
                         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
                         return None; // EMPTY
                     }
@@ -229,7 +221,7 @@ impl<T: Clone> DSSQueue<T> {
                     );
                 } else {
                     // non-empty queue
-                    self.x[tid].store(first.with_tag(DEQ_PREP_TAG), Ordering::SeqCst); // save predecessor of node to be dequeued
+                    self.x[tid].store(first.with_tag(DEQ_PREP_TAG), Ordering::Relaxed); // save predecessor of node to be dequeued
                     persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
 
                     let next_ref = unsafe { next.deref(pool) };
@@ -261,7 +253,6 @@ impl<T: Clone> DSSQueue<T> {
                     }
                 }
             }
-            backoff.snooze();
         }
     }
 
@@ -271,7 +262,7 @@ impl<T: Clone> DSSQueue<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> (Option<T>, bool) {
-        let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
+        let x_tid = self.x[tid].load(Ordering::Relaxed, guard);
         if x_tid == PShared::null().with_tag(DEQ_PREP_TAG) {
             // dequeue was prepared but did not take effect
             // "준비는 했지만 실행을 안함"
@@ -304,7 +295,7 @@ impl<T: Clone> DSSQueue<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> (Option<(_OpResolved, Option<T>)>, bool) {
-        let x_tid = self.x[tid].load(Ordering::SeqCst, guard);
+        let x_tid = self.x[tid].load(Ordering::Relaxed, guard);
         if (x_tid.tag() & ENQ_PREP_TAG) != 0 {
             // Enq를 준비했었음. 성공했는지는 resolve_enqueue로 확인
             let (value, completed) = self._resolve_enqueue(tid, guard, pool);
@@ -343,7 +334,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
         //
         // `val`이 None이면 EMPTY로 끝난 것. free하면 안됨
         if val.is_some() {
-            let node_tid = self.x[tid].load(Ordering::SeqCst, guard);
+            let node_tid = self.x[tid].load(Ordering::Relaxed, guard);
             unsafe { guard.defer_pdestroy(node_tid) };
         }
     }
@@ -389,15 +380,16 @@ impl Memento for DSSQueueEnqDeqPair {
     type Object<'o> = &'o TestDSSQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
 
@@ -418,10 +410,6 @@ impl Memento for DSSQueueEnqDeqPair {
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
-        // no-op
-    }
 }
 
 #[derive(Default, Debug)]
@@ -439,15 +427,16 @@ impl Memento for DSSQueueEnqDeqProb {
     type Object<'o> = &'o TestDSSQueue;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
-    type Error = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
         tid: Self::Input<'o>,
+        _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
+    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
         let q = &queue.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
@@ -467,10 +456,6 @@ impl Memento for DSSQueueEnqDeqProb {
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
         // no-op
     }
 }
