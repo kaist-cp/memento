@@ -124,15 +124,6 @@ pub trait Memento: Default + Collectable {
     /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
     /// 알려줄 수 있다.
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle);
-
-    /// TODO: doc
-    fn result<'o>(
-        &'o mut self,
-        object: Self::Object<'o>,
-        input: Self::Input<'o>,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>>; // Some(Succ, Fail) or None(Not started)
 }
 
 /// TODO: doc

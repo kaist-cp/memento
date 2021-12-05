@@ -69,23 +69,6 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.insert.reset(nested, guard, pool);
     }
-
-    fn result<'o>(
-        &'o mut self,
-        stack: Self::Object<'o>,
-        node: Self::Input<'o>,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
-        match self
-            .insert
-            .result(stack, (node, &stack.top, Self::before_cas), guard, pool)
-        {
-            Some(Ok(())) => Some(Ok(())),
-            Some(Err(e)) => Some(Err(TryFail)),
-            None => None,
-        }
-    }
 }
 
 /// TreiberStack의 try pop operation
@@ -139,25 +122,6 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.delete.reset(nested, guard, pool);
-    }
-
-    fn result<'o>(
-        &'o mut self,
-        stack: Self::Object<'o>,
-        mine_loc: Self::Input<'o>,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
-        match self
-            .delete
-            .result(stack, (mine_loc, &stack.top, Self::get_next), guard, pool)
-        {
-            Some(Ok(res)) => Some(Ok(
-                res.map(|popped| unsafe { popped.deref(pool) }.data.clone())
-            )),
-            Some(Err(e)) => Some(Err(TryFail)),
-            None => None,
-        }
     }
 }
 

@@ -178,23 +178,18 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
-            if !node.is_null() {
-                if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
-                    return Ok(());
-                }
-                node
+            if node.is_null() {
+                self.new_node(value, guard, pool)
             } else {
-                let node = POwned::new(Node::from(value), pool).into_shared(guard);
-                self.node.store(node, Ordering::Relaxed);
-                persist_obj(&self.node, true);
                 node
             }
         } else {
-            let node = POwned::new(Node::from(value), pool).into_shared(guard);
-            self.node.store(node, Ordering::Relaxed);
-            persist_obj(&self.node, true);
-            node
+            self.new_node(value, guard, pool)
         };
+
+        if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
+            return Ok(());
+        }
 
         while self.try_push.run(stack, node, false, guard, pool).is_err() {}
         Ok(())
@@ -203,21 +198,15 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_push.reset(nested, guard, pool);
     }
+}
 
-    fn result<'o>(
-        &'o mut self,
-        stack: Self::Object<'o>,
-        _: Self::Input<'o>,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
-        let node = self.node.load(Ordering::Relaxed, guard);
-
-        match self.try_push.result(stack, node, guard, pool) {
-            Some(Ok(())) => Some(Ok(())),
-            Some(Err(_)) => None,
-            None => None
-        }
+impl<T: Clone, S: Stack<T>> Push<T, S> {
+    #[inline]
+    fn new_node<'g>(&self, value: T, guard: &'g Guard, pool: &'static PoolHandle) -> PShared<'g, Node<T>>{
+        let node = POwned::new(Node::from(value), pool).into_shared(guard);
+        self.node.store(node, Ordering::Relaxed);
+        persist_obj(&self.node, true);
+        node
     }
 }
 
@@ -292,20 +281,6 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         self.try_pop.dealloc(mine, guard, pool);
 
         self.try_pop.reset(nested, guard, pool);
-    }
-
-    fn result<'o>(
-        &'o mut self,
-        stack: Self::Object<'o>,
-        (): Self::Input<'o>,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
-        match self.try_pop.result(stack, &self.mine, guard, pool) {
-            Some(Ok(res)) => Some(Ok(res)),
-            Some(Err(_)) => None,
-            None => None
-        }
     }
 }
 
@@ -429,16 +404,6 @@ pub(crate) mod tests {
 
         fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
-        }
-
-        fn result<'o>(
-            &'o mut self,
-            object: Self::Object<'o>,
-            input: Self::Input<'o>,
-            guard: &'o Guard,
-            pool: &'static PoolHandle,
-        ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
-            todo!()
         }
     }
 

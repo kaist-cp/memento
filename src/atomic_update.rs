@@ -88,10 +88,14 @@ where
         &'o mut self,
         obj: Self::Object<'o>,
         (mut new, point, before_cas): Self::Input<'o>,
-        _: bool,
+        rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if rec {
+            return self.result(obj, new, guard, pool);
+        }
+
         // Normal run
         let new_ref = unsafe { new.deref_mut(pool) };
         let old = point.load(Ordering::SeqCst, guard);
@@ -110,23 +114,21 @@ where
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+}
 
-    fn result<'o>(
-        &'o mut self,
-        obj: Self::Object<'o>,
-        (mut new, point, before_cas): Self::Input<'o>,
-        guard: &'o Guard,
+impl<O: Traversable<T>, T: Node + Collectable> Insert<O, T> {
+    fn result<'g>(
+        &self,
+        obj: &O,
+        new: PShared<'g, T>,
+        guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
-        if new.is_null() {
-            return None;
-        }
-
+    ) -> Result<(), InsertErr<'g, T>> {
         if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
-            return Some(Ok(()));
+            return Ok(());
         }
 
-        Some(Err(InsertErr::AbortedBeforeCAS))
+        Err(InsertErr::AbortedBeforeCAS)
     }
 }
 
@@ -177,6 +179,10 @@ where
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if rec {
+            return self.result(obj, target_loc, guard, pool);
+        }
+
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
@@ -225,26 +231,38 @@ where
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+}
 
-    fn result<'o>(
-        &'o mut self,
-        obj: Self::Object<'o>,
-        (target_loc, point, get_next): Self::Input<'o>,
-        guard: &'o Guard,
+impl<O, T> Delete<O, T>
+where
+    O: Traversable<T>,
+    T: Node + Collectable,
+{
+    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
+    const COMPLETE: usize = 1;
+
+    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
+    const EMPTY: usize = 2;
+
+    fn result<'g>(
+        &self,
+        obj: &O,
+        target_loc: &PAtomic<T>,
+        guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
+    ) -> Result<Option<PShared<'g, T>>, ()> {
         let target = target_loc.load(Ordering::Relaxed, guard);
 
         if target.tag() & Self::EMPTY == Self::EMPTY {
             // post-crash execution (empty)
-            return Some(Ok(None));
+            return Ok(None);
         }
 
         if !target.is_null() {
             if target.tag() & Self::COMPLETE == Self::COMPLETE {
                 // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
                 // post-crash execution (trying)
-                return Some(Ok(Some(target)));
+                return Ok(Some(target));
             }
 
             let target_ref = unsafe { target.deref(pool) };
@@ -253,7 +271,7 @@ where
             // target이 내가 pop한 게 맞는지 확인
             if owner == self.id(pool) {
                 target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                return Some(Ok(Some(target)));
+                return Ok(Some(target));
             };
 
             // target이 obj에서 빠지긴 했는지 확인
@@ -273,25 +291,13 @@ where
                 {
                     persist_obj(target_ref.owner(), true);
                     target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                    return Some(Ok(Some(target)));
+                    return Ok(Some(target));
                 }
             }
         }
 
-        None
+        Err(())
     }
-}
-
-impl<O, T> Delete<O, T>
-where
-    O: Traversable<T>,
-    T: Node + Collectable,
-{
-    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
-    const COMPLETE: usize = 1;
-
-    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
-    const EMPTY: usize = 2;
 
     /// TODO: doc
     pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
@@ -370,6 +376,10 @@ where
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if rec {
+            return self.result(target_loc, guard, pool);
+        }
+
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
@@ -423,40 +433,6 @@ where
     }
 
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
-
-    fn result<'o>(
-        &'o mut self,
-        _: Self::Object<'o>,
-        (target_loc, _, _): Self::Input<'o>,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Option<Result<Self::Output<'o>, Self::Error<'o>>> {
-        let target = target_loc.load(Ordering::Relaxed, guard);
-
-        if target.tag() & Self::EMPTY == Self::EMPTY {
-            // post-crash execution (empty)
-            return Some(Ok(None));
-        }
-
-        if !target.is_null() {
-            if target.tag() & Self::COMPLETE == Self::COMPLETE {
-                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
-                // post-crash execution (trying)
-                return Some(Ok(Some(target)));
-            }
-
-            let target_ref = unsafe { target.deref(pool) };
-            let owner = target_ref.owner().load(Ordering::SeqCst);
-
-            // target이 내가 pop한 게 맞는지 확인
-            if owner == self.id(pool) {
-                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                return Some(Ok(Some(target)));
-            };
-        }
-
-        None
-    }
 }
 
 impl<O, T> DeleteOpt<O, T>
@@ -469,6 +445,39 @@ where
 
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
+
+    fn result<'g>(
+        &self,
+        target_loc: &PAtomic<T>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Option<PShared<'g, T>>, ()> {
+        let target = target_loc.load(Ordering::Relaxed, guard);
+
+        if target.tag() & Self::EMPTY == Self::EMPTY {
+            // post-crash execution (empty)
+            return Ok(None);
+        }
+
+        if !target.is_null() {
+            if target.tag() & Self::COMPLETE == Self::COMPLETE {
+                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
+                // post-crash execution (trying)
+                return Ok(Some(target));
+            }
+
+            let target_ref = unsafe { target.deref(pool) };
+            let owner = target_ref.owner().load(Ordering::SeqCst);
+
+            // target이 내가 pop한 게 맞는지 확인
+            if owner == self.id(pool) {
+                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                return Ok(Some(target));
+            };
+        }
+
+        Err(())
+    }
 
     /// TODO: doc
     pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
