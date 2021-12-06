@@ -38,16 +38,16 @@
 // Persistent objects collection
 pub mod atomic_update_common;
 pub mod atomic_update_unopt;
-// pub mod queue_link_persist;
-// pub mod queue_opt;
-// pub mod queue_opt_link_persist;
 // pub mod elim_stack;
 // pub mod exchanger;
 // pub mod list;
 // pub mod lock;
 pub mod persistent;
 // pub mod pipe;
-pub mod queue;
+// pub mod queue;
+// pub mod queue_lp;
+pub mod queue_unopt;
+// pub mod queue_unopt_lp;
 pub mod stack;
 // pub mod ticket_lock;
 pub mod treiber_stack;
