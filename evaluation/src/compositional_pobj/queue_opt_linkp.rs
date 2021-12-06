@@ -4,7 +4,7 @@ use crossbeam_utils::CachePadded;
 use memento::persistent::*;
 use memento::plocation::pool::*;
 use memento::plocation::ralloc::{Collectable, GarbageCollection};
-use memento::queue_opt::*;
+use memento::queue_opt_link_persist::*;
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
@@ -28,17 +28,17 @@ impl<T: 'static + Clone> TestQueue for ComposedQueueOpt<T> {
 
 /// 초기화시 세팅한 노드 수만큼 넣어줌
 #[derive(Debug)]
-pub struct TestMementoQueueOpt {
+pub struct TestMementoQueueOptLinkp {
     queue: ComposedQueueOpt<usize>,
 }
 
-impl Collectable for TestMementoQueueOpt {
+impl Collectable for TestMementoQueueOptLinkp {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl PDefault for TestMementoQueueOpt {
+impl PDefault for TestMementoQueueOptLinkp {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let queue = ComposedQueueOpt::pdefault(pool);
         let guard = epoch::pin();
@@ -54,12 +54,12 @@ impl PDefault for TestMementoQueueOpt {
 }
 
 #[derive(Debug)]
-pub struct MementoQueueOptEnqDeqPair {
+pub struct MementoQueueOptLinkpEnqDeqPair {
     enq: CachePadded<Enqueue<usize>>,
     deq: CachePadded<Dequeue<usize>>,
 }
 
-impl Default for MementoQueueOptEnqDeqPair {
+impl Default for MementoQueueOptLinkpEnqDeqPair {
     fn default() -> Self {
         Self {
             enq: CachePadded::new(Enqueue::<usize>::default()),
@@ -68,16 +68,16 @@ impl Default for MementoQueueOptEnqDeqPair {
     }
 }
 
-impl Collectable for MementoQueueOptEnqDeqPair {
+impl Collectable for MementoQueueOptLinkpEnqDeqPair {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl TestNOps for MementoQueueOptEnqDeqPair {}
+impl TestNOps for MementoQueueOptLinkpEnqDeqPair {}
 
-impl Memento for MementoQueueOptEnqDeqPair {
-    type Object<'o> = &'o TestMementoQueueOpt;
+impl Memento for MementoQueueOptLinkpEnqDeqPair {
+    type Object<'o> = &'o TestMementoQueueOptLinkp;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error<'o> = ();
@@ -120,12 +120,12 @@ impl Memento for MementoQueueOptEnqDeqPair {
 }
 
 #[derive(Debug)]
-pub struct MementoQueueOptEnqDeqProb {
+pub struct MementoQueueOptLinkpEnqDeqProb {
     enq: CachePadded<Enqueue<usize>>,
     deq: CachePadded<Dequeue<usize>>,
 }
 
-impl Default for MementoQueueOptEnqDeqProb {
+impl Default for MementoQueueOptLinkpEnqDeqProb {
     fn default() -> Self {
         Self {
             enq: CachePadded::new(Enqueue::<usize>::default()),
@@ -134,16 +134,16 @@ impl Default for MementoQueueOptEnqDeqProb {
     }
 }
 
-impl Collectable for MementoQueueOptEnqDeqProb {
+impl Collectable for MementoQueueOptLinkpEnqDeqProb {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl TestNOps for MementoQueueOptEnqDeqProb {}
+impl TestNOps for MementoQueueOptLinkpEnqDeqProb {}
 
-impl Memento for MementoQueueOptEnqDeqProb {
-    type Object<'o> = &'o TestMementoQueueOpt;
+impl Memento for MementoQueueOptLinkpEnqDeqProb {
+    type Object<'o> = &'o TestMementoQueueOptLinkp;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
     type Error<'o> = ();

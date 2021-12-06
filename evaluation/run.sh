@@ -59,13 +59,18 @@ show_cfg
 
 # 2. Benchmarking queue performance
 bench memento_queue prob50 $out_path/queue.csv
+bench memento_queue_linkp prob50 $out_path/queue.csv
 bench memento_queue_opt prob50 $out_path/queue.csv
+bench memento_queue_opt_linkp prob50 $out_path/queue.csv
 # bench memento_pipe_queue prob50 $out_path/queue.csv
 bench durable_queue prob50 $out_path/queue.csv
 bench log_queue prob50 $out_path/queue.csv
 bench dss_queue prob50 $out_path/queue.csv
+
 bench memento_queue pair $out_path/queue.csv
+bench memento_queue_linkp pair $out_path/queue.csv
 bench memento_queue_opt pair $out_path/queue.csv
+bench memento_queue_opt_linkp pair $out_path/queue.csv
 # bench memento_pipe_queue pair $out_path/queue.csv
 bench durable_queue pair $out_path/queue.csv
 bench log_queue pair $out_path/queue.csv
