@@ -2,18 +2,20 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::atomic_update::{Delete, Insert, Traversable};
+use crate::atomic_update_common::Traversable;
+use crate::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::pepoch::{self as epoch, Guard, PAtomic, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
 use crate::stack::*;
+use crate::unopt_node::{DeallocNode, NodeUnOpt};
 
 /// TreiberStack의 try push operation
 #[derive(Debug)]
 pub struct TryPush<T: Clone> {
     /// push를 위해 할당된 node
-    insert: Insert<TreiberStack<T>, Node<T>>,
+    insert: InsertUnOpt<TreiberStack<T>, NodeUnOpt<T, TreiberStack<T>>>,
 }
 
 impl<T: Clone> Default for TryPush<T> {
@@ -28,13 +30,16 @@ unsafe impl<T: Clone + Send + Sync> Send for TryPush<T> {}
 
 impl<T: Clone> Collectable for TryPush<T> {
     fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Insert::filter(&mut try_push.insert, gc, pool);
+        InsertUnOpt::filter(&mut try_push.insert, gc, pool);
     }
 }
 
 impl<T: Clone> TryPush<T> {
     #[inline]
-    fn before_cas(mine: &mut Node<T>, old_top: PShared<'_, Node<T>>) -> bool {
+    fn before_cas(
+        mine: &mut NodeUnOpt<T, TreiberStack<T>>,
+        old_top: PShared<'_, NodeUnOpt<T, TreiberStack<T>>>,
+    ) -> bool {
         mine.next.store(old_top, Ordering::SeqCst);
         persist_obj(&mine.next, false);
         true
@@ -43,7 +48,7 @@ impl<T: Clone> TryPush<T> {
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = PShared<'o, Node<T>>;
+    type Input<'o> = PShared<'o, NodeUnOpt<T, TreiberStack<T>>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -75,7 +80,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 #[derive(Debug)]
 pub struct TryPop<T: Clone> {
     /// pop를 위해 할당된 node
-    delete: Delete<TreiberStack<T>, Node<T>>,
+    delete: DeleteUnOpt<TreiberStack<T>, NodeUnOpt<T, TreiberStack<T>>>,
 }
 
 impl<T: Clone> Default for TryPop<T> {
@@ -90,13 +95,13 @@ unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
 
 impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Delete::filter(&mut try_pop.delete, gc, pool);
+        DeleteUnOpt::filter(&mut try_pop.delete, gc, pool);
     }
 }
 
 impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = &'o PAtomic<Node<T>>;
+    type Input<'o> = &'o PAtomic<NodeUnOpt<T, TreiberStack<T>>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
@@ -125,9 +130,14 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     }
 }
 
-impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
+impl<T: Clone> DeallocNode<T, NodeUnOpt<T, TreiberStack<T>>> for TryPop<T> {
     #[inline]
-    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
+    fn dealloc(
+        &self,
+        target: PShared<'_, NodeUnOpt<T, TreiberStack<T>>>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
         self.delete.dealloc(target, guard, pool);
     }
 }
@@ -135,11 +145,11 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
 impl<T: Clone> TryPop<T> {
     #[inline]
     fn get_next<'g>(
-        target: PShared<'_, Node<T>>,
+        target: PShared<'_, NodeUnOpt<T, TreiberStack<T>>>,
         _: &TreiberStack<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
+    ) -> Result<Option<PShared<'g, NodeUnOpt<T, TreiberStack<T>>>>, ()> {
         if target.is_null() {
             return Ok(None);
         }
@@ -153,7 +163,7 @@ impl<T: Clone> TryPop<T> {
 /// Persistent Treiber stack
 #[derive(Debug)]
 pub struct TreiberStack<T: Clone> {
-    top: PAtomic<Node<T>>,
+    top: PAtomic<NodeUnOpt<T, TreiberStack<T>>>,
 }
 
 impl<T: Clone> Default for TreiberStack<T> {
@@ -172,7 +182,7 @@ impl<T: Clone> Collectable for TreiberStack<T> {
         let mut top = stack.top.load(Ordering::SeqCst, guard);
         if !top.is_null() {
             let top_ref = unsafe { top.deref_mut(pool) };
-            Node::mark(top_ref, gc);
+            NodeUnOpt::mark(top_ref, gc);
         }
     }
 }
@@ -183,9 +193,14 @@ impl<T: Clone> PDefault for TreiberStack<T> {
     }
 }
 
-impl<T: Clone> Traversable<Node<T>> for TreiberStack<T> {
+impl<T: Clone> Traversable<NodeUnOpt<T, TreiberStack<T>>> for TreiberStack<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
+    fn search(
+        &self,
+        target: PShared<'_, NodeUnOpt<T, TreiberStack<T>>>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> bool {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
