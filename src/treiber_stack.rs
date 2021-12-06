@@ -36,7 +36,7 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 impl<T: Clone> TryPush<T> {
     #[inline]
-    fn before_cas(
+    fn prepare(
         mine: &mut NodeUnOpt<T, TreiberStack<T>>,
         old_top: PShared<'_, NodeUnOpt<T, TreiberStack<T>>>,
     ) -> bool {
@@ -63,7 +63,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         self.insert
             .run(
                 stack,
-                (node, &stack.top, Self::before_cas),
+                (node, &stack.top, Self::prepare),
                 rec,
                 guard,
                 pool,

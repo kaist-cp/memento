@@ -40,7 +40,7 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 }
 
 impl<T: Clone> TryEnqueue<T> {
-    fn before_cas(
+    fn prepare(
         _: &mut NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>,
         tail_next: PShared<'_, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
     ) -> bool {
@@ -68,7 +68,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         self.insert
             .run(
                 queue,
-                (node, &tail_ref.next, Self::before_cas),
+                (node, &tail_ref.next, Self::prepare),
                 rec,
                 guard,
                 pool,

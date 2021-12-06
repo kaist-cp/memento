@@ -57,7 +57,7 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        (mut new, point, before_cas): Self::Input<'o>,
+        (mut new, point, prepare): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -70,7 +70,7 @@ where
         let new_ref = unsafe { new.deref_mut(pool) };
         let old = point.load(Ordering::SeqCst, guard);
 
-        if !before_cas(new_ref, old) {
+        if !prepare(new_ref, old) {
             return Err(InsertErr::PrepareFail);
         }
 
