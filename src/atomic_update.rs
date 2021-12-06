@@ -48,6 +48,12 @@ pub enum InsertErr<'g, T> {
     RecFail,
 }
 
+/// Persist 아직 안 됐는지 표시하기 위한 태그
+const NOT_PERSISTED: usize = 1;
+
+/// Empty를 표시하기 위한 태그
+const EMPTY: usize = 2;
+
 /// TODO: doc
 #[derive(Debug)]
 pub struct Insert<O, N: Node + Collectable> {
@@ -108,11 +114,40 @@ where
         }
 
         let ret = point
-            .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| ())
-            .map_err(|e| InsertErr::CASFailure(e.current));
+            .compare_exchange(
+                old,
+                new.with_tag(NOT_PERSISTED),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            )
+            .map(|_| {
+                persist_obj(point, true);
+                let _ = point.compare_exchange( // link-persist
+                    new.with_tag(NOT_PERSISTED),
+                    new,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+            })
+            .map_err(|e| {
+                let tag = e.current.tag();
+                if tag & NOT_PERSISTED == NOT_PERSISTED { // link-persist
+                    persist_obj(point, true);
+                    let new = e.current.with_tag(tag & !NOT_PERSISTED);
+                    let _ = point.compare_exchange(
+                        e.current,
+                        new,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                }
 
-        persist_obj(point, true); // TODO: stack에서는 성공한 놈만 해도 될지도?
+                InsertErr::CASFailure(e.current)
+            });
+
         ret
     }
 
@@ -192,7 +227,7 @@ where
         let next = match get_next(target, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
-                target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
+                target_loc.store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
                 persist_obj(&target_loc, true);
                 return Ok(None);
             }
@@ -208,8 +243,38 @@ where
         target_ref.ack();
 
         // point를 next로 바꿈
-        let res = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        persist_obj(point, true);
+        let res = point
+            .compare_exchange(
+                target,
+                next.with_tag(NOT_PERSISTED),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            )
+            .map(|_| {
+                persist_obj(point, true);
+                let _ = point.compare_exchange( // link-persist
+                    next.with_tag(NOT_PERSISTED),
+                    next,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+            })
+            .map_err(|e| {
+                let tag = e.current.tag();
+                if tag & NOT_PERSISTED == NOT_PERSISTED { // link-persist
+                    persist_obj(point, true);
+                    let new = e.current.with_tag(tag & !NOT_PERSISTED);
+                    let _ = point.compare_exchange(
+                        e.current,
+                        new,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                }
+            });
 
         if res.is_err() {
             return Err(());
@@ -240,9 +305,6 @@ where
     O: Traversable<N>,
     N: Node + Collectable,
 {
-    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
-    const EMPTY: usize = 2;
-
     fn result<'g>(
         &self,
         obj: &O,
@@ -252,7 +314,7 @@ where
     ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = target_loc.load(Ordering::Relaxed, guard);
 
-        if target.tag() & Self::EMPTY == Self::EMPTY {
+        if target.tag() & EMPTY == EMPTY {
             // post-crash execution (empty)
             return Ok(None);
         }
@@ -292,7 +354,7 @@ where
 
     /// TODO: doc
     pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
-        if target.is_null() || target.tag() == Self::EMPTY {
+        if target.is_null() || target.tag() == EMPTY {
             return;
         }
 
@@ -377,7 +439,7 @@ where
         let next = match get_next(target, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
-                target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
+                target_loc.store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
                 persist_obj(&target_loc, true);
                 return Ok(None);
             }
@@ -391,26 +453,31 @@ where
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { target.deref(pool) };
         let owner = target_ref.owner();
+        let id = self.id(pool);
         owner
             .compare_exchange(
                 Self::no_owner(),
-                self.id(pool),
+                id | NOT_PERSISTED, // TODO: 트레일링 제로에 맞게 안전하게 태깅하도록 래핑
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
             .map(|_| {
                 persist_obj(owner, true);
+                let _ = owner.compare_exchange(id | NOT_PERSISTED, id & !NOT_PERSISTED, Ordering::SeqCst, Ordering::SeqCst); // link-persist
+
                 let _ =
                     point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
                 guard.defer_persist(point);
 
                 Some(target)
             })
-            .map_err(|_| {
-                let cur = point.load(Ordering::SeqCst, guard);
-                if cur == target {
+            .map_err(|real_owner| {
+                let p = point.load(Ordering::SeqCst, guard);
+                if p == target && real_owner & NOT_PERSISTED == NOT_PERSISTED {
                     // same context
                     persist_obj(owner, true); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
+                    let _ = owner.compare_exchange(real_owner, real_owner & !NOT_PERSISTED, Ordering::SeqCst, Ordering::SeqCst); // link-persist
+
                     let _ = point.compare_exchange(
                         target,
                         next,
@@ -430,9 +497,6 @@ where
     O: Traversable<N>,
     N: Node + Collectable,
 {
-    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
-    const EMPTY: usize = 2;
-
     fn result<'g>(
         &self,
         target_loc: &PAtomic<N>,
@@ -441,7 +505,7 @@ where
     ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = target_loc.load(Ordering::Relaxed, guard);
 
-        if target.tag() & Self::EMPTY == Self::EMPTY {
+        if target.tag() & EMPTY == EMPTY {
             // post-crash execution (empty)
             return Ok(None);
         }
@@ -461,7 +525,7 @@ where
 
     /// TODO: doc
     pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
-        if target.is_null() || target.tag() == Self::EMPTY {
+        if target.is_null() || target.tag() == EMPTY {
             return;
         }
 
