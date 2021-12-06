@@ -1,7 +1,8 @@
 //! Persistent opt queue
 
-use crate::atomic_update::{self, DeleteOpt, Insert, InsertErr, Traversable};
-use crate::stack::DeallocNode;
+use crate::atomic_update::{self, Delete, GetNext, Insert, SMOAtomic};
+use crate::atomic_update_common::{self, InsertErr, Traversable};
+use crate::unopt_node::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -31,7 +32,7 @@ impl<T: Clone> Default for NodeOpt<T> {
         Self {
             data: MaybeUninit::uninit(),
             next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(Delete::<ComposedQueueOpt<T>, _, TryDequeue<T>>::no_owner()),
         }
     }
 }
@@ -41,7 +42,7 @@ impl<T: Clone> From<T> for NodeOpt<T> {
         Self {
             data: MaybeUninit::new(value),
             next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(Delete::<ComposedQueueOpt<T>, _, TryDequeue<T>>::no_owner()),
         }
     }
 }
@@ -59,13 +60,14 @@ impl<T: Clone> Collectable for NodeOpt<T> {
     }
 }
 
-impl<T: Clone> atomic_update::Node for NodeOpt<T> {
+impl<T: Clone> atomic_update_common::Node for NodeOpt<T> {
     #[inline]
     fn ack(&self) {}
 
     #[inline]
     fn acked(&self) -> bool {
-        self.owner().load(Ordering::SeqCst) != DeleteOpt::<ComposedQueueOpt<T>, Self>::no_owner()
+        self.owner().load(Ordering::SeqCst)
+            != Delete::<ComposedQueueOpt<T>, Self, TryDequeue<T>>::no_owner()
     }
 
     #[inline]
@@ -103,9 +105,7 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     #[inline]
-    fn before_cas(_: &mut NodeOpt<T>, old_tail_next: PShared<'_, NodeOpt<T>>) -> bool {
-        old_tail_next.is_null()
-    }
+    fn prepare(_: &mut NodeOpt<T>) -> bool { true }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
@@ -128,7 +128,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         self.insert
             .run(
                 queue,
-                (node, &tail_ref.next, Self::before_cas),
+                (node, &tail_ref.next, Self::prepare),
                 rec,
                 guard,
                 pool,
@@ -143,7 +143,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
                 );
             })
             .map_err(|e| {
-                if let InsertErr::AbortedBeforeCAS = e {
+                if let InsertErr::PrepareFail = e {
                     // tail is stale
                     persist_obj(&tail_ref.next, true);
                     let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO: 또 로드 해서 성능 저하. 어쩌면 insert의 로직을 더 줄여야 할 지도 모름.
@@ -267,7 +267,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
-    delete_opt: DeleteOpt<ComposedQueueOpt<T>, NodeOpt<T>>,
+    delete_opt: Delete<ComposedQueueOpt<T>, NodeOpt<T>, Self>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -282,7 +282,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        DeleteOpt::filter(&mut try_deq.delete_opt, gc, pool);
+        Delete::filter(&mut try_deq.delete_opt, gc, pool);
     }
 }
 
@@ -303,7 +303,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete_opt
             .run(
                 queue,
-                (mine_loc, &queue.head, Self::get_next),
+                (mine_loc, &queue.head),
                 rec,
                 guard,
                 pool,
@@ -332,7 +332,7 @@ impl<T: Clone> DeallocNode<T, NodeOpt<T>> for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> TryDequeue<T> {
+impl<T: Clone> GetNext<ComposedQueueOpt<T>, NodeOpt<T>> for TryDequeue<T> {
     fn get_next<'g>(
         old_head: PShared<'_, NodeOpt<T>>,
         queue: &ComposedQueueOpt<T>,
@@ -449,7 +449,7 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct ComposedQueueOpt<T: Clone> {
-    head: CachePadded<PAtomic<NodeOpt<T>>>,
+    head: CachePadded<SMOAtomic<Self, NodeOpt<T>, TryDequeue<T>>>,
     tail: CachePadded<PAtomic<NodeOpt<T>>>,
 }
 
@@ -460,7 +460,7 @@ impl<T: Clone> PDefault for ComposedQueueOpt<T> {
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
-            head: CachePadded::new(PAtomic::from(sentinel)),
+            head: CachePadded::new(SMOAtomic::from(sentinel)),
             tail: CachePadded::new(PAtomic::from(sentinel)),
         }
     }

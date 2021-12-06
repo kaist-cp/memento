@@ -147,6 +147,15 @@ pub struct SMOAtomic<O, N, G: GetNext<O, N>> {
     _marker: PhantomData<*const (O, G)>,
 }
 
+impl<O, N, G: GetNext<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
+    fn from(node: PShared<'_, N>) -> Self {
+        Self {
+            ptr: PAtomic::from(node),
+            _marker: Default::default(),
+        }
+    }
+}
+
 impl<O, N, G: GetNext<O, N>> Deref for SMOAtomic<O, N, G> {
     type Target = PAtomic<N>;
 
@@ -154,6 +163,9 @@ impl<O, N, G: GetNext<O, N>> Deref for SMOAtomic<O, N, G> {
         &self.ptr
     }
 }
+
+unsafe impl<O, N, G: GetNext<O, N>> Send for SMOAtomic<O, N, G> {}
+unsafe impl<O, N, G: GetNext<O, N>> Sync for SMOAtomic<O, N, G> {}
 
 /// TODO: doc
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
