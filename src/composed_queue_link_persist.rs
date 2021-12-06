@@ -1,6 +1,6 @@
-//! Persistent queue
+//! Persistent queue using link-persist
 
-use crate::atomic_update::{self, Delete, Insert, InsertErr, Traversable};
+use crate::atomic_update::{self, InsertErr, Traversable, InsertLinkPersist, DeleteLinkPesist};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
@@ -35,7 +35,7 @@ impl<T: Clone> Default for Node<T> {
             data: MaybeUninit::uninit(),
             next: PAtomic::null(),
             enqueued: AtomicBool::new(false),
-            dequeuer: AtomicUsize::new(Delete::<ComposedQueue<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(DeleteLinkPesist::<ComposedQueue<T>, _>::no_owner()),
         }
     }
 }
@@ -46,7 +46,7 @@ impl<T: Clone> From<T> for Node<T> {
             data: MaybeUninit::new(value),
             next: PAtomic::null(),
             enqueued: AtomicBool::new(false),
-            dequeuer: AtomicUsize::new(Delete::<ComposedQueue<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(DeleteLinkPesist::<ComposedQueue<T>, _>::no_owner()),
         }
     }
 }
@@ -90,7 +90,7 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: Insert<ComposedQueue<T>, Node<T>>,
+    insert: InsertLinkPersist<ComposedQueue<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -105,7 +105,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryEnqueue<T> {}
 
 impl<T: Clone> Collectable for TryEnqueue<T> {
     fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Insert::filter(&mut try_push.insert, gc, pool);
+        InsertLinkPersist::filter(&mut try_push.insert, gc, pool);
     }
 }
 
@@ -274,7 +274,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
-    delete: Delete<ComposedQueue<T>, Node<T>>,
+    delete: DeleteLinkPesist<ComposedQueue<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -289,7 +289,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Delete::filter(&mut try_deq.delete, gc, pool);
+        DeleteLinkPesist::filter(&mut try_deq.delete, gc, pool);
     }
 }
 
@@ -613,7 +613,7 @@ mod test {
     #[test]
     #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
     fn enq_deq() {
-        const FILE_NAME: &str = "composed_enq_deq.pool";
+        const FILE_NAME: &str = "composed_link_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<ComposedQueue<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)

@@ -1,4 +1,4 @@
-//! Persistent queue based on Treiber queue
+//! Persistent opt queue
 
 use crate::atomic_update::{self, DeleteOpt, Insert, InsertErr, Traversable};
 use crate::stack::DeallocNode;

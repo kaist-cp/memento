@@ -38,7 +38,9 @@
 // Persistent objects collection
 pub mod atomic_update;
 pub mod composed_queue;
+pub mod composed_queue_link_persist;
 pub mod composed_queue_opt;
+pub mod composed_queue_opt_link_persist;
 // pub mod elim_stack;
 // pub mod exchanger;
 // pub mod list;
