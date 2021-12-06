@@ -20,7 +20,7 @@
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
@@ -37,10 +37,10 @@
 
 // Persistent objects collection
 pub mod atomic_update;
-pub mod queue;
-pub mod queue_link_persist;
-pub mod queue_opt;
-pub mod queue_opt_link_persist;
+// pub mod queue;
+// pub mod queue_link_persist;
+// pub mod queue_opt;
+// pub mod queue_opt_link_persist;
 // pub mod elim_stack;
 // pub mod exchanger;
 // pub mod list;
@@ -48,9 +48,9 @@ pub mod queue_opt_link_persist;
 pub mod persistent;
 // pub mod pipe;
 // pub mod queue;
-pub mod stack;
+// pub mod stack;
 // pub mod ticket_lock;
-pub mod treiber_stack;
+// pub mod treiber_stack;
 
 // Persistent location
 pub mod plocation;
