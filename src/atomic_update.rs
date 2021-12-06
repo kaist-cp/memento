@@ -1,6 +1,10 @@
 //! Atomic update memento collections
 
-use std::{marker::PhantomData, sync::atomic::Ordering};
+use std::{
+    marker::PhantomData,
+    ops::Deref,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crossbeam_epoch::Guard;
 
@@ -11,84 +15,95 @@ use crate::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,
-    },
+    }, atomic_update_common::{Node, Traversable, InsertErr},
 };
 
 /// TODO: doc
-pub trait Traversable<T> {
-    /// TODO: doc
-    fn search(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) -> bool;
-}
-
-/// TODO: doc
-pub trait Node: Sized {
-    /// TODO: doc
-    fn ack(&self);
-
-    /// TODO: doc
-    fn acked(&self) -> bool;
-
-    /// TODO: doc
-    fn owner(&self) -> &PAtomic<Self>;
-}
-
-/// TODO: doc
 #[derive(Debug)]
-pub enum InsertErr<'g, T> {
-    /// TODO: doc
-    AbortedBeforeCAS,
-
-    /// TODO: doc
-    CASFailure(PShared<'g, T>),
-
-    /// TODO: doc
-    RecFail,
+pub struct Insert<O, N: Node + Collectable> {
+    _marker: PhantomData<*const (O, N)>,
 }
 
-/// Persist 아직 안 됐는지 표시하기 위한 태그
-const NOT_PERSISTED: usize = 1;
+unsafe impl<O, N: Node + Collectable + Send + Sync> Send for Insert<O, N> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for Insert<O, N> {}
 
-/// Empty를 표시하기 위한 태그
-const EMPTY: usize = 2;
+impl<O, N: Node + Collectable> Default for Insert<O, N> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
 
-// /// TODO: doc
-// #[derive(Debug)]
-// pub struct Insert<O, N: Node + Collectable> {
-//     _marker: PhantomData<*const (O, N)>,
-// }
+impl<O, N: Node + Collectable> Collectable for Insert<O, N> {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+}
 
-// unsafe impl<O, N: Node + Collectable + Send + Sync> Send for Insert<O, N> {}
-// unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for Insert<O, N> {}
+impl<O, N> Memento for Insert<O, N>
+where
+    O: 'static + Traversable<N>,
+    N: 'static + Node + Collectable,
+{
+    type Object<'o> = &'o O;
+    type Input<'o> = (
+        PShared<'o, N>,
+        &'o PAtomic<N>,
+        fn(&mut N) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
+    );
+    type Output<'o>
+    where
+        O: 'o,
+        N: 'o,
+    = ();
+    type Error<'o> = InsertErr<'o, N>;
 
-// impl<O, N: Node + Collectable> Default for Insert<O, N> {
-//     fn default() -> Self {
-//         Self {
-//             _marker: Default::default(),
-//         }
-//     }
-// }
+    fn run<'o>(
+        &'o mut self,
+        obj: Self::Object<'o>,
+        (mut new, point, prepare): Self::Input<'o>,
+        rec: bool,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if rec {
+            return self.result(obj, new, guard, pool);
+        }
 
-// impl<O, N: Node + Collectable> Collectable for Insert<O, N> {
-//     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
-// }
+        // Normal run
+        let new_ref = unsafe { new.deref_mut(pool) };
+        let old = point.load(Ordering::SeqCst, guard);
 
-// impl<O, N> Memento for Insert<O, N>
-// where
-//     O: 'static + Traversable<N>,
-//     N: 'static + Node + Collectable,
-// {
-//     type Object<'o> = &'o O;
-//     type Input<'o> = (
-//         PShared<'o, N>,
-//         &'o PAtomic<N>,
-//         fn(&mut N, PShared<'_, N>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
-//     );
-//     type Output<'o>
-//     where
-//         O: 'o,
-//         N: 'o,
-//     = ();
-//     type Error<'o> = InsertErr<'o, N>;
+        if !old.is_null() || !prepare(new_ref) {
+            return Err(InsertErr::PrepareFail);
+        }
+
+        let ret = point
+            .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
+            .map(|_| ())
+            .map_err(|e| InsertErr::CASFail(e.current));
+
+        persist_obj(point, true);
+        ret
+    }
+
+    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+}
+
+impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
+    fn result<'g>(
+        &self,
+        obj: &O,
+        new: PShared<'g, N>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<(), InsertErr<'g, N>> {
+        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
+            return Ok(());
+        }
+
+        Err(InsertErr::RecFail) // Fail이 crash 이후 달라질 수 있음. Insert는 weak 함
+    }
+}
 
 //     fn run<'o>(
 //         &'o mut self,
