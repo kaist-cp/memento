@@ -27,13 +27,13 @@ pub trait Node: Sized {
 /// TODO: doc
 #[derive(Debug)]
 pub enum InsertErr<'g, T> {
-    /// TODO: doc
+    /// Insert를 위한 atomic operation 전에 기각됨
     PrepareFail,
 
-    /// TODO: doc
+    /// CAS에 실패 (Strong fail)
     CASFail(PShared<'g, T>),
 
-    /// TODO: doc
+    /// Recovery run 때 fail임을 판단 (Weak fail)
     RecFail,
 }
 
