@@ -134,7 +134,12 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
 
 impl<T: Clone> TryPop<T> {
     #[inline]
-    fn get_next<'g>(target: PShared<'_, Node<T>>, _: &TreiberStack<T>, guard: &'g Guard, pool: &PoolHandle) -> Result<Option<PShared<'g, Node<T>>>, ()> {
+    fn get_next<'g>(
+        target: PShared<'_, Node<T>>,
+        _: &TreiberStack<T>,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
         if target.is_null() {
             return Ok(None);
         }

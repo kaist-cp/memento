@@ -76,8 +76,6 @@ pub mod tests {
         fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
             // no-op
         }
-
-        // fn recover<'o>(&mut self, _: Self::Object<'o>, _: &'static PoolHandle) {}
     }
 
     /// test에 사용하기 위한 더미용 PoolHandle 얻기

@@ -37,7 +37,7 @@ debug:
     - RUST_MIN_STACK=5073741824 cargo test --features no_persist
 
     # idempotency 테스트를 위해 한 번 더 실행하기
-    - RUST_MIN_STACK=5073741824 cargo test --features no_persist
+    # - RUST_MIN_STACK=5073741824 cargo test --features no_persist # TODO: test에 rec run 적용해서 다시 오픈
 
 release:
   stage: test

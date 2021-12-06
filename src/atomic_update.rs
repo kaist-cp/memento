@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crossbeam_epoch::{self as epoch, Guard};
+use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
@@ -43,18 +43,21 @@ pub enum InsertErr<'g, T> {
 
     /// TODO: doc
     CASFailure(PShared<'g, T>),
+
+    /// TODO: doc
+    RecFail,
 }
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct Insert<O, T: Node + Collectable> {
-    _marker: PhantomData<*const (O, T)>,
+pub struct Insert<O, N: Node + Collectable> {
+    _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, T: Node + Collectable + Send + Sync> Send for Insert<O, T> {}
-unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Insert<O, T> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Send for Insert<O, N> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for Insert<O, N> {}
 
-impl<O, T: Node + Collectable> Default for Insert<O, T> {
+impl<O, N: Node + Collectable> Default for Insert<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -62,27 +65,27 @@ impl<O, T: Node + Collectable> Default for Insert<O, T> {
     }
 }
 
-impl<O, T: Node + Collectable> Collectable for Insert<O, T> {
+impl<O, N: Node + Collectable> Collectable for Insert<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, T> Memento for Insert<O, T>
+impl<O, N> Memento for Insert<O, N>
 where
-    O: 'static + Traversable<T>,
-    T: 'static + Node + Collectable,
+    O: 'static + Traversable<N>,
+    N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
-        PShared<'o, T>,
-        &'o PAtomic<T>,
-        fn(&mut T, PShared<'_, T>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
+        PShared<'o, N>,
+        &'o PAtomic<N>,
+        fn(&mut N, PShared<'_, N>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
     where
         O: 'o,
-        T: 'o,
+        N: 'o,
     = ();
-    type Error<'o> = InsertErr<'o, T>;
+    type Error<'o> = InsertErr<'o, N>;
 
     fn run<'o>(
         &'o mut self,
@@ -93,12 +96,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            // TODO: result로 갈 것 같음
-            if !new.is_null()
-                && (obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked())
-            {
-                return Ok(());
-            }
+            return self.result(obj, new, guard, pool);
         }
 
         // Normal run
@@ -121,23 +119,32 @@ where
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<O, T> Insert<O, T>
-where
-    O: Traversable<T>,
-    T: Node + Collectable,
-{
+impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
+    fn result<'g>(
+        &self,
+        obj: &O,
+        new: PShared<'g, N>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<(), InsertErr<'g, N>> {
+        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
+            return Ok(());
+        }
+
+        Err(InsertErr::RecFail)
+    }
 }
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct Delete<O, T: Node + Collectable> {
-    _marker: PhantomData<*const (O, T)>,
+pub struct Delete<O, N: Node + Collectable> {
+    _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, T: Node + Collectable + Send + Sync> Send for Delete<O, T> {}
-unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for Delete<O, T> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Send for Delete<O, N> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for Delete<O, N> {}
 
-impl<O, T: Node + Collectable> Default for Delete<O, T> {
+impl<O, N: Node + Collectable> Default for Delete<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -145,26 +152,26 @@ impl<O, T: Node + Collectable> Default for Delete<O, T> {
     }
 }
 
-impl<O, T: Node + Collectable> Collectable for Delete<O, T> {
+impl<O, N: Node + Collectable> Collectable for Delete<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, T> Memento for Delete<O, T>
+impl<O, N> Memento for Delete<O, N>
 where
-    O: 'static + Traversable<T>,
-    T: 'static + Node + Collectable,
+    O: 'static + Traversable<N>,
+    N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
-        &'o PAtomic<T>,
-        &'o PAtomic<T>,
-        fn(PShared<'_, T>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, T>>, ()>, // OK(Some or None): next or empty, Err: need retry
+        &'o PAtomic<N>,
+        &'o PAtomic<N>,
+        fn(PShared<'_, N>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, N>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
     type Output<'o>
     where
         O: 'o,
-        T: 'o,
-    = Option<PShared<'o, T>>;
+        N: 'o,
+    = Option<PShared<'o, N>>;
     type Error<'o> = ();
 
     fn run<'o>(
@@ -176,50 +183,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            let target = target_loc.load(Ordering::Relaxed, guard);
-
-            if target.tag() & Self::EMPTY == Self::EMPTY {
-                // post-crash execution (empty)
-                return Ok(None);
-            }
-
-            if !target.is_null() {
-                if target.tag() & Self::COMPLETE == Self::COMPLETE {
-                    // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
-                    // post-crash execution (trying)
-                    return Ok(Some(target));
-                }
-
-                let target_ref = unsafe { target.deref(pool) };
-                let owner = target_ref.owner().load(Ordering::SeqCst);
-
-                // target이 내가 pop한 게 맞는지 확인
-                if owner == self.id(pool) {
-                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                    return Ok(Some(target));
-                };
-
-                // target이 obj에서 빠지긴 했는지 확인
-                if !obj.search(target, guard, pool) {
-                    // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
-                    // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
-                    if owner == Self::no_owner()
-                        && target_ref
-                            .owner()
-                            .compare_exchange(
-                                Self::no_owner(),
-                                self.id(pool),
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                            )
-                            .is_ok()
-                    {
-                        persist_obj(target_ref.owner(), true);
-                        target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                        return Ok(Some(target));
-                    }
-                }
-            }
+            return self.result(obj, target_loc, guard, pool);
         }
 
         // Normal run
@@ -272,10 +236,10 @@ where
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<O, T> Delete<O, T>
+impl<O, N> Delete<O, N>
 where
-    O: Traversable<T>,
-    T: Node + Collectable,
+    O: Traversable<N>,
+    N: Node + Collectable,
 {
     /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
     const COMPLETE: usize = 1;
@@ -283,8 +247,63 @@ where
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
+    fn result<'g>(
+        &self,
+        obj: &O,
+        target_loc: &PAtomic<N>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Option<PShared<'g, N>>, ()> {
+        let target = target_loc.load(Ordering::Relaxed, guard);
+
+        if target.tag() & Self::EMPTY == Self::EMPTY {
+            // post-crash execution (empty)
+            return Ok(None);
+        }
+
+        if !target.is_null() {
+            if target.tag() & Self::COMPLETE == Self::COMPLETE {
+                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
+                // post-crash execution (trying)
+                return Ok(Some(target));
+            }
+
+            let target_ref = unsafe { target.deref(pool) };
+            let owner = target_ref.owner().load(Ordering::SeqCst);
+
+            // target이 내가 pop한 게 맞는지 확인
+            if owner == self.id(pool) {
+                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                return Ok(Some(target));
+            };
+
+            // target이 obj에서 빠지긴 했는지 확인
+            if !obj.search(target, guard, pool) {
+                // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
+                // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
+                if owner == Self::no_owner()
+                    && target_ref
+                        .owner()
+                        .compare_exchange(
+                            Self::no_owner(),
+                            self.id(pool),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                {
+                    persist_obj(target_ref.owner(), true);
+                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                    return Ok(Some(target));
+                }
+            }
+        }
+
+        Err(())
+    }
+
     /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
+    pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
         if target.is_null() || target.tag() == Self::EMPTY {
             return;
         }
@@ -315,14 +334,14 @@ where
 /// TODO: doc
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
-pub struct DeleteOpt<O, T: Node + Collectable> {
-    _marker: PhantomData<*const (O, T)>,
+pub struct DeleteOpt<O, N: Node + Collectable> {
+    _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, T: Node + Collectable + Send + Sync> Send for DeleteOpt<O, T> {}
-unsafe impl<O, T: Node + Collectable + Send + Sync> Sync for DeleteOpt<O, T> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Send for DeleteOpt<O, N> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for DeleteOpt<O, N> {}
 
-impl<O, T: Node + Collectable> Default for DeleteOpt<O, T> {
+impl<O, N: Node + Collectable> Default for DeleteOpt<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -330,26 +349,26 @@ impl<O, T: Node + Collectable> Default for DeleteOpt<O, T> {
     }
 }
 
-impl<O, T: Node + Collectable> Collectable for DeleteOpt<O, T> {
+impl<O, N: Node + Collectable> Collectable for DeleteOpt<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, T> Memento for DeleteOpt<O, T>
+impl<O, N> Memento for DeleteOpt<O, N>
 where
-    O: 'static + Traversable<T>,
-    T: 'static + Node + Collectable,
+    O: 'static + Traversable<N>,
+    N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
-        &'o PAtomic<T>,
-        &'o PAtomic<T>,
-        fn(PShared<'_, T>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, T>>, ()>, // OK(Some or None): next or empty, Err: need retry
+        &'o PAtomic<N>,
+        &'o PAtomic<N>,
+        fn(PShared<'_, N>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, N>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
     type Output<'o>
     where
         O: 'o,
-        T: 'o,
-    = Option<PShared<'o, T>>;
+        N: 'o,
+    = Option<PShared<'o, N>>;
     type Error<'o> = ();
 
     fn run<'o>(
@@ -361,29 +380,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            let target = target_loc.load(Ordering::Relaxed, guard);
-
-            if target.tag() & Self::EMPTY == Self::EMPTY {
-                // post-crash execution (empty)
-                return Ok(None);
-            }
-
-            if !target.is_null() {
-                if target.tag() & Self::COMPLETE == Self::COMPLETE {
-                    // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
-                    // post-crash execution (trying)
-                    return Ok(Some(target));
-                }
-
-                let target_ref = unsafe { target.deref(pool) };
-                let owner = target_ref.owner().load(Ordering::SeqCst);
-
-                // target이 내가 pop한 게 맞는지 확인
-                if owner == self.id(pool) {
-                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
-                    return Ok(Some(target));
-                };
-            }
+            return self.result(target_loc, guard, pool);
         }
 
         // Normal run
@@ -424,7 +421,8 @@ where
             })
             .map_err(|_| {
                 let cur = point.load(Ordering::SeqCst, guard);
-                if cur == target { // same context
+                if cur == target {
+                    // same context
                     persist_obj(owner, true); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
                     let _ = point.compare_exchange(
                         target,
@@ -440,10 +438,10 @@ where
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<O, T> DeleteOpt<O, T>
+impl<O, N> DeleteOpt<O, N>
 where
-    O: Traversable<T>,
-    T: Node + Collectable,
+    O: Traversable<N>,
+    N: Node + Collectable,
 {
     /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
     const COMPLETE: usize = 1;
@@ -451,8 +449,41 @@ where
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
+    fn result<'g>(
+        &self,
+        target_loc: &PAtomic<N>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Option<PShared<'g, N>>, ()> {
+        let target = target_loc.load(Ordering::Relaxed, guard);
+
+        if target.tag() & Self::EMPTY == Self::EMPTY {
+            // post-crash execution (empty)
+            return Ok(None);
+        }
+
+        if !target.is_null() {
+            if target.tag() & Self::COMPLETE == Self::COMPLETE {
+                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
+                // post-crash execution (trying)
+                return Ok(Some(target));
+            }
+
+            let target_ref = unsafe { target.deref(pool) };
+            let owner = target_ref.owner().load(Ordering::SeqCst);
+
+            // target이 내가 pop한 게 맞는지 확인
+            if owner == self.id(pool) {
+                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
+                return Ok(Some(target));
+            };
+        }
+
+        Err(())
+    }
+
     /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) {
+    pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
         if target.is_null() || target.tag() == Self::EMPTY {
             return;
         }

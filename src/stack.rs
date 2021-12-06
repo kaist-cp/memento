@@ -47,15 +47,18 @@ impl<T: Clone> From<T> for Node<T> {
 }
 
 impl<T: Clone> atomic_update::Node for Node<T> {
+    #[inline]
     fn ack(&self) {
         self.pushed.store(true, Ordering::SeqCst);
         persist_obj(&self.pushed, true);
     }
 
+    #[inline]
     fn acked(&self) -> bool {
         self.pushed.load(Ordering::SeqCst)
     }
 
+    #[inline]
     fn owner(&self) -> &AtomicUsize {
         &self.popper
     }
@@ -178,38 +181,40 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
-            if !node.is_null() {
-                if self
-                    .try_push
-                    .run(stack, node, rec, guard, pool)
-                    .is_ok()
-                {
-                    return Ok(());
-                }
-                node
+            if node.is_null() {
+                self.new_node(value, guard, pool)
             } else {
-                let node = POwned::new(Node::from(value), pool).into_shared(guard);
-                self.node.store(node, Ordering::Relaxed);
-                persist_obj(&self.node, true);
                 node
             }
         } else {
-            let node = POwned::new(Node::from(value), pool).into_shared(guard);
-            self.node.store(node, Ordering::Relaxed);
-            persist_obj(&self.node, true);
-            node
+            self.new_node(value, guard, pool)
         };
 
-        while self
-            .try_push
-            .run(stack, node, false, guard, pool)
-            .is_err()
-        {}
+        if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
+            return Ok(());
+        }
+
+        while self.try_push.run(stack, node, false, guard, pool).is_err() {}
         Ok(())
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_push.reset(nested, guard, pool);
+    }
+}
+
+impl<T: Clone, S: Stack<T>> Push<T, S> {
+    #[inline]
+    fn new_node<'g>(
+        &self,
+        value: T,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> PShared<'g, Node<T>> {
+        let node = POwned::new(Node::from(value), pool).into_shared(guard);
+        self.node.store(node, Ordering::Relaxed);
+        persist_obj(&self.node, true);
+        node
     }
 }
 

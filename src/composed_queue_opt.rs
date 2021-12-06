@@ -3,15 +3,13 @@
 use crate::atomic_update::{self, DeleteOpt, Insert, InsertErr, Traversable};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_utils::{Backoff, CachePadded};
-use etrace::some_or;
-use std::sync::atomic::AtomicBool;
-use std::{mem::MaybeUninit, ptr};
+use crossbeam_utils::CachePadded;
+use std::mem::MaybeUninit;
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
-use crate::plocation::{ll::*, pool::*, ptr::*};
+use crate::plocation::{ll::*, pool::*};
 
 /// TODO: doc
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
@@ -23,8 +21,6 @@ pub struct NodeOpt<T: Clone> {
     /// TODO: doc
     pub next: PAtomic<NodeOpt<T>>,
 
-    enqueued: AtomicBool,
-
     /// 누가 dequeue 했는지 식별
     // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
     dequeuer: AtomicUsize,
@@ -35,7 +31,6 @@ impl<T: Clone> Default for NodeOpt<T> {
         Self {
             data: MaybeUninit::uninit(),
             next: PAtomic::null(),
-            enqueued: AtomicBool::new(false),
             dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
         }
     }
@@ -46,7 +41,6 @@ impl<T: Clone> From<T> for NodeOpt<T> {
         Self {
             data: MaybeUninit::new(value),
             next: PAtomic::null(),
-            enqueued: AtomicBool::new(false),
             dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
         }
     }
@@ -66,15 +60,15 @@ impl<T: Clone> Collectable for NodeOpt<T> {
 }
 
 impl<T: Clone> atomic_update::Node for NodeOpt<T> {
-    fn ack(&self) {
-        self.enqueued.store(true, Ordering::SeqCst);
-        persist_obj(&self.enqueued, true);
-    }
+    #[inline]
+    fn ack(&self) {}
 
+    #[inline]
     fn acked(&self) -> bool {
         self.owner().load(Ordering::SeqCst) != DeleteOpt::<ComposedQueueOpt<T>, Self>::no_owner()
     }
 
+    #[inline]
     fn owner(&self) -> &AtomicUsize {
         &self.dequeuer
     }
@@ -230,23 +224,18 @@ impl<T: Clone> Memento for Enqueue<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
-            if !node.is_null() {
-                if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
-                    return Ok(());
-                }
-                node
+            if node.is_null() {
+                self.new_node(value, guard, pool)
             } else {
-                let node = POwned::new(NodeOpt::from(value), pool).into_shared(guard);
-                self.node.store(node, Ordering::Relaxed);
-                persist_obj(&self.node, true);
                 node
             }
         } else {
-            let node = POwned::new(NodeOpt::from(value), pool).into_shared(guard);
-            self.node.store(node, Ordering::Relaxed);
-            persist_obj(&self.node, true);
-            node
+            self.new_node(value, guard, pool)
         };
+
+        if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
+            return Ok(());
+        }
 
         while self.try_enq.run(queue, node, false, guard, pool).is_err() {}
         Ok(())
@@ -254,6 +243,21 @@ impl<T: Clone> Memento for Enqueue<T> {
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
         self.try_enq.reset(nested, guard, pool);
+    }
+}
+
+impl<T: Clone> Enqueue<T> {
+    #[inline]
+    fn new_node<'g>(
+        &self,
+        value: T,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> PShared<'g, NodeOpt<T>> {
+        let node = POwned::new(NodeOpt::from(value), pool).into_shared(guard);
+        self.node.store(node, Ordering::Relaxed);
+        persist_obj(&self.node, true);
+        node
     }
 }
 
