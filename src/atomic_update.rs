@@ -227,7 +227,6 @@ where
             )
             .map(|_| {
                 persist_obj(target_ref.owner(), true);
-                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                 Some(target)
             })
             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
@@ -241,9 +240,6 @@ where
     O: Traversable<N>,
     N: Node + Collectable,
 {
-    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
-    const COMPLETE: usize = 1;
-
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
@@ -262,18 +258,11 @@ where
         }
 
         if !target.is_null() {
-            if target.tag() & Self::COMPLETE == Self::COMPLETE {
-                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
-                // post-crash execution (trying)
-                return Ok(Some(target));
-            }
-
             let target_ref = unsafe { target.deref(pool) };
             let owner = target_ref.owner().load(Ordering::SeqCst);
 
             // target이 내가 pop한 게 맞는지 확인
             if owner == self.id(pool) {
-                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                 return Ok(Some(target));
             };
 
@@ -293,7 +282,6 @@ where
                         .is_ok()
                 {
                     persist_obj(target_ref.owner(), true);
-                    target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                     return Ok(Some(target));
                 }
             }
@@ -416,7 +404,6 @@ where
                     point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
                 guard.defer_persist(point);
 
-                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                 Some(target)
             })
             .map_err(|_| {
@@ -443,9 +430,6 @@ where
     O: Traversable<N>,
     N: Node + Collectable,
 {
-    /// Direct tracking 검사를 하게 만들도록 하는 복구중 태그
-    const COMPLETE: usize = 1;
-
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
@@ -463,18 +447,11 @@ where
         }
 
         if !target.is_null() {
-            if target.tag() & Self::COMPLETE == Self::COMPLETE {
-                // TODO: COMPLETE 태그는 빼도 좋은 건지 생각하고 이유 적기
-                // post-crash execution (trying)
-                return Ok(Some(target));
-            }
-
             let target_ref = unsafe { target.deref(pool) };
             let owner = target_ref.owner().load(Ordering::SeqCst);
 
             // target이 내가 pop한 게 맞는지 확인
             if owner == self.id(pool) {
-                target_loc.store(target.with_tag(Self::COMPLETE), Ordering::Relaxed);
                 return Ok(Some(target));
             };
         }
