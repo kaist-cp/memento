@@ -1,7 +1,8 @@
 //! Persistent opt queue
 
-use crate::atomic_update::{self, DeleteOpt, Insert, InsertErr, Traversable};
-use crate::stack::DeallocNode;
+use crate::atomic_update::{self, Delete, GetNext, Insert, SMOAtomic};
+use crate::atomic_update_common::{self, InsertErr, Traversable};
+use crate::unopt_node::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -31,7 +32,7 @@ impl<T: Clone> Default for NodeOpt<T> {
         Self {
             data: MaybeUninit::uninit(),
             next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(Delete::<Queue<T>, _, TryDequeue<T>>::no_owner()),
         }
     }
 }
@@ -41,7 +42,7 @@ impl<T: Clone> From<T> for NodeOpt<T> {
         Self {
             data: MaybeUninit::new(value),
             next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(DeleteOpt::<ComposedQueueOpt<T>, _>::no_owner()),
+            dequeuer: AtomicUsize::new(Delete::<Queue<T>, _, TryDequeue<T>>::no_owner()),
         }
     }
 }
@@ -59,13 +60,14 @@ impl<T: Clone> Collectable for NodeOpt<T> {
     }
 }
 
-impl<T: Clone> atomic_update::Node for NodeOpt<T> {
+impl<T: Clone> atomic_update_common::Node for NodeOpt<T> {
     #[inline]
     fn ack(&self) {}
 
     #[inline]
     fn acked(&self) -> bool {
-        self.owner().load(Ordering::SeqCst) != DeleteOpt::<ComposedQueueOpt<T>, Self>::no_owner()
+        self.owner().load(Ordering::SeqCst)
+            != Delete::<Queue<T>, Self, TryDequeue<T>>::no_owner()
     }
 
     #[inline]
@@ -82,7 +84,7 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: Insert<ComposedQueueOpt<T>, NodeOpt<T>>,
+    insert: Insert<Queue<T>, NodeOpt<T>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -103,13 +105,11 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     #[inline]
-    fn before_cas(_: &mut NodeOpt<T>, old_tail_next: PShared<'_, NodeOpt<T>>) -> bool {
-        old_tail_next.is_null()
-    }
+    fn prepare(_: &mut NodeOpt<T>) -> bool { true }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
-    type Object<'o> = &'o ComposedQueueOpt<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input<'o> = PShared<'o, NodeOpt<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
@@ -128,7 +128,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         self.insert
             .run(
                 queue,
-                (node, &tail_ref.next, Self::before_cas),
+                (node, &tail_ref.next, Self::prepare),
                 rec,
                 guard,
                 pool,
@@ -143,7 +143,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
                 );
             })
             .map_err(|e| {
-                if let InsertErr::AbortedBeforeCAS = e {
+                if let InsertErr::PrepareFail = e {
                     // tail is stale
                     persist_obj(&tail_ref.next, true);
                     let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO: 또 로드 해서 성능 저하. 어쩌면 insert의 로직을 더 줄여야 할 지도 모름.
@@ -206,7 +206,7 @@ impl<T: Clone> Drop for Enqueue<T> {
 }
 
 impl<T: Clone> Memento for Enqueue<T> {
-    type Object<'o> = &'o ComposedQueueOpt<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input<'o> = T;
     type Output<'o>
     where
@@ -267,7 +267,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
-    delete_opt: DeleteOpt<ComposedQueueOpt<T>, NodeOpt<T>>,
+    delete_opt: Delete<Queue<T>, NodeOpt<T>, Self>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -282,12 +282,12 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        DeleteOpt::filter(&mut try_deq.delete_opt, gc, pool);
+        Delete::filter(&mut try_deq.delete_opt, gc, pool);
     }
 }
 
 impl<T: 'static + Clone> Memento for TryDequeue<T> {
-    type Object<'o> = &'o ComposedQueueOpt<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input<'o> = &'o PAtomic<NodeOpt<T>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
@@ -303,7 +303,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete_opt
             .run(
                 queue,
-                (mine_loc, &queue.head, Self::get_next),
+                (mine_loc, &queue.head),
                 rec,
                 guard,
                 pool,
@@ -332,10 +332,10 @@ impl<T: Clone> DeallocNode<T, NodeOpt<T>> for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> TryDequeue<T> {
+impl<T: Clone> GetNext<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
     fn get_next<'g>(
         old_head: PShared<'_, NodeOpt<T>>,
-        queue: &ComposedQueueOpt<T>,
+        queue: &Queue<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, NodeOpt<T>>>, ()> {
@@ -395,7 +395,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
 }
 
 impl<T: Clone> Memento for Dequeue<T> {
-    type Object<'o> = &'o ComposedQueueOpt<T>;
+    type Object<'o> = &'o Queue<T>;
     type Input<'o> = ();
     type Output<'o>
     where
@@ -448,25 +448,25 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 
 /// Persistent Queue
 #[derive(Debug)]
-pub struct ComposedQueueOpt<T: Clone> {
-    head: CachePadded<PAtomic<NodeOpt<T>>>,
+pub struct Queue<T: Clone> {
+    head: CachePadded<SMOAtomic<Self, NodeOpt<T>, TryDequeue<T>>>,
     tail: CachePadded<PAtomic<NodeOpt<T>>>,
 }
 
-impl<T: Clone> PDefault for ComposedQueueOpt<T> {
+impl<T: Clone> PDefault for Queue<T> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(NodeOpt::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
-            head: CachePadded::new(PAtomic::from(sentinel)),
+            head: CachePadded::new(SMOAtomic::from(sentinel)),
             tail: CachePadded::new(PAtomic::from(sentinel)),
         }
     }
 }
 
-impl<T: Clone> Collectable for ComposedQueueOpt<T> {
+impl<T: Clone> Collectable for Queue<T> {
     fn filter(queue: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
@@ -479,7 +479,7 @@ impl<T: Clone> Collectable for ComposedQueueOpt<T> {
     }
 }
 
-impl<T: Clone> Traversable<NodeOpt<T>> for ComposedQueueOpt<T> {
+impl<T: Clone> Traversable<NodeOpt<T>> for Queue<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
     fn search(&self, target: PShared<'_, NodeOpt<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
@@ -498,7 +498,7 @@ impl<T: Clone> Traversable<NodeOpt<T>> for ComposedQueueOpt<T> {
     }
 }
 
-unsafe impl<T: Clone + Send + Sync> Send for ComposedQueueOpt<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for Queue<T> {}
 
 #[cfg(test)]
 mod test {
@@ -533,7 +533,7 @@ mod test {
     }
 
     impl Memento for EnqDeq {
-        type Object<'o> = &'o ComposedQueueOpt<usize>;
+        type Object<'o> = &'o Queue<usize>;
         type Input<'o> = usize; // tid
         type Output<'o> = ();
         type Error<'o> = !;
@@ -593,8 +593,8 @@ mod test {
         }
     }
 
-    impl TestRootObj for ComposedQueueOpt<usize> {}
-    impl TestRootMemento<ComposedQueueOpt<usize>> for EnqDeq {}
+    impl TestRootObj for Queue<usize> {}
+    impl TestRootMemento<Queue<usize>> for EnqDeq {}
 
     // TODO: stack의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -609,6 +609,6 @@ mod test {
         const FILE_NAME: &str = "composed_opt_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<ComposedQueueOpt<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<Queue<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }

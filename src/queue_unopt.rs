@@ -20,7 +20,7 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: InsertUnOpt<ComposedQueue<T>, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
+    insert: InsertUnOpt<QueueUnOpt<T>, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -41,16 +41,16 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     fn prepare(
-        _: &mut NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>,
-        tail_next: PShared<'_, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
+        _: &mut NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>,
+        tail_next: PShared<'_, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
     ) -> bool {
         tail_next.is_null()
     }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
-    type Object<'o> = &'o ComposedQueue<T>;
-    type Input<'o> = PShared<'o, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>;
+    type Object<'o> = &'o QueueUnOpt<T>;
+    type Input<'o> = PShared<'o, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -108,7 +108,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
-    node: PAtomic<NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
+    node: PAtomic<NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
     try_enq: TryEnqueue<T>,
 }
 
@@ -129,7 +129,7 @@ impl<T: Clone> Collectable for Enqueue<T> {
         let mut node = enq.node.load(Ordering::Relaxed, guard);
         if !node.is_null() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            NodeUnOpt::<MaybeUninit<T>, ComposedQueue<T>>::mark(node_ref, gc);
+            NodeUnOpt::<MaybeUninit<T>, QueueUnOpt<T>>::mark(node_ref, gc);
         }
 
         TryEnqueue::<T>::filter(&mut enq.try_enq, gc, pool);
@@ -146,7 +146,7 @@ impl<T: Clone> Drop for Enqueue<T> {
 }
 
 impl<T: Clone> Memento for Enqueue<T> {
-    type Object<'o> = &'o ComposedQueue<T>;
+    type Object<'o> = &'o QueueUnOpt<T>;
     type Input<'o> = T;
     type Output<'o>
     where
@@ -193,7 +193,7 @@ impl<T: Clone> Enqueue<T> {
         value: T,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> PShared<'g, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>> {
+    ) -> PShared<'g, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>> {
         let node = POwned::new(NodeUnOpt::from(MaybeUninit::new(value)), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
@@ -207,7 +207,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
-    delete: DeleteUnOpt<ComposedQueue<T>, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
+    delete: DeleteUnOpt<QueueUnOpt<T>, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -227,8 +227,8 @@ impl<T: Clone> Collectable for TryDequeue<T> {
 }
 
 impl<T: 'static + Clone> Memento for TryDequeue<T> {
-    type Object<'o> = &'o ComposedQueue<T>;
-    type Input<'o> = &'o PAtomic<NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>;
+    type Object<'o> = &'o QueueUnOpt<T>;
+    type Input<'o> = &'o PAtomic<NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
@@ -265,13 +265,13 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> DeallocNode<MaybeUninit<T>, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>
+impl<T: Clone> DeallocNode<MaybeUninit<T>, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>
     for TryDequeue<T>
 {
     #[inline]
     fn dealloc(
         &self,
-        target: PShared<'_, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
+        target: PShared<'_, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) {
@@ -281,11 +281,11 @@ impl<T: Clone> DeallocNode<MaybeUninit<T>, NodeUnOpt<MaybeUninit<T>, ComposedQue
 
 impl<T: Clone> TryDequeue<T> {
     fn get_next<'g>(
-        old_head: PShared<'_, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
-        queue: &ComposedQueue<T>,
+        old_head: PShared<'_, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
+        queue: &QueueUnOpt<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>>, ()> {
+    ) -> Result<Option<PShared<'g, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>>, ()> {
         let old_head_ref = unsafe { old_head.deref(pool) };
         let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -313,7 +313,7 @@ impl<T: Clone> TryDequeue<T> {
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    mine: PAtomic<NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
+    mine: PAtomic<NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
     try_deq: TryDequeue<T>,
 }
 
@@ -334,7 +334,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
         let mut mine = deq.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             let mine_ref = unsafe { mine.deref_mut(pool) };
-            NodeUnOpt::<MaybeUninit<T>, ComposedQueue<T>>::mark(mine_ref, gc);
+            NodeUnOpt::<MaybeUninit<T>, QueueUnOpt<T>>::mark(mine_ref, gc);
         }
 
         TryDequeue::<T>::filter(&mut deq.try_deq, gc, pool);
@@ -342,7 +342,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
 }
 
 impl<T: Clone> Memento for Dequeue<T> {
-    type Object<'o> = &'o ComposedQueue<T>;
+    type Object<'o> = &'o QueueUnOpt<T>;
     type Input<'o> = ();
     type Output<'o>
     where
@@ -395,12 +395,12 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 
 /// Persistent Queue
 #[derive(Debug)]
-pub struct ComposedQueue<T: Clone> {
-    head: CachePadded<PAtomic<NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>>,
-    tail: CachePadded<PAtomic<NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>>,
+pub struct QueueUnOpt<T: Clone> {
+    head: CachePadded<PAtomic<NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>>,
+    tail: CachePadded<PAtomic<NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>>,
 }
 
-impl<T: Clone> PDefault for ComposedQueue<T> {
+impl<T: Clone> PDefault for QueueUnOpt<T> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(NodeUnOpt::from(MaybeUninit::uninit()), pool).into_shared(guard);
@@ -413,7 +413,7 @@ impl<T: Clone> PDefault for ComposedQueue<T> {
     }
 }
 
-impl<T: Clone> Collectable for ComposedQueue<T> {
+impl<T: Clone> Collectable for QueueUnOpt<T> {
     fn filter(queue: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
@@ -426,11 +426,11 @@ impl<T: Clone> Collectable for ComposedQueue<T> {
     }
 }
 
-impl<T: Clone> Traversable<NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>> for ComposedQueue<T> {
+impl<T: Clone> Traversable<NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>> for QueueUnOpt<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
     fn search(
         &self,
-        target: PShared<'_, NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>>,
+        target: PShared<'_, NodeUnOpt<MaybeUninit<T>, QueueUnOpt<T>>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
@@ -450,7 +450,7 @@ impl<T: Clone> Traversable<NodeUnOpt<MaybeUninit<T>, ComposedQueue<T>>> for Comp
     }
 }
 
-unsafe impl<T: Clone + Send + Sync> Send for ComposedQueue<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for QueueUnOpt<T> {}
 
 #[cfg(test)]
 mod test {
@@ -485,7 +485,7 @@ mod test {
     }
 
     impl Memento for EnqDeq {
-        type Object<'o> = &'o ComposedQueue<usize>;
+        type Object<'o> = &'o QueueUnOpt<usize>;
         type Input<'o> = usize; // tid
         type Output<'o> = ();
         type Error<'o> = !;
@@ -545,8 +545,8 @@ mod test {
         }
     }
 
-    impl TestRootObj for ComposedQueue<usize> {}
-    impl TestRootMemento<ComposedQueue<usize>> for EnqDeq {}
+    impl TestRootObj for QueueUnOpt<usize> {}
+    impl TestRootMemento<QueueUnOpt<usize>> for EnqDeq {}
 
     // TODO: stack의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -561,6 +561,6 @@ mod test {
         const FILE_NAME: &str = "composed_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<ComposedQueue<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<QueueUnOpt<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }
