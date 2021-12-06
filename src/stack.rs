@@ -1,97 +1,30 @@
 //! Persistent Stack
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::Guard;
 
-use crate::atomic_update::{self, Delete};
+use crate::atomic_update_common::Traversable;
 use crate::pepoch::{self as epoch, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ll::persist_obj;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::PoolHandle;
-use crate::treiber_stack::TreiberStack;
+use crate::unopt_node::{DeallocNode, NodeUnOpt};
 
-/// Stack의 try push/pop 실패
-#[derive(Debug, Clone)]
+/// TODO: doc
+#[derive(Debug)]
 pub struct TryFail;
 
-/// TODO: doc
-// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
-#[derive(Debug)]
-pub struct Node<T: Clone> {
-    /// TODO: doc
-    pub data: T,
-
-    /// TODO: doc
-    pub next: PAtomic<Node<T>>,
-
-    /// push 되었는지 여부
-    // 이게 없으면, pop()에서 node 뺀 후 popper 등록 전에 crash 났을 때, 노드가 이미 push 되었었다는 걸 알 수 없음
-    pushed: AtomicBool,
-
-    /// 누가 pop 했는지 식별
-    // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
-    popper: AtomicUsize,
-}
-
-impl<T: Clone> From<T> for Node<T> {
-    fn from(value: T) -> Self {
-        Self {
-            data: value,
-            next: PAtomic::null(),
-            pushed: AtomicBool::new(false),
-            popper: AtomicUsize::new(Delete::<TreiberStack<T>, _>::no_owner()),
-        }
-    }
-}
-
-impl<T: Clone> atomic_update::Node for Node<T> {
-    #[inline]
-    fn ack(&self) {
-        self.pushed.store(true, Ordering::SeqCst);
-        persist_obj(&self.pushed, true);
-    }
-
-    #[inline]
-    fn acked(&self) -> bool {
-        self.pushed.load(Ordering::SeqCst)
-    }
-
-    #[inline]
-    fn owner(&self) -> &AtomicUsize {
-        &self.popper
-    }
-}
-
-unsafe impl<T: Clone + Send + Sync> Send for Node<T> {}
-
-impl<T: Clone> Collectable for Node<T> {
-    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut next = node.next.load(Ordering::SeqCst, guard);
-        if !next.is_null() {
-            let next_ref = unsafe { next.deref_mut(pool) };
-            Node::<T>::mark(next_ref, gc);
-        }
-    }
-}
-
-/// TODO: doc
-pub trait DeallocNode<T: Clone, N: atomic_update::Node> {
-    /// TODO: doc
-    fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle);
-}
-
 /// Persistent stack trait
-pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
+pub trait Stack<T: 'static + Clone>:
+    'static + Default + Collectable + Traversable<NodeUnOpt<T, Self>>
+{
     /// Try push 연산을 위한 Persistent op.
     /// Try push의 결과가 `TryFail`일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `TryFail`이 됨.
     type TryPush: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = PShared<'o, Node<T>>,
+        Input<'o> = PShared<'o, NodeUnOpt<T, Self>>,
         Output<'o> = (),
         Error<'o> = TryFail,
     >;
@@ -106,10 +39,10 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Try pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
     type TryPop: for<'o> Memento<
             Object<'o> = &'o Self,
-            Input<'o> = &'o PAtomic<Node<T>>,
+            Input<'o> = &'o PAtomic<NodeUnOpt<T, Self>>,
             Output<'o> = Option<T>,
             Error<'o> = TryFail,
-        > + DeallocNode<T, Node<T>>;
+        > + DeallocNode<T, NodeUnOpt<T, Self>>;
 
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
@@ -124,8 +57,8 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
 
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
-pub struct Push<T: 'static + Clone, S: Stack<T>> {
-    node: PAtomic<Node<T>>,
+pub struct Push<T: 'static + Clone, S: Stack<T> + Traversable<NodeUnOpt<T, S>>> {
+    node: PAtomic<NodeUnOpt<T, S>>,
     try_push: S::TryPush,
 }
 
@@ -146,7 +79,7 @@ impl<T: Clone, S: Stack<T>> Collectable for Push<T, S> {
         let mut node = push.node.load(Ordering::Relaxed, guard);
         if !node.is_null() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<T>::mark(node_ref, gc);
+            NodeUnOpt::<T, S>::mark(node_ref, gc);
         }
 
         S::TryPush::filter(&mut push.try_push, gc, pool);
@@ -210,8 +143,8 @@ impl<T: Clone, S: Stack<T>> Push<T, S> {
         value: T,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<T>> {
-        let node = POwned::new(Node::from(value), pool).into_shared(guard);
+    ) -> PShared<'g, NodeUnOpt<T, S>> {
+        let node = POwned::new(NodeUnOpt::from(value), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
         node
@@ -223,7 +156,7 @@ unsafe impl<T: 'static + Clone, S: Stack<T>> Send for Push<T, S> where S::TryPus
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
 pub struct Pop<T: 'static + Clone, S: Stack<T>> {
-    mine: PAtomic<Node<T>>,
+    mine: PAtomic<NodeUnOpt<T, S>>,
     try_pop: S::TryPop,
 }
 
@@ -244,7 +177,7 @@ impl<T: Clone, S: Stack<T>> Collectable for Pop<T, S> {
         let mut mine = pop.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             let mine_ref = unsafe { mine.deref_mut(pool) };
-            Node::<T>::mark(mine_ref, gc);
+            NodeUnOpt::<T, S>::mark(mine_ref, gc);
         }
 
         S::TryPop::filter(&mut pop.try_pop, gc, pool);

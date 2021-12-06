@@ -36,11 +36,8 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
-pub mod atomic_update;
-pub mod queue;
-pub mod queue_link_persist;
-pub mod queue_opt;
-pub mod queue_opt_link_persist;
+pub mod atomic_update_common;
+pub mod atomic_update_unopt;
 // pub mod elim_stack;
 // pub mod exchanger;
 // pub mod list;
@@ -48,9 +45,13 @@ pub mod queue_opt_link_persist;
 pub mod persistent;
 // pub mod pipe;
 // pub mod queue;
+// pub mod queue_lp;
+pub mod queue_unopt;
+// pub mod queue_unopt_lp;
 pub mod stack;
 // pub mod ticket_lock;
 pub mod treiber_stack;
+pub mod unopt_node;
 
 // Persistent location
 pub mod plocation;
