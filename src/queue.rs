@@ -66,8 +66,7 @@ impl<T: Clone> atomic_update_common::Node for NodeOpt<T> {
 
     #[inline]
     fn acked(&self) -> bool {
-        self.owner().load(Ordering::SeqCst)
-            != Delete::<Queue<T>, Self, TryDequeue<T>>::no_owner()
+        self.owner().load(Ordering::SeqCst) != Delete::<Queue<T>, Self, TryDequeue<T>>::no_owner()
     }
 
     #[inline]
@@ -105,7 +104,9 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     #[inline]
-    fn prepare(_: &mut NodeOpt<T>) -> bool { true }
+    fn prepare(_: &mut NodeOpt<T>) -> bool {
+        true
+    }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
@@ -301,13 +302,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete_opt
-            .run(
-                queue,
-                (mine_loc, &queue.head),
-                rec,
-                guard,
-                pool,
-            )
+            .run(queue, (mine_loc, &queue.head), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
@@ -360,6 +355,16 @@ impl<T: Clone> GetNext<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
         }
 
         Ok(Some(next))
+    }
+
+    #[inline]
+    fn node_when_deleted<'g>(
+        old_head: PShared<'_, NodeOpt<T>>,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> PShared<'g, NodeOpt<T>> {
+        let old_head_ref = unsafe { old_head.deref(pool) }; // SAFE: old_head는 null일 수 없음
+        old_head_ref.next.load(Ordering::SeqCst, guard)
     }
 }
 

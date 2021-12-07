@@ -36,8 +36,8 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
-pub mod atomic_update_common;
 pub mod atomic_update;
+pub mod atomic_update_common;
 pub mod atomic_update_unopt;
 // pub mod elim_stack;
 // pub mod exchanger;
