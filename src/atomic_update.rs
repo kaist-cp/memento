@@ -518,22 +518,16 @@ where
     }
 
     /// TODO: doc
-    pub fn dealloc(&self, _: PShared<'_, N>, _: &Guard, _: &PoolHandle) {
-        // TODO: 내가 넣었던 `new` 포인터와 비교해봐야 함
+    pub fn dealloc(&self, target: PShared<'_, N>, new: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
+        // owner가 내가 아닐 수 있음
+        // 따라서 owner를 확인 후 내가 update한 게 맞는다면 free
+        unsafe {
+            let owner = target.deref(pool).owner().load(Ordering::SeqCst);
 
-        // if target.is_null() || target.tag() == Self::EMPTY {
-        //     return;
-        // }
-
-        // // owner가 내가 아닐 수 있음
-        // // 따라서 owner를 확인 후 내가 delete한 게 맞는다면 free
-        // unsafe {
-        //     let owner = target.deref(pool).owner().load(Ordering::SeqCst);
-
-        //     if owner.as_ptr().into_offset() == self.id(pool) {
-        //         guard.defer_pdestroy(target);
-        //     }
-        // }
+            if owner == new.into_usize() {
+                guard.defer_pdestroy(target);
+            }
+        }
     }
 
     /// TODO: doc
