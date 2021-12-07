@@ -120,7 +120,7 @@ impl DeleteOrNode {
 
     #[inline]
     fn set_delete(x: usize) -> usize {
-        x | Self::DELETE_CLIENT // TODO: client id의 LSB에 trailing zero가 있나? (node ptr과 구분)
+        (x & (!0 << 1)) | Self::DELETE_CLIENT // TODO: client가 align 되어있다는 확신이 없음. 일단 LSB를 그냥 맘대로 사용함.
     }
 }
 
