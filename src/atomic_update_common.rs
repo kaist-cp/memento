@@ -10,9 +10,9 @@ use crate::{
 };
 
 /// TODO: doc
-pub trait Traversable<T> {
+pub trait Traversable<N> {
     /// TODO: doc
-    fn search(&self, target: PShared<'_, T>, guard: &Guard, pool: &PoolHandle) -> bool;
+    fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
 }
 
 /// TODO: doc

@@ -18,7 +18,7 @@ use crate::{
 /// TODO: doc
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
 #[derive(Debug)]
-pub struct NodeUnOpt<T, O: Traversable<Self>> {
+pub struct NodeUnOpt<T, O: Traversable<Self>> { // TODO: O 빠져도 될 듯
     /// TODO: doc
     pub(crate) data: T,
 
@@ -40,7 +40,7 @@ impl<T, O: Traversable<Self>> From<T> for NodeUnOpt<T, O> {
             data: value,
             next: PAtomic::null(),
             pushed: AtomicBool::new(false),
-            popper: AtomicUsize::new(DeleteUnOpt::<O, _>::no_owner()),
+            popper: AtomicUsize::new(DeleteUnOpt::<O, _>::no_owner()), // TODO: no_owner 통합
         }
     }
 }
