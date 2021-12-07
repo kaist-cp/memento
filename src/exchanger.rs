@@ -19,7 +19,7 @@ use crate::{
 };
 
 // WAITING Tag
-const WAITING: usize = 0;
+const WAITING: usize = 1;
 
 #[inline]
 fn opposite_tag(t: usize) -> usize {
@@ -142,6 +142,11 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
                 .unwrap()
                 .unwrap()
         };
+
+        // test
+        // let node_ref = unsafe { node.deref(pool) }.data.value;
+        // node_ref
+        // test
 
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
@@ -350,12 +355,12 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         let node = if rec {
             let node = self.node.load(Ordering::Relaxed, guard);
             if node.is_null() {
-                self.new_node(value, guard, pool)
+                self.new_node(value.clone(), guard, pool)
             } else {
                 node
             }
         } else {
-            self.new_node(value, guard, pool)
+            self.new_node(value.clone(), guard, pool)
         };
 
         if let Ok(v) = self.try_xchg.run(xchg, node, rec, guard, pool) {
@@ -363,6 +368,7 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         }
 
         loop {
+            let node = self.new_node(value.clone(), guard, pool); // TODO: alloc 문제 해결하고 clone 다 떼주기
             if let Ok(v) = self.try_xchg.run(xchg, node, false, guard, pool) {
                 return Ok(v);
             }
@@ -437,5 +443,182 @@ impl<T: Clone> Collectable for Exchanger<T> {
             let slot_ref = unsafe { slot.deref_mut(pool) };
             Node::mark(slot_ref, gc);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+
+    use crate::{
+        plocation::ralloc::{Collectable, GarbageCollection},
+        utils::tests::{run_test, TestRootMemento, TestRootObj},
+    };
+
+    use super::*;
+
+    /// 두 스레드가 한 exchanger를 두고 잘 교환하는지 (1회) 테스트
+    #[derive(Default)]
+    struct ExchangeOnce {
+        exchange: Exchange<usize>,
+    }
+
+    impl Collectable for ExchangeOnce {
+        fn filter(xchg_once: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchange::filter(&mut xchg_once.exchange, gc, pool);
+        }
+    }
+
+    impl Memento for ExchangeOnce {
+        type Object<'o> = &'o Exchanger<usize>;
+        type Input<'o> = usize; // tid(mid)
+        type Output<'o> = ();
+        type Error<'o> = !;
+
+        fn run<'o>(
+            &'o mut self,
+            xchg: Self::Object<'o>,
+            tid: Self::Input<'o>,
+            rec: bool,
+            guard: &Guard,
+            pool: &'static PoolHandle,
+        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+            // `move` for `tid`
+            let ret = self
+                .exchange
+                .run(xchg, tid, rec, guard, pool)
+                .unwrap();
+            assert_eq!(ret, 1 - tid);
+
+            Ok(())
+        }
+
+        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
+            todo!("reset test")
+        }
+    }
+
+    impl TestRootObj for Exchanger<usize> {}
+    impl TestRootMemento<Exchanger<usize>> for ExchangeOnce {}
+
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+    #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
+    fn exchange_once() {
+        const FILE_NAME: &str = "exchange_once.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
+    }
+
+    /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
+    ///
+    ///   ---T0---                   -------T1-------                   ---T2---
+    ///  |        |                 |                |                 |        |
+    ///     (exchange0)        (exchange0)     (exchange2)        (exchange2)
+    /// [item]    <-----lxchg----->       [item]       <-----rxchg----->     [item]
+    #[derive(Default)]
+    struct RotateLeft {
+        item: usize,
+        exchange0: Exchange<usize>,
+        exchange2: Exchange<usize>,
+    }
+
+    impl Collectable for RotateLeft {
+        fn filter(rleft: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchange::filter(&mut rleft.exchange0, gc, pool);
+            Exchange::filter(&mut rleft.exchange2, gc, pool);
+        }
+    }
+
+    impl Memento for RotateLeft {
+        type Object<'o> = &'o [Exchanger<usize>; 2];
+        type Input<'o> = usize;
+        type Output<'o> = ();
+        type Error<'o> = !;
+
+        /// Before rotation : [0]  [1]  [2]
+        /// After rotation  : [1]  [2]  [0]
+        fn run<'o>(
+            &'o mut self,
+            xchgs: Self::Object<'o>,
+            tid: Self::Input<'o>,
+            rec: bool,
+            guard: &Guard,
+            pool: &'static PoolHandle,
+        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+            // Alias
+            let lxchg = &xchgs[0];
+            let rxchg = &xchgs[1];
+            let item = &mut self.item;
+
+            *item = tid;
+
+            match tid {
+                // T0: [0] -> [1]    [2]
+                0 => {
+                    *item = self
+                        .exchange0
+                        .run(lxchg, *item, rec, guard, pool)
+                        .unwrap();
+                    assert_eq!(*item, 1);
+                }
+                // T1: Composition in the middle
+                1 => {
+                    // Step1: [0] <- [1]    [2]
+
+                    *item = self
+                        .exchange0
+                        .run(lxchg, *item, rec, guard, pool)
+                        .unwrap();
+                    assert_eq!(*item, 0);
+
+                    // Step2: [1]    [0] -> [2]
+                    *item = self
+                        .exchange2
+                        .run(rxchg, *item, rec, guard, pool)
+                        .unwrap();
+                    assert_eq!(*item, 2);
+                }
+                // T2: [0]    [1] <- [2]
+                2 => {
+                    *item = self
+                        .exchange2
+                        .run(rxchg, *item, rec, guard, pool)
+                        .unwrap();
+                    assert_eq!(*item, 0);
+                }
+                _ => unreachable!(),
+            }
+            Ok(())
+        }
+
+        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
+            todo!("reset test")
+        }
+    }
+
+    impl Collectable for [Exchanger<usize>; 2] {
+        fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchanger::filter(&mut s[0], gc, pool);
+            Exchanger::filter(&mut s[1], gc, pool);
+        }
+    }
+    impl PDefault for [Exchanger<usize>; 2] {
+        fn pdefault(pool: &'static PoolHandle) -> Self {
+            [Exchanger::pdefault(pool), Exchanger::pdefault(pool)]
+        }
+    }
+    impl TestRootObj for [Exchanger<usize>; 2] {}
+    impl TestRootMemento<[Exchanger<usize>; 2]> for RotateLeft {}
+
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+    #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
+    fn rotate_left() {
+        const FILE_NAME: &str = "rotate_left.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
     }
 }
