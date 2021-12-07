@@ -1,9 +1,10 @@
 //! Persistent opt queue
 
 use crate::atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic};
-use crate::atomic_update_common::{self, no_owner, InsertErr, Traversable};
+use crate::atomic_update_common::{InsertErr, Traversable};
+use crate::node::Node;
 use crate::unopt_node::DeallocNode;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 
@@ -13,69 +14,6 @@ use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
 
 /// TODO: doc
-// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
-#[derive(Debug)]
-pub struct NodeOpt<T: Clone> {
-    /// TODO: doc
-    pub data: MaybeUninit<T>,
-
-    /// TODO: doc
-    pub next: PAtomic<NodeOpt<T>>,
-
-    /// 누가 dequeue 했는지 식별
-    // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
-    dequeuer: AtomicUsize,
-}
-
-impl<T: Clone> Default for NodeOpt<T> {
-    fn default() -> Self {
-        Self {
-            data: MaybeUninit::uninit(),
-            next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(no_owner()),
-        }
-    }
-}
-
-impl<T: Clone> From<T> for NodeOpt<T> {
-    fn from(value: T) -> Self {
-        Self {
-            data: MaybeUninit::new(value),
-            next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(no_owner()),
-        }
-    }
-}
-
-impl<T: Clone> Collectable for NodeOpt<T> {
-    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark valid ptr to trace
-        let mut next = node.next.load(Ordering::SeqCst, guard);
-        if !next.is_null() {
-            let next = unsafe { next.deref_mut(pool) };
-            NodeOpt::<T>::mark(next, gc);
-        }
-    }
-}
-
-impl<T: Clone> atomic_update_common::Node for NodeOpt<T> {
-    #[inline]
-    fn ack(&self) {}
-
-    #[inline]
-    fn acked(&self) -> bool {
-        self.owner().load(Ordering::SeqCst) != no_owner()
-    }
-
-    #[inline]
-    fn owner(&self) -> &AtomicUsize {
-        &self.dequeuer
-    }
-}
-
-/// TODO: doc
 #[derive(Debug)]
 pub struct TryFail;
 
@@ -83,7 +21,7 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: Insert<Queue<T>, NodeOpt<T>>,
+    insert: Insert<Queue<T>, Node<MaybeUninit<T>, Queue<T>>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -104,14 +42,14 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     #[inline]
-    fn prepare(_: &mut NodeOpt<T>) -> bool {
+    fn prepare(_: &mut Node<MaybeUninit<T>, Queue<T>>) -> bool {
         true
     }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input<'o> = PShared<'o, NodeOpt<T>>;
+    type Input<'o> = PShared<'o, Node<MaybeUninit<T>, Queue<T>>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -169,7 +107,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
-    node: PAtomic<NodeOpt<T>>,
+    node: PAtomic<Node<MaybeUninit<T>, Queue<T>>>,
     try_enq: TryEnqueue<T>,
 }
 
@@ -190,7 +128,7 @@ impl<T: Clone> Collectable for Enqueue<T> {
         let mut node = enq.node.load(Ordering::Relaxed, guard);
         if !node.is_null() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            NodeOpt::<T>::mark(node_ref, gc);
+            Node::<MaybeUninit<T>, Queue<T>>::mark(node_ref, gc);
         }
 
         TryEnqueue::<T>::filter(&mut enq.try_enq, gc, pool);
@@ -254,8 +192,8 @@ impl<T: Clone> Enqueue<T> {
         value: T,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> PShared<'g, NodeOpt<T>> {
-        let node = POwned::new(NodeOpt::from(value), pool).into_shared(guard);
+    ) -> PShared<'g, Node<MaybeUninit<T>, Queue<T>>> {
+        let node = POwned::new(Node::from(MaybeUninit::new(value)), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
         node
@@ -268,7 +206,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
-    delete_opt: Delete<Queue<T>, NodeOpt<T>, Self>,
+    delete_opt: Delete<Queue<T>, Node<MaybeUninit<T>, Queue<T>>, Self>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -289,7 +227,7 @@ impl<T: Clone> Collectable for TryDequeue<T> {
 
 impl<T: 'static + Clone> Memento for TryDequeue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input<'o> = &'o PAtomic<NodeOpt<T>>;
+    type Input<'o> = &'o PAtomic<Node<MaybeUninit<T>, Queue<T>>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
@@ -320,20 +258,25 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> DeallocNode<T, NodeOpt<T>> for TryDequeue<T> {
+impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>, Queue<T>>> for TryDequeue<T> {
     #[inline]
-    fn dealloc(&self, target: PShared<'_, NodeOpt<T>>, guard: &Guard, pool: &PoolHandle) {
+    fn dealloc(
+        &self,
+        target: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
         self.delete_opt.dealloc(target, guard, pool);
     }
 }
 
-impl<T: Clone> DeleteHelper<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
+impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>, Queue<T>>> for TryDequeue<T> {
     fn prepare<'g>(
-        old_head: PShared<'_, NodeOpt<T>>,
+        old_head: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
         queue: &Queue<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, NodeOpt<T>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>, Queue<T>>>>, ()> {
         let old_head_ref = unsafe { old_head.deref(pool) };
         let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -359,10 +302,10 @@ impl<T: Clone> DeleteHelper<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
 
     #[inline]
     fn node_when_deleted<'g>(
-        old_head: PShared<'_, NodeOpt<T>>,
+        old_head: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> PShared<'g, NodeOpt<T>> {
+    ) -> PShared<'g, Node<MaybeUninit<T>, Queue<T>>> {
         let old_head_ref = unsafe { old_head.deref(pool) }; // SAFE: old_head는 null일 수 없음
         old_head_ref.next.load(Ordering::SeqCst, guard)
     }
@@ -371,7 +314,7 @@ impl<T: Clone> DeleteHelper<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    mine: PAtomic<NodeOpt<T>>,
+    mine: PAtomic<Node<MaybeUninit<T>, Queue<T>>>,
     try_deq: TryDequeue<T>,
 }
 
@@ -392,7 +335,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
         let mut mine = deq.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             let mine_ref = unsafe { mine.deref_mut(pool) };
-            NodeOpt::<T>::mark(mine_ref, gc);
+            Node::<MaybeUninit<T>, Queue<T>>::mark(mine_ref, gc);
         }
 
         TryDequeue::<T>::filter(&mut deq.try_deq, gc, pool);
@@ -454,14 +397,14 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
-    head: CachePadded<SMOAtomic<Self, NodeOpt<T>, TryDequeue<T>>>,
-    tail: CachePadded<PAtomic<NodeOpt<T>>>,
+    head: CachePadded<SMOAtomic<Self, Node<MaybeUninit<T>, Queue<T>>, TryDequeue<T>>>,
+    tail: CachePadded<PAtomic<Node<MaybeUninit<T>, Queue<T>>>>,
 }
 
 impl<T: Clone> PDefault for Queue<T> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
-        let sentinel = POwned::new(NodeOpt::default(), pool).into_shared(guard);
+        let sentinel = POwned::new(Node::from(MaybeUninit::uninit()), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
@@ -479,14 +422,19 @@ impl<T: Clone> Collectable for Queue<T> {
         let mut head = queue.head.load(Ordering::SeqCst, guard);
         if !head.is_null() {
             let head_ref = unsafe { head.deref_mut(pool) };
-            NodeOpt::mark(head_ref, gc);
+            Node::mark(head_ref, gc);
         }
     }
 }
 
-impl<T: Clone> Traversable<NodeOpt<T>> for Queue<T> {
+impl<T: Clone> Traversable<Node<MaybeUninit<T>, Queue<T>>> for Queue<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(&self, target: PShared<'_, NodeOpt<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
+    fn search(
+        &self,
+        target: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
         // TODO: null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?

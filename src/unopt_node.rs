@@ -23,7 +23,7 @@ pub struct NodeUnOpt<T, O: Traversable<Self>> {
     pub(crate) data: T,
 
     /// TODO: doc
-    pub(crate) next: PAtomic<NodeUnOpt<T, O>>,
+    pub(crate) next: PAtomic<Self>,
 
     /// push 되었는지 여부
     // 이게 없으면, pop()에서 node 뺀 후 popper 등록 전에 crash 났을 때, 노드가 이미 push 되었었다는 걸 알 수 없음
