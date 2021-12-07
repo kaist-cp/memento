@@ -41,6 +41,7 @@ pub mod atomic_update_common;
 pub mod atomic_update_unopt;
 // pub mod elim_stack;
 // pub mod exchanger;
+// pub mod exchanger_legacy;
 // pub mod list;
 // pub mod lock;
 pub mod persistent;
