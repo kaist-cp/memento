@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
-use crate::atomic_update::{self, Delete, GetNext, Insert, SMOAtomic};
-use crate::atomic_update_common::{self, InsertErr, Traversable};
+use crate::atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic};
+use crate::atomic_update_common::{self, no_owner, InsertErr, Traversable};
 use crate::unopt_node::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
@@ -32,7 +32,7 @@ impl<T: Clone> Default for NodeOpt<T> {
         Self {
             data: MaybeUninit::uninit(),
             next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(Delete::<Queue<T>, _, TryDequeue<T>>::no_owner()),
+            dequeuer: AtomicUsize::new(no_owner()),
         }
     }
 }
@@ -42,7 +42,7 @@ impl<T: Clone> From<T> for NodeOpt<T> {
         Self {
             data: MaybeUninit::new(value),
             next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(Delete::<Queue<T>, _, TryDequeue<T>>::no_owner()),
+            dequeuer: AtomicUsize::new(no_owner()),
         }
     }
 }
@@ -66,8 +66,7 @@ impl<T: Clone> atomic_update_common::Node for NodeOpt<T> {
 
     #[inline]
     fn acked(&self) -> bool {
-        self.owner().load(Ordering::SeqCst)
-            != Delete::<Queue<T>, Self, TryDequeue<T>>::no_owner()
+        self.owner().load(Ordering::SeqCst) != no_owner()
     }
 
     #[inline]
@@ -105,7 +104,9 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     #[inline]
-    fn prepare(_: &mut NodeOpt<T>) -> bool { true }
+    fn prepare(_: &mut NodeOpt<T>) -> bool {
+        true
+    }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
@@ -301,13 +302,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete_opt
-            .run(
-                queue,
-                (mine_loc, &queue.head),
-                rec,
-                guard,
-                pool,
-            )
+            .run(queue, (mine_loc, &queue.head), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
@@ -332,8 +327,8 @@ impl<T: Clone> DeallocNode<T, NodeOpt<T>> for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> GetNext<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
-    fn get_next<'g>(
+impl<T: Clone> DeleteHelper<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
+    fn prepare<'g>(
         old_head: PShared<'_, NodeOpt<T>>,
         queue: &Queue<T>,
         guard: &'g Guard,
@@ -360,6 +355,16 @@ impl<T: Clone> GetNext<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
         }
 
         Ok(Some(next))
+    }
+
+    #[inline]
+    fn node_when_deleted<'g>(
+        old_head: PShared<'_, NodeOpt<T>>,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> PShared<'g, NodeOpt<T>> {
+        let old_head_ref = unsafe { old_head.deref(pool) }; // SAFE: old_head는 null일 수 없음
+        old_head_ref.next.load(Ordering::SeqCst, guard)
     }
 }
 

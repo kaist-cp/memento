@@ -4,7 +4,10 @@ use std::sync::atomic::AtomicUsize;
 
 use crossbeam_epoch::Guard;
 
-use crate::{pepoch::PShared, plocation::PoolHandle};
+use crate::{
+    pepoch::{atomic::Pointer, PShared},
+    plocation::PoolHandle,
+};
 
 /// TODO: doc
 pub trait Traversable<T> {
@@ -13,6 +16,7 @@ pub trait Traversable<T> {
 }
 
 /// TODO: doc
+// TODO: node들 싹 통합: 각자의 node 안에 Node trait 구현된 걸 쓰도록
 pub trait Node: Sized {
     /// TODO: doc
     fn ack(&self);
@@ -39,3 +43,10 @@ pub enum InsertErr<'g, T> {
 
 /// Empty를 표시하기 위한 태그
 pub const EMPTY: usize = 2;
+
+/// No owner를 표시하기 위함
+#[inline]
+pub fn no_owner() -> usize {
+    let null = PShared::<()>::null();
+    null.into_usize()
+}

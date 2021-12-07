@@ -20,7 +20,7 @@
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-// #![deny(warnings)]
+#![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
@@ -36,8 +36,8 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
-pub mod atomic_update_common;
 pub mod atomic_update;
+pub mod atomic_update_common;
 pub mod atomic_update_unopt;
 // pub mod elim_stack;
 // pub mod exchanger;
