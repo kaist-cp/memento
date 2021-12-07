@@ -128,7 +128,7 @@ impl DeleteOrNode {
 // TODO: 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
 pub trait DeleteHelper<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
-    fn prepare<'g>(
+    fn prepare_delete<'g>(
         cur: PShared<'_, N>,
         obj: &O,
         guard: &'g Guard,
@@ -229,7 +229,7 @@ where
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
-        let next = match G::prepare(target, obj, guard, pool) {
+        let next = match G::prepare_delete(target, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
                 target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);

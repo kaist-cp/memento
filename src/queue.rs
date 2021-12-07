@@ -271,7 +271,7 @@ impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>>> for TryDequeue<T> {
 }
 
 impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
-    fn prepare<'g>(
+    fn prepare_delete<'g>(
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
         queue: &Queue<T>,
         guard: &'g Guard,
