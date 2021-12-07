@@ -16,6 +16,8 @@ use crate::{
 };
 
 /// TODO: doc
+///
+/// 빠졌던 노드를 다시 넣으려 하면 안 됨
 #[derive(Debug)]
 pub struct Insert<O, N: Node + Collectable> {
     _marker: PhantomData<*const (O, N)>,
@@ -215,7 +217,8 @@ where
     G: 'static + DeleteHelper<O, N>,
 {
     type Object<'o> = &'o O;
-    type Input<'o> = (&'o PAtomic<N>, &'o SMOAtomic<O, N, G>);
+    type Input<'o> = (
+        &'o PAtomic<N>, &'o SMOAtomic<O, N, G>);
     type Output<'o>
     where
         O: 'o,
@@ -362,6 +365,8 @@ where
 }
 
 /// TODO: doc
+///
+/// 빠졌던 노드를 다시 넣으려 하면 안 됨
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // TODO: update는 O 필요 없는 것 같음
 #[derive(Debug)]
@@ -439,8 +444,7 @@ where
             let next =
                 DeleteOrNode::is_node(o).unwrap_or(G::node_when_deleted(target, guard, pool));
             let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-            // TODO: 빠졌던 노드가 다시 들어오게 되는 경우? (ABA같은 문제)
-            // TODO: 뺀 거를 다시 넣는 일이 있다면 owner를 씻겨줘야 함. 그냥 빠진 노드는 다시 못 쓰게 하는 게 어떰
+            // 빠졌던 노드를 다시 들어오게 되는 경우는 없어야 함
             return Err(());
         }
 

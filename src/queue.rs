@@ -207,6 +207,8 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
     delete_opt: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
+
+    // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
 impl<T: Clone> Default for TryDequeue<T> {

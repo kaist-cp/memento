@@ -75,6 +75,8 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 pub struct TryPop<T: Clone> {
     /// pop를 위해 할당된 node
     delete: DeleteUnOpt<TreiberStack<T>, NodeUnOpt<T>>,
+
+    // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
 impl<T: Clone> Default for TryPop<T> {

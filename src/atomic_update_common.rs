@@ -61,14 +61,14 @@ pub fn no_owner() -> usize {
 
 /// Input으로 주어지는 `save_loc`은 `no_read()`로 세팅되어 있어야 함
 #[derive(Debug)]
-pub struct Read<N: Node + Collectable> {
+pub struct Load<N: Node + Collectable> {
     _marker: PhantomData<*const N>,
 }
 
-unsafe impl<N: Node + Collectable + Send + Sync> Send for Read<N> {}
-unsafe impl<N: Node + Collectable + Send + Sync> Sync for Read<N> {}
+unsafe impl<N: Node + Collectable + Send + Sync> Send for Load<N> {}
+unsafe impl<N: Node + Collectable + Send + Sync> Sync for Load<N> {}
 
-impl<N: Node + Collectable> Default for Read<N> {
+impl<N: Node + Collectable> Default for Load<N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -76,20 +76,17 @@ impl<N: Node + Collectable> Default for Read<N> {
     }
 }
 
-impl<N: Node + Collectable> Collectable for Read<N> {
+impl<N: Node + Collectable> Collectable for Load<N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<N> Memento for Read<N>
+impl<N> Memento for Load<N>
 where
     N: 'static + Node + Collectable,
 {
     type Object<'o> = ();
     type Input<'o> = (&'o PAtomic<N>, &'o PAtomic<N>);
     type Output<'o> = Option<PShared<'o, N>>;
-    // where
-    //     N: 'o,
-    // = ();
     type Error<'o> = !;
 
     fn run<'o>(
@@ -114,7 +111,7 @@ where
     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<N: Node + Collectable> Read<N> {
+impl<N: Node + Collectable> Load<N> {
     #[inline]
     fn result<'g>(&self, save_loc: &PAtomic<N>, guard: &'g Guard) -> Option<PShared<'g, N>> {
         let saved = save_loc.load(Ordering::Relaxed, guard);

@@ -1,12 +1,14 @@
 //! Persistent Exchanger
 
+// TODO: 2-byte high tagging to resolve ABA problem
+
 use std::{sync::atomic::Ordering, time::Duration};
 
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
     atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
-    atomic_update_common::Traversable,
+    atomic_update_common::{Load, Traversable},
     node::Node,
     pepoch::{PAtomic, PShared},
     persistent::{Memento, PDefault},
@@ -49,16 +51,29 @@ impl<T> From<T> for ExchangeNode<T> {
 /// Exchanger의 try exchange
 #[derive(Debug)]
 pub struct TryExchange<T: Clone> {
+    init_ld_param: PAtomic<Node<ExchangeNode<T>>>,
+    wait_ld_param: PAtomic<Node<ExchangeNode<T>>>,
+    load: Load<Node<ExchangeNode<T>>>,
+
     insert: Insert<Exchanger<T>, Node<ExchangeNode<T>>>,
+
+    update_param: PAtomic<Node<ExchangeNode<T>>>,
     update: Update<Exchanger<T>, Node<ExchangeNode<T>>, Self>,
+
+    delete_param: PAtomic<Node<ExchangeNode<T>>>,
     delete: Delete<Exchanger<T>, Node<ExchangeNode<T>>, Self>,
 }
 
 impl<T: Clone> Default for TryExchange<T> {
     fn default() -> Self {
         Self {
+            init_ld_param: PAtomic::from(Load::<Node<ExchangeNode<T>>>::no_read()),
+            wait_ld_param: PAtomic::from(Load::<Node<ExchangeNode<T>>>::no_read()),
+            load: Default::default(),
             insert: Default::default(),
+            update_param: PAtomic::null(),
             update: Default::default(),
+            delete_param: PAtomic::null(),
             delete: Default::default(),
         }
     }
@@ -66,36 +81,67 @@ impl<T: Clone> Default for TryExchange<T> {
 
 impl<T: Clone> Collectable for TryExchange<T> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        todo!()
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = s.init_ld_param.load(Ordering::Relaxed, guard);
+        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+        }
+
+        let mut node = s.wait_ld_param.load(Ordering::Relaxed, guard);
+        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+        }
+
+        let mut node = s.update_param.load(Ordering::Relaxed, guard);
+        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+        }
+
+        let mut node = s.delete_param.load(Ordering::Relaxed, guard);
+        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+        }
+
+        Load::filter(&mut s.load, gc, pool);
+        Insert::filter(&mut s.insert, gc, pool);
+        Update::filter(&mut s.update, gc, pool);
+        Delete::filter(&mut s.delete, gc, pool);
     }
 }
 
 impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = (
-        PShared<'o, Node<ExchangeNode<T>>>,
-        &'o PAtomic<Node<ExchangeNode<T>>>,
-        &'o PAtomic<Node<ExchangeNode<T>>>,
-    );
+    type Input<'o> = PShared<'o, Node<ExchangeNode<T>>>;
     type Output<'o> = T; // TODO: input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         xchg: Self::Object<'o>,
-        (node, update_target_loc, delete_target_loc): Self::Input<'o>,
+        node: Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let slot = xchg.slot.load(Ordering::SeqCst, guard);
-
-        if rec {
-            // TODO: crash 후 slot에 내가 들어가 있는 경우 등....
-            // TODO: read memento를 만들자
-        }
-
-        // Normal run
+        // 예전에 읽었던 slot을 불러오거나 새로 읽음
+        let saved_slot = self
+            .load
+            .run((), (&self.init_ld_param, &xchg.slot), rec, guard, pool)
+            .unwrap();
+        let slot = if let Some(s) = saved_slot {
+            s
+        } else {
+            self.load
+                .run((), (&self.init_ld_param, &xchg.slot), false, guard, pool)
+                .unwrap()
+                .unwrap()
+        };
 
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
@@ -114,7 +160,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
                 return Err(TryFail::Busy);
             }
 
-            return self.wait(mine, delete_target_loc, xchg, rec, guard, pool);
+            return self.wait(mine, xchg, rec, guard, pool);
         }
 
         // slot이 null이 아니면 tag를 확인하고 반대껄 장착하고 update
@@ -126,7 +172,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
 
         let updated = self.update.run(
             xchg,
-            (mine, update_target_loc, &xchg.slot),
+            (mine, &self.update_param, &xchg.slot),
             rec,
             guard,
             pool,
@@ -139,7 +185,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
 
         // 내가 기다린다고 선언한 거면 기다림
         if my_tag == WAITING {
-            return self.wait(mine, delete_target_loc, xchg, rec, guard, pool);
+            return self.wait(mine, xchg, rec, guard, pool);
         }
 
         // even으로 성공하면 성공 리턴
@@ -149,7 +195,15 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        todo!()
+        self.init_ld_param.store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
+        self.wait_ld_param.store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
+        self.update_param.store(PShared::null(), Ordering::Relaxed);
+        self.delete_param.store(PShared::null(), Ordering::Relaxed);
+
+        self.load.reset(nested, guard, pool);
+        self.insert.reset(nested, guard, pool);
+        self.update.reset(nested, guard, pool);
+        self.delete.reset(nested, guard, pool);
     }
 }
 
@@ -157,7 +211,6 @@ impl<T: 'static + Clone> TryExchange<T> {
     fn wait<'g>(
         &mut self,
         mine: PShared<'_, Node<ExchangeNode<T>>>,
-        delete_target_loc: &PAtomic<Node<ExchangeNode<T>>>,
         xchg: &Exchanger<T>,
         rec: bool,
         guard: &'g Guard,
@@ -165,9 +218,20 @@ impl<T: 'static + Clone> TryExchange<T> {
     ) -> Result<T, TryFail> {
         // TODO: timeout을 받고 loop을 쓰자
         // 누군가 update 해주길 기다림
-        let slot = xchg.slot.load(Ordering::SeqCst, guard);
+        let saved_slot = self
+            .load
+            .run((), (&self.wait_ld_param, &xchg.slot), rec, guard, pool)
+            .unwrap();
+        let slot = if let Some(s) = saved_slot {
+            s
+        } else {
+            self.load
+                .run((), (&self.wait_ld_param, &xchg.slot), false, guard, pool)
+                .unwrap()
+                .unwrap()
+        };
 
-        // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감 ( TODO: 파트너? owner를 봐야 한다고?)
+        // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if slot != mine {
             return Ok(Self::wait_succ(mine, pool));
         }
@@ -178,9 +242,10 @@ impl<T: 'static + Clone> TryExchange<T> {
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = self
             .delete
-            .run(xchg, (delete_target_loc, &xchg.slot), rec, guard, pool);
+            .run(xchg, (&self.delete_param, &xchg.slot), rec, guard, pool);
 
         if deleted.is_ok() {
+            // TODO: 소유권 청소해야 함
             return Err(TryFail::Timeout);
         }
 
