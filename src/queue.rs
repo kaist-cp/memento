@@ -242,7 +242,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete_opt
-            .run(queue, (mine_loc, &queue.head), rec, guard, pool)
+            .run(queue, (mine_loc, PShared::null(), &queue.head), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
@@ -275,6 +275,7 @@ impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>>> for TryDequeue<T> {
 impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
     fn prepare_delete<'g>(
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
+        _: PShared<'_, Node<MaybeUninit<T>>>,
         queue: &Queue<T>,
         guard: &'g Guard,
         pool: &PoolHandle,

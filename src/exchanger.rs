@@ -242,7 +242,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = self
             .delete
-            .run(xchg, (&self.delete_param, &xchg.slot), rec, guard, pool);
+            .run(xchg, (&self.delete_param, mine, &xchg.slot), rec, guard, pool);
 
         if deleted.is_ok() {
             // TODO: 소유권 청소해야 함
@@ -272,14 +272,16 @@ impl<T: 'static + Clone> TryExchange<T> {
 impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange<T> {
     fn prepare_delete<'g>(
         cur: PShared<'_, Node<ExchangeNode<T>>>,
-        obj: &Exchanger<T>,
-        guard: &'g Guard,
-        pool: &PoolHandle,
+        mine: PShared<'_, Node<ExchangeNode<T>>>,
+        _: &Exchanger<T>,
+        _: &'g Guard,
+        _: &PoolHandle,
     ) -> Result<Option<PShared<'g, Node<ExchangeNode<T>>>>, ()> {
-        // TODO: cur == mine 일 때에만 시도해야 함
-        // mine을 어떻게 구하지?
+        if cur == mine {
+            return Err(());
+        }
 
-        todo!()
+        Ok(Some(PShared::<_>::null()))
     }
 
     fn node_when_deleted<'g>(

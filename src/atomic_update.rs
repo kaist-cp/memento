@@ -133,6 +133,7 @@ pub trait DeleteHelper<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
     fn prepare_delete<'g>(
         cur: PShared<'_, N>,
+        forbidden: PShared<'_, N>,
         obj: &O,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -217,8 +218,7 @@ where
     G: 'static + DeleteHelper<O, N>,
 {
     type Object<'o> = &'o O;
-    type Input<'o> = (
-        &'o PAtomic<N>, &'o SMOAtomic<O, N, G>);
+    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o SMOAtomic<O, N, G>);
     type Output<'o>
     where
         O: 'o,
@@ -230,7 +230,7 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        (target_loc, point): Self::Input<'o>,
+        (target_loc, forbidden, point): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -242,7 +242,7 @@ where
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
-        let next = match G::prepare_delete(target, obj, guard, pool) {
+        let next = match G::prepare_delete(target, forbidden, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
                 target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
