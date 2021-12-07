@@ -5,7 +5,7 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 use crossbeam_epoch::Guard;
 
 use crate::{
-    atomic_update_common::{InsertErr, Node, Traversable},
+    atomic_update_common::{no_owner, InsertErr, Node, Traversable},
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
     persistent::Memento,
     plocation::{
@@ -249,7 +249,7 @@ where
         let owner = target_ref.owner();
         owner
             .compare_exchange(
-                Self::no_owner(),
+                no_owner(),
                 self.id(pool),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
@@ -349,14 +349,6 @@ where
         let off = unsafe { self.as_pptr(pool).into_offset() };
         DeleteOrNode::set_delete(off)
     }
-
-    /// TODO: doc
-    // TODO: 공통 함수로 빼기
-    #[inline]
-    pub fn no_owner() -> usize {
-        let null = PShared::<Self>::null();
-        null.into_usize()
-    }
 }
 
 /// TODO: doc
@@ -418,6 +410,11 @@ where
 
         // 포인트의 현재 타겟 불러옴
         let target = point.load(Ordering::SeqCst, guard);
+
+        if target.is_null() {
+            return Err(());
+        }
+
         let target_ref = unsafe { target.deref(pool) };
 
         // owner의 주인이 없는지 확인
@@ -425,8 +422,8 @@ where
         let o = owner.load(Ordering::SeqCst);
 
         // 이미 주인이 있다면 point를 바꿔주고 페일 리턴
-        // TODO: no_owner는 Delete랑 같은 함수 써야 함. common으로 빼자 (할 때 node들 싹 통합: 각자의 node 안에 Node trait 구현된 걸 쓰도록)
-        if o == Self::no_owner() {
+        // TODO: 찜하기 전에 load 먼저 해보는 건데, 그 순서는 실험을 하고 나서 정하자
+        if o == no_owner() {
             persist_obj(owner, false);
             let next =
                 DeleteOrNode::is_node(o).unwrap_or(G::node_when_deleted(target, guard, pool));
@@ -509,7 +506,13 @@ where
     }
 
     /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, N>, new: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
+    pub fn dealloc(
+        &self,
+        target: PShared<'_, N>,
+        new: PShared<'_, N>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
         // owner가 내가 아닐 수 있음
         // 따라서 owner를 확인 후 내가 update한 게 맞는다면 free
         unsafe {
@@ -519,12 +522,5 @@ where
                 guard.defer_pdestroy(target);
             }
         }
-    }
-
-    /// TODO: doc
-    #[inline]
-    pub fn no_owner() -> usize {
-        let null = PShared::<Self>::null();
-        null.into_usize()
     }
 }
