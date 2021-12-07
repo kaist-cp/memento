@@ -200,7 +200,6 @@ impl<T: 'static + Clone> TryExchange<T> {
 
     #[inline]
     fn prepare_insert(_: &mut Node<ExchangeNode<T>>) -> bool {
-        // TODO: 모든 opt insert는 prepare가 필요 없는 것 같음
         true
     }
 }
@@ -212,13 +211,16 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, Node<ExchangeNode<T>>>>, ()> {
+        // TODO: cur == mine 일 때에만 시도해야 함
+        // mine을 어떻게 구하지?
+
         todo!()
     }
 
     fn node_when_deleted<'g>(
-        deleted: PShared<'_, Node<ExchangeNode<T>>>,
-        guard: &'g Guard,
-        pool: &PoolHandle,
+        _: PShared<'_, Node<ExchangeNode<T>>>,
+        _: &'g Guard,
+        _: &PoolHandle,
     ) -> PShared<'g, Node<ExchangeNode<T>>> {
         PShared::<_>::null()
     }

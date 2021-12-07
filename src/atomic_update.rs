@@ -87,6 +87,7 @@ where
 }
 
 impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
+    #[inline]
     fn result<'g>(
         &self,
         obj: &O,
@@ -248,7 +249,6 @@ where
             Err(()) => return Err(()),
         };
 
-        // TODO: 찜하기 전에 owner 로드 해보기
         // 우선 내가 target을 가리키고
         target_loc.store(target, Ordering::Relaxed);
         persist_obj(target_loc, false);
@@ -311,6 +311,7 @@ where
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
+    #[inline]
     fn result<'g>(
         &self,
         target_loc: &PAtomic<N>,
@@ -438,6 +439,8 @@ where
             let next =
                 DeleteOrNode::is_node(o).unwrap_or(G::node_when_deleted(target, guard, pool));
             let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+            // TODO: 빠졌던 노드가 다시 들어오게 되는 경우? (ABA같은 문제)
+            // TODO: 뺀 거를 다시 넣는 일이 있다면 owner를 씻겨줘야 함. 그냥 빠진 노드는 다시 못 쓰게 하는 게 어떰
             return Err(());
         }
 
@@ -493,6 +496,7 @@ where
     N: Node + Collectable,
     G: DeleteHelper<O, N>,
 {
+    #[inline]
     fn result<'g>(
         &self,
         new: PShared<'_, N>,
