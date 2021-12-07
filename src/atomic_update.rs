@@ -423,7 +423,7 @@ where
 
         // 이미 주인이 있다면 point를 바꿔주고 페일 리턴
         // TODO: 찜하기 전에 load 먼저 해보는 건데, 그 순서는 실험을 하고 나서 정하자
-        if o == no_owner() {
+        if o != no_owner() {
             persist_obj(owner, false);
             let next =
                 DeleteOrNode::is_node(o).unwrap_or(G::node_when_deleted(target, guard, pool));
