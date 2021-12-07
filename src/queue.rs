@@ -21,7 +21,7 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: Insert<Queue<T>, Node<MaybeUninit<T>, Queue<T>>>,
+    insert: Insert<Queue<T>, Node<MaybeUninit<T>>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -42,14 +42,14 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     #[inline]
-    fn prepare(_: &mut Node<MaybeUninit<T>, Queue<T>>) -> bool {
+    fn prepare(_: &mut Node<MaybeUninit<T>>) -> bool {
         true
     }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input<'o> = PShared<'o, Node<MaybeUninit<T>, Queue<T>>>;
+    type Input<'o> = PShared<'o, Node<MaybeUninit<T>>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -107,7 +107,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
-    node: PAtomic<Node<MaybeUninit<T>, Queue<T>>>,
+    node: PAtomic<Node<MaybeUninit<T>>>,
     try_enq: TryEnqueue<T>,
 }
 
@@ -128,7 +128,7 @@ impl<T: Clone> Collectable for Enqueue<T> {
         let mut node = enq.node.load(Ordering::Relaxed, guard);
         if !node.is_null() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<MaybeUninit<T>, Queue<T>>::mark(node_ref, gc);
+            Node::<MaybeUninit<T>>::mark(node_ref, gc);
         }
 
         TryEnqueue::<T>::filter(&mut enq.try_enq, gc, pool);
@@ -192,7 +192,7 @@ impl<T: Clone> Enqueue<T> {
         value: T,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<MaybeUninit<T>, Queue<T>>> {
+    ) -> PShared<'g, Node<MaybeUninit<T>>> {
         let node = POwned::new(Node::from(MaybeUninit::new(value)), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
@@ -206,7 +206,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
-    delete_opt: Delete<Queue<T>, Node<MaybeUninit<T>, Queue<T>>, Self>,
+    delete_opt: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -227,7 +227,7 @@ impl<T: Clone> Collectable for TryDequeue<T> {
 
 impl<T: 'static + Clone> Memento for TryDequeue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input<'o> = &'o PAtomic<Node<MaybeUninit<T>, Queue<T>>>;
+    type Input<'o> = &'o PAtomic<Node<MaybeUninit<T>>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
@@ -258,11 +258,11 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>, Queue<T>>> for TryDequeue<T> {
+impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>>> for TryDequeue<T> {
     #[inline]
     fn dealloc(
         &self,
-        target: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
+        target: PShared<'_, Node<MaybeUninit<T>>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) {
@@ -270,13 +270,13 @@ impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>, Queue<T>>> for TryDequeue<T> 
     }
 }
 
-impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>, Queue<T>>> for TryDequeue<T> {
+impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
     fn prepare<'g>(
-        old_head: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
+        old_head: PShared<'_, Node<MaybeUninit<T>>>,
         queue: &Queue<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>, Queue<T>>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>>>>, ()> {
         let old_head_ref = unsafe { old_head.deref(pool) };
         let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -302,10 +302,10 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>, Queue<T>>> for TryDeq
 
     #[inline]
     fn node_when_deleted<'g>(
-        old_head: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
+        old_head: PShared<'_, Node<MaybeUninit<T>>>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> PShared<'g, Node<MaybeUninit<T>, Queue<T>>> {
+    ) -> PShared<'g, Node<MaybeUninit<T>>> {
         let old_head_ref = unsafe { old_head.deref(pool) }; // SAFE: old_head는 null일 수 없음
         old_head_ref.next.load(Ordering::SeqCst, guard)
     }
@@ -314,7 +314,7 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>, Queue<T>>> for TryDeq
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    mine: PAtomic<Node<MaybeUninit<T>, Queue<T>>>,
+    mine: PAtomic<Node<MaybeUninit<T>>>,
     try_deq: TryDequeue<T>,
 }
 
@@ -335,7 +335,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
         let mut mine = deq.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             let mine_ref = unsafe { mine.deref_mut(pool) };
-            Node::<MaybeUninit<T>, Queue<T>>::mark(mine_ref, gc);
+            Node::<MaybeUninit<T>>::mark(mine_ref, gc);
         }
 
         TryDequeue::<T>::filter(&mut deq.try_deq, gc, pool);
@@ -397,8 +397,8 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
-    head: CachePadded<SMOAtomic<Self, Node<MaybeUninit<T>, Queue<T>>, TryDequeue<T>>>,
-    tail: CachePadded<PAtomic<Node<MaybeUninit<T>, Queue<T>>>>,
+    head: CachePadded<SMOAtomic<Self, Node<MaybeUninit<T>>, TryDequeue<T>>>,
+    tail: CachePadded<PAtomic<Node<MaybeUninit<T>>>>,
 }
 
 impl<T: Clone> PDefault for Queue<T> {
@@ -427,11 +427,11 @@ impl<T: Clone> Collectable for Queue<T> {
     }
 }
 
-impl<T: Clone> Traversable<Node<MaybeUninit<T>, Queue<T>>> for Queue<T> {
+impl<T: Clone> Traversable<Node<MaybeUninit<T>>> for Queue<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
     fn search(
         &self,
-        target: PShared<'_, Node<MaybeUninit<T>, Queue<T>>>,
+        target: PShared<'_, Node<MaybeUninit<T>>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {

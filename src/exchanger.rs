@@ -26,9 +26,9 @@ pub struct ExchangeNode<T> {
 /// Exchanger의 try exchange
 #[derive(Debug)]
 pub struct TryExchange<T: Clone> {
-    insert: Insert<Exchanger<T>, Node<ExchangeNode<T>, Exchanger<T>>>,
-    update: Update<Exchanger<T>, Node<ExchangeNode<T>, Exchanger<T>>, Self>,
-    delete: Delete<Exchanger<T>, Node<ExchangeNode<T>, Exchanger<T>>, Self>,
+    insert: Insert<Exchanger<T>, Node<ExchangeNode<T>>>,
+    update: Update<Exchanger<T>, Node<ExchangeNode<T>>, Self>,
+    delete: Delete<Exchanger<T>, Node<ExchangeNode<T>>, Self>,
 }
 
 impl<T: Clone> Default for TryExchange<T> {
@@ -53,11 +53,11 @@ impl<T: Clone> Collectable for TryExchange<T> {
 
 impl<T: Clone> Memento for TryExchange<T> {
     type Object<'o> = Exchanger<T>;
-    type Input<'o> = Node<ExchangeNode<T>, Exchanger<T>>;
+    type Input<'o> = Node<ExchangeNode<T>>;
     type Output<'o>
     where
         T: 'o,
-    = &'o Node<ExchangeNode<T>, Exchanger<T>>;
+    = &'o Node<ExchangeNode<T>>;
     type Error<'o>
     where
         T: 'o,
@@ -79,21 +79,21 @@ impl<T: Clone> Memento for TryExchange<T> {
     }
 }
 
-impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>, Exchanger<T>>> for TryExchange<T> {
+impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange<T> {
     fn prepare<'g>(
-        cur: PShared<'_, Node<ExchangeNode<T>, Exchanger<T>>>,
+        cur: PShared<'_, Node<ExchangeNode<T>>>,
         obj: &Exchanger<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<ExchangeNode<T>, Exchanger<T>>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<ExchangeNode<T>>>>, ()> {
         todo!()
     }
 
     fn node_when_deleted<'g>(
-        deleted: PShared<'_, Node<ExchangeNode<T>, Exchanger<T>>>,
+        deleted: PShared<'_, Node<ExchangeNode<T>>>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> PShared<'g, Node<ExchangeNode<T>, Exchanger<T>>> {
+    ) -> PShared<'g, Node<ExchangeNode<T>>> {
         todo!()
     }
 }
@@ -102,13 +102,13 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>, Exchanger<T>>> f
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
 pub struct Exchanger<T: Clone> {
-    slot: SMOAtomic<Self, Node<ExchangeNode<T>, Self>, TryExchange<T>>,
+    slot: SMOAtomic<Self, Node<ExchangeNode<T>>, TryExchange<T>>,
 }
 
-impl<T: Clone> Traversable<Node<ExchangeNode<T>, Exchanger<T>>> for Exchanger<T> {
+impl<T: Clone> Traversable<Node<ExchangeNode<T>>> for Exchanger<T> {
     fn search(
         &self,
-        target: PShared<'_, Node<ExchangeNode<T>, Exchanger<T>>>,
+        target: PShared<'_, Node<ExchangeNode<T>>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
