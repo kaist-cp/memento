@@ -150,6 +150,15 @@ pub struct SMOAtomic<O, N, G: DeleteHelper<O, N>> {
     _marker: PhantomData<*const (O, G)>,
 }
 
+impl<O, N, G: DeleteHelper<O, N>> Default for SMOAtomic<O, N, G> {
+    fn default() -> Self {
+        Self {
+            ptr: PAtomic::null(),
+            _marker: Default::default(),
+        }
+    }
+}
+
 impl<O, N, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
@@ -528,7 +537,7 @@ where
     /// # Safety
     ///
     /// Update되어 owner가 node일 때만 사용해야 함
-    pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N>{
+    pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N> {
         let u = old.owner().load(Ordering::SeqCst);
         PShared::from_usize(u)
     }

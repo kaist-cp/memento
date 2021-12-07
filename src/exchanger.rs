@@ -2,7 +2,7 @@
 
 use std::{sync::atomic::Ordering, time::Duration};
 
-use crossbeam_epoch::Guard;
+use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
     atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
@@ -231,9 +231,17 @@ pub struct Exchanger<T: Clone> {
     slot: SMOAtomic<Self, Node<ExchangeNode<T>>, TryExchange<T>>,
 }
 
+impl<T: Clone> Default for Exchanger<T> {
+    fn default() -> Self {
+        Self {
+            slot: SMOAtomic::default(),
+        }
+    }
+}
+
 impl<T: Clone> PDefault for Exchanger<T> {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
-        todo!()
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Default::default()
     }
 }
 
@@ -242,14 +250,22 @@ impl<T: Clone> Traversable<Node<ExchangeNode<T>>> for Exchanger<T> {
         &self,
         target: PShared<'_, Node<ExchangeNode<T>>>,
         guard: &Guard,
-        pool: &PoolHandle,
+        _: &PoolHandle,
     ) -> bool {
-        todo!()
+        let slot = self.slot.load(Ordering::SeqCst, guard);
+        slot == target
     }
 }
 
 impl<T: Clone> Collectable for Exchanger<T> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        todo!()
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut slot = s.slot.load(Ordering::SeqCst, guard);
+        if !slot.is_null() {
+            let slot_ref = unsafe { slot.deref_mut(pool) };
+            Node::mark(slot_ref, gc);
+        }
     }
 }
