@@ -9,7 +9,7 @@ use memento::queue::*;
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-impl<T: 'static + Clone> TestQueue for ComposedQueue<T> {
+impl<T: 'static + Clone> TestQueue for Queue<T> {
     type EnqInput = (&'static mut Enqueue<T>, T); // Memento, input
     type DeqInput = &'static mut Dequeue<T>; // Memento
 
@@ -29,7 +29,7 @@ impl<T: 'static + Clone> TestQueue for ComposedQueue<T> {
 /// 초기화시 세팅한 노드 수만큼 넣어줌
 #[derive(Debug)]
 pub struct TestMementoQueue {
-    queue: ComposedQueue<usize>,
+    queue: Queue<usize>,
 }
 
 impl Collectable for TestMementoQueue {
@@ -40,7 +40,7 @@ impl Collectable for TestMementoQueue {
 
 impl PDefault for TestMementoQueue {
     fn pdefault(pool: &'static PoolHandle) -> Self {
-        let queue = ComposedQueue::pdefault(pool);
+        let queue = Queue::pdefault(pool);
         let guard = epoch::pin();
 
         // 초기 노드 삽입
@@ -177,7 +177,6 @@ impl Memento for MementoQueueEnqDeqProb {
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-
         Ok(())
     }
 
