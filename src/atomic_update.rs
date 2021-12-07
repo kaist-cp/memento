@@ -126,7 +126,6 @@ impl DeleteOrNode {
 
 /// TODO: doc
 // TODO: 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
-// TODO: 이름 바꾸기
 pub trait DeleteHelper<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
     fn prepare<'g>(
@@ -487,9 +486,6 @@ where
     N: Node + Collectable,
     G: DeleteHelper<O, N>,
 {
-    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
-    const EMPTY: usize = 2;
-
     fn result<'g>(
         &self,
         new: PShared<'_, N>,
@@ -498,11 +494,6 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = save_loc.load(Ordering::Relaxed, guard);
-
-        if target.tag() & Self::EMPTY == Self::EMPTY {
-            // post-crash execution (empty)
-            return Ok(None);
-        }
 
         if !target.is_null() {
             let target_ref = unsafe { target.deref(pool) };
