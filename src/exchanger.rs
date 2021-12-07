@@ -3,6 +3,7 @@
 use std::{marker::PhantomData, sync::atomic::Ordering, time::Duration};
 
 use crossbeam_epoch::Guard;
+use etrace::some_or;
 
 use crate::{
     atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
@@ -16,9 +17,8 @@ use crate::{
     },
 };
 
-// State Tagging
-const ODD: usize = 0;
-const EVEN: usize = 1;
+// WAITING Tag
+const WAITING: usize = 0;
 
 #[inline]
 fn opposite_tag(t: usize) -> usize {
@@ -78,7 +78,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         &'o PAtomic<Node<ExchangeNode<T>>>,
         &'o PAtomic<Node<ExchangeNode<T>>>,
     );
-    type Output<'o> = &'o Node<ExchangeNode<T>>;
+    type Output<'o> = T; // TODO: input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
@@ -100,7 +100,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
         if slot.is_null() {
-            let mine = node.with_tag(ODD); // 비어있으므로 내가 홀수임
+            let mine = node.with_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
             let inserted = self.insert.run(
                 xchg,
@@ -118,9 +118,9 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         }
 
         // slot이 null이 아니면 tag를 확인하고 반대껄 장착하고 update
-        // - odd로 성공하면 기다림
-        // - even으로 성공하면 성공 리턴
-        // - 실패하면 페일 리턴
+        // - 내가 WAITING으로 성공하면 기다림
+        // - 내가 non WAITING으로 성공하면 성공 리턴
+        // - 실패하면 contention으로 인한 fail 리턴
         let my_tag = opposite_tag(slot.tag());
         let mine = node.with_tag(my_tag);
 
@@ -131,16 +131,21 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
             guard,
             pool,
         );
+
+        // 실패하면 contention으로 인한 fail 리턴
         if updated.is_err() {
-            // contention
             return Err(TryFail::Busy);
         }
 
-        if my_tag == ODD {
-            self.wait(mine, delete_target_loc, xchg, rec, guard, pool)
-        } else {
-            todo!("성공")
+        // 내가 기다린다고 선언한 거면 기다림
+        if my_tag == WAITING {
+            return self.wait(mine, delete_target_loc, xchg, rec, guard, pool);
         }
+
+        // even으로 성공하면 성공 리턴
+        let partner = updated.unwrap();
+        let partner_ref = unsafe { partner.deref(pool) };
+        Ok(partner_ref.data.value.clone())
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
@@ -157,7 +162,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<&'g Node<ExchangeNode<T>>, TryFail> {
+    ) -> Result<T, TryFail> {
         // TODO: timeout을 받고 loop을 쓰자
         // 누군가 update 해주길 기다림
         let slot = xchg.slot.load(Ordering::SeqCst, guard);

@@ -391,7 +391,7 @@ where
     where
         O: 'o,
         N: 'o,
-    = Option<PShared<'o, N>>;
+    = PShared<'o, N>;
     type Error<'o> = ();
 
     fn run<'o>(
@@ -452,7 +452,7 @@ where
 
                 // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
                 guard.defer_persist(point);
-                Some(target)
+                target
             })
             .map_err(|cur| {
                 let p = point.load(Ordering::SeqCst, guard);
@@ -489,7 +489,7 @@ where
         save_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Option<PShared<'g, N>>, ()> {
+    ) -> Result<PShared<'g, N>, ()> {
         let target = save_loc.load(Ordering::Relaxed, guard);
 
         if !target.is_null() {
@@ -498,7 +498,7 @@ where
 
             // target이 내가 pop한 게 맞는지 확인
             if owner == new.into_usize() {
-                return Ok(Some(target));
+                return Ok(target);
             };
         }
 
