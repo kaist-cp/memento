@@ -1,6 +1,6 @@
 //! Persistent opt queue
 
-use crate::atomic_update::{self, Delete, GetNext, Insert, SMOAtomic};
+use crate::atomic_update::{self, Delete, DeleteHelper, Insert, SMOAtomic};
 use crate::atomic_update_common::{self, InsertErr, Traversable};
 use crate::unopt_node::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -327,8 +327,8 @@ impl<T: Clone> DeallocNode<T, NodeOpt<T>> for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> GetNext<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
-    fn get_next<'g>(
+impl<T: Clone> DeleteHelper<Queue<T>, NodeOpt<T>> for TryDequeue<T> {
+    fn prepare<'g>(
         old_head: PShared<'_, NodeOpt<T>>,
         queue: &Queue<T>,
         guard: &'g Guard,

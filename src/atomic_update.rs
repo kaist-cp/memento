@@ -1,10 +1,6 @@
 //! Atomic update memento collections
 
-use std::{
-    marker::PhantomData,
-    ops::Deref,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
@@ -131,9 +127,9 @@ impl DeleteOrNode {
 /// TODO: doc
 // TODO: 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
 // TODO: 이름 바꾸기
-pub trait GetNext<O, N> {
+pub trait DeleteHelper<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
-    fn get_next<'g>(
+    fn prepare<'g>(
         cur: PShared<'_, N>,
         obj: &O,
         guard: &'g Guard,
@@ -150,12 +146,12 @@ pub trait GetNext<O, N> {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct SMOAtomic<O, N, G: GetNext<O, N>> {
+pub struct SMOAtomic<O, N, G: DeleteHelper<O, N>> {
     ptr: PAtomic<N>,
     _marker: PhantomData<*const (O, G)>,
 }
 
-impl<O, N, G: GetNext<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
+impl<O, N, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
             ptr: PAtomic::from(node),
@@ -164,7 +160,7 @@ impl<O, N, G: GetNext<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
     }
 }
 
-impl<O, N, G: GetNext<O, N>> Deref for SMOAtomic<O, N, G> {
+impl<O, N, G: DeleteHelper<O, N>> Deref for SMOAtomic<O, N, G> {
     type Target = PAtomic<N>;
 
     fn deref(&self) -> &Self::Target {
@@ -172,20 +168,26 @@ impl<O, N, G: GetNext<O, N>> Deref for SMOAtomic<O, N, G> {
     }
 }
 
-unsafe impl<O, N, G: GetNext<O, N>> Send for SMOAtomic<O, N, G> {}
-unsafe impl<O, N, G: GetNext<O, N>> Sync for SMOAtomic<O, N, G> {}
+unsafe impl<O, N, G: DeleteHelper<O, N>> Send for SMOAtomic<O, N, G> {}
+unsafe impl<O, N, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G> {}
 
 /// TODO: doc
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
-pub struct Delete<O, N: Node + Collectable, G: GetNext<O, N>> {
+pub struct Delete<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
     _marker: PhantomData<*const (O, N, G)>,
 }
 
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: GetNext<O, N>> Send for Delete<O, N, G> {}
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: GetNext<O, N>> Sync for Delete<O, N, G> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Send
+    for Delete<O, N, G>
+{
+}
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
+    for Delete<O, N, G>
+{
+}
 
-impl<O, N: Node + Collectable, G: GetNext<O, N>> Default for Delete<O, N, G> {
+impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Delete<O, N, G> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -193,7 +195,7 @@ impl<O, N: Node + Collectable, G: GetNext<O, N>> Default for Delete<O, N, G> {
     }
 }
 
-impl<O, N: Node + Collectable, G: GetNext<O, N>> Collectable for Delete<O, N, G> {
+impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Collectable for Delete<O, N, G> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
@@ -201,7 +203,7 @@ impl<O, N, G> Memento for Delete<O, N, G>
 where
     O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
-    G: 'static + GetNext<O, N>,
+    G: 'static + DeleteHelper<O, N>,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (&'o PAtomic<N>, &'o SMOAtomic<O, N, G>);
@@ -228,7 +230,7 @@ where
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
-        let next = match G::get_next(target, obj, guard, pool) {
+        let next = match G::prepare(target, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
                 target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
@@ -275,7 +277,7 @@ where
                 // same context
                 persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
 
-                // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next
+                // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next(= node_when_delete(target))
                 let real_next = DeleteOrNode::is_node(cur).unwrap_or(next);
 
                 // point를 승리한 애와 관련된 것으로 바꿔주
@@ -296,7 +298,7 @@ impl<O, N, G> Delete<O, N, G>
 where
     O: Traversable<N>,
     N: Node + Collectable,
-    G: GetNext<O, N>,
+    G: DeleteHelper<O, N>,
 {
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
@@ -361,14 +363,20 @@ where
 /// TODO: doc
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
-pub struct Update<O, N: Node + Collectable, G: GetNext<O, N>> {
+pub struct Update<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
     _marker: PhantomData<*const (O, N, G)>,
 }
 
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: GetNext<O, N>> Send for Update<O, N, G> {}
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: GetNext<O, N>> Sync for Update<O, N, G> {}
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Send
+    for Update<O, N, G>
+{
+}
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
+    for Update<O, N, G>
+{
+}
 
-impl<O, N: Node + Collectable, G: GetNext<O, N>> Default for Update<O, N, G> {
+impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Update<O, N, G> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -376,11 +384,11 @@ impl<O, N: Node + Collectable, G: GetNext<O, N>> Default for Update<O, N, G> {
     }
 }
 
-impl<O, N: Node + Collectable, G: GetNext<O, N>> Collectable for Update<O, N, G> {
+impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Collectable for Update<O, N, G> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, N, G: GetNext<O, N>> Memento for Update<O, N, G>
+impl<O, N, G: DeleteHelper<O, N>> Memento for Update<O, N, G>
 where
     O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
@@ -477,7 +485,7 @@ impl<O, N, G> Update<O, N, G>
 where
     O: Traversable<N>,
     N: Node + Collectable,
-    G: GetNext<O, N>,
+    G: DeleteHelper<O, N>,
 {
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
