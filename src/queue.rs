@@ -1,6 +1,6 @@
 //! Persistent opt queue
 
-use crate::atomic_update::{self, Delete, DeleteHelper, Insert, SMOAtomic};
+use crate::atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic};
 use crate::atomic_update_common::{self, InsertErr, Traversable};
 use crate::unopt_node::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};

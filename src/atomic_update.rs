@@ -405,7 +405,7 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
+        _: Self::Object<'o>,
         (new, save_loc, point): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
@@ -518,7 +518,7 @@ where
     }
 
     /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
+    pub fn dealloc(&self, _: PShared<'_, N>, _: &Guard, _: &PoolHandle) {
         // TODO: 내가 넣었던 `new` 포인터와 비교해봐야 함
 
         // if target.is_null() || target.tag() == Self::EMPTY {
@@ -534,13 +534,6 @@ where
         //         guard.defer_pdestroy(target);
         //     }
         // }
-    }
-
-    // TODO: 쓸 일 없을 듯?
-    #[inline]
-    fn id(&self, pool: &PoolHandle) -> usize {
-        // 풀 열릴 때마다 주소 바뀌니 상대주소로 식별해야 함
-        unsafe { self.as_pptr(pool).into_offset() }
     }
 
     /// TODO: doc
