@@ -1,9 +1,8 @@
 //! Persistent Exchanger
 
-use std::{marker::PhantomData, sync::atomic::Ordering, time::Duration};
+use std::{sync::atomic::Ordering, time::Duration};
 
 use crossbeam_epoch::Guard;
-use etrace::some_or;
 
 use crate::{
     atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
@@ -93,6 +92,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
 
         if rec {
             // TODO: crash 후 slot에 내가 들어가 있는 경우 등....
+            // TODO: read memento를 만들자
         }
 
         // Normal run
@@ -167,15 +167,15 @@ impl<T: 'static + Clone> TryExchange<T> {
         // 누군가 update 해주길 기다림
         let slot = xchg.slot.load(Ordering::SeqCst, guard);
 
-        // slot이 내가 아니면 내 파트너의 value 갖고 나감 ( TODO: 파트너? owner를 봐야 한다고?)
+        // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감 ( TODO: 파트너? owner를 봐야 한다고?)
         if slot != mine {
-            todo!("성공")
+            return Ok(Self::wait_succ(mine, pool));
         }
 
         std::thread::sleep(Duration::from_millis(1)); // TODO: timeout 받으면 이제 이건 backoff로 바뀜
 
         // 기다리다 지치면 delete 함
-        //    delete 실패하면 그 사이에 매칭 성사된 거임
+        // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = self
             .delete
             .run(xchg, (delete_target_loc, &xchg.slot), rec, guard, pool);
@@ -184,7 +184,18 @@ impl<T: 'static + Clone> TryExchange<T> {
             return Err(TryFail::Timeout);
         }
 
-        todo!("성공")
+        return Ok(Self::wait_succ(mine, pool));
+    }
+
+    #[inline]
+    fn wait_succ(mine: PShared<'_, Node<ExchangeNode<T>>>, pool: &PoolHandle) -> T {
+        // 내 파트너는 나의 owner()임
+        let mine_ref = unsafe { mine.deref(pool) };
+        let partner = unsafe {
+            Update::<Exchanger<T>, Node<ExchangeNode<T>>, Self>::next_updated_node(mine_ref)
+        };
+        let partner_ref = unsafe { partner.deref(pool) };
+        partner_ref.data.value.clone()
     }
 
     #[inline]
@@ -209,7 +220,7 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> PShared<'g, Node<ExchangeNode<T>>> {
-        todo!()
+        PShared::<_>::null()
     }
 }
 

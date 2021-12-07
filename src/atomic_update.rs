@@ -353,6 +353,7 @@ where
 
 /// TODO: doc
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+// TODO: update는 O 필요 없는 것 같음
 #[derive(Debug)]
 pub struct Update<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
     _marker: PhantomData<*const (O, N, G)>,
@@ -522,5 +523,13 @@ where
                 guard.defer_pdestroy(target);
             }
         }
+    }
+
+    /// # Safety
+    ///
+    /// Update되어 owner가 node일 때만 사용해야 함
+    pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N>{
+        let u = old.owner().load(Ordering::SeqCst);
+        PShared::from_usize(u)
     }
 }
