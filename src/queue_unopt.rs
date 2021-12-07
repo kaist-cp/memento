@@ -101,6 +101,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO: node reset
         self.insert.reset(nested, guard, pool);
     }
 }

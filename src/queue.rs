@@ -181,6 +181,7 @@ impl<T: Clone> Memento for Enqueue<T> {
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO: node reset
         self.try_enq.reset(nested, guard, pool);
     }
 }

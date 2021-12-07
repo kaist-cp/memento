@@ -10,11 +10,11 @@ use crate::{
     atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
     atomic_update_common::{Load, Traversable},
     node::Node,
-    pepoch::{PAtomic, PShared},
+    pepoch::{PAtomic, PShared, POwned, PDestroyable},
     persistent::{Memento, PDefault},
     plocation::{
         ralloc::{Collectable, GarbageCollection},
-        PoolHandle,
+        PoolHandle, ll::persist_obj,
     },
 };
 
@@ -195,8 +195,10 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.init_ld_param.store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
-        self.wait_ld_param.store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
+        self.init_ld_param
+            .store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
+        self.wait_ld_param
+            .store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
         self.update_param.store(PShared::null(), Ordering::Relaxed);
         self.delete_param.store(PShared::null(), Ordering::Relaxed);
 
@@ -240,9 +242,13 @@ impl<T: 'static + Clone> TryExchange<T> {
 
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
-        let deleted = self
-            .delete
-            .run(xchg, (&self.delete_param, mine, &xchg.slot), rec, guard, pool);
+        let deleted = self.delete.run(
+            xchg,
+            (&self.delete_param, mine, &xchg.slot),
+            rec,
+            guard,
+            pool,
+        );
 
         if deleted.is_ok() {
             // TODO: 소유권 청소해야 함
@@ -290,6 +296,101 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange
         _: &PoolHandle,
     ) -> PShared<'g, Node<ExchangeNode<T>>> {
         PShared::<_>::null()
+    }
+}
+
+/// Exchanger의 exchange operation.
+/// 반드시 exchange에 성공함.
+#[derive(Debug)]
+pub struct Exchange<T: Clone> {
+    node: PAtomic<Node<ExchangeNode<T>>>,
+    try_xchg: TryExchange<T>,
+}
+
+impl<T: Clone> Default for Exchange<T> {
+    fn default() -> Self {
+        Self {
+            node: PAtomic::null(),
+            try_xchg: Default::default(),
+        }
+    }
+}
+
+unsafe impl<T: Clone + Send + Sync> Send for Exchange<T> {}
+
+impl<T: Clone> Collectable for Exchange<T> {
+    fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = xchg.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+        }
+
+        TryExchange::<T>::filter(&mut xchg.try_xchg, gc, pool);
+    }
+}
+
+impl<T: 'static + Clone> Memento for Exchange<T> {
+    type Object<'o> = &'o Exchanger<T>;
+    type Input<'o> = T;
+    type Output<'o> = T;
+    type Error<'o> = !;
+
+    fn run<'o>(
+        &'o mut self,
+        xchg: Self::Object<'o>,
+        value: Self::Input<'o>,
+        rec: bool,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        let node = if rec {
+            let node = self.node.load(Ordering::Relaxed, guard);
+            if node.is_null() {
+                self.new_node(value, guard, pool)
+            } else {
+                node
+            }
+        } else {
+            self.new_node(value, guard, pool)
+        };
+
+        if let Ok(v) = self.try_xchg.run(xchg, node, rec, guard, pool) {
+            return Ok(v);
+        }
+
+        loop {
+            if let Ok(v) = self.try_xchg.run(xchg, node, false, guard, pool) {
+                return Ok(v);
+            }
+        }
+    }
+
+    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
+        let node = self.node.load(Ordering::SeqCst, guard);
+        if !node.is_null() {
+            self.node.store(PShared::null(), Ordering::SeqCst);
+            // TODO: 이 사이에 죽으면 partner의 포인터에 의해 gc가 수거하지 못해 leak 발생
+            unsafe { guard.defer_pdestroy(node) };
+        }
+    }
+}
+
+impl<T: Clone> Exchange<T> {
+    #[inline]
+    fn new_node<'g>(
+        &self,
+        value: T,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> PShared<'g, Node<ExchangeNode<T>>> {
+        let node = POwned::new(Node::from(ExchangeNode::from(value)), pool).into_shared(guard);
+        self.node.store(node, Ordering::Relaxed);
+        persist_obj(&self.node, true);
+        node
     }
 }
 

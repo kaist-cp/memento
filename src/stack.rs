@@ -132,6 +132,7 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
     }
 
     fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO: node reset
         self.try_push.reset(nested, guard, pool);
     }
 }
