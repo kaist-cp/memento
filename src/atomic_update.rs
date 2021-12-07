@@ -16,6 +16,8 @@ use crate::{
 };
 
 /// TODO: doc
+///
+/// 빠졌던 노드를 다시 넣으려 하면 안 됨
 #[derive(Debug)]
 pub struct Insert<O, N: Node + Collectable> {
     _marker: PhantomData<*const (O, N)>,
@@ -87,6 +89,7 @@ where
 }
 
 impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
+    #[inline]
     fn result<'g>(
         &self,
         obj: &O,
@@ -128,8 +131,9 @@ impl DeleteOrNode {
 // TODO: 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
 pub trait DeleteHelper<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
-    fn prepare<'g>(
+    fn prepare_delete<'g>(
         cur: PShared<'_, N>,
+        forbidden: PShared<'_, N>,
         obj: &O,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -148,6 +152,15 @@ pub trait DeleteHelper<O, N> {
 pub struct SMOAtomic<O, N, G: DeleteHelper<O, N>> {
     ptr: PAtomic<N>,
     _marker: PhantomData<*const (O, G)>,
+}
+
+impl<O, N, G: DeleteHelper<O, N>> Default for SMOAtomic<O, N, G> {
+    fn default() -> Self {
+        Self {
+            ptr: PAtomic::null(),
+            _marker: Default::default(),
+        }
+    }
 }
 
 impl<O, N, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
@@ -205,7 +218,7 @@ where
     G: 'static + DeleteHelper<O, N>,
 {
     type Object<'o> = &'o O;
-    type Input<'o> = (&'o PAtomic<N>, &'o SMOAtomic<O, N, G>);
+    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o SMOAtomic<O, N, G>);
     type Output<'o>
     where
         O: 'o,
@@ -217,7 +230,7 @@ where
     fn run<'o>(
         &'o mut self,
         obj: Self::Object<'o>,
-        (target_loc, point): Self::Input<'o>,
+        (target_loc, forbidden, point): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -229,7 +242,7 @@ where
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
 
-        let next = match G::prepare(target, obj, guard, pool) {
+        let next = match G::prepare_delete(target, forbidden, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
                 target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
@@ -239,7 +252,6 @@ where
             Err(()) => return Err(()),
         };
 
-        // TODO: 찜하기 전에 owner 로드 해보기
         // 우선 내가 target을 가리키고
         target_loc.store(target, Ordering::Relaxed);
         persist_obj(target_loc, false);
@@ -302,6 +314,7 @@ where
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
 
+    #[inline]
     fn result<'g>(
         &self,
         target_loc: &PAtomic<N>,
@@ -352,7 +365,10 @@ where
 }
 
 /// TODO: doc
+///
+/// 빠졌던 노드를 다시 넣으려 하면 안 됨
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+// TODO: update는 O 필요 없는 것 같음
 #[derive(Debug)]
 pub struct Update<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
     _marker: PhantomData<*const (O, N, G)>,
@@ -391,7 +407,7 @@ where
     where
         O: 'o,
         N: 'o,
-    = Option<PShared<'o, N>>;
+    = PShared<'o, N>;
     type Error<'o> = ();
 
     fn run<'o>(
@@ -428,6 +444,7 @@ where
             let next =
                 DeleteOrNode::is_node(o).unwrap_or(G::node_when_deleted(target, guard, pool));
             let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+            // 빠졌던 노드를 다시 들어오게 되는 경우는 없어야 함
             return Err(());
         }
 
@@ -438,7 +455,7 @@ where
         // 빼려는 node가 내가 넣을 노드 가리키게 함
         owner
             .compare_exchange(
-                PShared::<N>::null().into_usize(),
+                no_owner(),
                 new.into_usize(),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
@@ -452,7 +469,7 @@ where
 
                 // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
                 guard.defer_persist(point);
-                Some(target)
+                target
             })
             .map_err(|cur| {
                 let p = point.load(Ordering::SeqCst, guard);
@@ -483,13 +500,14 @@ where
     N: Node + Collectable,
     G: DeleteHelper<O, N>,
 {
+    #[inline]
     fn result<'g>(
         &self,
         new: PShared<'_, N>,
         save_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Option<PShared<'g, N>>, ()> {
+    ) -> Result<PShared<'g, N>, ()> {
         let target = save_loc.load(Ordering::Relaxed, guard);
 
         if !target.is_null() {
@@ -498,7 +516,7 @@ where
 
             // target이 내가 pop한 게 맞는지 확인
             if owner == new.into_usize() {
-                return Ok(Some(target));
+                return Ok(target);
             };
         }
 
@@ -522,5 +540,13 @@ where
                 guard.defer_pdestroy(target);
             }
         }
+    }
+
+    /// # Safety
+    ///
+    /// Update되어 owner가 node일 때만 사용해야 함
+    pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N> {
+        let u = old.owner().load(Ordering::SeqCst);
+        PShared::from_usize(u)
     }
 }

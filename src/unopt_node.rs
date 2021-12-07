@@ -5,8 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crossbeam_epoch::Guard;
 
 use crate::{
-    atomic_update_common::{self, Traversable},
-    atomic_update_unopt::DeleteUnOpt,
+    atomic_update_common::{self, no_owner},
     pepoch::{self as epoch, PAtomic, PShared},
     plocation::{
         ll::persist_obj,
@@ -18,12 +17,12 @@ use crate::{
 /// TODO: doc
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
 #[derive(Debug)]
-pub struct NodeUnOpt<T, O: Traversable<Self>> {
+pub struct NodeUnOpt<T> {
     /// TODO: doc
     pub(crate) data: T,
 
     /// TODO: doc
-    pub(crate) next: PAtomic<NodeUnOpt<T, O>>,
+    pub(crate) next: PAtomic<Self>,
 
     /// push 되었는지 여부
     // 이게 없으면, pop()에서 node 뺀 후 popper 등록 전에 crash 났을 때, 노드가 이미 push 되었었다는 걸 알 수 없음
@@ -34,18 +33,18 @@ pub struct NodeUnOpt<T, O: Traversable<Self>> {
     pub(crate) popper: AtomicUsize,
 }
 
-impl<T, O: Traversable<Self>> From<T> for NodeUnOpt<T, O> {
+impl<T> From<T> for NodeUnOpt<T> {
     fn from(value: T) -> Self {
         Self {
             data: value,
             next: PAtomic::null(),
             pushed: AtomicBool::new(false),
-            popper: AtomicUsize::new(DeleteUnOpt::<O, _>::no_owner()),
+            popper: AtomicUsize::new(no_owner()),
         }
     }
 }
 
-impl<T, O: Traversable<Self>> atomic_update_common::Node for NodeUnOpt<T, O> {
+impl<T> atomic_update_common::Node for NodeUnOpt<T> {
     #[inline]
     fn ack(&self) {
         self.pushed.store(true, Ordering::SeqCst);
@@ -63,9 +62,9 @@ impl<T, O: Traversable<Self>> atomic_update_common::Node for NodeUnOpt<T, O> {
     }
 }
 
-unsafe impl<T: Send + Sync, O: Traversable<Self>> Send for NodeUnOpt<T, O> {}
+unsafe impl<T: Send + Sync> Send for NodeUnOpt<T> {}
 
-impl<T, O: Traversable<Self>> Collectable for NodeUnOpt<T, O> {
+impl<T> Collectable for NodeUnOpt<T> {
     fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
@@ -73,7 +72,7 @@ impl<T, O: Traversable<Self>> Collectable for NodeUnOpt<T, O> {
         let mut next = node.next.load(Ordering::SeqCst, guard);
         if !next.is_null() {
             let next_ref = unsafe { next.deref_mut(pool) };
-            NodeUnOpt::<T, O>::mark(next_ref, gc);
+            NodeUnOpt::<T>::mark(next_ref, gc);
         }
     }
 }
