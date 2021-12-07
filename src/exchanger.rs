@@ -143,11 +143,6 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
                 .unwrap()
         };
 
-        // test
-        // let node_ref = unsafe { node.deref(pool) }.data.value;
-        // node_ref
-        // test
-
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
         if slot.is_null() {
@@ -289,10 +284,10 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange
         _: &PoolHandle,
     ) -> Result<Option<PShared<'g, Node<ExchangeNode<T>>>>, ()> {
         if cur == mine {
-            return Err(());
+            return Ok(Some(PShared::<_>::null()));
         }
 
-        Ok(Some(PShared::<_>::null()))
+        Err(())
     }
 
     fn node_when_deleted<'g>(

@@ -455,7 +455,7 @@ where
         // 빼려는 node가 내가 넣을 노드 가리키게 함
         owner
             .compare_exchange(
-                PShared::<N>::null().into_usize(),
+                no_owner(),
                 new.into_usize(),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
