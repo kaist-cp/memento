@@ -9,7 +9,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    smo::atomic_update_common::{self, no_owner},
+    smo::common::{self, no_owner},
 };
 
 /// TODO: doc
@@ -56,7 +56,7 @@ impl<T> Collectable for Node<T> {
     }
 }
 
-impl<T> atomic_update_common::Node for Node<T> {
+impl<T> common::Node for Node<T> {
     #[inline]
     fn ack(&self) {}
 
@@ -71,7 +71,7 @@ impl<T> atomic_update_common::Node for Node<T> {
     }
 }
 
-impl<T> atomic_update_common::NodeUnOpt for Node<T> {
+impl<T> common::NodeUnOpt for Node<T> {
     #[inline]
     fn ack_unopt(&self) {
         self.acked_unopt.store(true, Ordering::SeqCst);

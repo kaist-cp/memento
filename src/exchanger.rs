@@ -17,7 +17,7 @@ use crate::{
     },
     smo::{
         atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
-        atomic_update_common::{Load, Traversable},
+        common::{Load, Traversable},
     },
 };
 

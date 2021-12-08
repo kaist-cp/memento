@@ -1,6 +1,6 @@
 //! Persistent queue
 
-use crate::smo::atomic_update_common::{DeallocNode, InsertErr, Traversable};
+use crate::smo::common::{DeallocNode, InsertErr, Traversable};
 use crate::smo::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use core::sync::atomic::Ordering;
