@@ -5,7 +5,9 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     exchanger::{Exchanger, TryExchange},
-    persistent::{PDefault, Memento},
+    node::Node,
+    pepoch::PShared,
+    persistent::{Memento, PDefault},
     plocation::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
@@ -62,19 +64,23 @@ where
     S: 'static + Stack<T>,
 {
     type Object<'o> = &'o ElimStack<T, S>;
-    type Input<'o> = T;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
-        stack: Self::Object<'o>,
+        elim: Self::Object<'o>,
         node: Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        todo!();
+        let inner_res = self.try_push.run(&elim.inner, node, rec, guard, pool);
+        // inner_res.or(self.try_exchange.run(&elim.slots[self.elim_idx], node, rec, guard, pool));
+        todo!()
+
+        // TODO: exchanger가 교환 조건 받도록
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
