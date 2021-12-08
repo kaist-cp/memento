@@ -13,6 +13,7 @@ use crate::{
         PoolHandle,
     },
     stack::{Stack, TryFail},
+    treiber_stack::{self},
 };
 
 const ELIM_SIZE: usize = 16;
@@ -30,9 +31,9 @@ enum Request<T> {
 
 /// ElimStack의 push operation
 #[derive(Debug)]
-pub struct TryPush<T: 'static + Clone, S: Stack<T>> {
+struct TryPush<T: 'static + Clone> {
     /// inner stack의 push op
-    try_push: S::TryPush,
+    try_push: treiber_stack::TryPush<Request<T>>,
 
     /// elimination exchange를 위해 할당된 index
     elim_idx: usize,
@@ -41,7 +42,7 @@ pub struct TryPush<T: 'static + Clone, S: Stack<T>> {
     try_exchange: TryExchange<Request<T>>,
 }
 
-impl<T: Clone, S: Stack<T>> Default for TryPush<T, S> {
+impl<T: Clone> Default for TryPush<T> {
     fn default() -> Self {
         Self {
             try_push: Default::default(),
@@ -51,20 +52,19 @@ impl<T: Clone, S: Stack<T>> Default for TryPush<T, S> {
     }
 }
 
-impl<T: Clone, S: Stack<T>> Collectable for TryPush<T, S> {
+impl<T: Clone> Collectable for TryPush<T> {
     fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        S::TryPush::filter(&mut try_push.try_push, gc, pool);
+        treiber_stack::TryPush::filter(&mut try_push.try_push, gc, pool);
         TryExchange::filter(&mut try_push.try_exchange, gc, pool);
     }
 }
 
-impl<T, S> Memento for TryPush<T, S>
+impl<T> Memento for TryPush<T>
 where
     T: 'static + Clone,
-    S: 'static + Stack<T>,
 {
-    type Object<'o> = &'o ElimStack<T, S>;
-    type Input<'o> = PShared<'o, Node<T>>;
+    type Object<'o> = &'o ElimStack<T>;
+    type Input<'o> = PShared<'o, Node<Request<T>>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -77,7 +77,9 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let inner_res = self.try_push.run(&elim.inner, node, rec, guard, pool);
-        // inner_res.or(self.try_exchange.run(&elim.slots[self.elim_idx], node, rec, guard, pool));
+        // inner_res.or(self
+        //     .try_exchange
+        //     .run(&elim.slots[self.elim_idx], node, rec, guard, pool));
         todo!()
 
         // TODO: exchanger가 교환 조건 받도록
@@ -91,9 +93,9 @@ where
 
 /// `ElimStack::pop()`를 호출할 때 쓰일 client
 #[derive(Debug)]
-pub struct TryPop<T: 'static + Clone, S: Stack<T>> {
+pub struct TryPop<T: 'static + Clone> {
     /// inner stack의 pop client
-    try_pop: S::TryPop,
+    try_pop: treiber_stack::TryPop<Request<T>>,
 
     /// elimination exchange를 위해 할당된 index
     elim_idx: usize,
@@ -102,7 +104,7 @@ pub struct TryPop<T: 'static + Clone, S: Stack<T>> {
     try_exchange: TryExchange<Request<T>>,
 }
 
-impl<T: 'static + Clone, S: Stack<T>> Default for TryPop<T, S> {
+impl<T: 'static + Clone> Default for TryPop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
@@ -112,19 +114,18 @@ impl<T: 'static + Clone, S: Stack<T>> Default for TryPop<T, S> {
     }
 }
 
-impl<T: Clone, S: Stack<T>> Collectable for TryPop<T, S> {
+impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        S::TryPop::filter(&mut try_pop.try_pop, gc, pool);
+        treiber_stack::TryPop::filter(&mut try_pop.try_pop, gc, pool);
         TryExchange::filter(&mut try_pop.try_exchange, gc, pool);
     }
 }
 
-impl<T, S> Memento for TryPop<T, S>
+impl<T> Memento for TryPop<T>
 where
     T: 'static + Clone,
-    S: 'static + Stack<T>,
 {
-    type Object<'o> = &'o ElimStack<T, S>;
+    type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = ();
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
@@ -149,12 +150,12 @@ where
 /// Persistent Elimination backoff stack
 /// - ELIM_SIZE: size of elimination array
 #[derive(Debug)]
-pub struct ElimStack<T: 'static + Clone, S: Stack<T>> {
-    inner: S,
+pub struct ElimStack<T: 'static + Clone> {
+    inner: treiber_stack::TreiberStack<Request<T>>,
     slots: [Exchanger<Request<T>>; ELIM_SIZE],
 }
 
-impl<T: Clone, S: Stack<T>> Default for ElimStack<T, S> {
+impl<T: Clone> Default for ElimStack<T> {
     fn default() -> Self {
         Self {
             inner: Default::default(),
@@ -163,20 +164,22 @@ impl<T: Clone, S: Stack<T>> Default for ElimStack<T, S> {
     }
 }
 
-impl<T: Clone, S: Stack<T>> Collectable for ElimStack<T, S> {
+impl<T: Clone> Collectable for ElimStack<T> {
     fn filter(elim_stack: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        S::filter(&mut elim_stack.inner, gc, pool);
-        for slot in elim_stack.slots.as_mut() {
-            Exchanger::filter(slot, gc, pool);
-        }
+        // TODO
+
+        // S::filter(&mut elim_stack.inner, gc, pool);
+        // for slot in elim_stack.slots.as_mut() {
+        //     Exchanger::filter(slot, gc, pool);
+        // }
     }
 }
 
-impl<T: Clone, S: Stack<T>> PDefault for ElimStack<T, S> {
+impl<T: Clone> PDefault for ElimStack<T> {
     fn pdefault(_: &'static PoolHandle) -> Self {
         Self::default()
     }
 }
 
-unsafe impl<T: Clone + Send + Sync, S: Send + Stack<T>> Send for ElimStack<T, S> {}
-unsafe impl<T: Clone, S: Stack<T>> Sync for ElimStack<T, S> {}
+unsafe impl<T: Clone + Send + Sync> Send for ElimStack<T> {}
+unsafe impl<T: Clone> Sync for ElimStack<T> {}
