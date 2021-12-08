@@ -92,6 +92,7 @@ where
             .map(|_| ())
             .map_err(|_| TryFail)
 
+        // TODO: try_exchange에서 owner clear 해줘야 함
         // TODO: exchanger가 교환 조건 받도록 해야 함
     }
 
@@ -189,6 +190,7 @@ where
             unreachable!("exchange 조건으로 인해 Push랑만 교환함")
         }
 
+        // TODO: try_exchange에서 owner clear 해줘야 함
         // TODO: exchanger가 교환 조건 받도록 해야 함
     }
 

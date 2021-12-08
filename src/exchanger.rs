@@ -104,16 +104,18 @@ impl<T: Clone> Collectable for TryExchange<T> {
     }
 }
 
+type ExchangeCond<T> = fn(&T) -> bool;
+
 impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = PShared<'o, Node<T>>;
+    type Input<'o> = (PShared<'o, Node<T>>, ExchangeCond<T>);
     type Output<'o> = T; // TODO: input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         xchg: Self::Object<'o>,
-        node: Self::Input<'o>,
+        (node, cond): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -151,6 +153,16 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         let my_tag = opposite_tag(slot.tag());
         let mine = node.with_tag(my_tag);
 
+        // 상대가 기다리는 입장인 경우
+        if my_tag != WAITING {
+            let slot_ref = unsafe { slot.deref(pool) }; // SAFE: free되지 않은 node임. 왜냐하면 WAITING 하던 애가 그냥 나갈 때는 반드시 slot을 비우고 나감.
+            if !cond(&slot_ref.data) {
+                return Err(TryFail::Busy);
+            }
+        }
+
+        // (1) cond를 통과한 적합한 상대가 기다리고 있거나
+        // (2) 이미 교환 끝난 애가 slot에 들어 있음
         let updated = self.update.run(
             xchg,
             (mine, &self.update_param, &xchg.slot),
@@ -306,14 +318,14 @@ impl<T: Clone> Collectable for Exchange<T> {
 
 impl<T: 'static + Clone> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = T;
+    type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T;
     type Error<'o> = !;
 
     fn run<'o>(
         &'o mut self,
         xchg: Self::Object<'o>,
-        value: Self::Input<'o>,
+        (value, cond): Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -329,13 +341,13 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             self.new_node(value.clone(), guard, pool)
         };
 
-        if let Ok(v) = self.try_xchg.run(xchg, node, rec, guard, pool) {
+        if let Ok(v) = self.try_xchg.run(xchg, (node, cond), rec, guard, pool) {
             return Ok(v);
         }
 
         loop {
             let node = self.new_node(value.clone(), guard, pool); // TODO: alloc 문제 해결하고 clone 다 떼주기
-            if let Ok(v) = self.try_xchg.run(xchg, node, false, guard, pool) {
+            if let Ok(v) = self.try_xchg.run(xchg, (node, cond), false, guard, pool) {
                 return Ok(v);
             }
         }
@@ -448,7 +460,7 @@ mod tests {
 
             for _ in 0..100 {
                 // `move` for `tid`
-                let ret = self.exchange.run(xchg, tid, rec, guard, pool).unwrap();
+                let ret = self.exchange.run(xchg, (tid, |_| true), rec, guard, pool).unwrap();
                 assert_eq!(ret, 1 - tid);
             }
 
@@ -519,23 +531,23 @@ mod tests {
             match tid {
                 // T0: [0] -> [1]    [2]
                 0 => {
-                    *item = self.exchange0.run(lxchg, *item, rec, guard, pool).unwrap();
+                    *item = self.exchange0.run(lxchg, (*item, |_| true), rec, guard, pool).unwrap();
                     assert_eq!(*item, 1);
                 }
                 // T1: Composition in the middle
                 1 => {
                     // Step1: [0] <- [1]    [2]
 
-                    *item = self.exchange0.run(lxchg, *item, rec, guard, pool).unwrap();
+                    *item = self.exchange0.run(lxchg, (*item, |_| true), rec, guard, pool).unwrap();
                     assert_eq!(*item, 0);
 
                     // Step2: [1]    [0] -> [2]
-                    *item = self.exchange2.run(rxchg, *item, rec, guard, pool).unwrap();
+                    *item = self.exchange2.run(rxchg, (*item, |_| true), rec, guard, pool).unwrap();
                     assert_eq!(*item, 2);
                 }
                 // T2: [0]    [1] <- [2]
                 2 => {
-                    *item = self.exchange2.run(rxchg, *item, rec, guard, pool).unwrap();
+                    *item = self.exchange2.run(rxchg, (*item, |_| true), rec, guard, pool).unwrap();
                     assert_eq!(*item, 0);
                 }
                 _ => unreachable!(),
