@@ -119,18 +119,10 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
-        let saved_slot = self
+        let slot = self
             .load
             .run((), (&self.init_ld_param, &xchg.slot), rec, guard, pool)
             .unwrap();
-        let slot = if let Some(s) = saved_slot {
-            s
-        } else {
-            self.load
-                .run((), (&self.init_ld_param, &xchg.slot), false, guard, pool)
-                .unwrap()
-                .unwrap()
-        };
 
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
@@ -209,18 +201,10 @@ impl<T: 'static + Clone> TryExchange<T> {
     ) -> Result<T, TryFail> {
         // TODO: timeout을 받고 loop을 쓰자
         // 누군가 update 해주길 기다림
-        let saved_slot = self
+        let slot = self
             .load
             .run((), (&self.wait_ld_param, &xchg.slot), rec, guard, pool)
             .unwrap();
-        let slot = if let Some(s) = saved_slot {
-            s
-        } else {
-            self.load
-                .run((), (&self.wait_ld_param, &xchg.slot), false, guard, pool)
-                .unwrap()
-                .unwrap()
-        };
 
         // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if slot != mine {
@@ -251,9 +235,7 @@ impl<T: 'static + Clone> TryExchange<T> {
     fn wait_succ(mine: PShared<'_, Node<T>>, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
-        let partner = unsafe {
-            Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref)
-        };
+        let partner = unsafe { Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref) };
         let partner_ref = unsafe { partner.deref(pool) };
         partner_ref.data.clone()
     }
@@ -406,12 +388,7 @@ impl<T: Clone> PDefault for Exchanger<T> {
 }
 
 impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
-    fn search(
-        &self,
-        target: PShared<'_, Node<T>>,
-        guard: &Guard,
-        _: &PoolHandle,
-    ) -> bool {
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
         let slot = self.slot.load(Ordering::SeqCst, guard);
         slot == target
     }

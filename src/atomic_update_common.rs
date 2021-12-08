@@ -103,7 +103,7 @@ where
 {
     type Object<'o> = ();
     type Input<'o> = (&'o PAtomic<N>, &'o PAtomic<N>);
-    type Output<'o> = Option<PShared<'o, N>>;
+    type Output<'o> = PShared<'o, N>;
     type Error<'o> = !;
 
     fn run<'o>(
@@ -115,14 +115,16 @@ where
         _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return Ok(self.result(save_loc, guard));
+            if let Some(saved) = self.result(save_loc, guard) {
+                return Ok(saved);
+            }
         }
 
         // Normal run
         let p = point.load(Ordering::SeqCst, guard);
         save_loc.store(p, Ordering::Relaxed);
         persist_obj(save_loc, true);
-        Ok(Some(p))
+        Ok(p)
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
