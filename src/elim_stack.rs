@@ -9,7 +9,7 @@ use crate::{
     exchanger::{Exchanger, TryExchange},
     node::Node,
     pepoch::{PAtomic, POwned, PShared},
-    persistent::{Memento, PDefault, AtomicReset},
+    persistent::{AtomicReset, Memento, PDefault},
     plocation::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -88,12 +88,17 @@ where
         }
 
         self.try_exchange
-            .run(&elim.slots[self.elim_idx], node, rec, guard, pool)
+            .run(
+                &elim.slots[self.elim_idx],
+                (node, |req| matches!(req, Request::Pop)),
+                rec,
+                guard,
+                pool,
+            )
             .map(|_| ())
             .map_err(|_| TryFail)
 
         // TODO: try_exchange에서 owner clear 해줘야 함
-        // TODO: exchanger가 교환 조건 받도록 해야 함
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -178,7 +183,7 @@ where
 
         let req = self
             .try_exchange
-            .run(&elim.slots[self.elim_idx], node, rec, guard, pool)
+            .run(&elim.slots[self.elim_idx], (node, |req| matches!(req, Request::Push(_))), rec, guard, pool)
             .map_err(|_| {
                 self.try_exchange.reset(guard, pool);
                 TryFail
@@ -191,7 +196,6 @@ where
         }
 
         // TODO: try_exchange에서 owner clear 해줘야 함
-        // TODO: exchanger가 교환 조건 받도록 해야 함
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
