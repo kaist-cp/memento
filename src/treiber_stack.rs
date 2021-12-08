@@ -3,7 +3,7 @@
 use core::sync::atomic::Ordering;
 
 use crate::ploc::common::{DeallocNode, Traversable};
-use crate::ploc::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
+use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;

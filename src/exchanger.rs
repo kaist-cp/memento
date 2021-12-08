@@ -16,7 +16,7 @@ use crate::{
         PoolHandle,
     },
     ploc::{
-        atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
+        smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
         common::{Load, Traversable},
     },
 };

@@ -1,6 +1,6 @@
 //! Persistent opt queue using link-persist
 
-use crate::ploc::atomic_update::{self, InsertErr, Traversable, InsertLinkPersist, DeleteOptLinkPersist};
+use crate::ploc::smo::{self, InsertErr, Traversable, InsertLinkPersist, DeleteOptLinkPersist};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
@@ -59,7 +59,7 @@ impl<T: Clone> Collectable for NodeOpt<T> {
     }
 }
 
-impl<T: Clone> atomic_update::Node for NodeOpt<T> {
+impl<T: Clone> smo::Node for NodeOpt<T> {
     #[inline]
     fn ack(&self) {}
 

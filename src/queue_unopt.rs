@@ -1,7 +1,7 @@
 //! Persistent queue
 
 use crate::ploc::common::{DeallocNode, InsertErr, Traversable};
-use crate::ploc::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
+use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
