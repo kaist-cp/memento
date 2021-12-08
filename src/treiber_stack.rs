@@ -2,20 +2,20 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::atomic_update_common::Traversable;
+use crate::atomic_update_common::{Traversable, DeallocNode};
 use crate::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
+use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
 use crate::stack::*;
-use crate::unopt_node::{DeallocNode, NodeUnOpt};
 
 /// TreiberStack의 try push operation
 #[derive(Debug)]
 pub struct TryPush<T: Clone> {
     /// push를 위해 할당된 node
-    insert: InsertUnOpt<TreiberStack<T>, NodeUnOpt<T>>,
+    insert: InsertUnOpt<TreiberStack<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryPush<T> {
@@ -36,7 +36,7 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 impl<T: Clone> TryPush<T> {
     #[inline]
-    fn prepare(mine: &mut NodeUnOpt<T>, old_top: PShared<'_, NodeUnOpt<T>>) -> bool {
+    fn prepare(mine: &mut Node<T>, old_top: PShared<'_, Node<T>>) -> bool {
         mine.next.store(old_top, Ordering::SeqCst);
         persist_obj(&mine.next, false);
         true
@@ -45,7 +45,7 @@ impl<T: Clone> TryPush<T> {
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = PShared<'o, NodeUnOpt<T>>;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -71,7 +71,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 #[derive(Debug)]
 pub struct TryPop<T: Clone> {
     /// pop를 위해 할당된 node
-    delete: DeleteUnOpt<TreiberStack<T>, NodeUnOpt<T>>,
+    delete: DeleteUnOpt<TreiberStack<T>, Node<T>>,
     // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
@@ -93,7 +93,7 @@ impl<T: Clone> Collectable for TryPop<T> {
 
 impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = &'o PAtomic<NodeUnOpt<T>>;
+    type Input<'o> = &'o PAtomic<Node<T>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
@@ -122,9 +122,9 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     }
 }
 
-impl<T: Clone> DeallocNode<T, NodeUnOpt<T>> for TryPop<T> {
+impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
     #[inline]
-    fn dealloc(&self, target: PShared<'_, NodeUnOpt<T>>, guard: &Guard, pool: &PoolHandle) {
+    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
         self.delete.dealloc(target, guard, pool);
     }
 }
@@ -132,11 +132,11 @@ impl<T: Clone> DeallocNode<T, NodeUnOpt<T>> for TryPop<T> {
 impl<T: Clone> TryPop<T> {
     #[inline]
     fn get_next<'g>(
-        target: PShared<'_, NodeUnOpt<T>>,
+        target: PShared<'_, Node<T>>,
         _: &TreiberStack<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, NodeUnOpt<T>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
         if target.is_null() {
             return Ok(None);
         }
@@ -150,7 +150,7 @@ impl<T: Clone> TryPop<T> {
 /// Persistent Treiber stack
 #[derive(Debug)]
 pub struct TreiberStack<T: Clone> {
-    top: PAtomic<NodeUnOpt<T>>,
+    top: PAtomic<Node<T>>,
 }
 
 impl<T: Clone> Default for TreiberStack<T> {
@@ -169,7 +169,7 @@ impl<T: Clone> Collectable for TreiberStack<T> {
         let mut top = stack.top.load(Ordering::SeqCst, guard);
         if !top.is_null() {
             let top_ref = unsafe { top.deref_mut(pool) };
-            NodeUnOpt::mark(top_ref, gc);
+            Node::mark(top_ref, gc);
         }
     }
 }
@@ -180,9 +180,9 @@ impl<T: Clone> PDefault for TreiberStack<T> {
     }
 }
 
-impl<T: Clone> Traversable<NodeUnOpt<T>> for TreiberStack<T> {
+impl<T: Clone> Traversable<Node<T>> for TreiberStack<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(&self, target: PShared<'_, NodeUnOpt<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {

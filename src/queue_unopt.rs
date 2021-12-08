@@ -1,8 +1,8 @@
 //! Persistent queue
 
-use crate::atomic_update_common::{InsertErr, Traversable};
+use crate::atomic_update_common::{DeallocNode, InsertErr, Traversable};
 use crate::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
-use crate::unopt_node::{DeallocNode, NodeUnOpt};
+use crate::node::Node;
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -20,7 +20,7 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: InsertUnOpt<QueueUnOpt<T>, NodeUnOpt<MaybeUninit<T>>>,
+    insert: InsertUnOpt<QueueUnOpt<T>, Node<MaybeUninit<T>>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -41,8 +41,8 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     fn prepare(
-        _: &mut NodeUnOpt<MaybeUninit<T>>,
-        tail_next: PShared<'_, NodeUnOpt<MaybeUninit<T>>>,
+        _: &mut Node<MaybeUninit<T>>,
+        tail_next: PShared<'_, Node<MaybeUninit<T>>>,
     ) -> bool {
         tail_next.is_null()
     }
@@ -50,7 +50,7 @@ impl<T: Clone> TryEnqueue<T> {
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Object<'o> = &'o QueueUnOpt<T>;
-    type Input<'o> = PShared<'o, NodeUnOpt<MaybeUninit<T>>>;
+    type Input<'o> = PShared<'o, Node<MaybeUninit<T>>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -109,7 +109,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
-    node: PAtomic<NodeUnOpt<MaybeUninit<T>>>,
+    node: PAtomic<Node<MaybeUninit<T>>>,
     try_enq: TryEnqueue<T>,
 }
 
@@ -130,7 +130,7 @@ impl<T: Clone> Collectable for Enqueue<T> {
         let mut node = enq.node.load(Ordering::Relaxed, guard);
         if !node.is_null() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            NodeUnOpt::<MaybeUninit<T>>::mark(node_ref, gc);
+            Node::<MaybeUninit<T>>::mark(node_ref, gc);
         }
 
         TryEnqueue::<T>::filter(&mut enq.try_enq, gc, pool);
@@ -194,8 +194,8 @@ impl<T: Clone> Enqueue<T> {
         value: T,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> PShared<'g, NodeUnOpt<MaybeUninit<T>>> {
-        let node = POwned::new(NodeUnOpt::from(MaybeUninit::new(value)), pool).into_shared(guard);
+    ) -> PShared<'g, Node<MaybeUninit<T>>> {
+        let node = POwned::new(Node::from(MaybeUninit::new(value)), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
         node
@@ -208,7 +208,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
-    delete: DeleteUnOpt<QueueUnOpt<T>, NodeUnOpt<MaybeUninit<T>>>,
+    delete: DeleteUnOpt<QueueUnOpt<T>, Node<MaybeUninit<T>>>,
 
     // TODO: delete loc은 얘가 갖고 있어야 함
 }
@@ -231,7 +231,7 @@ impl<T: Clone> Collectable for TryDequeue<T> {
 
 impl<T: 'static + Clone> Memento for TryDequeue<T> {
     type Object<'o> = &'o QueueUnOpt<T>;
-    type Input<'o> = &'o PAtomic<NodeUnOpt<MaybeUninit<T>>>;
+    type Input<'o> = &'o PAtomic<Node<MaybeUninit<T>>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
@@ -268,13 +268,13 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> DeallocNode<MaybeUninit<T>, NodeUnOpt<MaybeUninit<T>>>
+impl<T: Clone> DeallocNode<MaybeUninit<T>, Node<MaybeUninit<T>>>
     for TryDequeue<T>
 {
     #[inline]
     fn dealloc(
         &self,
-        target: PShared<'_, NodeUnOpt<MaybeUninit<T>>>,
+        target: PShared<'_, Node<MaybeUninit<T>>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) {
@@ -284,11 +284,11 @@ impl<T: Clone> DeallocNode<MaybeUninit<T>, NodeUnOpt<MaybeUninit<T>>>
 
 impl<T: Clone> TryDequeue<T> {
     fn get_next<'g>(
-        old_head: PShared<'_, NodeUnOpt<MaybeUninit<T>>>,
+        old_head: PShared<'_, Node<MaybeUninit<T>>>,
         queue: &QueueUnOpt<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, NodeUnOpt<MaybeUninit<T>>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>>>>, ()> {
         let old_head_ref = unsafe { old_head.deref(pool) };
         let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -316,7 +316,7 @@ impl<T: Clone> TryDequeue<T> {
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    mine: PAtomic<NodeUnOpt<MaybeUninit<T>>>,
+    mine: PAtomic<Node<MaybeUninit<T>>>,
     try_deq: TryDequeue<T>,
 }
 
@@ -337,7 +337,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
         let mut mine = deq.mine.load(Ordering::SeqCst, guard);
         if !mine.is_null() {
             let mine_ref = unsafe { mine.deref_mut(pool) };
-            NodeUnOpt::<MaybeUninit<T>>::mark(mine_ref, gc);
+            Node::<MaybeUninit<T>>::mark(mine_ref, gc);
         }
 
         TryDequeue::<T>::filter(&mut deq.try_deq, gc, pool);
@@ -399,14 +399,14 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct QueueUnOpt<T: Clone> {
-    head: CachePadded<PAtomic<NodeUnOpt<MaybeUninit<T>>>>,
-    tail: CachePadded<PAtomic<NodeUnOpt<MaybeUninit<T>>>>,
+    head: CachePadded<PAtomic<Node<MaybeUninit<T>>>>,
+    tail: CachePadded<PAtomic<Node<MaybeUninit<T>>>>,
 }
 
 impl<T: Clone> PDefault for QueueUnOpt<T> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
-        let sentinel = POwned::new(NodeUnOpt::from(MaybeUninit::uninit()), pool).into_shared(guard);
+        let sentinel = POwned::new(Node::from(MaybeUninit::uninit()), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
@@ -424,16 +424,16 @@ impl<T: Clone> Collectable for QueueUnOpt<T> {
         let mut head = queue.head.load(Ordering::SeqCst, guard);
         if !head.is_null() {
             let head_ref = unsafe { head.deref_mut(pool) };
-            NodeUnOpt::mark(head_ref, gc);
+            Node::mark(head_ref, gc);
         }
     }
 }
 
-impl<T: Clone> Traversable<NodeUnOpt<MaybeUninit<T>>> for QueueUnOpt<T> {
+impl<T: Clone> Traversable<Node<MaybeUninit<T>>> for QueueUnOpt<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
     fn search(
         &self,
-        target: PShared<'_, NodeUnOpt<MaybeUninit<T>>>,
+        target: PShared<'_, Node<MaybeUninit<T>>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {

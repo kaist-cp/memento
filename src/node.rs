@@ -1,13 +1,13 @@
 //! Node
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
 use crate::{
     atomic_update_common::{self, no_owner},
     pepoch::{self as epoch, PAtomic},
     plocation::{
         ralloc::{Collectable, GarbageCollection},
-        PoolHandle,
+        PoolHandle, ll::persist_obj,
     },
 };
 
@@ -21,9 +21,13 @@ pub struct Node<T> {
     /// TODO: doc
     pub(crate) next: PAtomic<Self>,
 
-    /// 누가 dequeue 했는지 식별
-    // usize인 이유: AtomicPtr이 될 경우 불필요한 SMR 발생
-    pub(crate) dequeuer: AtomicUsize, // TODO: 이름 바꾸기
+    pub(crate) acked_unopt: AtomicBool,
+
+    /// 누가 delete 했는지 식별 (unopt op에서만 사용 e.g. treiber stack)
+    pub(crate) owner_unopt: AtomicUsize,
+
+    /// 누가 delete/update 했는지 식별
+    pub(crate) owner: AtomicUsize,
 }
 
 impl<T> From<T> for Node<T> {
@@ -31,7 +35,9 @@ impl<T> From<T> for Node<T> {
         Self {
             data: value,
             next: PAtomic::null(),
-            dequeuer: AtomicUsize::new(no_owner()),
+            acked_unopt: AtomicBool::new(false),
+            owner_unopt: AtomicUsize::new(no_owner()),
+            owner: AtomicUsize::new(no_owner()),
         }
     }
 }
@@ -60,6 +66,24 @@ impl<T> atomic_update_common::Node for Node<T> {
 
     #[inline]
     fn owner(&self) -> &AtomicUsize {
-        &self.dequeuer
+        &self.owner
+    }
+}
+
+impl<T> atomic_update_common::NodeUnOpt for Node<T> {
+    #[inline]
+    fn ack_unopt(&self) {
+        self.acked_unopt.store(true, Ordering::SeqCst);
+        persist_obj(&self.acked_unopt, true);
+    }
+
+    #[inline]
+    fn acked_unopt(&self) -> bool {
+        self.acked_unopt.load(Ordering::SeqCst)
+    }
+
+    #[inline]
+    fn owner_unopt(&self) -> &AtomicUsize {
+        &self.owner_unopt
     }
 }

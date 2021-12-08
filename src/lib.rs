@@ -54,7 +54,6 @@ pub mod stack;
 // pub mod ticket_lock;
 pub mod treiber_stack;
 pub mod node;
-pub mod unopt_node;
 
 // Persistent location
 pub mod plocation;
