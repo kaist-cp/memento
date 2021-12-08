@@ -8,8 +8,8 @@ use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::ralloc::{Collectable, GarbageCollection};
-use crate::plocation::{ll::*, pool::*};
+use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::{ll::*, pool::*};
 
 /// TODO: doc
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
@@ -503,7 +503,7 @@ unsafe impl<T: Clone + Send + Sync> Send for ComposedQueueOpt<T> {}
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{plocation::ralloc::Collectable, utils::tests::*};
+    use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
     use serial_test::serial;
 
     const NR_THREAD: usize = 12;

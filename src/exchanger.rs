@@ -10,7 +10,7 @@ use crate::{
     node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     persistent::{Memento, PDefault},
-    plocation::{
+    pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
@@ -451,8 +451,8 @@ mod tests {
     use serial_test::serial;
 
     use crate::{
-        plocation::ralloc::{Collectable, GarbageCollection},
-        utils::tests::{run_test, TestRootMemento, TestRootObj},
+        pmem::ralloc::{Collectable, GarbageCollection},
+        test_utils::tests::{run_test, TestRootMemento, TestRootObj},
     };
 
     use super::*;

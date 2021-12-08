@@ -47,11 +47,11 @@ pub mod stack;
 pub mod treiber_stack;
 pub mod node;
 
-// Persistent location
-pub mod plocation;
+// Persistent memory underline
+pub mod pmem;
 
 // Persistent version of crossbeam_epoch
 pub mod pepoch;
 
 // Utility
-pub mod utils;
+pub mod test_utils;

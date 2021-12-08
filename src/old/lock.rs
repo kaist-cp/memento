@@ -10,7 +10,7 @@ use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
     persistent::*,
-    plocation::{
+    pmem::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
@@ -77,9 +77,9 @@ impl<L: RawLock> PDefault for Mutex<L, usize> {
 ///
 /// ```rust
 /// # use memento::{
-/// #   plocation::pool::*,
+/// #   pmem::pool::*,
 /// #   persistent::*,
-/// #   utils::tests::get_dummy_handle
+/// #   test_utils::tests::get_dummy_handle
 /// # };
 /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
 /// use memento::ticket_lock::TicketLock;
@@ -210,8 +210,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
-        plocation::{ralloc::GarbageCollection, PoolHandle},
-        utils::tests::*,
+        pmem::{ralloc::GarbageCollection, PoolHandle},
+        test_utils::tests::*,
     };
 
     struct FetchAdd<L: RawLock> {

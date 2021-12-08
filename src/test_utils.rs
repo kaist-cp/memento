@@ -9,8 +9,8 @@ pub mod tests {
     use tempfile::NamedTempFile;
 
     use crate::persistent::{Memento, PDefault};
-    use crate::plocation::pool::*;
-    use crate::plocation::ralloc::{Collectable, GarbageCollection};
+    use crate::pmem::pool::*;
+    use crate::pmem::ralloc::{Collectable, GarbageCollection};
 
     /// 테스트 파일이 위치할 경로 계산
     ///

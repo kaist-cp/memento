@@ -2,7 +2,7 @@
 
 use crossbeam_epoch::Guard;
 use memento::persistent::{Memento, PDefault};
-use memento::plocation::Pool;
+use memento::pmem::Pool;
 use rand::Rng;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -154,7 +154,7 @@ pub struct Opt {
 /// Abstraction of queue
 pub mod queue {
     use crossbeam_epoch::Guard;
-    use memento::plocation::PoolHandle;
+    use memento::pmem::PoolHandle;
 
     use crate::{
         common::{get_nops, PROB},

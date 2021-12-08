@@ -9,10 +9,10 @@ use std::path::Path;
 use std::{fs, mem};
 
 use crate::persistent::*;
-use crate::plocation::global::global_pool;
-use crate::plocation::ll::persist_obj;
-use crate::plocation::ptr::PPtr;
-use crate::plocation::{global, ralloc::*};
+use crate::pmem::global::global_pool;
+use crate::pmem::ll::persist_obj;
+use crate::pmem::ptr::PPtr;
+use crate::pmem::{global, ralloc::*};
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
 
@@ -32,9 +32,9 @@ const IX_MEMENTO_START: u64 = 2; // root memento(s)는 Ralloc의 2번째 root부
 ///
 /// ```no_run
 /// # // "이렇게 사용한다"만 보이기 위해 파일을 실제로 만들진 않고 "no_run"으로 함
-/// # use memento::plocation::pool::*;
+/// # use memento::pmem::pool::*;
 /// # use memento::persistent::*;
-/// # use memento::utils::tests::{DummyRootObj as MyRootObj, DummyRootMemento as MyRootMemento};
+/// # use memento::test_utils::tests::{DummyRootObj as MyRootObj, DummyRootMemento as MyRootMemento};
 /// # use crossbeam_epoch::{self as epoch};
 /// // 풀 생성 후 풀의 핸들러 얻기
 /// let pool_handle = Pool::create::<MyRootObj, MyRootMemento>("foo.pool", 8 * 1024 * 1024 * 1024, 1).unwrap();
@@ -376,8 +376,8 @@ mod tests {
     use serial_test::serial;
 
     use crate::persistent::Memento;
-    use crate::plocation::pool::*;
-    use crate::utils::tests::*;
+    use crate::pmem::pool::*;
+    use crate::test_utils::tests::*;
 
     #[derive(Default)]
     struct RootMemento {
