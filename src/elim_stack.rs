@@ -84,13 +84,12 @@ where
             return Ok(());
         }
 
-        self
-            .try_exchange
+        self.try_exchange
             .run(&elim.slots[self.elim_idx], node, rec, guard, pool)
             .map(|_| ())
             .map_err(|_| TryFail)
 
-        // TODO: exchanger가 교환 조건 받도록 하기?
+        // TODO: exchanger가 교환 조건 받도록 해야 함
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -140,21 +139,22 @@ where
 
     fn run<'o>(
         &'o mut self,
-        stack: Self::Object<'o>,
+        elim: Self::Object<'o>,
         (): Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        // TODO: 스택은 노드가 필요 없고 exchange는 필요함
+        // TODO: treiber가 delete_loc 들고 있게 하는 게 선행
         // if self
         //     .try_pop
-        //     .run(&elim.inner, node, rec, guard, pool)
+        //     .run(&elim.inner, (), rec, guard, pool)
         //     .is_ok()
         // {
         //     return Ok(());
         // }
 
+        // TODO: 스택은 노드가 필요 없고 exchange는 필요함
         // self
         //     .try_exchange
         //     .run(&elim.slots[self.elim_idx], node, rec, guard, pool)
