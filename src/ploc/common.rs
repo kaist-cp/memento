@@ -20,12 +20,6 @@ use crate::{
 };
 
 /// TODO: doc
-pub trait Traversable<N> {
-    /// TODO: doc
-    fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
-}
-
-/// TODO: doc
 pub trait Node: Sized {
     /// TODO: doc
     fn ack(&self);

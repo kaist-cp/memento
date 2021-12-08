@@ -10,14 +10,14 @@ use crate::{
     node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     persistent::{Memento, PDefault},
+    ploc::{
+        common::Load,
+        smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update}, Traversable,
+    },
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
-    },
-    ploc::{
-        smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
-        common::{Load, Traversable},
     },
 };
 

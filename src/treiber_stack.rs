@@ -2,11 +2,12 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::ploc::common::{DeallocNode, Traversable};
-use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
+use crate::ploc::common::DeallocNode;
+use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
+use crate::ploc::Traversable;
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::stack::*;

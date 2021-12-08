@@ -4,7 +4,10 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
-use super::common::{no_owner, InsertErr, Node, Traversable};
+use super::{
+    common::{no_owner, InsertErr, Node},
+    Traversable,
+};
 
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
@@ -428,12 +431,7 @@ where
     G: 'static,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (
-        PShared<'o, N>,
-        &'o PAtomic<N>,
-        PShared<'o, N>,
-        &'o O,
-    );
+    type Input<'o> = (PShared<'o, N>, &'o PAtomic<N>, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
