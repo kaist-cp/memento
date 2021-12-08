@@ -131,9 +131,9 @@ impl<T: Clone, S: Stack<T>> Memento for Push<T, S> {
         Ok(())
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // TODO: node reset
-        self.try_push.reset(nested, guard, pool);
+        self.try_push.reset(guard, pool);
     }
 }
 
@@ -213,7 +213,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         }
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         let mine = self.mine.load(Ordering::Relaxed, guard);
 
         // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
@@ -222,7 +222,7 @@ impl<T: Clone, S: Stack<T>> Memento for Pop<T, S> {
         persist_obj(&self.mine, true);
         self.try_pop.dealloc(mine, guard, pool);
 
-        self.try_pop.reset(nested, guard, pool);
+        self.try_pop.reset(guard, pool);
     }
 }
 
@@ -344,7 +344,7 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
     }

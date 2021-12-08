@@ -144,9 +144,9 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
         }))
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // `MutexGuard`가 살아있을 때 이 함수 호출은 컴파일 타임에 막아짐.
-        self.lock.reset(nested, guard, pool);
+        self.lock.reset(guard, pool);
     }
 
     fn set_recovery(&mut self, _: &'static PoolHandle) {}
@@ -287,12 +287,12 @@ pub(crate) mod tests {
             }
         } // Unlock when `cnt` is dropped
 
-        fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+        fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
             if !nested {
                 self.state = State::Resetting;
             }
 
-            self.lock.reset(nested, guard, pool);
+            self.lock.reset(guard, pool);
 
             if !nested {
                 self.state = State::Ready;

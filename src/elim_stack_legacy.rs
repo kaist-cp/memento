@@ -98,7 +98,7 @@ where
         stack.try_push(self, value, guard, pool)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
             persist_obj(&self.state, true);
@@ -176,7 +176,7 @@ where
         stack.try_pop(self, guard, pool)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         if nested {
             self.state = State::Resetting;
             persist_obj(&self.state, true);

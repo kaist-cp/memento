@@ -108,7 +108,7 @@ where
         Ok(Some(p))
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 }
 
 impl<N: Node + Collectable> Load<N> {

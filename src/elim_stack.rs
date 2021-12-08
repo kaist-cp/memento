@@ -77,9 +77,9 @@ where
         todo!();
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_exchange.reset(true, guard, pool);
-        self.try_push.reset(true, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.try_exchange.reset(guard, pool);
+        self.try_push.reset(guard, pool);
     }
 }
 

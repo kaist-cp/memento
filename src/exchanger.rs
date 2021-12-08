@@ -195,7 +195,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         Ok(partner_ref.data.value.clone())
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.init_ld_param
             .store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
         self.wait_ld_param
@@ -203,10 +203,10 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         self.update_param.store(PShared::null(), Ordering::Relaxed);
         self.delete_param.store(PShared::null(), Ordering::Relaxed);
 
-        self.load.reset(nested, guard, pool);
-        self.insert.reset(nested, guard, pool);
-        self.update.reset(nested, guard, pool);
-        self.delete.reset(nested, guard, pool);
+        self.load.reset(guard, pool);
+        self.insert.reset(guard, pool);
+        self.update.reset(guard, pool);
+        self.delete.reset(guard, pool);
     }
 }
 
@@ -371,7 +371,7 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         }
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, _: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
@@ -490,7 +490,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
+        fn reset(&mut self, _guard: &Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }
@@ -578,7 +578,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _nested: bool, _guard: &Guard, _pool: &'static PoolHandle) {
+        fn reset(&mut self, _guard: &Guard, _pool: &'static PoolHandle) {
             todo!("reset test")
         }
     }

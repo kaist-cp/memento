@@ -36,10 +36,7 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 impl<T: Clone> TryPush<T> {
     #[inline]
-    fn prepare(
-        mine: &mut NodeUnOpt<T>,
-        old_top: PShared<'_, NodeUnOpt<T>>,
-    ) -> bool {
+    fn prepare(mine: &mut NodeUnOpt<T>, old_top: PShared<'_, NodeUnOpt<T>>) -> bool {
         mine.next.store(old_top, Ordering::SeqCst);
         persist_obj(&mine.next, false);
         true
@@ -65,8 +62,8 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.insert.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.insert.reset(guard, pool);
     }
 }
 
@@ -75,7 +72,6 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 pub struct TryPop<T: Clone> {
     /// pop를 위해 할당된 node
     delete: DeleteUnOpt<TreiberStack<T>, NodeUnOpt<T>>,
-
     // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
@@ -121,19 +117,14 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.delete.reset(guard, pool);
     }
 }
 
 impl<T: Clone> DeallocNode<T, NodeUnOpt<T>> for TryPop<T> {
     #[inline]
-    fn dealloc(
-        &self,
-        target: PShared<'_, NodeUnOpt<T>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+    fn dealloc(&self, target: PShared<'_, NodeUnOpt<T>>, guard: &Guard, pool: &PoolHandle) {
         self.delete.dealloc(target, guard, pool);
     }
 }
@@ -191,12 +182,7 @@ impl<T: Clone> PDefault for TreiberStack<T> {
 
 impl<T: Clone> Traversable<NodeUnOpt<T>> for TreiberStack<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(
-        &self,
-        target: PShared<'_, NodeUnOpt<T>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> bool {
+    fn search(&self, target: PShared<'_, NodeUnOpt<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {

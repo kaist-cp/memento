@@ -99,8 +99,8 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
             })
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.insert.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.insert.reset(guard, pool);
     }
 }
 
@@ -180,9 +180,9 @@ impl<T: Clone> Memento for Enqueue<T> {
         Ok(())
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // TODO: node reset
-        self.try_enq.reset(nested, guard, pool);
+        self.try_enq.reset(guard, pool);
     }
 }
 
@@ -208,7 +208,6 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 pub struct TryDequeue<T: Clone> {
     /// pop를 위해 할당된 node
     delete_opt: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
-
     // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
@@ -243,7 +242,13 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete_opt
-            .run(queue, (mine_loc, PShared::null(), &queue.head), rec, guard, pool)
+            .run(
+                queue,
+                (mine_loc, PShared::null(), &queue.head),
+                rec,
+                guard,
+                pool,
+            )
             .map(|ret| {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
@@ -256,19 +261,14 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete_opt.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.delete_opt.reset(guard, pool);
     }
 }
 
 impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>>> for TryDequeue<T> {
     #[inline]
-    fn dealloc(
-        &self,
-        target: PShared<'_, Node<MaybeUninit<T>>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+    fn dealloc(&self, target: PShared<'_, Node<MaybeUninit<T>>>, guard: &Guard, pool: &PoolHandle) {
         self.delete_opt.dealloc(target, guard, pool);
     }
 }
@@ -374,7 +374,7 @@ impl<T: Clone> Memento for Dequeue<T> {
         }
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         let mine = self.mine.load(Ordering::Relaxed, guard);
 
         // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
@@ -383,7 +383,7 @@ impl<T: Clone> Memento for Dequeue<T> {
         persist_obj(&self.mine, true);
         self.try_deq.dealloc(mine, guard, pool);
 
-        self.try_deq.reset(nested, guard, pool);
+        self.try_deq.reset(guard, pool);
     }
 }
 
@@ -514,7 +514,7 @@ mod test {
                     let mut tmp_deq = Dequeue::<usize>::default();
                     let must_none = tmp_deq.run(queue, (), rec, guard, pool).unwrap();
                     assert!(must_none.is_none());
-                    tmp_deq.reset(false, guard, pool);
+                    tmp_deq.reset(guard, pool);
 
                     // Check results
                     assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
@@ -545,7 +545,7 @@ mod test {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
     }

@@ -101,7 +101,7 @@ where
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, _pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, _pool: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
@@ -166,7 +166,7 @@ where
         Ok(list.remove(self, &key, guard, pool))
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         let target = self.target.load(Ordering::SeqCst, guard);
         if !target.is_null() {
             self.target.store(PShared::null(), Ordering::SeqCst);

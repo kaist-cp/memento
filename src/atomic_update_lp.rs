@@ -100,7 +100,7 @@
 //         ret
 //     }
 
-//     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+//     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 // }
 
 // impl<O: Traversable<N>, N: Node + Collectable> InsertLinkPersist<O, N> {
@@ -246,7 +246,7 @@
 //             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
 //     }
 
-//     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+//     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 // }
 
 // impl<O, N> DeleteLinkPesist<O, N>
@@ -438,7 +438,7 @@
 //             })
 //     }
 
-//     fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+//     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 // }
 
 // impl<O, N> DeleteOptLinkPersist<O, N>
