@@ -2,7 +2,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crossbeam_epoch::Guard;
+use crossbeam_epoch::{self as epoch, Guard};
 use rand::{thread_rng, Rng};
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    stack::TryFail,
+    stack::{Stack, TryFail},
     treiber_stack::{self, TreiberStack},
 };
 
@@ -254,3 +254,196 @@ impl<T: Clone> PDefault for ElimStack<T> {
 
 unsafe impl<T: Clone + Send + Sync> Send for ElimStack<T> {}
 unsafe impl<T: Clone> Sync for ElimStack<T> {}
+
+/// Stack의 try push를 이용하는 push op.
+#[derive(Debug)]
+pub struct Push<T: 'static + Clone> {
+    node: PAtomic<Node<Request<T>>>,
+    try_push: TryPush<T>,
+}
+
+impl<T: Clone> Default for Push<T> {
+    fn default() -> Self {
+        Self {
+            node: Default::default(),
+            try_push: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for Push<T> {
+    fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = push.node.load(Ordering::Relaxed, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<Request<T>>::mark(node_ref, gc);
+        }
+
+        TryPush::filter(&mut push.try_push, gc, pool);
+    }
+}
+
+impl<T: Clone> Drop for Push<T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let node = self.node.load(Ordering::Relaxed, guard);
+        assert!(node.is_null(), "reset 되어있지 않음.")
+        // TODO: trypush의 리셋여부 파악?
+    }
+}
+
+impl<T: Clone> Memento for Push<T> {
+    type Object<'o> = &'o ElimStack<T>;
+    type Input<'o> = T;
+    type Output<'o>
+    where
+        T: 'o,
+    = ();
+    type Error<'o> = !;
+
+    fn run<'o>(
+        &'o mut self,
+        stack: Self::Object<'o>,
+        value: Self::Input<'o>,
+        rec: bool,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        let node = if rec {
+            let node = self.node.load(Ordering::Relaxed, guard);
+            if node.is_null() {
+                self.new_node(value, guard, pool)
+            } else {
+                node
+            }
+        } else {
+            self.new_node(value, guard, pool)
+        };
+
+        if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
+            return Ok(());
+        }
+
+        while self.try_push.run(stack, node, false, guard, pool).is_err() {}
+        Ok(())
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO: node reset
+        self.try_push.reset(guard, pool);
+    }
+}
+
+impl<T: Clone> Push<T> {
+    #[inline]
+    fn new_node<'g>(
+        &self,
+        value: T,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> PShared<'g, Node<Request<T>>> {
+        let node = POwned::new(Node::from(Request::Push(value)), pool).into_shared(guard);
+        self.node.store(node, Ordering::Relaxed);
+        persist_obj(&self.node, true);
+        node
+    }
+}
+
+unsafe impl<T: 'static + Clone> Send for Push<T> {}
+
+/// Stack의 try pop을 이용하는 pop op.
+#[derive(Debug)]
+pub struct Pop<T: 'static + Clone> {
+    try_pop: TryPop<T>,
+}
+
+impl<T: Clone> Default for Pop<T> {
+    fn default() -> Self {
+        Self {
+            try_pop: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for Pop<T> {
+    fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        TryPop::filter(&mut pop.try_pop, gc, pool);
+    }
+}
+
+impl<T: Clone> Memento for Pop<T> {
+    type Object<'o> = &'o ElimStack<T>;
+    type Input<'o> = ();
+    type Output<'o>
+    where
+        T: 'o,
+    = Option<T>;
+    type Error<'o> = !;
+
+    fn run<'o>(
+        &'o mut self,
+        stack: Self::Object<'o>,
+        (): Self::Input<'o>,
+        rec: bool,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if let Ok(v) = self.try_pop.run(stack, (), rec, guard, pool) {
+            return Ok(v);
+        }
+
+        loop {
+            if let Ok(v) = self.try_pop.run(stack, (), false, guard, pool) {
+                return Ok(v);
+            }
+        }
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.try_pop.reset(guard, pool);
+    }
+}
+
+impl<T: Clone> Drop for Pop<T> {
+    fn drop(&mut self) {
+        // TODO: trypop의 리셋여부 파악?
+    }
+}
+
+unsafe impl<T: Clone> Send for Pop<T> {}
+
+impl<T: 'static + Clone> Stack<T> for ElimStack<T> {
+    type Push = Push<T>;
+    type Pop = Pop<T>;
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+
+    use super::*;
+    use crate::{stack::tests::*, utils::tests::*};
+
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 1_000_000;
+
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+    impl TestRootObj for ElimStack<usize> {}
+
+    // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
+    #[test]
+    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
+    fn push_pop() {
+        const FILE_NAME: &str = "elim_push_pop.pool";
+        run_test::<ElimStack<usize>, PushPop<ElimStack<usize>, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
+    }
+}
