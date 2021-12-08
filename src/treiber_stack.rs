@@ -2,7 +2,7 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::smo::atomic_update_common::{DeallocNode, Traversable};
+use crate::smo::common::{DeallocNode, Traversable};
 use crate::smo::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
@@ -58,7 +58,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.insert
-            .run(stack, (node, &stack.top, Self::prepare), rec, guard, pool)
+            .run(&stack.top, (node, stack, Self::prepare), rec, guard, pool)
             .map_err(|_| TryFail)
     }
 
@@ -116,8 +116,8 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
             .run(
-                stack,
-                (&self.delete_param, &stack.top, Self::get_next),
+                &stack.top,
+                (&self.delete_param, stack, Self::get_next),
                 rec,
                 guard,
                 pool,

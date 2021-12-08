@@ -4,7 +4,7 @@ use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
-use super::atomic_update_common::{InsertErr, NodeUnOpt, Traversable, EMPTY};
+use super::common::{InsertErr, NodeUnOpt, Traversable, EMPTY};
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
     persistent::Memento,
@@ -41,10 +41,10 @@ where
     O: 'static + Traversable<N>,
     N: 'static + NodeUnOpt + Collectable,
 {
-    type Object<'o> = &'o O;
+    type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (
         PShared<'o, N>,
-        &'o PAtomic<N>,
+        &'o O,
         fn(&mut N, PShared<'_, N>) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
@@ -56,8 +56,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (mut new, point, prepare): Self::Input<'o>,
+        point: Self::Object<'o>,
+        (mut new, obj, prepare): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -131,10 +131,10 @@ where
     O: 'static + Traversable<N>,
     N: 'static + NodeUnOpt + Collectable,
 {
-    type Object<'o> = &'o O;
+    type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (
         &'o PAtomic<N>,
-        &'o PAtomic<N>,
+        &'o O,
         fn(PShared<'_, N>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, N>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
     type Output<'o>
@@ -146,8 +146,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (target_loc, point, get_next): Self::Input<'o>,
+        point: Self::Object<'o>,
+        (target_loc, obj, get_next): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,

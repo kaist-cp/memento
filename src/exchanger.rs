@@ -17,7 +17,7 @@ use crate::{
     },
     smo::{
         atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
-        atomic_update_common::{Load, Traversable},
+        common::{Load, Traversable},
     },
 };
 
@@ -134,8 +134,8 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
             let mine = node.with_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
             let inserted = self.insert.run(
-                xchg,
-                (mine, &xchg.slot, Self::prepare_insert),
+                &xchg.slot,
+                (mine, xchg, Self::prepare_insert),
                 rec,
                 guard,
                 pool,
@@ -168,8 +168,8 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         let updated = self
             .update
             .run(
-                xchg,
-                (mine, &self.update_param, slot, &xchg.slot),
+                &xchg.slot,
+                (mine, &self.update_param, slot, xchg),
                 rec,
                 guard,
                 pool,
@@ -234,8 +234,8 @@ impl<T: 'static + Clone> TryExchange<T> {
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = self.delete.run(
-            xchg,
-            (&self.delete_param, mine, &xchg.slot),
+            &xchg.slot,
+            (&self.delete_param, mine, xchg),
             rec,
             guard,
             pool,

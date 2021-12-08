@@ -4,7 +4,7 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
-use super::atomic_update_common::{no_owner, InsertErr, Node, Traversable};
+use super::common::{no_owner, InsertErr, Node, Traversable};
 
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
@@ -44,10 +44,10 @@ where
     O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
 {
-    type Object<'o> = &'o O;
+    type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (
         PShared<'o, N>,
-        &'o PAtomic<N>,
+        &'o O,
         fn(&mut N) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
@@ -59,8 +59,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (mut new, point, prepare): Self::Input<'o>, // TODO: prepare도 그냥 Prepare trait으로 할 수 있을 듯
+        point: Self::Object<'o>,
+        (mut new, obj, prepare): Self::Input<'o>, // TODO: prepare도 그냥 Prepare trait으로 할 수 있을 듯
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -230,8 +230,8 @@ where
     N: 'static + Node + Collectable,
     G: 'static + DeleteHelper<O, N>,
 {
-    type Object<'o> = &'o O;
-    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o SMOAtomic<O, N, G>);
+    type Object<'o> = &'o SMOAtomic<O, N, G>;
+    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -242,8 +242,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (target_loc, forbidden, point): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        point: Self::Object<'o>,
+        (target_loc, forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -427,12 +427,12 @@ where
     N: 'static + Node + Collectable,
     G: 'static,
 {
-    type Object<'o> = &'o O;
+    type Object<'o> = &'o SMOAtomic<O, N, G>;
     type Input<'o> = (
         PShared<'o, N>,
         &'o PAtomic<N>,
         PShared<'o, N>,
-        &'o SMOAtomic<O, N, G>,
+        &'o O,
     );
     type Output<'o>
     where
@@ -443,8 +443,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (new, save_loc, expected, point): Self::Input<'o>,
+        point: Self::Object<'o>,
+        (new, save_loc, expected, obj): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,

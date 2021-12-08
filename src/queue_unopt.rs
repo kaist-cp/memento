@@ -1,6 +1,6 @@
 //! Persistent queue
 
-use crate::smo::atomic_update_common::{DeallocNode, InsertErr, Traversable};
+use crate::smo::common::{DeallocNode, InsertErr, Traversable};
 use crate::smo::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use core::sync::atomic::Ordering;
@@ -64,8 +64,8 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 
         self.insert
             .run(
-                queue,
-                (node, &tail_ref.next, Self::prepare),
+                &tail_ref.next,
+                (node, queue, Self::prepare),
                 rec,
                 guard,
                 pool,
@@ -250,8 +250,8 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
             .run(
-                queue,
-                (&self.delete_param, &queue.head, Self::get_next),
+                &queue.head,
+                (&self.delete_param, queue, Self::get_next),
                 rec,
                 guard,
                 pool,
