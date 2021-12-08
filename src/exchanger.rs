@@ -106,7 +106,7 @@ impl<T: Clone> Collectable for TryExchange<T> {
 
 type ExchangeCond<T> = fn(&T) -> bool;
 
-impl<T: 'static + Clone> Memento for TryExchange<T> {
+impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input<'o> = (PShared<'o, Node<T>>, ExchangeCond<T>);
     type Output<'o> = T; // TODO: input과의 대구를 고려해서 node reference가 나을지?
@@ -143,7 +143,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
                 return Err(TryFail::Busy);
             }
 
-            return self.wait(mine, xchg, rec, guard, pool);
+            return self.wait(mine, xchg, cond, rec, guard, pool);
         }
 
         // slot이 null이 아니면 tag를 확인하고 반대껄 장착하고 update
@@ -161,29 +161,32 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
             }
         }
 
+        let slot_ref = unsafe { slot.deref(pool) };
+        assert_ne!(my_tag, slot.tag());
+
         // (1) cond를 통과한 적합한 상대가 기다리고 있거나
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
-        let updated = self.update.run(
-            xchg,
-            (mine, &self.update_param, &xchg.slot),
-            rec,
-            guard,
-            pool,
-        );
-
-        // 실패하면 contention으로 인한 fail 리턴
-        if updated.is_err() {
-            return Err(TryFail::Busy);
-        }
+        let updated = self
+            .update
+            .run(
+                xchg,
+                (mine, &self.update_param, slot, &xchg.slot),
+                rec,
+                guard,
+                pool,
+            )
+            .map_err(|_|
+            // 실패하면 contention으로 인한 fail 리턴
+            TryFail::Busy)?;
 
         // 내가 기다린다고 선언한 거면 기다림
         if my_tag == WAITING {
-            return self.wait(mine, xchg, rec, guard, pool);
+            return self.wait(mine, xchg, cond, rec, guard, pool);
         }
 
         // even으로 성공하면 성공 리턴
-        let partner = updated.unwrap();
-        let partner_ref = unsafe { partner.deref(pool) };
+        let partner_ref = unsafe { updated.deref(pool) };
+        assert!(cond(&partner_ref.data));
         Ok(partner_ref.data.clone())
     }
 
@@ -202,17 +205,24 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
     }
 }
 
-impl<T: 'static + Clone> TryExchange<T> {
+impl<T: 'static + Clone + std::fmt::Debug> TryExchange<T> {
     fn wait<'g>(
         &mut self,
         mine: PShared<'_, Node<T>>,
         xchg: &Exchanger<T>,
+        cond: ExchangeCond<T>,
         rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<T, TryFail> {
         // TODO: timeout을 받고 loop을 쓰자
-        // 누군가 update 해주길 기다림
+
+        if !rec {
+            // 누군가 update 해주길 기다림
+            // (복구 아닐 때에만 기다림)
+            std::thread::sleep(Duration::from_nanos(100)); // TODO: timeout 받으면 이제 이건 backoff로 바뀜
+        }
+
         let slot = self
             .load
             .run((), (&self.wait_ld_param, &xchg.slot), rec, guard, pool)
@@ -220,10 +230,8 @@ impl<T: 'static + Clone> TryExchange<T> {
 
         // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if slot != mine {
-            return Ok(Self::wait_succ(mine, pool));
+            return Ok(Self::succ_after_wait(mine, cond, pool));
         }
-
-        std::thread::sleep(Duration::from_millis(1)); // TODO: timeout 받으면 이제 이건 backoff로 바뀜
 
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
@@ -249,15 +257,20 @@ impl<T: 'static + Clone> TryExchange<T> {
             }
         }
 
-        return Ok(Self::wait_succ(mine, pool));
+        println!("asdfasdf");
+        return Ok(Self::succ_after_wait(mine, cond, pool));
     }
 
     #[inline]
-    fn wait_succ(mine: PShared<'_, Node<T>>, pool: &PoolHandle) -> T {
+    fn succ_after_wait(mine: PShared<'_, Node<T>>, cond: ExchangeCond<T>, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
         let partner = unsafe { Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref) };
         let partner_ref = unsafe { partner.deref(pool) };
+        if !cond(&partner_ref.data) {
+            println!("{:?} vs {:?}", mine_ref.data, partner_ref.data);
+            println!("{:?} ==? {:?}", mine, partner);
+        }
         partner_ref.data.clone()
     }
 
@@ -282,6 +295,16 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
         }
 
         Err(())
+    }
+
+    fn prepare_update<'g>(
+        cur: PShared<'_, Node<T>>,
+        expected: PShared<'_, Node<T>>,
+        _: &Exchanger<T>,
+        _: &'g Guard,
+        _: &PoolHandle,
+    ) -> bool {
+        cur == expected
     }
 
     fn node_when_deleted<'g>(
@@ -327,7 +350,7 @@ impl<T: Clone> Collectable for Exchange<T> {
     }
 }
 
-impl<T: 'static + Clone> Memento for Exchange<T> {
+impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T;

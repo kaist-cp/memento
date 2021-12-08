@@ -46,7 +46,7 @@ pub mod exchanger;
 // pub mod lock;
 pub mod persistent;
 // pub mod pipe;
-pub mod queue;
+// pub mod queue;
 // pub mod queue_lp;
 pub mod queue_unopt;
 // pub mod queue_unopt_lp;

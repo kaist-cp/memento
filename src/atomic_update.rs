@@ -576,6 +576,7 @@ where
     /// Update되어 owner가 node일 때만 사용해야 함
     pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N> {
         let u = old.owner().load(Ordering::SeqCst);
+        assert_ne!(u, no_owner()); // TODO: ABA 문제가 터지는지 확인하기 위해 달아놓은 assert
         PShared::from_usize(u)
     }
 }
