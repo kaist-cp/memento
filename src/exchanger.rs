@@ -37,39 +37,27 @@ pub enum TryFail {
     Busy,
 }
 
-/// TODO: doc
-#[derive(Debug)]
-pub struct ExchangeNode<T> {
-    value: T,
-}
-
-impl<T> From<T> for ExchangeNode<T> {
-    fn from(value: T) -> Self {
-        Self { value }
-    }
-}
-
 /// Exchanger의 try exchange
 #[derive(Debug)]
 pub struct TryExchange<T: Clone> {
-    init_ld_param: PAtomic<Node<ExchangeNode<T>>>,
-    wait_ld_param: PAtomic<Node<ExchangeNode<T>>>,
-    load: Load<Node<ExchangeNode<T>>>,
+    init_ld_param: PAtomic<Node<T>>,
+    wait_ld_param: PAtomic<Node<T>>,
+    load: Load<Node<T>>,
 
-    insert: Insert<Exchanger<T>, Node<ExchangeNode<T>>>,
+    insert: Insert<Exchanger<T>, Node<T>>,
 
-    update_param: PAtomic<Node<ExchangeNode<T>>>,
-    update: Update<Exchanger<T>, Node<ExchangeNode<T>>, Self>,
+    update_param: PAtomic<Node<T>>,
+    update: Update<Exchanger<T>, Node<T>, Self>,
 
-    delete_param: PAtomic<Node<ExchangeNode<T>>>,
-    delete: Delete<Exchanger<T>, Node<ExchangeNode<T>>, Self>,
+    delete_param: PAtomic<Node<T>>,
+    delete: Delete<Exchanger<T>, Node<T>, Self>,
 }
 
 impl<T: Clone> Default for TryExchange<T> {
     fn default() -> Self {
         Self {
-            init_ld_param: PAtomic::from(Load::<Node<ExchangeNode<T>>>::no_read()),
-            wait_ld_param: PAtomic::from(Load::<Node<ExchangeNode<T>>>::no_read()),
+            init_ld_param: PAtomic::from(Load::<Node<T>>::no_read()),
+            wait_ld_param: PAtomic::from(Load::<Node<T>>::no_read()),
             load: Default::default(),
             insert: Default::default(),
             update_param: PAtomic::null(),
@@ -86,27 +74,27 @@ impl<T: Clone> Collectable for TryExchange<T> {
 
         // Mark ptr if valid
         let mut node = s.init_ld_param.load(Ordering::Relaxed, guard);
-        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+        if !node.is_null() && node != Load::<Node<T>>::no_read() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+            Node::<T>::mark(node_ref, gc);
         }
 
         let mut node = s.wait_ld_param.load(Ordering::Relaxed, guard);
-        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+        if !node.is_null() && node != Load::<Node<T>>::no_read() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+            Node::<T>::mark(node_ref, gc);
         }
 
         let mut node = s.update_param.load(Ordering::Relaxed, guard);
-        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+        if !node.is_null() && node != Load::<Node<T>>::no_read() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+            Node::<T>::mark(node_ref, gc);
         }
 
         let mut node = s.delete_param.load(Ordering::Relaxed, guard);
-        if !node.is_null() && node != Load::<Node<ExchangeNode<T>>>::no_read() {
+        if !node.is_null() && node != Load::<Node<T>>::no_read() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+            Node::<T>::mark(node_ref, gc);
         }
 
         Load::filter(&mut s.load, gc, pool);
@@ -118,7 +106,7 @@ impl<T: Clone> Collectable for TryExchange<T> {
 
 impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = PShared<'o, Node<ExchangeNode<T>>>;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = T; // TODO: input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
@@ -192,14 +180,14 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         // even으로 성공하면 성공 리턴
         let partner = updated.unwrap();
         let partner_ref = unsafe { partner.deref(pool) };
-        Ok(partner_ref.data.value.clone())
+        Ok(partner_ref.data.clone())
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.init_ld_param
-            .store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
+            .store(Load::<Node<T>>::no_read(), Ordering::Relaxed);
         self.wait_ld_param
-            .store(Load::<Node<ExchangeNode<T>>>::no_read(), Ordering::Relaxed);
+            .store(Load::<Node<T>>::no_read(), Ordering::Relaxed);
         self.update_param.store(PShared::null(), Ordering::Relaxed);
         self.delete_param.store(PShared::null(), Ordering::Relaxed);
 
@@ -213,7 +201,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
 impl<T: 'static + Clone> TryExchange<T> {
     fn wait<'g>(
         &mut self,
-        mine: PShared<'_, Node<ExchangeNode<T>>>,
+        mine: PShared<'_, Node<T>>,
         xchg: &Exchanger<T>,
         rec: bool,
         guard: &'g Guard,
@@ -260,30 +248,30 @@ impl<T: 'static + Clone> TryExchange<T> {
     }
 
     #[inline]
-    fn wait_succ(mine: PShared<'_, Node<ExchangeNode<T>>>, pool: &PoolHandle) -> T {
+    fn wait_succ(mine: PShared<'_, Node<T>>, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
         let partner = unsafe {
-            Update::<Exchanger<T>, Node<ExchangeNode<T>>, Self>::next_updated_node(mine_ref)
+            Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref)
         };
         let partner_ref = unsafe { partner.deref(pool) };
-        partner_ref.data.value.clone()
+        partner_ref.data.clone()
     }
 
     #[inline]
-    fn prepare_insert(_: &mut Node<ExchangeNode<T>>) -> bool {
+    fn prepare_insert(_: &mut Node<T>) -> bool {
         true
     }
 }
 
-impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange<T> {
+impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
     fn prepare_delete<'g>(
-        cur: PShared<'_, Node<ExchangeNode<T>>>,
-        mine: PShared<'_, Node<ExchangeNode<T>>>,
+        cur: PShared<'_, Node<T>>,
+        mine: PShared<'_, Node<T>>,
         _: &Exchanger<T>,
         _: &'g Guard,
         _: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<ExchangeNode<T>>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
         if cur == mine {
             return Ok(Some(PShared::<_>::null()));
         }
@@ -292,10 +280,10 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange
     }
 
     fn node_when_deleted<'g>(
-        _: PShared<'_, Node<ExchangeNode<T>>>,
+        _: PShared<'_, Node<T>>,
         _: &'g Guard,
         _: &PoolHandle,
-    ) -> PShared<'g, Node<ExchangeNode<T>>> {
+    ) -> PShared<'g, Node<T>> {
         PShared::<_>::null()
     }
 }
@@ -304,7 +292,7 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<ExchangeNode<T>>> for TryExchange
 /// 반드시 exchange에 성공함.
 #[derive(Debug)]
 pub struct Exchange<T: Clone> {
-    node: PAtomic<Node<ExchangeNode<T>>>,
+    node: PAtomic<Node<T>>,
     try_xchg: TryExchange<T>,
 }
 
@@ -327,7 +315,7 @@ impl<T: Clone> Collectable for Exchange<T> {
         let mut node = xchg.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<ExchangeNode<T>>::mark(node_ref, gc);
+            Node::<T>::mark(node_ref, gc);
         }
 
         TryExchange::<T>::filter(&mut xchg.try_xchg, gc, pool);
@@ -388,8 +376,8 @@ impl<T: Clone> Exchange<T> {
         value: T,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<ExchangeNode<T>>> {
-        let node = POwned::new(Node::from(ExchangeNode::from(value)), pool).into_shared(guard);
+    ) -> PShared<'g, Node<T>> {
+        let node = POwned::new(Node::from(value), pool).into_shared(guard);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
         node
@@ -400,7 +388,7 @@ impl<T: Clone> Exchange<T> {
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
 pub struct Exchanger<T: Clone> {
-    slot: SMOAtomic<Self, Node<ExchangeNode<T>>, TryExchange<T>>,
+    slot: SMOAtomic<Self, Node<T>, TryExchange<T>>,
 }
 
 impl<T: Clone> Default for Exchanger<T> {
@@ -417,10 +405,10 @@ impl<T: Clone> PDefault for Exchanger<T> {
     }
 }
 
-impl<T: Clone> Traversable<Node<ExchangeNode<T>>> for Exchanger<T> {
+impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
     fn search(
         &self,
-        target: PShared<'_, Node<ExchangeNode<T>>>,
+        target: PShared<'_, Node<T>>,
         guard: &Guard,
         _: &PoolHandle,
     ) -> bool {

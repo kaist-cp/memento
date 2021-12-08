@@ -69,7 +69,7 @@ where
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        value: Self::Input<'o>,
+        node: Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -78,8 +78,8 @@ where
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_exchange.reset(guard, pool);
         self.try_push.reset(guard, pool);
+        self.try_exchange.reset(guard, pool);
     }
 }
 
@@ -135,8 +135,8 @@ where
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_pop.reset(true, guard, pool);
-        self.try_exchange.reset(true, guard, pool);
+        self.try_pop.reset(guard, pool);
+        self.try_exchange.reset(guard, pool);
     }
 }
 
