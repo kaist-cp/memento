@@ -116,8 +116,8 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
             .run(
-                stack,
-                (&self.delete_param, &stack.top, Self::get_next),
+                &stack.top,
+                (&self.delete_param, stack, Self::get_next),
                 rec,
                 guard,
                 pool,

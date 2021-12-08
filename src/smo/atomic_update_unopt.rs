@@ -131,10 +131,10 @@ where
     O: 'static + Traversable<N>,
     N: 'static + NodeUnOpt + Collectable,
 {
-    type Object<'o> = &'o O;
+    type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (
         &'o PAtomic<N>,
-        &'o PAtomic<N>,
+        &'o O,
         fn(PShared<'_, N>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, N>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
     type Output<'o>
@@ -146,8 +146,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (target_loc, point, get_next): Self::Input<'o>,
+        point: Self::Object<'o>,
+        (target_loc, obj, get_next): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
