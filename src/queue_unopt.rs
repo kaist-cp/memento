@@ -98,7 +98,6 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO: node reset
         self.insert.reset(guard, pool);
     }
 }
@@ -180,6 +179,7 @@ impl<T: Clone> Memento for Enqueue<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO: node reset
         self.try_enq.reset(guard, pool);
     }
 }
