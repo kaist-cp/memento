@@ -19,7 +19,7 @@ use crate::{
     treiber_stack::{self, TreiberStack},
 };
 
-const ELIM_SIZE: usize = 16;
+const ELIM_SIZE: usize = 4;
 
 #[inline]
 fn get_random_elim_index() -> usize {
@@ -64,7 +64,7 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 impl<T> Memento for TryPush<T>
 where
-    T: 'static + Clone + std::fmt::Debug,
+    T: 'static + Clone,
 {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = PShared<'o, Node<Request<T>>>;
@@ -107,7 +107,7 @@ where
 
 /// `ElimStack::pop()`를 호출할 때 쓰일 client
 #[derive(Debug)]
-pub struct TryPop<T: 'static + Clone + std::fmt::Debug> {
+pub struct TryPop<T: 'static + Clone> {
     /// inner stack의 pop client
     try_pop: treiber_stack::TryPop<Request<T>>,
 
@@ -121,18 +121,18 @@ pub struct TryPop<T: 'static + Clone + std::fmt::Debug> {
     try_exchange: AtomicReset<TryExchange<Request<T>>>,
 }
 
-impl<T: 'static + Clone + std::fmt::Debug> Default for TryPop<T> {
+impl<T: 'static + Clone> Default for TryPop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
-            elim_idx: get_random_elim_index(), // TODO: Fixed index vs online random index 성능 비교
+            elim_idx: get_random_elim_index(), // TODO(opt): Fixed index vs online random index 성능 비교
             exchange_pop_node: PAtomic::null(),
             try_exchange: AtomicReset::default(),
         }
     }
 }
 
-impl<T: Clone + std::fmt::Debug> Collectable for TryPop<T> {
+impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         treiber_stack::TryPop::filter(&mut try_pop.try_pop, gc, pool);
         AtomicReset::filter(&mut try_pop.try_exchange, gc, pool);
@@ -141,7 +141,7 @@ impl<T: Clone + std::fmt::Debug> Collectable for TryPop<T> {
 
 impl<T> Memento for TryPop<T>
 where
-    T: 'static + Clone + std::fmt::Debug,
+    T: 'static + Clone,
 {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = ();
@@ -203,7 +203,7 @@ where
     }
 }
 
-impl<T: Clone + std::fmt::Debug> TryPop<T> {
+impl<T: Clone> TryPop<T> {
     #[inline]
     fn new_pop_node<'g>(
         &self,
@@ -292,7 +292,7 @@ impl<T: Clone> Drop for Push<T> {
     }
 }
 
-impl<T: Clone + std::fmt::Debug> Memento for Push<T> {
+impl<T: Clone> Memento for Push<T> {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = T;
     type Output<'o>
@@ -353,11 +353,11 @@ unsafe impl<T: 'static + Clone> Send for Push<T> {}
 
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
-pub struct Pop<T: 'static + Clone + std::fmt::Debug> {
+pub struct Pop<T: 'static + Clone> {
     try_pop: TryPop<T>,
 }
 
-impl<T: Clone + std::fmt::Debug> Default for Pop<T> {
+impl<T: Clone> Default for Pop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
@@ -365,13 +365,13 @@ impl<T: Clone + std::fmt::Debug> Default for Pop<T> {
     }
 }
 
-impl<T: Clone + std::fmt::Debug> Collectable for Pop<T> {
+impl<T: Clone> Collectable for Pop<T> {
     fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         TryPop::filter(&mut pop.try_pop, gc, pool);
     }
 }
 
-impl<T: Clone + std::fmt::Debug> Memento for Pop<T> {
+impl<T: Clone> Memento for Pop<T> {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = ();
     type Output<'o>
@@ -404,15 +404,15 @@ impl<T: Clone + std::fmt::Debug> Memento for Pop<T> {
     }
 }
 
-impl<T: Clone + std::fmt::Debug> Drop for Pop<T> {
+impl<T: Clone> Drop for Pop<T> {
     fn drop(&mut self) {
         // TODO: trypop의 리셋여부 파악?
     }
 }
 
-unsafe impl<T: Clone + std::fmt::Debug> Send for Pop<T> {}
+unsafe impl<T: Clone> Send for Pop<T> {}
 
-impl<T: 'static + Clone + std::fmt::Debug> Stack<T> for ElimStack<T> {
+impl<T: 'static + Clone> Stack<T> for ElimStack<T> {
     type Push = Push<T>;
     type Pop = Pop<T>;
 }
@@ -424,7 +424,7 @@ mod tests {
     use super::*;
     use crate::{stack::tests::*, utils::tests::*};
 
-    const NR_THREAD: usize = 2;
+    const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;

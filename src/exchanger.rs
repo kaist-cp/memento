@@ -1,6 +1,6 @@
 //! Persistent Exchanger
 
-// TODO: 2-byte high tagging to resolve ABA problem + unsafe owner clear
+// TODO(must): 2-byte high tagging to resolve ABA problem
 
 use std::{sync::atomic::Ordering, time::Duration};
 
@@ -106,10 +106,10 @@ impl<T: Clone> Collectable for TryExchange<T> {
 
 type ExchangeCond<T> = fn(&T) -> bool;
 
-impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
+impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input<'o> = (PShared<'o, Node<T>>, ExchangeCond<T>);
-    type Output<'o> = T; // TODO: input과의 대구를 고려해서 node reference가 나을지?
+    type Output<'o> = T; // TODO(opt): input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
@@ -143,7 +143,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
                 return Err(TryFail::Busy);
             }
 
-            return self.wait(mine, xchg, cond, rec, guard, pool);
+            return self.wait(mine, xchg, rec, guard, pool);
         }
 
         // slot이 null이 아니면 tag를 확인하고 반대껄 장착하고 update
@@ -160,9 +160,6 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
                 return Err(TryFail::Busy);
             }
         }
-
-        let slot_ref = unsafe { slot.deref(pool) };
-        assert_ne!(my_tag, slot.tag());
 
         // (1) cond를 통과한 적합한 상대가 기다리고 있거나
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
@@ -181,7 +178,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
 
         // 내가 기다린다고 선언한 거면 기다림
         if my_tag == WAITING {
-            return self.wait(mine, xchg, cond, rec, guard, pool);
+            return self.wait(mine, xchg, rec, guard, pool);
         }
 
         // even으로 성공하면 성공 리턴
@@ -205,22 +202,21 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
     }
 }
 
-impl<T: 'static + Clone + std::fmt::Debug> TryExchange<T> {
+impl<T: 'static + Clone> TryExchange<T> {
     fn wait<'g>(
         &mut self,
         mine: PShared<'_, Node<T>>,
         xchg: &Exchanger<T>,
-        cond: ExchangeCond<T>,
         rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<T, TryFail> {
-        // TODO: timeout을 받고 loop을 쓰자
+        // TODO(opt): timeout을 받고 loop을 쓰자
 
         if !rec {
             // 누군가 update 해주길 기다림
             // (복구 아닐 때에만 기다림)
-            std::thread::sleep(Duration::from_nanos(100)); // TODO: timeout 받으면 이제 이건 backoff로 바뀜
+            std::thread::sleep(Duration::from_nanos(100)); // TODO(opt): timeout 받으면 이제 이건 backoff로 바뀜
         }
 
         let slot = self
@@ -230,7 +226,7 @@ impl<T: 'static + Clone + std::fmt::Debug> TryExchange<T> {
 
         // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if slot != mine {
-            return Ok(Self::succ_after_wait(mine, cond, pool));
+            return Ok(Self::succ_after_wait(mine, pool));
         }
 
         // 기다리다 지치면 delete 함
@@ -257,20 +253,15 @@ impl<T: 'static + Clone + std::fmt::Debug> TryExchange<T> {
             }
         }
 
-        println!("asdfasdf");
-        return Ok(Self::succ_after_wait(mine, cond, pool));
+        return Ok(Self::succ_after_wait(mine, pool));
     }
 
     #[inline]
-    fn succ_after_wait(mine: PShared<'_, Node<T>>, cond: ExchangeCond<T>, pool: &PoolHandle) -> T {
+    fn succ_after_wait(mine: PShared<'_, Node<T>>, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
         let partner = unsafe { Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref) };
         let partner_ref = unsafe { partner.deref(pool) };
-        if !cond(&partner_ref.data) {
-            println!("{:?} vs {:?}", mine_ref.data, partner_ref.data);
-            println!("{:?} ==? {:?}", mine, partner);
-        }
         partner_ref.data.clone()
     }
 
@@ -350,7 +341,7 @@ impl<T: Clone> Collectable for Exchange<T> {
     }
 }
 
-impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
+impl<T: 'static + Clone> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T;
@@ -380,7 +371,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
         }
 
         loop {
-            let node = self.new_node(value.clone(), guard, pool); // TODO: alloc 문제 해결하고 clone 다 떼주기
+            let node = self.new_node(value.clone(), guard, pool); // TODO(must): ABA 때문에 alloc하는 걸 2-byte tagging로 해결하고 clone 다 떼주기
             if let Ok(v) = self.try_xchg.run(xchg, (node, cond), false, guard, pool) {
                 return Ok(v);
             }

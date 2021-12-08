@@ -1,7 +1,5 @@
 //! Persistent Stack
 
-use crate::atomic_update_common::Traversable;
-use crate::node::Node;
 use crate::persistent::*;
 use crate::plocation::ralloc::Collectable;
 
