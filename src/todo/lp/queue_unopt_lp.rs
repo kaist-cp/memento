@@ -1,6 +1,6 @@
 //! Persistent queue using link-persist
 
-use crate::smo::atomic_update::{self, InsertErr, Traversable, InsertLinkPersist, DeleteLinkPesist};
+use crate::ploc::smo::{self, InsertErr, Traversable, InsertLinkPersist, DeleteLinkPesist};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
@@ -9,8 +9,8 @@ use std::sync::atomic::AtomicBool;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::ralloc::{Collectable, GarbageCollection};
-use crate::plocation::{ll::*, pool::*};
+use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::{ll::*, pool::*};
 
 /// TODO: doc
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
@@ -64,7 +64,7 @@ impl<T: Clone> Collectable for Node<T> {
     }
 }
 
-impl<T: Clone> atomic_update::Node for Node<T> {
+impl<T: Clone> smo::Node for Node<T> {
     #[inline]
     fn ack(&self) {
         self.enqueued.store(true, Ordering::SeqCst);
@@ -510,7 +510,7 @@ unsafe impl<T: Clone + Send + Sync> Send for ComposedQueue<T> {}
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{plocation::ralloc::Collectable, utils::tests::*};
+    use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
     use serial_test::serial;
 
     const NR_THREAD: usize = 12;

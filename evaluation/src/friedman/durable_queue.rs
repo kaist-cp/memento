@@ -5,8 +5,8 @@ use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::persistent::*;
-use memento::plocation::ralloc::{Collectable, GarbageCollection};
-use memento::plocation::{ll::*, pool::*};
+use memento::pmem::ralloc::{Collectable, GarbageCollection};
+use memento::pmem::{ll::*, pool::*};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 

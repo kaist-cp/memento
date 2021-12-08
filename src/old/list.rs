@@ -7,7 +7,7 @@ use etrace::some_or;
 use crate::{
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, PDestroyable, POwned, PShared},
     persistent::Memento,
-    plocation::{
+    pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,

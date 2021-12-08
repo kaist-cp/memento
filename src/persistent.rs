@@ -1,6 +1,6 @@
 //! Trait collection for persistent objects
 
-use crate::plocation::{
+use crate::pmem::{
     ll::persist_obj,
     pool::PoolHandle,
     ralloc::{Collectable, GarbageCollection},

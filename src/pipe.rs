@@ -4,7 +4,7 @@ use crossbeam_epoch::Guard;
 
 use crate::{
     persistent::Memento,
-    plocation::{
+    pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
@@ -120,9 +120,9 @@ where
 mod tests {
     use super::*;
     use crate::persistent::PDefault;
-    use crate::plocation::ralloc::{Collectable, GarbageCollection};
+    use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::queue::*;
-    use crate::utils::tests::*;
+    use crate::test_utils::tests::*;
     use serial_test::serial;
 
     const COUNT: usize = 1_000_000;

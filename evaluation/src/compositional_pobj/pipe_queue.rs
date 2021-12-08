@@ -5,7 +5,7 @@ use crossbeam_utils::CachePadded;
 use memento::{
     persistent::{Memento, PDefault},
     pipe::Pipe,
-    plocation::{
+    pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,

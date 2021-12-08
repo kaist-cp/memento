@@ -5,7 +5,7 @@ use memento::{
     pepoch::PAtomic,
     persistent::{Memento, PDefault},
     pipe::Pipe,
-    plocation::{ralloc::Collectable, PoolHandle},
+    pmem::{ralloc::Collectable, PoolHandle},
     queue::{DequeueSome, Enqueue, Queue},
 };
 use std::sync::atomic::Ordering;
@@ -55,7 +55,7 @@ impl GetOurPipeNOps {
 impl Collectable for GetOurPipeNOps {
     fn filter(
         s: &mut Self,
-        gc: &mut memento::plocation::ralloc::GarbageCollection,
+        gc: &mut memento::pmem::ralloc::GarbageCollection,
         pool: &'static PoolHandle,
     ) {
         todo!()

@@ -2,13 +2,14 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::smo::common::{DeallocNode, Traversable};
-use crate::smo::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
-use crate::plocation::ralloc::{Collectable, GarbageCollection};
-use crate::plocation::{ll::*, pool::*};
+use crate::ploc::common::DeallocNode;
+use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
+use crate::ploc::Traversable;
+use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::{ll::*, pool::*};
 use crate::stack::*;
 
 /// TreiberStack의 try push operation
@@ -395,7 +396,7 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::{stack::tests::*, utils::tests::*};
+    use crate::{stack::tests::*, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 1_000_000;

@@ -14,7 +14,7 @@ use crate::{
     lock::RawLock,
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
     persistent::*,
-    plocation::{
+    pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
@@ -352,7 +352,7 @@ mod tests {
     use super::*;
     use crate::{
         lock::{tests::ConcurAdd, Mutex},
-        utils::tests::run_test,
+        test_utils::tests::run_test,
     };
     use serial_test::serial;
 

@@ -1,7 +1,7 @@
 //! Persistent Stack
 
 use crate::persistent::*;
-use crate::plocation::ralloc::Collectable;
+use crate::pmem::ralloc::Collectable;
 
 /// TODO: doc
 #[derive(Debug)]
@@ -34,9 +34,9 @@ pub(crate) mod tests {
     use crossbeam_epoch::Guard;
 
     use super::*;
-    use crate::plocation::PoolHandle;
-    use crate::plocation::ralloc::GarbageCollection;
-    use crate::utils::tests::*;
+    use crate::pmem::PoolHandle;
+    use crate::pmem::ralloc::GarbageCollection;
+    use crate::test_utils::tests::*;
 
     pub(crate) struct PushPop<S: Stack<usize>, const NR_THREAD: usize, const COUNT: usize> {
         pushes: [S::Push; COUNT],

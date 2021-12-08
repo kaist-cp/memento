@@ -10,7 +10,7 @@ use crate::{
     node::Node,
     pepoch::{PAtomic, POwned, PShared},
     persistent::{AtomicReset, Memento, PDefault},
-    plocation::{
+    pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
@@ -422,7 +422,7 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::{stack::tests::*, utils::tests::*};
+    use crate::{stack::tests::*, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;

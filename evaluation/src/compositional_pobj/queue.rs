@@ -3,8 +3,8 @@ use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::composed_queue::*;
 use memento::persistent::*;
-use memento::plocation::pool::*;
-use memento::plocation::ralloc::{Collectable, GarbageCollection};
+use memento::pmem::pool::*;
+use memento::pmem::ralloc::{Collectable, GarbageCollection};
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};

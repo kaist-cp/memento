@@ -132,10 +132,10 @@ pub trait Collectable: Sized {
     /// # Example
     ///
     /// ```
-    /// # use memento::plocation::pool::PoolHandle;
-    /// # use memento::plocation::ralloc::GarbageCollection;
-    /// # use memento::plocation::ralloc::Collectable;
-    /// # use memento::plocation::ptr::PPtr;
+    /// # use memento::pmem::pool::PoolHandle;
+    /// # use memento::pmem::ralloc::GarbageCollection;
+    /// # use memento::pmem::ralloc::Collectable;
+    /// # use memento::pmem::ptr::PPtr;
     /// # struct Inner {}
     /// # impl Collectable for Inner {
     /// #    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {

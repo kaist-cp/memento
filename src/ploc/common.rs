@@ -12,18 +12,12 @@ use crossbeam_epoch::Guard;
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PShared},
     persistent::Memento,
-    plocation::{
+    pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
 };
-
-/// TODO: doc
-pub trait Traversable<N> {
-    /// TODO: doc
-    fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
-}
 
 /// TODO: doc
 pub trait Node: Sized {
