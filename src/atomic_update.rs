@@ -85,7 +85,7 @@ where
         ret
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 }
 
 impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
@@ -302,7 +302,7 @@ where
             })
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 }
 
 impl<O, N, G> Delete<O, N, G>
@@ -491,7 +491,7 @@ where
             })
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 }
 
 impl<O, N, G> Update<O, N, G>

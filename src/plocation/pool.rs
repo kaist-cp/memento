@@ -416,7 +416,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
             // no-op
         }
     }

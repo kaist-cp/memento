@@ -5,7 +5,7 @@ use std::{marker::PhantomData, sync::atomic::Ordering};
 use crossbeam_epoch::Guard;
 
 use crate::{
-    atomic_update_common::{InsertErr, Node, Traversable, EMPTY},
+    atomic_update_common::{InsertErr, Traversable, EMPTY, NodeUnOpt},
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
     persistent::Memento,
     plocation::{
@@ -17,14 +17,14 @@ use crate::{
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct InsertUnOpt<O, N: Node + Collectable> {
+pub struct InsertUnOpt<O, N: NodeUnOpt + Collectable> {
     _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, N: Node + Collectable + Send + Sync> Send for InsertUnOpt<O, N> {}
-unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for InsertUnOpt<O, N> {}
+unsafe impl<O, N: NodeUnOpt + Collectable + Send + Sync> Send for InsertUnOpt<O, N> {}
+unsafe impl<O, N: NodeUnOpt + Collectable + Send + Sync> Sync for InsertUnOpt<O, N> {}
 
-impl<O, N: Node + Collectable> Default for InsertUnOpt<O, N> {
+impl<O, N: NodeUnOpt + Collectable> Default for InsertUnOpt<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -32,14 +32,14 @@ impl<O, N: Node + Collectable> Default for InsertUnOpt<O, N> {
     }
 }
 
-impl<O, N: Node + Collectable> Collectable for InsertUnOpt<O, N> {
+impl<O, N: NodeUnOpt + Collectable> Collectable for InsertUnOpt<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<O, N> Memento for InsertUnOpt<O, N>
 where
     O: 'static + Traversable<N>,
-    N: 'static + Node + Collectable,
+    N: 'static + NodeUnOpt + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
@@ -83,10 +83,10 @@ where
         ret
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 }
 
-impl<O: Traversable<N>, N: Node + Collectable> InsertUnOpt<O, N> {
+impl<O: Traversable<N>, N: NodeUnOpt + Collectable> InsertUnOpt<O, N> {
     fn result<'g>(
         &self,
         obj: &O,
@@ -94,7 +94,7 @@ impl<O: Traversable<N>, N: Node + Collectable> InsertUnOpt<O, N> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertErr<'g, N>> {
-        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
+        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked_unopt() {
             return Ok(());
         }
 
@@ -104,14 +104,14 @@ impl<O: Traversable<N>, N: Node + Collectable> InsertUnOpt<O, N> {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct DeleteUnOpt<O, N: Node + Collectable> {
+pub struct DeleteUnOpt<O, N: NodeUnOpt + Collectable> {
     _marker: PhantomData<*const (O, N)>,
 }
 
-unsafe impl<O, N: Node + Collectable + Send + Sync> Send for DeleteUnOpt<O, N> {}
-unsafe impl<O, N: Node + Collectable + Send + Sync> Sync for DeleteUnOpt<O, N> {}
+unsafe impl<O, N: NodeUnOpt + Collectable + Send + Sync> Send for DeleteUnOpt<O, N> {}
+unsafe impl<O, N: NodeUnOpt + Collectable + Send + Sync> Sync for DeleteUnOpt<O, N> {}
 
-impl<O, N: Node + Collectable> Default for DeleteUnOpt<O, N> {
+impl<O, N: NodeUnOpt + Collectable> Default for DeleteUnOpt<O, N> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -119,14 +119,14 @@ impl<O, N: Node + Collectable> Default for DeleteUnOpt<O, N> {
     }
 }
 
-impl<O, N: Node + Collectable> Collectable for DeleteUnOpt<O, N> {
+impl<O, N: NodeUnOpt + Collectable> Collectable for DeleteUnOpt<O, N> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<O, N> Memento for DeleteUnOpt<O, N>
 where
     O: 'static + Traversable<N>,
-    N: 'static + Node + Collectable,
+    N: 'static + NodeUnOpt + Collectable,
 {
     type Object<'o> = &'o O;
     type Input<'o> = (
@@ -172,7 +172,7 @@ where
 
         // target을 ack해주고
         let target_ref = unsafe { target.deref(pool) };
-        target_ref.ack();
+        target_ref.ack_unopt();
 
         // point를 next로 바꿈
         let res = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
@@ -185,27 +185,27 @@ where
         // 빼려는 node에 내 이름 새겨넣음
         // CAS인 이유: delete 복구 중인 스레드와 경합이 일어날 수 있음
         target_ref
-            .owner()
+            .owner_unopt()
             .compare_exchange(
-                Self::no_owner(),
+                Self::no_owner(), // TODO: no_owner 통합
                 self.id(pool),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
             .map(|_| {
-                persist_obj(target_ref.owner(), true);
+                persist_obj(target_ref.owner_unopt(), true);
                 Some(target)
             })
             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 }
 
 impl<O, N> DeleteUnOpt<O, N>
 where
     O: Traversable<N>,
-    N: Node + Collectable,
+    N: NodeUnOpt + Collectable,
 {
     fn result<'g>(
         &self,
@@ -223,7 +223,7 @@ where
 
         if !target.is_null() {
             let target_ref = unsafe { target.deref(pool) };
-            let owner = target_ref.owner().load(Ordering::SeqCst);
+            let owner = target_ref.owner_unopt().load(Ordering::SeqCst);
 
             // target이 내가 pop한 게 맞는지 확인
             if owner == self.id(pool) {
@@ -236,7 +236,7 @@ where
                 // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
                 if owner == Self::no_owner()
                     && target_ref
-                        .owner()
+                        .owner_unopt()
                         .compare_exchange(
                             Self::no_owner(),
                             self.id(pool),
@@ -245,7 +245,7 @@ where
                         )
                         .is_ok()
                 {
-                    persist_obj(target_ref.owner(), true);
+                    persist_obj(target_ref.owner_unopt(), true);
                     return Ok(Some(target));
                 }
             }
@@ -263,7 +263,7 @@ where
         // owner가 내가 아닐 수 있음
         // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
         unsafe {
-            if target.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
+            if target.deref(pool).owner_unopt().load(Ordering::SeqCst) == self.id(pool) {
                 guard.defer_pdestroy(target);
             }
         }

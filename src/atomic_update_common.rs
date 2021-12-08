@@ -24,7 +24,6 @@ pub trait Traversable<N> {
 }
 
 /// TODO: doc
-// TODO: node들 싹 통합: 각자의 node 안에 Node trait 구현된 걸 쓰도록
 pub trait Node: Sized {
     /// TODO: doc
     fn ack(&self);
@@ -34,6 +33,24 @@ pub trait Node: Sized {
 
     /// TODO: doc
     fn owner(&self) -> &AtomicUsize;
+}
+
+/// TODO: doc
+pub trait NodeUnOpt: Sized {
+    /// TODO: doc
+    fn ack_unopt(&self);
+
+    /// TODO: doc
+    fn acked_unopt(&self) -> bool;
+
+    /// TODO: doc
+    fn owner_unopt(&self) -> &AtomicUsize;
+}
+
+/// TODO: doc
+pub trait DeallocNode<T, N: Node> {
+    /// TODO: doc
+    fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle);
 }
 
 /// TODO: doc
@@ -108,7 +125,7 @@ where
         Ok(Some(p))
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 }
 
 impl<N: Node + Collectable> Load<N> {

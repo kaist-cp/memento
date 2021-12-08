@@ -1,6 +1,10 @@
 //! Trait collection for persistent objects
 
-use crate::plocation::{pool::PoolHandle, ralloc::Collectable};
+use crate::plocation::{
+    ll::persist_obj,
+    pool::PoolHandle,
+    ralloc::{Collectable, GarbageCollection},
+};
 use crossbeam_epoch::Guard;
 use std::{mem::ManuallyDrop, ptr};
 
@@ -123,7 +127,62 @@ pub trait Memento: Default + Collectable {
     /// 나타내는 flag가 켜져있으므로 하위 op의 reset이 따로 reset flag를 설정할 필요가 없다. 이를 위해 하위
     /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
     /// 알려줄 수 있다.
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle);
+}
+
+/// TODO: doc
+#[derive(Debug, Default)]
+pub struct AtomicReset<M: Memento> {
+    composed: M,
+    resetting: bool,
+}
+
+impl<M: Memento> Collectable for AtomicReset<M> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        M::filter(&mut s.composed, gc, pool);
+    }
+}
+
+impl<M: Memento> Memento for AtomicReset<M> {
+    type Object<'o> = M::Object<'o>;
+    type Input<'o> = M::Input<'o>;
+    type Output<'o>
+    where
+        M: 'o,
+    = M::Output<'o>;
+    type Error<'o>
+    where
+        M: 'o,
+    = M::Error<'o>;
+
+    fn run<'o>(
+        &'o mut self,
+        object: Self::Object<'o>,
+        input: Self::Input<'o>,
+        rec: bool,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if rec {
+            if self.resetting {
+                self.reset(guard, pool);
+            }
+            return self.composed.run(object, input, false, guard, pool);
+        }
+
+        self.composed.run(object, input, rec, guard, pool)
+    }
+
+    // TODO: 하위 메멘토의 리셋은 싹 다 async persist
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.resetting = true;
+        persist_obj(&self.resetting, true);
+
+        self.composed.reset(guard, pool);
+
+        self.resetting = false;
+        persist_obj(&self.resetting, true);
+    }
 }
 
 /// TODO: doc

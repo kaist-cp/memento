@@ -85,7 +85,7 @@ where
         self.to.run(to_obj, v, guard, pool).map_err(|_| ())
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         if !nested {
             self.resetting = true;
             persist_obj(&self.resetting, true);
@@ -211,7 +211,7 @@ mod tests {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &Guard, _: &PoolHandle) {
+        fn reset(&mut self, _: &Guard, _: &PoolHandle) {
             todo!("reset test")
         }
 

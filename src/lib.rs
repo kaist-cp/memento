@@ -39,7 +39,7 @@
 pub mod atomic_update;
 pub mod atomic_update_common;
 pub mod atomic_update_unopt;
-// pub mod elim_stack;
+pub mod elim_stack;
 pub mod exchanger;
 // pub mod exchanger_legacy;
 // pub mod list;
@@ -54,7 +54,6 @@ pub mod stack;
 // pub mod ticket_lock;
 pub mod treiber_stack;
 pub mod node;
-pub mod unopt_node;
 
 // Persistent location
 pub mod plocation;

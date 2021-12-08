@@ -105,7 +105,7 @@ impl Memento for Lock {
 
     // TODO: reset을 해도 membership까지 reset 되거나 할당 해제되진 않을 것임 (state->Ready, ticket->NO_TICKET)
     //       이것이 디자인의 일관성을 깨진 않는지?
-    fn reset(&mut self, _: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         let mut m = self.membership.load(Ordering::SeqCst, guard);
         if m.is_null() {
             return;
@@ -155,7 +155,7 @@ impl Memento for Unlock {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
 
     fn set_recovery(&mut self, _: &'static PoolHandle) {}
 }

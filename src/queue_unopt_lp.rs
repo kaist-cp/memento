@@ -167,8 +167,8 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
             })
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.insert.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.insert.reset(guard, pool);
     }
 }
 
@@ -248,8 +248,8 @@ impl<T: Clone> Memento for Enqueue<T> {
         Ok(())
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_enq.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.try_enq.reset(guard, pool);
     }
 }
 
@@ -327,8 +327,8 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.delete.reset(guard, pool);
     }
 }
 
@@ -429,7 +429,7 @@ impl<T: Clone> Memento for Dequeue<T> {
         }
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         let mine = self.mine.load(Ordering::Relaxed, guard);
 
         // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
@@ -438,7 +438,7 @@ impl<T: Clone> Memento for Dequeue<T> {
         persist_obj(&self.mine, true);
         self.try_deq.dealloc(mine, guard, pool);
 
-        self.try_deq.reset(nested, guard, pool);
+        self.try_deq.reset(guard, pool);
     }
 }
 
@@ -595,7 +595,7 @@ mod test {
             Ok(())
         }
 
-        fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+        fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
             todo!("reset test")
         }
     }

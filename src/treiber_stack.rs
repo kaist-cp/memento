@@ -2,20 +2,20 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::atomic_update_common::Traversable;
+use crate::atomic_update_common::{DeallocNode, Traversable};
 use crate::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
-use crate::pepoch::{self as epoch, Guard, PAtomic, PShared};
+use crate::node::Node;
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
 use crate::plocation::ralloc::{Collectable, GarbageCollection};
 use crate::plocation::{ll::*, pool::*};
 use crate::stack::*;
-use crate::unopt_node::{DeallocNode, NodeUnOpt};
 
 /// TreiberStack의 try push operation
 #[derive(Debug)]
 pub struct TryPush<T: Clone> {
     /// push를 위해 할당된 node
-    insert: InsertUnOpt<TreiberStack<T>, NodeUnOpt<T>>,
+    insert: InsertUnOpt<TreiberStack<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryPush<T> {
@@ -36,10 +36,7 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 impl<T: Clone> TryPush<T> {
     #[inline]
-    fn prepare(
-        mine: &mut NodeUnOpt<T>,
-        old_top: PShared<'_, NodeUnOpt<T>>,
-    ) -> bool {
+    fn prepare(mine: &mut Node<T>, old_top: PShared<'_, Node<T>>) -> bool {
         mine.next.store(old_top, Ordering::SeqCst);
         persist_obj(&mine.next, false);
         true
@@ -48,7 +45,7 @@ impl<T: Clone> TryPush<T> {
 
 impl<T: 'static + Clone> Memento for TryPush<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = PShared<'o, NodeUnOpt<T>>;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -65,8 +62,8 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.insert.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.insert.reset(guard, pool);
     }
 }
 
@@ -74,8 +71,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 #[derive(Debug)]
 pub struct TryPop<T: Clone> {
     /// pop를 위해 할당된 node
-    delete: DeleteUnOpt<TreiberStack<T>, NodeUnOpt<T>>,
-
+    delete: DeleteUnOpt<TreiberStack<T>, Node<T>>,
     // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
@@ -97,7 +93,7 @@ impl<T: Clone> Collectable for TryPop<T> {
 
 impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = &'o PAtomic<NodeUnOpt<T>>;
+    type Input<'o> = &'o PAtomic<Node<T>>;
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
@@ -121,19 +117,14 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
             .map_err(|_| TryFail)
     }
 
-    fn reset(&mut self, nested: bool, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete.reset(nested, guard, pool);
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.delete.reset(guard, pool);
     }
 }
 
-impl<T: Clone> DeallocNode<T, NodeUnOpt<T>> for TryPop<T> {
+impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
     #[inline]
-    fn dealloc(
-        &self,
-        target: PShared<'_, NodeUnOpt<T>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
         self.delete.dealloc(target, guard, pool);
     }
 }
@@ -141,11 +132,11 @@ impl<T: Clone> DeallocNode<T, NodeUnOpt<T>> for TryPop<T> {
 impl<T: Clone> TryPop<T> {
     #[inline]
     fn get_next<'g>(
-        target: PShared<'_, NodeUnOpt<T>>,
+        target: PShared<'_, Node<T>>,
         _: &TreiberStack<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, NodeUnOpt<T>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
         if target.is_null() {
             return Ok(None);
         }
@@ -159,7 +150,7 @@ impl<T: Clone> TryPop<T> {
 /// Persistent Treiber stack
 #[derive(Debug)]
 pub struct TreiberStack<T: Clone> {
-    top: PAtomic<NodeUnOpt<T>>,
+    top: PAtomic<Node<T>>,
 }
 
 impl<T: Clone> Default for TreiberStack<T> {
@@ -178,7 +169,7 @@ impl<T: Clone> Collectable for TreiberStack<T> {
         let mut top = stack.top.load(Ordering::SeqCst, guard);
         if !top.is_null() {
             let top_ref = unsafe { top.deref_mut(pool) };
-            NodeUnOpt::mark(top_ref, gc);
+            Node::mark(top_ref, gc);
         }
     }
 }
@@ -189,14 +180,9 @@ impl<T: Clone> PDefault for TreiberStack<T> {
     }
 }
 
-impl<T: Clone> Traversable<NodeUnOpt<T>> for TreiberStack<T> {
+impl<T: Clone> Traversable<Node<T>> for TreiberStack<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(
-        &self,
-        target: PShared<'_, NodeUnOpt<T>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> bool {
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.top.load(Ordering::SeqCst, guard);
 
         while !curr.is_null() {
@@ -214,9 +200,191 @@ impl<T: Clone> Traversable<NodeUnOpt<T>> for TreiberStack<T> {
 
 unsafe impl<T: Clone + Send + Sync> Send for TreiberStack<T> {}
 
+/// Stack의 try push를 이용하는 push op.
+#[derive(Debug)]
+pub struct Push<T: 'static + Clone> {
+    node: PAtomic<Node<T>>,
+    try_push: TryPush<T>,
+}
+
+impl<T: Clone> Default for Push<T> {
+    fn default() -> Self {
+        Self {
+            node: Default::default(),
+            try_push: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for Push<T> {
+    fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut node = push.node.load(Ordering::Relaxed, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::<T>::mark(node_ref, gc);
+        }
+
+        TryPush::filter(&mut push.try_push, gc, pool);
+    }
+}
+
+impl<T: Clone> Drop for Push<T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let node = self.node.load(Ordering::Relaxed, guard);
+        assert!(node.is_null(), "reset 되어있지 않음.")
+        // TODO: trypush의 리셋여부 파악?
+    }
+}
+
+impl<T: Clone> Memento for Push<T> {
+    type Object<'o> = &'o TreiberStack<T>;
+    type Input<'o> = T;
+    type Output<'o>
+    where
+        T: 'o,
+    = ();
+    type Error<'o> = !;
+
+    fn run<'o>(
+        &'o mut self,
+        stack: Self::Object<'o>,
+        value: Self::Input<'o>,
+        rec: bool,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        let node = if rec {
+            let node = self.node.load(Ordering::Relaxed, guard);
+            if node.is_null() {
+                self.new_node(value, guard, pool)
+            } else {
+                node
+            }
+        } else {
+            self.new_node(value, guard, pool)
+        };
+
+        if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
+            return Ok(());
+        }
+
+        while self.try_push.run(stack, node, false, guard, pool).is_err() {}
+        Ok(())
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO: node reset
+        self.try_push.reset(guard, pool);
+    }
+}
+
+impl<T: Clone> Push<T> {
+    #[inline]
+    fn new_node<'g>(
+        &self,
+        value: T,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> PShared<'g, Node<T>> {
+        let node = POwned::new(Node::from(value), pool).into_shared(guard);
+        self.node.store(node, Ordering::Relaxed);
+        persist_obj(&self.node, true);
+        node
+    }
+}
+
+unsafe impl<T: 'static + Clone> Send for Push<T> {}
+
+/// Stack의 try pop을 이용하는 pop op.
+#[derive(Debug)]
+pub struct Pop<T: 'static + Clone> {
+    mine: PAtomic<Node<T>>,
+    try_pop: TryPop<T>,
+}
+
+impl<T: Clone> Default for Pop<T> {
+    fn default() -> Self {
+        Self {
+            mine: Default::default(),
+            try_pop: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for Pop<T> {
+    fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut mine = pop.mine.load(Ordering::SeqCst, guard);
+        if !mine.is_null() {
+            let mine_ref = unsafe { mine.deref_mut(pool) };
+            Node::<T>::mark(mine_ref, gc);
+        }
+
+        TryPop::filter(&mut pop.try_pop, gc, pool);
+    }
+}
+
+impl<T: Clone> Memento for Pop<T> {
+    type Object<'o> = &'o TreiberStack<T>;
+    type Input<'o> = ();
+    type Output<'o>
+    where
+        T: 'o,
+    = Option<T>;
+    type Error<'o> = !;
+
+    fn run<'o>(
+        &'o mut self,
+        stack: Self::Object<'o>,
+        (): Self::Input<'o>,
+        rec: bool,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if let Ok(v) = self.try_pop.run(stack, &self.mine, rec, guard, pool) {
+            return Ok(v);
+        }
+
+        loop {
+            if let Ok(v) = self.try_pop.run(stack, &self.mine, false, guard, pool) {
+                return Ok(v);
+            }
+        }
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        let mine = self.mine.load(Ordering::Relaxed, guard);
+
+        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+        self.mine.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.mine, true);
+        self.try_pop.dealloc(mine, guard, pool);
+
+        self.try_pop.reset(guard, pool);
+    }
+}
+
+impl<T: Clone> Drop for Pop<T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let mine = self.mine.load(Ordering::Relaxed, guard);
+        assert!(mine.is_null(), "reset 되어있지 않음.")
+        // TODO: trypop의 리셋여부 파악?
+    }
+}
+
+unsafe impl<T: Clone> Send for Pop<T> {}
+
 impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
-    type TryPush = TryPush<T>;
-    type TryPop = TryPop<T>;
+    type Push = Push<T>;
+    type Pop = Pop<T>;
 }
 
 #[cfg(test)]

@@ -129,7 +129,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         xchg.exchange(self, value, Timeout::Limited(timeout), cond, guard, pool)
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, _: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
@@ -198,7 +198,7 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             .unwrap()) // 시간 무제한이므로 return 시 반드시 성공을 보장
     }
 
-    fn reset(&mut self, _: bool, guard: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, guard: &Guard, _: &'static PoolHandle) {
         let node = self.node.load(Ordering::SeqCst, guard);
         if !node.is_null() {
             self.node.store(PShared::null(), Ordering::SeqCst);
