@@ -234,8 +234,8 @@ impl<T: 'static + Clone> TryExchange<T> {
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = self.delete.run(
-            xchg,
-            (&self.delete_param, mine, &xchg.slot),
+            &xchg.slot,
+            (&self.delete_param, mine, xchg),
             rec,
             guard,
             pool,

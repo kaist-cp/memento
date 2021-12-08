@@ -251,8 +251,8 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete_opt
             .run(
-                queue,
-                (&self.delete_param, PShared::null(), &queue.head),
+                &queue.head,
+                (&self.delete_param, PShared::null(), queue),
                 rec,
                 guard,
                 pool,

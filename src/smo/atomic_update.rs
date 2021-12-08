@@ -230,8 +230,8 @@ where
     N: 'static + Node + Collectable,
     G: 'static + DeleteHelper<O, N>,
 {
-    type Object<'o> = &'o O;
-    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o SMOAtomic<O, N, G>);
+    type Object<'o> = &'o SMOAtomic<O, N, G>;
+    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -242,8 +242,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (target_loc, forbidden, point): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        point: Self::Object<'o>,
+        (target_loc, forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
