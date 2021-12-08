@@ -4,8 +4,8 @@ use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
+use super::atomic_update_common::{InsertErr, NodeUnOpt, Traversable, EMPTY};
 use crate::{
-    atomic_update_common::{InsertErr, NodeUnOpt, Traversable, EMPTY},
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
     persistent::Memento,
     plocation::{

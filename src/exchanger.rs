@@ -7,8 +7,6 @@ use std::{sync::atomic::Ordering, time::Duration};
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
-    atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
-    atomic_update_common::{Load, Traversable},
     node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     persistent::{Memento, PDefault},
@@ -16,6 +14,10 @@ use crate::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
+    },
+    smo::{
+        atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
+        atomic_update_common::{Load, Traversable},
     },
 };
 

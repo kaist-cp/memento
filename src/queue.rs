@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
-use crate::atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic};
-use crate::atomic_update_common::{DeallocNode, InsertErr, Traversable};
+use crate::smo::atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic};
+use crate::smo::atomic_update_common::{DeallocNode, InsertErr, Traversable};
 use crate::node::Node;
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;

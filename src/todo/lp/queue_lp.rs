@@ -1,6 +1,6 @@
 //! Persistent opt queue using link-persist
 
-use crate::atomic_update::{self, InsertErr, Traversable, InsertLinkPersist, DeleteOptLinkPersist};
+use crate::smo::atomic_update::{self, InsertErr, Traversable, InsertLinkPersist, DeleteOptLinkPersist};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;

@@ -2,8 +2,8 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::atomic_update_common::{DeallocNode, Traversable};
-use crate::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
+use crate::smo::atomic_update_common::{DeallocNode, Traversable};
+use crate::smo::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;

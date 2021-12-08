@@ -1,14 +1,15 @@
 //! Node
 
-use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::{
-    atomic_update_common::{self, no_owner},
     pepoch::{self as epoch, PAtomic},
     plocation::{
+        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
-        PoolHandle, ll::persist_obj,
+        PoolHandle,
     },
+    smo::atomic_update_common::{self, no_owner},
 };
 
 /// TODO: doc
