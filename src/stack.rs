@@ -11,7 +11,7 @@ pub struct TryFail;
 
 /// Persistent stack trait
 pub trait Stack<T: 'static + Clone>:
-    'static + Default + Collectable + Traversable<Node<T>>
+    'static + Default + Collectable
 {
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
