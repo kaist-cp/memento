@@ -76,13 +76,21 @@ where
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let inner_res = self.try_push.run(&elim.inner, node, rec, guard, pool);
-        // inner_res.or(self
-        //     .try_exchange
-        //     .run(&elim.slots[self.elim_idx], node, rec, guard, pool));
-        todo!()
+        if self
+            .try_push
+            .run(&elim.inner, node, rec, guard, pool)
+            .is_ok()
+        {
+            return Ok(());
+        }
 
-        // TODO: exchanger가 교환 조건 받도록
+        self
+            .try_exchange
+            .run(&elim.slots[self.elim_idx], node, rec, guard, pool)
+            .map(|_| ())
+            .map_err(|_| TryFail)
+
+        // TODO: exchanger가 교환 조건 받도록 하기?
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -138,6 +146,21 @@ where
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // TODO: 스택은 노드가 필요 없고 exchange는 필요함
+        // if self
+        //     .try_pop
+        //     .run(&elim.inner, node, rec, guard, pool)
+        //     .is_ok()
+        // {
+        //     return Ok(());
+        // }
+
+        // self
+        //     .try_exchange
+        //     .run(&elim.slots[self.elim_idx], node, rec, guard, pool)
+        //     .map(|_| ())
+        //     .map_err(|_| TryFail)
+
         todo!()
     }
 
