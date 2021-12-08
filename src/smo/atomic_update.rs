@@ -44,10 +44,10 @@ where
     O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
 {
-    type Object<'o> = &'o O;
+    type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (
         PShared<'o, N>,
-        &'o PAtomic<N>,
+        &'o O,
         fn(&mut N) -> bool, // cas 전에 할 일 (bool 리턴값은 계속 진행할지 여부)
     );
     type Output<'o>
@@ -59,8 +59,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (mut new, point, prepare): Self::Input<'o>, // TODO: prepare도 그냥 Prepare trait으로 할 수 있을 듯
+        point: Self::Object<'o>,
+        (mut new, obj, prepare): Self::Input<'o>, // TODO: prepare도 그냥 Prepare trait으로 할 수 있을 듯
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,

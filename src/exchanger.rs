@@ -134,8 +134,8 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
             let mine = node.with_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
             let inserted = self.insert.run(
-                xchg,
-                (mine, &xchg.slot, Self::prepare_insert),
+                &xchg.slot,
+                (mine, xchg, Self::prepare_insert),
                 rec,
                 guard,
                 pool,
