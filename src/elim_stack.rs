@@ -83,6 +83,63 @@ where
     }
 }
 
+/// `ElimStack::pop()`를 호출할 때 쓰일 client
+#[derive(Debug)]
+pub struct TryPop<T: 'static + Clone, S: Stack<T>> {
+    /// inner stack의 pop client
+    try_pop: S::TryPop,
+
+    /// elimination exchange를 위해 할당된 index
+    elim_idx: usize,
+
+    /// elimination exchanger의 exchange client
+    try_exchange: TryExchange<Request<T>>,
+}
+
+impl<T: 'static + Clone, S: Stack<T>> Default for TryPop<T, S> {
+    fn default() -> Self {
+        Self {
+            try_pop: Default::default(),
+            elim_idx: get_random_elim_index(), // TODO: Fixed index vs online random index 성능 비교
+            try_exchange: TryExchange::default(),
+        }
+    }
+}
+
+impl<T: Clone, S: Stack<T>> Collectable for TryPop<T, S> {
+    fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        S::TryPop::filter(&mut try_pop.try_pop, gc, pool);
+        TryExchange::filter(&mut try_pop.try_exchange, gc, pool);
+    }
+}
+
+impl<T, S> Memento for TryPop<T, S>
+where
+    T: 'static + Clone,
+    S: 'static + Stack<T>,
+{
+    type Object<'o> = &'o ElimStack<T, S>;
+    type Input<'o> = ();
+    type Output<'o> = Option<T>;
+    type Error<'o> = TryFail;
+
+    fn run<'o>(
+        &'o mut self,
+        stack: Self::Object<'o>,
+        (): Self::Input<'o>,
+        rec: bool,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        todo!()
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.try_pop.reset(true, guard, pool);
+        self.try_exchange.reset(true, guard, pool);
+    }
+}
+
 /// Persistent Elimination backoff stack
 /// - ELIM_SIZE: size of elimination array
 #[derive(Debug)]
