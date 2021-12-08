@@ -16,7 +16,7 @@ use crate::{
         PoolHandle,
     },
     stack::{Stack, TryFail},
-    treiber_stack::{self},
+    treiber_stack::{self, TreiberStack},
 };
 
 const ELIM_SIZE: usize = 16;
@@ -222,7 +222,7 @@ impl<T: Clone> TryPop<T> {
 /// - ELIM_SIZE: size of elimination array
 #[derive(Debug)]
 pub struct ElimStack<T: 'static + Clone> {
-    inner: treiber_stack::TreiberStack<Request<T>>,
+    inner: TreiberStack<Request<T>>,
     slots: [Exchanger<Request<T>>; ELIM_SIZE],
 }
 
@@ -237,12 +237,10 @@ impl<T: Clone> Default for ElimStack<T> {
 
 impl<T: Clone> Collectable for ElimStack<T> {
     fn filter(elim_stack: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        // TODO
-
-        // S::filter(&mut elim_stack.inner, gc, pool);
-        // for slot in elim_stack.slots.as_mut() {
-        //     Exchanger::filter(slot, gc, pool);
-        // }
+        TreiberStack::filter(&mut elim_stack.inner, gc, pool);
+        for slot in elim_stack.slots.as_mut() {
+            Exchanger::filter(slot, gc, pool);
+        }
     }
 }
 
