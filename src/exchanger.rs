@@ -168,8 +168,8 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         let updated = self
             .update
             .run(
-                xchg,
-                (mine, &self.update_param, slot, &xchg.slot),
+                &xchg.slot,
+                (mine, &self.update_param, slot, xchg),
                 rec,
                 guard,
                 pool,

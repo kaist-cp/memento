@@ -427,12 +427,12 @@ where
     N: 'static + Node + Collectable,
     G: 'static,
 {
-    type Object<'o> = &'o O;
+    type Object<'o> = &'o SMOAtomic<O, N, G>;
     type Input<'o> = (
         PShared<'o, N>,
         &'o PAtomic<N>,
         PShared<'o, N>,
-        &'o SMOAtomic<O, N, G>,
+        &'o O,
     );
     type Output<'o>
     where
@@ -443,8 +443,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        obj: Self::Object<'o>,
-        (new, save_loc, expected, point): Self::Input<'o>,
+        point: Self::Object<'o>,
+        (new, save_loc, expected, obj): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
