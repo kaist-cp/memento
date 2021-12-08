@@ -2,8 +2,8 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::atomic_update_common::{DeallocNode, Traversable};
-use crate::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
+use crate::smo::atomic_update_common::{DeallocNode, Traversable};
+use crate::smo::atomic_update_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::persistent::*;
@@ -70,14 +70,14 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 /// TreiberStack의 try pop operation
 #[derive(Debug)]
 pub struct TryPop<T: Clone> {
-    /// pop를 위해 할당된 node
+    delete_param: PAtomic<Node<T>>,
     delete: DeleteUnOpt<TreiberStack<T>, Node<T>>,
-    // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
 impl<T: Clone> Default for TryPop<T> {
     fn default() -> Self {
         Self {
+            delete_param: PAtomic::null(),
             delete: Default::default(),
         }
     }
@@ -87,20 +87,29 @@ unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
 
 impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut param = try_pop.delete_param.load(Ordering::SeqCst, guard);
+        if !param.is_null() {
+            let param_ref = unsafe { param.deref_mut(pool) };
+            Node::<T>::mark(param_ref, gc);
+        }
+
         DeleteUnOpt::filter(&mut try_pop.delete, gc, pool);
     }
 }
 
 impl<T: 'static + Clone> Memento for TryPop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = &'o PAtomic<Node<T>>;
+    type Input<'o> = ();
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         stack: Self::Object<'o>,
-        mine_loc: Self::Input<'o>,
+        (): Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -108,7 +117,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         self.delete
             .run(
                 stack,
-                (mine_loc, &stack.top, Self::get_next),
+                (&self.delete_param, &stack.top, Self::get_next),
                 rec,
                 guard,
                 pool,
@@ -118,6 +127,14 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        let param = self.delete_param.load(Ordering::Relaxed, guard);
+
+        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+        self.delete_param.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.delete_param, true);
+        self.dealloc(param, guard, pool);
+
         self.delete.reset(guard, pool);
     }
 }
@@ -126,6 +143,14 @@ impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
     #[inline]
     fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
         self.delete.dealloc(target, guard, pool);
+    }
+}
+
+impl<T: Clone> Drop for TryPop<T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let param = self.delete_param.load(Ordering::Relaxed, guard);
+        assert!(param.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -302,14 +327,12 @@ unsafe impl<T: 'static + Clone> Send for Push<T> {}
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
 pub struct Pop<T: 'static + Clone> {
-    mine: PAtomic<Node<T>>,
     try_pop: TryPop<T>,
 }
 
 impl<T: Clone> Default for Pop<T> {
     fn default() -> Self {
         Self {
-            mine: Default::default(),
             try_pop: Default::default(),
         }
     }
@@ -317,15 +340,6 @@ impl<T: Clone> Default for Pop<T> {
 
 impl<T: Clone> Collectable for Pop<T> {
     fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut mine = pop.mine.load(Ordering::SeqCst, guard);
-        if !mine.is_null() {
-            let mine_ref = unsafe { mine.deref_mut(pool) };
-            Node::<T>::mark(mine_ref, gc);
-        }
-
         TryPop::filter(&mut pop.try_pop, gc, pool);
     }
 }
@@ -347,35 +361,24 @@ impl<T: Clone> Memento for Pop<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if let Ok(v) = self.try_pop.run(stack, &self.mine, rec, guard, pool) {
+        if let Ok(v) = self.try_pop.run(stack, (), rec, guard, pool) {
             return Ok(v);
         }
 
         loop {
-            if let Ok(v) = self.try_pop.run(stack, &self.mine, false, guard, pool) {
+            if let Ok(v) = self.try_pop.run(stack, (), false, guard, pool) {
                 return Ok(v);
             }
         }
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        let mine = self.mine.load(Ordering::Relaxed, guard);
-
-        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        self.mine.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.mine, true);
-        self.try_pop.dealloc(mine, guard, pool);
-
         self.try_pop.reset(guard, pool);
     }
 }
 
 impl<T: Clone> Drop for Pop<T> {
     fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let mine = self.mine.load(Ordering::Relaxed, guard);
-        assert!(mine.is_null(), "reset 되어있지 않음.")
         // TODO: trypop의 리셋여부 파악?
     }
 }

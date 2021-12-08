@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
-use crate::atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic};
-use crate::atomic_update_common::{DeallocNode, InsertErr, Traversable};
+use crate::smo::atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic};
+use crate::smo::atomic_update_common::{DeallocNode, InsertErr, Traversable};
 use crate::node::Node;
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -205,14 +205,14 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    /// pop를 위해 할당된 node
+    delete_param: PAtomic<Node<MaybeUninit<T>>>,
     delete_opt: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
-    // TODO: delete loc은 얘가 갖고 있어야 함
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
+            delete_param: PAtomic::null(),
             delete_opt: Default::default(),
         }
     }
@@ -222,20 +222,29 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark ptr if valid
+        let mut param = try_deq.delete_param.load(Ordering::SeqCst, guard);
+        if !param.is_null() {
+            let param_ref = unsafe { param.deref_mut(pool) };
+            Node::<MaybeUninit<T>>::mark(param_ref, gc);
+        }
+
         Delete::filter(&mut try_deq.delete_opt, gc, pool);
     }
 }
 
 impl<T: 'static + Clone> Memento for TryDequeue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input<'o> = &'o PAtomic<Node<MaybeUninit<T>>>;
+    type Input<'o> = ();
     type Output<'o> = Option<T>;
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        mine_loc: Self::Input<'o>,
+        (): Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -243,7 +252,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete_opt
             .run(
                 queue,
-                (mine_loc, PShared::null(), &queue.head),
+                (&self.delete_param, PShared::null(), &queue.head),
                 rec,
                 guard,
                 pool,
@@ -261,6 +270,14 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        let param = self.delete_param.load(Ordering::Relaxed, guard);
+
+        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+        self.delete_param.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.delete_param, true);
+        self.dealloc(param, guard, pool);
+
         self.delete_opt.reset(guard, pool);
     }
 }
@@ -269,6 +286,14 @@ impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>>> for TryDequeue<T> {
     #[inline]
     fn dealloc(&self, target: PShared<'_, Node<MaybeUninit<T>>>, guard: &Guard, pool: &PoolHandle) {
         self.delete_opt.dealloc(target, guard, pool);
+    }
+}
+
+impl<T: Clone> Drop for TryDequeue<T> {
+    fn drop(&mut self) {
+        let guard = unsafe { epoch::unprotected() };
+        let param = self.delete_param.load(Ordering::Relaxed, guard);
+        assert!(param.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -303,6 +328,17 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
         Ok(Some(next))
     }
 
+    // TODO(prof): How to refactor?
+    fn prepare_update<'g>(
+        _: PShared<'_, Node<MaybeUninit<T>>>,
+        _: PShared<'_, Node<MaybeUninit<T>>>,
+        _: &Queue<T>,
+        _: &'g Guard,
+        _: &PoolHandle,
+    ) -> bool {
+        unreachable!("not used.")
+    }
+
     #[inline]
     fn node_when_deleted<'g>(
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
@@ -317,14 +353,12 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    mine: PAtomic<Node<MaybeUninit<T>>>,
     try_deq: TryDequeue<T>,
 }
 
 impl<T: Clone> Default for Dequeue<T> {
     fn default() -> Self {
         Self {
-            mine: Default::default(),
             try_deq: Default::default(),
         }
     }
@@ -332,15 +366,6 @@ impl<T: Clone> Default for Dequeue<T> {
 
 impl<T: Clone> Collectable for Dequeue<T> {
     fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut mine = deq.mine.load(Ordering::SeqCst, guard);
-        if !mine.is_null() {
-            let mine_ref = unsafe { mine.deref_mut(pool) };
-            Node::<MaybeUninit<T>>::mark(mine_ref, gc);
-        }
-
         TryDequeue::<T>::filter(&mut deq.try_deq, gc, pool);
     }
 }
@@ -362,35 +387,24 @@ impl<T: Clone> Memento for Dequeue<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if let Ok(v) = self.try_deq.run(queue, &self.mine, rec, guard, pool) {
+        if let Ok(v) = self.try_deq.run(queue, (), rec, guard, pool) {
             return Ok(v);
         }
 
         loop {
-            if let Ok(v) = self.try_deq.run(queue, &self.mine, false, guard, pool) {
+            if let Ok(v) = self.try_deq.run(queue, (), false, guard, pool) {
                 return Ok(v);
             }
         }
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        let mine = self.mine.load(Ordering::Relaxed, guard);
-
-        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        self.mine.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.mine, true);
-        self.try_deq.dealloc(mine, guard, pool);
-
         self.try_deq.reset(guard, pool);
     }
 }
 
 impl<T: Clone> Drop for Dequeue<T> {
     fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let mine = self.mine.load(Ordering::Relaxed, guard);
-        assert!(mine.is_null(), "reset 되어있지 않음.")
         // TODO: trydeq의 리셋여부 파악?
     }
 }
@@ -512,7 +526,7 @@ mod test {
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<usize>::default();
                     let must_none = tmp_deq.run(queue, (), rec, guard, pool).unwrap();
-                    assert!(must_none.is_none());
+                    assert!(must_none.is_none()); // TODO(must): Cannot assert for the second execution.
                     tmp_deq.reset(guard, pool);
 
                     // Check results

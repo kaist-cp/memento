@@ -1,14 +1,12 @@
 //! Persistent Exchanger
 
-// TODO: 2-byte high tagging to resolve ABA problem + unsafe owner clear
+// TODO(must): 2-byte high tagging to resolve ABA problem
 
 use std::{sync::atomic::Ordering, time::Duration};
 
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
-    atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
-    atomic_update_common::{Load, Traversable},
     node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     persistent::{Memento, PDefault},
@@ -16,6 +14,10 @@ use crate::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
+    },
+    smo::{
+        atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
+        atomic_update_common::{Load, Traversable},
     },
 };
 
@@ -104,33 +106,27 @@ impl<T: Clone> Collectable for TryExchange<T> {
     }
 }
 
+type ExchangeCond<T> = fn(&T) -> bool;
+
 impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = PShared<'o, Node<T>>;
-    type Output<'o> = T; // TODO: input과의 대구를 고려해서 node reference가 나을지?
+    type Input<'o> = (PShared<'o, Node<T>>, ExchangeCond<T>);
+    type Output<'o> = T; // TODO(opt): input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &'o mut self,
         xchg: Self::Object<'o>,
-        node: Self::Input<'o>,
+        (node, cond): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
-        let saved_slot = self
+        let slot = self
             .load
             .run((), (&self.init_ld_param, &xchg.slot), rec, guard, pool)
             .unwrap();
-        let slot = if let Some(s) = saved_slot {
-            s
-        } else {
-            self.load
-                .run((), (&self.init_ld_param, &xchg.slot), false, guard, pool)
-                .unwrap()
-                .unwrap()
-        };
 
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
@@ -159,18 +155,28 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         let my_tag = opposite_tag(slot.tag());
         let mine = node.with_tag(my_tag);
 
-        let updated = self.update.run(
-            xchg,
-            (mine, &self.update_param, &xchg.slot),
-            rec,
-            guard,
-            pool,
-        );
-
-        // 실패하면 contention으로 인한 fail 리턴
-        if updated.is_err() {
-            return Err(TryFail::Busy);
+        // 상대가 기다리는 입장인 경우
+        if my_tag != WAITING {
+            let slot_ref = unsafe { slot.deref(pool) }; // SAFE: free되지 않은 node임. 왜냐하면 WAITING 하던 애가 그냥 나갈 때는 반드시 slot을 비우고 나감.
+            if !cond(&slot_ref.data) {
+                return Err(TryFail::Busy);
+            }
         }
+
+        // (1) cond를 통과한 적합한 상대가 기다리고 있거나
+        // (2) 이미 교환 끝난 애가 slot에 들어 있음
+        let updated = self
+            .update
+            .run(
+                xchg,
+                (mine, &self.update_param, slot, &xchg.slot),
+                rec,
+                guard,
+                pool,
+            )
+            .map_err(|_|
+            // 실패하면 contention으로 인한 fail 리턴
+            TryFail::Busy)?;
 
         // 내가 기다린다고 선언한 거면 기다림
         if my_tag == WAITING {
@@ -178,8 +184,8 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         }
 
         // even으로 성공하면 성공 리턴
-        let partner = updated.unwrap();
-        let partner_ref = unsafe { partner.deref(pool) };
+        let partner_ref = unsafe { updated.deref(pool) };
+        assert!(cond(&partner_ref.data));
         Ok(partner_ref.data.clone())
     }
 
@@ -207,27 +213,23 @@ impl<T: 'static + Clone> TryExchange<T> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<T, TryFail> {
-        // TODO: timeout을 받고 loop을 쓰자
-        // 누군가 update 해주길 기다림
-        let saved_slot = self
+        // TODO(opt): timeout을 받고 loop을 쓰자
+
+        if !rec {
+            // 누군가 update 해주길 기다림
+            // (복구 아닐 때에만 기다림)
+            std::thread::sleep(Duration::from_nanos(100)); // TODO(opt): timeout 받으면 이제 이건 backoff로 바뀜
+        }
+
+        let slot = self
             .load
             .run((), (&self.wait_ld_param, &xchg.slot), rec, guard, pool)
             .unwrap();
-        let slot = if let Some(s) = saved_slot {
-            s
-        } else {
-            self.load
-                .run((), (&self.wait_ld_param, &xchg.slot), false, guard, pool)
-                .unwrap()
-                .unwrap()
-        };
 
         // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if slot != mine {
-            return Ok(Self::wait_succ(mine, pool));
+            return Ok(Self::succ_after_wait(mine, pool));
         }
-
-        std::thread::sleep(Duration::from_millis(1)); // TODO: timeout 받으면 이제 이건 backoff로 바뀜
 
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
@@ -239,21 +241,28 @@ impl<T: 'static + Clone> TryExchange<T> {
             pool,
         );
 
-        if deleted.is_ok() {
-            // TODO: 소유권 청소해야 함
-            return Err(TryFail::Timeout);
+        if let Ok(res) = deleted {
+            match res {
+                Some(d) => {
+                    unsafe { clear_owner(d.deref(pool)) };
+                    return Err(TryFail::Timeout);
+                }
+                None => {
+                    unreachable!(
+                        "Delete is successful only if there is a node s.t. the node is mine."
+                    )
+                }
+            }
         }
 
-        return Ok(Self::wait_succ(mine, pool));
+        return Ok(Self::succ_after_wait(mine, pool));
     }
 
     #[inline]
-    fn wait_succ(mine: PShared<'_, Node<T>>, pool: &PoolHandle) -> T {
+    fn succ_after_wait(mine: PShared<'_, Node<T>>, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
-        let partner = unsafe {
-            Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref)
-        };
+        let partner = unsafe { Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref) };
         let partner_ref = unsafe { partner.deref(pool) };
         partner_ref.data.clone()
     }
@@ -262,6 +271,8 @@ impl<T: 'static + Clone> TryExchange<T> {
     fn prepare_insert(_: &mut Node<T>) -> bool {
         true
     }
+
+    // TODO: dealloc
 }
 
 impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
@@ -277,6 +288,16 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
         }
 
         Err(())
+    }
+
+    fn prepare_update<'g>(
+        cur: PShared<'_, Node<T>>,
+        expected: PShared<'_, Node<T>>,
+        _: &Exchanger<T>,
+        _: &'g Guard,
+        _: &PoolHandle,
+    ) -> bool {
+        cur == expected
     }
 
     fn node_when_deleted<'g>(
@@ -324,14 +345,14 @@ impl<T: Clone> Collectable for Exchange<T> {
 
 impl<T: 'static + Clone> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = T;
+    type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T;
     type Error<'o> = !;
 
     fn run<'o>(
         &'o mut self,
         xchg: Self::Object<'o>,
-        value: Self::Input<'o>,
+        (value, cond): Self::Input<'o>,
         rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -347,13 +368,13 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             self.new_node(value.clone(), guard, pool)
         };
 
-        if let Ok(v) = self.try_xchg.run(xchg, node, rec, guard, pool) {
+        if let Ok(v) = self.try_xchg.run(xchg, (node, cond), rec, guard, pool) {
             return Ok(v);
         }
 
         loop {
-            let node = self.new_node(value.clone(), guard, pool); // TODO: alloc 문제 해결하고 clone 다 떼주기
-            if let Ok(v) = self.try_xchg.run(xchg, node, false, guard, pool) {
+            let node = self.new_node(value.clone(), guard, pool); // TODO(must): ABA 때문에 alloc하는 걸 2-byte tagging로 해결하고 clone 다 떼주기
+            if let Ok(v) = self.try_xchg.run(xchg, (node, cond), false, guard, pool) {
                 return Ok(v);
             }
         }
@@ -406,12 +427,7 @@ impl<T: Clone> PDefault for Exchanger<T> {
 }
 
 impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
-    fn search(
-        &self,
-        target: PShared<'_, Node<T>>,
-        guard: &Guard,
-        _: &PoolHandle,
-    ) -> bool {
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
         let slot = self.slot.load(Ordering::SeqCst, guard);
         slot == target
     }
@@ -471,7 +487,10 @@ mod tests {
 
             for _ in 0..100 {
                 // `move` for `tid`
-                let ret = self.exchange.run(xchg, tid, rec, guard, pool).unwrap();
+                let ret = self
+                    .exchange
+                    .run(xchg, (tid, |_| true), rec, guard, pool)
+                    .unwrap();
                 assert_eq!(ret, 1 - tid);
             }
 
@@ -542,23 +561,35 @@ mod tests {
             match tid {
                 // T0: [0] -> [1]    [2]
                 0 => {
-                    *item = self.exchange0.run(lxchg, *item, rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange0
+                        .run(lxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 1);
                 }
                 // T1: Composition in the middle
                 1 => {
                     // Step1: [0] <- [1]    [2]
 
-                    *item = self.exchange0.run(lxchg, *item, rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange0
+                        .run(lxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 0);
 
                     // Step2: [1]    [0] -> [2]
-                    *item = self.exchange2.run(rxchg, *item, rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange2
+                        .run(rxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 2);
                 }
                 // T2: [0]    [1] <- [2]
                 2 => {
-                    *item = self.exchange2.run(rxchg, *item, rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange2
+                        .run(rxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 0);
                 }
                 _ => unreachable!(),

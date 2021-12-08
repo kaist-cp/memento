@@ -166,8 +166,8 @@ impl<M: Memento> Memento for AtomicReset<M> {
         if rec {
             if self.resetting {
                 self.reset(guard, pool);
+                return self.composed.run(object, input, false, guard, pool);
             }
-            return self.composed.run(object, input, false, guard, pool);
         }
 
         self.composed.run(object, input, rec, guard, pool)

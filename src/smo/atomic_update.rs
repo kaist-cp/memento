@@ -4,8 +4,9 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
+use super::atomic_update_common::{no_owner, InsertErr, Node, Traversable};
+
 use crate::{
-    atomic_update_common::{no_owner, InsertErr, Node, Traversable},
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
     persistent::Memento,
     plocation::{
@@ -97,7 +98,10 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertErr<'g, N>> {
-        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
+        if unsafe { new.deref(pool) }.acked()
+            || obj.search(new, guard, pool)
+            || unsafe { new.deref(pool) }.acked()
+        {
             return Ok(());
         }
 
@@ -138,6 +142,15 @@ pub trait DeleteHelper<O, N> {
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()>;
+
+    /// 계속 진행 여부를 리턴
+    fn prepare_update<'g>(
+        cur: PShared<'_, N>,
+        expected: PShared<'_, N>,
+        obj: &O,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> bool;
 
     /// A pointer that should be next after a node is deleted
     fn node_when_deleted<'g>(
@@ -366,6 +379,19 @@ where
 
 /// TODO: doc
 ///
+/// # Safety
+///
+/// 내가 Insert/Update로 넣은 node를 내가 Delete 해서 뺐을 때 사용
+/// - 남이 넣었던 건 하면 안 되는 이유: 넣었던 애가 `acked()`를 호출하기 때문에 owner를 건드리면 안 됨
+/// - 내가 Update로 뺐을 때 하면 안 되는 이유: point CAS를 helping 하는 애들이 next node를 owner를 통해 알게 되므로 건드리면 안 됨
+pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
+    let owner = deleted_node.owner();
+    owner.store(no_owner(), Ordering::SeqCst);
+    persist_obj(owner, true);
+}
+
+/// TODO: doc
+///
 /// 빠졌던 노드를 다시 넣으려 하면 안 됨
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // TODO: update는 O 필요 없는 것 같음
@@ -402,7 +428,12 @@ where
     G: 'static,
 {
     type Object<'o> = &'o O;
-    type Input<'o> = (PShared<'o, N>, &'o PAtomic<N>, &'o SMOAtomic<O, N, G>);
+    type Input<'o> = (
+        PShared<'o, N>,
+        &'o PAtomic<N>,
+        PShared<'o, N>,
+        &'o SMOAtomic<O, N, G>,
+    );
     type Output<'o>
     where
         O: 'o,
@@ -412,8 +443,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        _: Self::Object<'o>,
-        (new, save_loc, point): Self::Input<'o>,
+        obj: Self::Object<'o>,
+        (new, save_loc, expected, point): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -428,6 +459,10 @@ where
         let target = point.load(Ordering::SeqCst, guard);
 
         if target.is_null() {
+            return Err(());
+        }
+
+        if !G::prepare_update(target, expected, obj, guard, pool) {
             return Err(());
         }
 
@@ -547,6 +582,7 @@ where
     /// Update되어 owner가 node일 때만 사용해야 함
     pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N> {
         let u = old.owner().load(Ordering::SeqCst);
+        assert_ne!(u, no_owner()); // TODO: ABA 문제가 터지는지 확인하기 위해 달아놓은 assert
         PShared::from_usize(u)
     }
 }

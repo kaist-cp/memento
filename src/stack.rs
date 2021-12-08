@@ -1,7 +1,5 @@
 //! Persistent Stack
 
-use crate::atomic_update_common::Traversable;
-use crate::node::Node;
 use crate::persistent::*;
 use crate::plocation::ralloc::Collectable;
 
@@ -11,7 +9,7 @@ pub struct TryFail;
 
 /// Persistent stack trait
 pub trait Stack<T: 'static + Clone>:
-    'static + Default + Collectable + Traversable<Node<T>>
+    'static + Default + Collectable
 {
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.

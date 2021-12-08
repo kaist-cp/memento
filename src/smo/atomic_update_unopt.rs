@@ -4,8 +4,8 @@ use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
+use super::atomic_update_common::{InsertErr, NodeUnOpt, Traversable, EMPTY};
 use crate::{
-    atomic_update_common::{InsertErr, Traversable, EMPTY, NodeUnOpt},
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
     persistent::Memento,
     plocation::{
@@ -94,7 +94,10 @@ impl<O: Traversable<N>, N: NodeUnOpt + Collectable> InsertUnOpt<O, N> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertErr<'g, N>> {
-        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked_unopt() {
+        if unsafe { new.deref(pool) }.acked_unopt()
+            || obj.search(new, guard, pool)
+            || unsafe { new.deref(pool) }.acked_unopt()
+        {
             return Ok(());
         }
 
