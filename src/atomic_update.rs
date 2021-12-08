@@ -369,6 +369,19 @@ where
 
 /// TODO: doc
 ///
+/// # Safety
+///
+/// 내가 Insert/Update로 넣은 node를 내가 Delete 해서 뺐을 때 사용
+/// - 남이 넣었던 건 하면 안 되는 이유: 넣었던 애가 `acked()`를 호출하기 때문에 owner를 건드리면 안 됨
+/// - 내가 Update로 뺐을 때 하면 안 되는 이유: point CAS를 helping 하는 애들이 next node를 owner를 통해 알게 되므로 건드리면 안 됨
+pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
+    let owner = deleted_node.owner();
+    owner.store(no_owner(), Ordering::SeqCst);
+    persist_obj(owner, true);
+}
+
+/// TODO: doc
+///
 /// 빠졌던 노드를 다시 넣으려 하면 안 됨
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // TODO: update는 O 필요 없는 것 같음

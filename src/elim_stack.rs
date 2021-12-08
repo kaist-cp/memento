@@ -15,7 +15,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    stack::{Stack, TryFail},
+    stack::TryFail,
     treiber_stack::{self, TreiberStack},
 };
 
@@ -97,8 +97,6 @@ where
             )
             .map(|_| ())
             .map_err(|_| TryFail)
-
-        // TODO: try_exchange에서 owner clear 해줘야 함
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -183,7 +181,13 @@ where
 
         let req = self
             .try_exchange
-            .run(&elim.slots[self.elim_idx], (node, |req| matches!(req, Request::Push(_))), rec, guard, pool)
+            .run(
+                &elim.slots[self.elim_idx],
+                (node, |req| matches!(req, Request::Push(_))),
+                rec,
+                guard,
+                pool,
+            )
             .map_err(|_| {
                 self.try_exchange.reset(guard, pool);
                 TryFail
@@ -194,8 +198,6 @@ where
         } else {
             unreachable!("exchange 조건으로 인해 Push랑만 교환함")
         }
-
-        // TODO: try_exchange에서 owner clear 해줘야 함
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {

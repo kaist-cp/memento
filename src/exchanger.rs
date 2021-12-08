@@ -7,7 +7,7 @@ use std::{sync::atomic::Ordering, time::Duration};
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
-    atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
+    atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
     atomic_update_common::{Load, Traversable},
     node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
@@ -235,9 +235,18 @@ impl<T: 'static + Clone> TryExchange<T> {
             pool,
         );
 
-        if deleted.is_ok() {
-            // TODO: 소유권 청소해야 함
-            return Err(TryFail::Timeout);
+        if let Ok(res) = deleted {
+            match res {
+                Some(d) => {
+                    unsafe { clear_owner(d.deref(pool)) };
+                    return Err(TryFail::Timeout);
+                }
+                None => {
+                    unreachable!(
+                        "Delete is successful only if there is a node s.t. the node is mine."
+                    )
+                }
+            }
         }
 
         return Ok(Self::wait_succ(mine, pool));
@@ -256,6 +265,8 @@ impl<T: 'static + Clone> TryExchange<T> {
     fn prepare_insert(_: &mut Node<T>) -> bool {
         true
     }
+
+    // TODO: dealloc
 }
 
 impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
@@ -460,7 +471,10 @@ mod tests {
 
             for _ in 0..100 {
                 // `move` for `tid`
-                let ret = self.exchange.run(xchg, (tid, |_| true), rec, guard, pool).unwrap();
+                let ret = self
+                    .exchange
+                    .run(xchg, (tid, |_| true), rec, guard, pool)
+                    .unwrap();
                 assert_eq!(ret, 1 - tid);
             }
 
@@ -531,23 +545,35 @@ mod tests {
             match tid {
                 // T0: [0] -> [1]    [2]
                 0 => {
-                    *item = self.exchange0.run(lxchg, (*item, |_| true), rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange0
+                        .run(lxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 1);
                 }
                 // T1: Composition in the middle
                 1 => {
                     // Step1: [0] <- [1]    [2]
 
-                    *item = self.exchange0.run(lxchg, (*item, |_| true), rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange0
+                        .run(lxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 0);
 
                     // Step2: [1]    [0] -> [2]
-                    *item = self.exchange2.run(rxchg, (*item, |_| true), rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange2
+                        .run(rxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 2);
                 }
                 // T2: [0]    [1] <- [2]
                 2 => {
-                    *item = self.exchange2.run(rxchg, (*item, |_| true), rec, guard, pool).unwrap();
+                    *item = self
+                        .exchange2
+                        .run(rxchg, (*item, |_| true), rec, guard, pool)
+                        .unwrap();
                     assert_eq!(*item, 0);
                 }
                 _ => unreachable!(),
