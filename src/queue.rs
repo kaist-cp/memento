@@ -328,6 +328,17 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
         Ok(Some(next))
     }
 
+    // TODO(prof): How to refactor?
+    fn prepare_update<'g>(
+        _: PShared<'_, Node<MaybeUninit<T>>>,
+        _: PShared<'_, Node<MaybeUninit<T>>>,
+        _: &Queue<T>,
+        _: &'g Guard,
+        _: &PoolHandle,
+    ) -> bool {
+        unreachable!("not used.")
+    }
+
     #[inline]
     fn node_when_deleted<'g>(
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
@@ -515,7 +526,7 @@ mod test {
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<usize>::default();
                     let must_none = tmp_deq.run(queue, (), rec, guard, pool).unwrap();
-                    assert!(must_none.is_none());
+                    assert!(must_none.is_none()); // TODO(must): Cannot assert for the second execution.
                     tmp_deq.reset(guard, pool);
 
                     // Check results
