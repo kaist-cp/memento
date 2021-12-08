@@ -94,7 +94,10 @@ impl<O: Traversable<N>, N: NodeUnOpt + Collectable> InsertUnOpt<O, N> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertErr<'g, N>> {
-        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked_unopt() {
+        if unsafe { new.deref(pool) }.acked_unopt()
+            || obj.search(new, guard, pool)
+            || unsafe { new.deref(pool) }.acked_unopt()
+        {
             return Ok(());
         }
 

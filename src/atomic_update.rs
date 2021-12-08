@@ -97,7 +97,10 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertErr<'g, N>> {
-        if obj.search(new, guard, pool) || unsafe { new.deref(pool) }.acked() {
+        if unsafe { new.deref(pool) }.acked()
+            || obj.search(new, guard, pool)
+            || unsafe { new.deref(pool) }.acked()
+        {
             return Ok(());
         }
 
