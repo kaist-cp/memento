@@ -1,6 +1,6 @@
 //! Persistent Exchanger
 
-// TODO: 2-byte high tagging to resolve ABA problem
+// TODO: 2-byte high tagging to resolve ABA problem + unsafe owner clear
 
 use std::{sync::atomic::Ordering, time::Duration};
 
@@ -10,11 +10,12 @@ use crate::{
     atomic_update::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
     atomic_update_common::{Load, Traversable},
     node::Node,
-    pepoch::{PAtomic, PShared, POwned, PDestroyable},
+    pepoch::{PAtomic, PDestroyable, POwned, PShared},
     persistent::{Memento, PDefault},
     plocation::{
+        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
-        PoolHandle, ll::persist_obj,
+        PoolHandle,
     },
 };
 
@@ -478,12 +479,13 @@ mod tests {
             guard: &Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-            // `move` for `tid`
-            let ret = self
-                .exchange
-                .run(xchg, tid, rec, guard, pool)
-                .unwrap();
-            assert_eq!(ret, 1 - tid);
+            assert!(tid == 0 || tid == 1);
+
+            for _ in 0..100 {
+                // `move` for `tid`
+                let ret = self.exchange.run(xchg, tid, rec, guard, pool).unwrap();
+                assert_eq!(ret, 1 - tid);
+            }
 
             Ok(())
         }
@@ -552,35 +554,23 @@ mod tests {
             match tid {
                 // T0: [0] -> [1]    [2]
                 0 => {
-                    *item = self
-                        .exchange0
-                        .run(lxchg, *item, rec, guard, pool)
-                        .unwrap();
+                    *item = self.exchange0.run(lxchg, *item, rec, guard, pool).unwrap();
                     assert_eq!(*item, 1);
                 }
                 // T1: Composition in the middle
                 1 => {
                     // Step1: [0] <- [1]    [2]
 
-                    *item = self
-                        .exchange0
-                        .run(lxchg, *item, rec, guard, pool)
-                        .unwrap();
+                    *item = self.exchange0.run(lxchg, *item, rec, guard, pool).unwrap();
                     assert_eq!(*item, 0);
 
                     // Step2: [1]    [0] -> [2]
-                    *item = self
-                        .exchange2
-                        .run(rxchg, *item, rec, guard, pool)
-                        .unwrap();
+                    *item = self.exchange2.run(rxchg, *item, rec, guard, pool).unwrap();
                     assert_eq!(*item, 2);
                 }
                 // T2: [0]    [1] <- [2]
                 2 => {
-                    *item = self
-                        .exchange2
-                        .run(rxchg, *item, rec, guard, pool)
-                        .unwrap();
+                    *item = self.exchange2.run(rxchg, *item, rec, guard, pool).unwrap();
                     assert_eq!(*item, 0);
                 }
                 _ => unreachable!(),
