@@ -15,7 +15,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    smo::{
+    ploc::{
         atomic_update::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
         common::{Load, Traversable},
     },

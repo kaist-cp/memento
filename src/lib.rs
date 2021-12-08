@@ -36,7 +36,7 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 
 // Persistent objects collection
-pub mod smo;
+pub mod ploc;
 pub mod elim_stack;
 pub mod exchanger;
 pub mod persistent;

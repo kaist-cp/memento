@@ -9,7 +9,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    smo::common::{self, no_owner},
+    ploc::common::{self, no_owner},
 };
 
 /// TODO: doc
