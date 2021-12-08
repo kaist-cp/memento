@@ -1,5 +1,7 @@
 //! Atomic Update Common
 
+// TODO: Alloc도 memento가 될 수도 있음
+
 use std::{
     marker::PhantomData,
     sync::atomic::{AtomicUsize, Ordering},

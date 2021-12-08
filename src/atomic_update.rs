@@ -142,6 +142,15 @@ pub trait DeleteHelper<O, N> {
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()>;
 
+    /// 계속 진행 여부를 리턴
+    fn prepare_update<'g>(
+        cur: PShared<'_, N>,
+        expected: PShared<'_, N>,
+        obj: &O,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> bool;
+
     /// A pointer that should be next after a node is deleted
     fn node_when_deleted<'g>(
         deleted: PShared<'_, N>,
@@ -418,7 +427,7 @@ where
     G: 'static,
 {
     type Object<'o> = &'o O;
-    type Input<'o> = (PShared<'o, N>, &'o PAtomic<N>, &'o SMOAtomic<O, N, G>);
+    type Input<'o> = (PShared<'o, N>, &'o PAtomic<N>, PShared<'o, N>, &'o SMOAtomic<O, N, G>);
     type Output<'o>
     where
         O: 'o,
@@ -428,8 +437,8 @@ where
 
     fn run<'o>(
         &'o mut self,
-        _: Self::Object<'o>,
-        (new, save_loc, point): Self::Input<'o>,
+        obj: Self::Object<'o>,
+        (new, save_loc, expected, point): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -444,6 +453,10 @@ where
         let target = point.load(Ordering::SeqCst, guard);
 
         if target.is_null() {
+            return Err(());
+        }
+
+        if !G::prepare_update(target, expected, obj, guard, pool) {
             return Err(());
         }
 
