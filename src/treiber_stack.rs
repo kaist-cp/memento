@@ -58,7 +58,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.insert
-            .run(stack, (node, &stack.top, Self::prepare), rec, guard, pool)
+            .run(&stack.top, (node, stack, Self::prepare), rec, guard, pool)
             .map_err(|_| TryFail)
     }
 
