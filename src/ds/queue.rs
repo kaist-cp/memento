@@ -195,7 +195,7 @@ impl<T: Clone> Enqueue<T> {
         pool: &'static PoolHandle,
     ) -> PShared<'g, Node<MaybeUninit<T>>> {
         let node = POwned::new(Node::from(MaybeUninit::new(value)), pool).into_shared(guard);
-        // TODO: node도 persist해야 함
+        persist_obj(unsafe { node.deref(pool) }, true);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
         node

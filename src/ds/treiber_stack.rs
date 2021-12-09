@@ -317,6 +317,7 @@ impl<T: Clone> Push<T> {
         pool: &'static PoolHandle,
     ) -> PShared<'g, Node<T>> {
         let node = POwned::new(Node::from(value), pool).into_shared(guard);
+        persist_obj(unsafe { node.deref(pool) }, true);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
         node

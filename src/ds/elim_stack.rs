@@ -214,6 +214,7 @@ impl<T: Clone> TryPop<T> {
         pool: &'static PoolHandle,
     ) -> PShared<'g, Node<Request<T>>> {
         let pop_node = POwned::new(Node::from(Request::Pop), pool).into_shared(guard);
+        persist_obj(unsafe { pop_node.deref(pool) }, true);
         self.exchange_pop_node.store(pop_node, Ordering::Relaxed);
         persist_obj(&self.exchange_pop_node, true);
         pop_node
@@ -346,6 +347,7 @@ impl<T: Clone> Push<T> {
         pool: &'static PoolHandle,
     ) -> PShared<'g, Node<Request<T>>> {
         let node = POwned::new(Node::from(Request::Push(value)), pool).into_shared(guard);
+        persist_obj(unsafe { node.deref(pool) }, true);
         self.node.store(node, Ordering::Relaxed);
         persist_obj(&self.node, true);
         node
