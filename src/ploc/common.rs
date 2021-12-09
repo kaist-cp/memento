@@ -128,3 +128,9 @@ impl<T: Invalid + Default + Clone + Collectable> Checkpoint<T> {
         }
     }
 }
+
+impl<T: Invalid + Default + Clone + Collectable> Drop for Checkpoint<T> {
+    fn drop(&mut self) {
+        assert!(self.saved.is_invalid(), "Checkpoint must be reset before dropped.")
+    }
+}
