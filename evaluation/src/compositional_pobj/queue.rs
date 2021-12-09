@@ -1,15 +1,15 @@
 use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
-use memento::composed_queue::*;
-use memento::*;
+use memento::ds::queue::*;
 use memento::pmem::pool::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
+use memento::{Memento, PDefault};
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-impl<T: 'static + Clone> TestQueue for ComposedQueue<T> {
+impl<T: 'static + Clone> TestQueue for Queue<T> {
     type EnqInput = (&'static mut Enqueue<T>, T); // Memento, input
     type DeqInput = &'static mut Dequeue<T>; // Memento
 
@@ -17,19 +17,19 @@ impl<T: 'static + Clone> TestQueue for ComposedQueue<T> {
         let _ = enq.run(self, input, false, guard, pool);
 
         // TODO: custom logic 추상화
-        enq.reset(false, guard, pool);
+        enq.reset(guard, pool);
     }
 
     fn dequeue(&self, deq: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
         let _ = deq.run(self, (), false, guard, pool);
-        deq.reset(false, guard, pool);
+        deq.reset(guard, pool);
     }
 }
 
 /// 초기화시 세팅한 노드 수만큼 넣어줌
 #[derive(Debug)]
 pub struct TestMementoQueue {
-    queue: ComposedQueue<usize>,
+    queue: Queue<usize>,
 }
 
 impl Collectable for TestMementoQueue {
@@ -40,14 +40,14 @@ impl Collectable for TestMementoQueue {
 
 impl PDefault for TestMementoQueue {
     fn pdefault(pool: &'static PoolHandle) -> Self {
-        let queue = ComposedQueue::pdefault(pool);
+        let queue = Queue::pdefault(pool);
         let guard = epoch::pin();
 
         // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..QUEUE_INIT_SIZE {
             let _ = push_init.run(&queue, i, false, &guard, pool);
-            push_init.reset(false, &guard, pool);
+            push_init.reset(&guard, pool);
         }
         Self { queue }
     }
@@ -114,7 +114,7 @@ impl Memento for MementoQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -177,11 +177,10 @@ impl Memento for MementoQueueEnqDeqProb {
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }

@@ -27,7 +27,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
     };
     match target {
         "memento_queue" => TestTarget::MementoQueue(kind),
-        "memento_queue_opt" => TestTarget::MementoQueueOpt(kind),
+        "memento_queue_unopt" => TestTarget::MementoQueueUnOpt(kind),
         "memento_pipe_queue" => TestTarget::MementoPipeQueue(kind),
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
@@ -88,10 +88,9 @@ fn bench(opt: &Opt) -> f64 {
         opt.target, opt.kind, opt.threads
     );
     let target = parse_target(&opt.target, &opt.kind);
-
     let nops = match target {
         TestTarget::MementoQueue(_)
-        | TestTarget::MementoQueueOpt(_)
+        | TestTarget::MementoQueueUnOpt(_)
         | TestTarget::MementoPipeQueue(_)
         | TestTarget::FriedmanDurableQueue(_)
         | TestTarget::FriedmanLogQueue(_)

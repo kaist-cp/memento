@@ -4,9 +4,9 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
-use memento::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{ll::*, pool::*};
+use memento::*;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -231,7 +231,7 @@ impl Collectable for TestDurableQueue {
 impl PDefault for TestDurableQueue {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let queue = DurableQueue::pdefault(pool);
-        let mut guard = epoch::pin();
+        let guard = epoch::pin();
 
         // 초기 노드 삽입
         for i in 0..QUEUE_INIT_SIZE {
@@ -284,7 +284,7 @@ impl Memento for DurableQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -335,7 +335,7 @@ impl Memento for DurableQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }

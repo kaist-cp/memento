@@ -3,7 +3,6 @@ use std::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::{
-    {Memento, PDefault},
     pipe::Pipe,
     pmem::{
         ll::persist_obj,
@@ -11,6 +10,7 @@ use memento::{
         PoolHandle,
     },
     queue::{Dequeue, DequeueSome, Enqueue, Queue},
+    {Memento, PDefault},
 };
 
 use crate::common::{
@@ -229,7 +229,7 @@ impl Memento for MementoPipeQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 
@@ -297,7 +297,7 @@ impl Memento for MementoPipeQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 

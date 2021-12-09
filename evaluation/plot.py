@@ -6,9 +6,8 @@ import numpy as np
 objs = {
     "queue": {
         "targets": {
-            # TODO: our -> memento로 이름 변경
             "memento_queue": {'label': "Memento queue", 'marker': 'o', 'color': 'k', 'style': '-'},
-            "memento_queue_opt": {'label': "Memento queue-opt", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
+            "memento_queue_unopt": {'label': "Memento queue-unopt", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
             # 'memento_pipe_queue': {'label': "Memento pipe-queue", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
             'durable_queue': {'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
