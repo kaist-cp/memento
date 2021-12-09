@@ -13,8 +13,8 @@ pub use smo_unopt::*;
 
 use crate::{pepoch::PShared, pmem::PoolHandle};
 
-/// TODO: doc
+/// TODO(doc)
 pub trait Traversable<N> {
-    /// TODO: doc
+    /// TODO(doc)
     fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
 }

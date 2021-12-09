@@ -29,6 +29,7 @@
 // #![deny(single_use_lifetimes)] // Allowed due to GAT
 // #![deny(unused_lifetimes)] // Allowed due to GAT
 // #![deny(unstable_features)] // Allowed due to GAT
+#![allow(clippy::type_complexity)] // to allow SMO prepare functions
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
 #![feature(generic_associated_types)] // to define fields of `Memento`
 #![feature(asm)]
@@ -102,7 +103,7 @@ impl<T> Frozen<T> {
     ///    use memento::Frozen;
     ///
     ///    // 이 변수들은 언제나 pmem에서 접근 가능함을 가정
-    ///    let src = Frozen::<Box<i32>>::from(Box::new(42)); // TODO: use `PBox`
+    ///    let src = Frozen::<Box<i32>>::from(Box::new(42)); // TODO(opt): use `PBox`
     ///    let mut data = 0;
     ///    let mut flag = false;
     ///
@@ -132,10 +133,10 @@ impl<T> Frozen<T> {
 /// * `Memento`는 자신 혹은 자신이 사용한 `Guard`가 Drop 될 때 *반드시* `reset()` 되어있는 상태여야 함.
 pub trait Memento: Default + Collectable {
     /// Persistent op의 target object
-    type Object<'o>;
+    type Object<'o>: Clone;
 
     /// Persistent op의 input type
-    type Input<'o>;
+    type Input<'o>: Clone;
 
     /// Persistent op의 output type
     type Output<'o>: Clone
@@ -158,10 +159,10 @@ pub trait Memento: Default + Collectable {
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
-        rec: bool, // TODO: template parameter
+        rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>>;
@@ -180,7 +181,7 @@ pub trait Memento: Default + Collectable {
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle);
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug, Default)]
 pub struct AtomicReset<M: Memento> {
     composed: M,
@@ -206,18 +207,16 @@ impl<M: Memento> Memento for AtomicReset<M> {
     = M::Error<'o>;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if rec {
-            if self.resetting {
-                self.reset(guard, pool);
-                return self.composed.run(object, input, false, guard, pool);
-            }
+        if rec && self.resetting {
+            self.reset(guard, pool);
+            return self.composed.run(object, input, false, guard, pool);
         }
 
         self.composed.run(object, input, rec, guard, pool)
@@ -234,8 +233,8 @@ impl<M: Memento> Memento for AtomicReset<M> {
     }
 }
 
-/// TODO: doc
+/// TODO(doc)
 pub trait PDefault: Collectable {
-    /// TODO: doc
+    /// TODO(doc)
     fn pdefault(pool: &'static PoolHandle) -> Self;
 }

@@ -3,7 +3,7 @@
 use crate::pmem::ralloc::Collectable;
 use crate::*;
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct TryFail;
 
@@ -86,11 +86,11 @@ pub(crate) mod tests {
         /// - 여러 스레드가 Job을 반복
         /// - 마지막에 지금까지의 모든 pop의 결과물이 각 tid값의 정확한 누적 횟수를 가지는지 체크
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             stack: Self::Object<'o>,
             tid: Self::Input<'o>,
             rec: bool,
-            guard: &Guard,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             match tid {

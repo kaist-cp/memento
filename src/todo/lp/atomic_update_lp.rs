@@ -3,7 +3,7 @@
 // Persist 아직 안 됐는지 표시하기 위한 태그
 // const NOT_PERSISTED: usize = 1;
 
-// /// TODO: doc
+// /// TODO(doc)
 // #[derive(Debug)]
 // pub struct InsertLinkPersist<O, N: Node + Collectable> {
 //     _marker: PhantomData<*const (O, N)>,
@@ -43,7 +43,7 @@
 //     type Error<'o> = InsertErr<'o, N>;
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (mut new, point, before_cas): Self::Input<'o>,
 //         rec: bool,
@@ -119,7 +119,7 @@
 //     }
 // }
 
-// /// TODO: doc
+// /// TODO(doc)
 // #[derive(Debug)]
 // pub struct DeleteLinkPesist<O, N: Node + Collectable> {
 //     _marker: PhantomData<*const (O, N)>,
@@ -159,7 +159,7 @@
 //     type Error<'o> = ();
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (target_loc, point, get_next): Self::Input<'o>,
 //         rec: bool,
@@ -301,7 +301,7 @@
 //         Err(())
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
 //         if target.is_null() || target.tag() == EMPTY {
 //             return;
@@ -322,7 +322,7 @@
 //         unsafe { self.as_pptr(pool).into_offset() }
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     #[inline]
 //     pub fn no_owner() -> usize {
 //         let null = PShared::<Self>::null();
@@ -330,7 +330,7 @@
 //     }
 // }
 
-// /// TODO: doc
+// /// TODO(doc)
 // // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // #[derive(Debug)]
 // pub struct DeleteOptLinkPersist<O, N: Node + Collectable> {
@@ -371,7 +371,7 @@
 //     type Error<'o> = ();
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (target_loc, point, get_next): Self::Input<'o>,
 //         rec: bool,
@@ -472,7 +472,7 @@
 //         Err(())
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
 //         if target.is_null() || target.tag() == EMPTY {
 //             return;
@@ -493,7 +493,7 @@
 //         unsafe { self.as_pptr(pool).into_offset() }
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     #[inline]
 //     pub fn no_owner() -> usize {
 //         let null = PShared::<Self>::null();

@@ -12,7 +12,7 @@ use crate::{
     ploc::{
         common::Checkpoint,
         smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
-        Traversable,
+        NeedRetry, RetryLoop, Traversable,
     },
     pmem::{
         ll::persist_obj,
@@ -82,7 +82,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         xchg: Self::Object<'o>,
         (node, cond): Self::Input<'o>,
         rec: bool,
@@ -136,13 +136,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
         let updated = self
             .update
-            .run(
-                &xchg.slot,
-                (mine, slot, xchg),
-                rec,
-                guard,
-                pool,
-            )
+            .run(&xchg.slot, (mine, slot, xchg), rec, guard, pool)
             .map_err(|_|
             // 실패하면 contention으로 인한 fail 리턴
             TryFail::Busy)?;
@@ -182,7 +176,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         if !rec {
             // 누군가 update 해주길 기다림
             // (복구 아닐 때에만 기다림)
-            std::thread::sleep(Duration::from_nanos(100)); // TODO(opt): timeout 받으면 이제 이건 backoff로 바뀜
+            std::thread::sleep(Duration::from_nanos(100));
         }
 
         let slot = xchg.slot.load(Ordering::SeqCst, guard);
@@ -215,7 +209,7 @@ impl<T: 'static + Clone> TryExchange<T> {
             }
         }
 
-        return Ok(Self::succ_after_wait(mine, guard, pool));
+        Ok(Self::succ_after_wait(mine, guard, pool))
     }
 
     #[inline]
@@ -241,12 +235,12 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
         _: &Exchanger<T>,
         _: &'g Guard,
         _: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<T>>>, NeedRetry> {
         if cur == mine {
             return Ok(Some(PShared::<_>::null()));
         }
 
-        Err(())
+        Err(NeedRetry)
     }
 
     fn prepare_update<'g>(
@@ -271,9 +265,9 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
 /// Exchanger의 exchange operation.
 /// 반드시 exchange에 성공함.
 #[derive(Debug)]
-pub struct Exchange<T: Clone> {
+pub struct Exchange<T: 'static + Clone> {
     node: Checkpoint<PAtomic<Node<T>>>,
-    try_xchg: TryExchange<T>,
+    try_xchg: RetryLoop<TryExchange<T>>,
 }
 
 impl<T: Clone> Default for Exchange<T> {
@@ -290,7 +284,7 @@ unsafe impl<T: Clone + Send + Sync> Send for Exchange<T> {}
 impl<T: Clone> Collectable for Exchange<T> {
     fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut xchg.node, gc, pool);
-        TryExchange::<T>::filter(&mut xchg.try_xchg, gc, pool);
+        RetryLoop::filter(&mut xchg.try_xchg, gc, pool);
     }
 }
 
@@ -301,11 +295,11 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         xchg: Self::Object<'o>,
         (value, cond): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = POwned::new(Node::from(value), pool);
@@ -327,15 +321,9 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        if let Ok(v) = self.try_xchg.run(xchg, (node, cond), rec, guard, pool) {
-            return Ok(v);
-        }
-
-        loop {
-            if let Ok(v) = self.try_xchg.run(xchg, (node, cond), false, guard, pool) {
-                return Ok(v);
-            }
-        }
+        self.try_xchg
+            .run(xchg, (node, cond), rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -380,7 +368,7 @@ impl<T: Clone> Collectable for Exchanger<T> {
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
+    use rusty_fork::rusty_fork_test;
 
     use crate::{
         pmem::ralloc::{Collectable, GarbageCollection},
@@ -408,11 +396,11 @@ mod tests {
         type Error<'o> = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             xchg: Self::Object<'o>,
             tid: Self::Input<'o>,
             rec: bool,
-            guard: &Guard,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             assert!(tid == 0 || tid == 1);
@@ -437,14 +425,14 @@ mod tests {
     impl TestRootObj for Exchanger<usize> {}
     impl TestRootMemento<Exchanger<usize>> for ExchangeOnce {}
 
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn exchange_once() {
-        const FILE_NAME: &str = "exchange_once.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    rusty_fork_test! {
+        #[test]
+        fn exchange_once() {
+            const FILE_NAME: &str = "exchange_once.pool";
+            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
+            run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
+        }
     }
 
     /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
@@ -476,11 +464,11 @@ mod tests {
         /// Before rotation : [0]  [1]  [2]
         /// After rotation  : [1]  [2]  [0]
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             xchgs: Self::Object<'o>,
             tid: Self::Input<'o>,
             rec: bool,
-            guard: &Guard,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             // Alias
@@ -548,13 +536,13 @@ mod tests {
     impl TestRootObj for [Exchanger<usize>; 2] {}
     impl TestRootMemento<[Exchanger<usize>; 2]> for RotateLeft {}
 
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn rotate_left() {
-        const FILE_NAME: &str = "rotate_left.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    rusty_fork_test! {
+        #[test]
+        fn rotate_left() {
+            const FILE_NAME: &str = "rotate_left.pool";
+            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
+            run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
+        }
     }
 }

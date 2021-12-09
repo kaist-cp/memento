@@ -346,7 +346,7 @@ impl Pool {
         Ok(global_pool().unwrap())
     }
 
-    /// TODO: doc
+    /// TODO(doc)
     pub fn remove(filepath: &str) -> Result<(), Error> {
         fs::remove_file(&(filepath.to_owned() + "_basemd"))?;
         fs::remove_file(&(filepath.to_owned() + "_desc"))?;
@@ -373,7 +373,7 @@ mod tests {
     use crossbeam_epoch::Guard;
     use env_logger as _;
     use log::{self as _, debug};
-    use serial_test::serial;
+    use rusty_fork::rusty_fork_test;
 
     use crate::pmem::pool::*;
     use crate::test_utils::tests::*;
@@ -398,11 +398,11 @@ mod tests {
         type Error<'o> = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
             _: bool,
-            _: &Guard,
+            _: &'o Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             if self.flag {
@@ -426,15 +426,15 @@ mod tests {
     const FILE_NAME: &str = "check_inv.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-    /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
     // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn check_inv() {
-        // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
-        env_logger::init();
+    rusty_fork_test! {
+        /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
+        #[test]
+        fn check_inv() {
+            // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
+            env_logger::init();
 
-        run_test::<DummyRootObj, RootMemento, _>(FILE_NAME, FILE_SIZE, 1);
+            run_test::<DummyRootObj, RootMemento, _>(FILE_NAME, FILE_SIZE, 1);
+        }
     }
 }

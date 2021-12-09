@@ -2,7 +2,7 @@
 
 use crate::pepoch::{atomic::Pointer, PShared};
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub enum InsertErr<'g, T> {
     /// Insert를 위한 atomic operation 전에 기각됨

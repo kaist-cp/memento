@@ -16,7 +16,7 @@ use crate::{
     Memento,
 };
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct InsertUnOpt<O, N: NodeUnOpt + Collectable> {
     _marker: PhantomData<*const (O, N)>,
@@ -56,7 +56,7 @@ where
     type Error<'o> = InsertErr<'o, N>;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         point: Self::Object<'o>,
         (mut new, obj, prepare): Self::Input<'o>,
         rec: bool,
@@ -80,7 +80,7 @@ where
             .map(|_| ())
             .map_err(|e| InsertErr::CASFail(e.current));
 
-        persist_obj(point, true); // TODO: stack에서는 성공한 놈만 해도 될지도?
+        persist_obj(point, true); // TODO(opt): stack에서는 성공한 놈만 해도 될지도?
         ret
     }
 
@@ -106,7 +106,7 @@ impl<O: Traversable<N>, N: NodeUnOpt + Collectable> InsertUnOpt<O, N> {
     }
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct DeleteUnOpt<O, N: NodeUnOpt + Collectable> {
     target_loc: PAtomic<N>,
@@ -147,7 +147,7 @@ where
     type Error<'o> = ();
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         point: Self::Object<'o>,
         (obj, get_next): Self::Input<'o>,
         rec: bool,
@@ -202,7 +202,7 @@ where
                 persist_obj(target_ref.owner_unopt(), true);
                 Some(target)
             })
-            .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
+            .map_err(|_| ()) // TODO(must): 실패했을 땐 정말 persist 안 해도 됨?
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {

@@ -91,7 +91,7 @@ where
     type Error = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         list: Self::Object<'o>,
         (key, value): Self::Input<'o>,
         guard: &Guard,
@@ -157,7 +157,7 @@ where
     type Error = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         list: Self::Object<'o>,
         key: Self::Input<'o>,
         guard: &Guard,

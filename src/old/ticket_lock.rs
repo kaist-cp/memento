@@ -94,7 +94,7 @@ impl Memento for Lock {
     type Error = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         lock: Self::Object<'o>,
         _: Self::Input<'o>,
         guard: &Guard,
@@ -145,7 +145,7 @@ impl Memento for Unlock {
     type Error = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         lock: Self::Object<'o>,
         ticket: Self::Input<'o>,
         _: &Guard,

@@ -3,12 +3,12 @@
 use crossbeam_epoch::Guard;
 
 use crate::{
-    Memento,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
+    Memento,
 };
 
 /// `from` op과 `to` op을 failure-atomic하게 실행하는 pipe operation
@@ -70,7 +70,7 @@ where
     type Error = ();
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input<'o>,
         guard: &'o Guard,
@@ -119,11 +119,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PDefault;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::queue::*;
     use crate::test_utils::tests::*;
-    use serial_test::serial;
+    use crate::PDefault;
+    use rusty_fork::rusty_fork_test;
 
     const COUNT: usize = 1_000_000;
 
@@ -178,7 +178,7 @@ mod tests {
         type Error = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             q_arr: Self::Object<'o>,
             tid: Self::Input<'o>,
             guard: &Guard,
@@ -236,10 +236,10 @@ mod tests {
     const FILE_NAME: &str = "pipe_concur.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn pipe_concur() {
-        run_test::<[Queue<usize>; 2], Transfer, _>(FILE_NAME, FILE_SIZE, 3)
+    rusty_fork_test! {
+        #[test]
+        fn pipe_concur() {
+            run_test::<[Queue<usize>; 2], Transfer, _>(FILE_NAME, FILE_SIZE, 3)
+        }
     }
 }

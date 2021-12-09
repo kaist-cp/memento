@@ -15,14 +15,14 @@ use crate::{
     },
 };
 
-/// TODO: doc
-// TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
+/// TODO(doc)
+// TODO(must): T가 포인터일 수 있으니 T도 Collectable이여야함
 #[derive(Debug)]
 pub struct Node<T> {
-    /// TODO: doc
+    /// TODO(doc)
     pub(crate) data: T,
 
-    /// TODO: doc
+    /// TODO(doc)
     pub(crate) next: PAtomic<Self>,
 
     pub(crate) acked_unopt: AtomicBool,

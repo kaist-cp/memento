@@ -19,8 +19,6 @@
 //!     - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
 //!     - 모든 test를 persistent 버전으로 변경
 
-// TODO: `*::new`, `*::from`은 함수 내에서 persist 하고 리턴해야 할 듯
-
 use core::cmp;
 use core::fmt;
 use core::marker::PhantomData;
@@ -29,7 +27,7 @@ use core::slice;
 use core::sync::atomic::Ordering;
 
 use super::Guard;
-use crate::ploc::Invalid;
+use crate::ploc::Checkpointable;
 use crate::pmem::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::pool::PoolHandle;
@@ -1112,7 +1110,7 @@ fn invalid_ptr<'g, T>() -> PShared<'g, T> {
     unsafe { PShared::<T>::from_usize(NO_READ) }
 }
 
-impl<T> Invalid for PAtomic<T> {
+impl<T> Checkpointable for PAtomic<T> {
     fn invalidate(&mut self) {
         self.store(invalid_ptr(), Ordering::Relaxed);
     }
@@ -1889,7 +1887,7 @@ impl<T: ?Sized + Pointable> Default for PShared<'_, T> {
 #[cfg(all(test, not(crossbeam_loom)))]
 mod tests {
     use super::{POwned, PShared};
-    use serial_test::serial;
+    use rusty_fork::rusty_fork_test;
     use std::mem::MaybeUninit;
 
     use crate::test_utils::tests::*;
@@ -1911,13 +1909,13 @@ mod tests {
         static _U: PAtomic<u8> = PAtomic::<u8>::null();
     }
 
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn array_init() {
-        let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-        let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
-        let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
-        assert_eq!(arr.len(), 10);
+    rusty_fork_test! {
+        #[test]
+        fn array_init() {
+            let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
+            let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
+            let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
+            assert_eq!(arr.len(), 10);
+        }
     }
 }

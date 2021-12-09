@@ -2,7 +2,7 @@
 
 use crate::node::Node;
 use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
-use crate::ploc::{Checkpoint, InsertErr, Traversable};
+use crate::ploc::{Checkpoint, InsertErr, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -12,7 +12,7 @@ use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct TryFail;
 
@@ -52,15 +52,15 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         node: Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
-        let tail_ref = unsafe { tail.deref(pool) }; // TODO: filter 에서 tail align 해야 함
+        let tail_ref = unsafe { tail.deref(pool) }; // TODO(opt): filter 에서 tail align 해야 함
 
         self.insert
             .run(
@@ -83,7 +83,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
                 if let InsertErr::PrepareFail = e {
                     // tail is stale
                     persist_obj(&tail_ref.next, true);
-                    let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO: 또 로드 해서 성능 저하. 어쩌면 insert의 로직을 더 줄여야 할 지도 모름.
+                    let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 또 로드 해서 성능 저하 생길지도?
                     let _ = queue.tail.compare_exchange(
                         tail,
                         next,
@@ -106,7 +106,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
     node: Checkpoint<PAtomic<Node<MaybeUninit<T>>>>,
-    try_enq: TryEnqueue<T>,
+    try_enq: RetryLoop<TryEnqueue<T>>,
 }
 
 impl<T: Clone> Default for Enqueue<T> {
@@ -121,7 +121,7 @@ impl<T: Clone> Default for Enqueue<T> {
 impl<T: Clone> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut enq.node, gc, pool);
-        TryEnqueue::filter(&mut enq.try_enq, gc, pool);
+        RetryLoop::filter(&mut enq.try_enq, gc, pool);
     }
 }
 
@@ -135,11 +135,11 @@ impl<T: Clone> Memento for Enqueue<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         value: Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = POwned::new(Node::from(MaybeUninit::new(value)), pool);
@@ -161,16 +161,13 @@ impl<T: Clone> Memento for Enqueue<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
-            return Ok(());
-        }
-
-        while self.try_enq.run(queue, node, false, guard, pool).is_err() {}
-        Ok(())
+        self.try_enq
+            .run(queue, node, rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO: node reset
+        self.node.reset(guard, pool);
         self.try_enq.reset(guard, pool);
     }
 }
@@ -206,11 +203,11 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
@@ -219,7 +216,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
                         .next
-                        .load(Ordering::SeqCst, guard); // TODO: next를 다시 load해서 성능 저하
+                        .load(Ordering::SeqCst, guard); // TODO(opt): next를 다시 load해서 성능 저하 생길지도?
                     let next_ref = unsafe { next.deref(pool) };
                     unsafe { guard.defer_pdestroy(popped) };
                     unsafe { (*next_ref.data.as_ptr()).clone() }
@@ -267,7 +264,7 @@ impl<T: Clone> TryDequeue<T> {
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    try_deq: TryDequeue<T>,
+    try_deq: RetryLoop<TryDequeue<T>>,
 }
 
 impl<T: Clone> Default for Dequeue<T> {
@@ -280,7 +277,7 @@ impl<T: Clone> Default for Dequeue<T> {
 
 impl<T: Clone> Collectable for Dequeue<T> {
     fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        TryDequeue::<T>::filter(&mut deq.try_deq, gc, pool);
+        RetryLoop::filter(&mut deq.try_deq, gc, pool);
     }
 }
 
@@ -294,22 +291,16 @@ impl<T: Clone> Memento for Dequeue<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if let Ok(v) = self.try_deq.run(queue, (), rec, guard, pool) {
-            return Ok(v);
-        }
-
-        loop {
-            if let Ok(v) = self.try_deq.run(queue, (), false, guard, pool) {
-                return Ok(v);
-            }
-        }
+        self.try_deq
+            .run(queue, (), rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -355,7 +346,7 @@ impl<T: Clone> Traversable<Node<MaybeUninit<T>>> for QueueUnOpt<T> {
     ) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
-        // TODO: null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
+        // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
             if curr == target {
                 return true;
@@ -375,7 +366,7 @@ unsafe impl<T: Clone + Send + Sync> Send for QueueUnOpt<T> {}
 mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
-    use serial_test::serial;
+    use rusty_fork::rusty_fork_test;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;
@@ -411,11 +402,11 @@ mod test {
 
         /// idempotent enq_deq
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             queue: Self::Object<'o>,
             tid: Self::Input<'o>,
             rec: bool,
-            guard: &Guard,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             match tid {
@@ -467,19 +458,19 @@ mod test {
     impl TestRootObj for QueueUnOpt<usize> {}
     impl TestRootMemento<QueueUnOpt<usize>> for EnqDeq {}
 
-    // TODO: stack의 enq_deq과 합치기
+    // TODO(opt): queue의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // - pool을 2번째 열 때부터 gc 동작 확인가능:
     //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
     //
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn enq_deq() {
-        const FILE_NAME: &str = "composed_enq_deq.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    rusty_fork_test! {
+        #[test]
+        fn enq_deq() {
+            const FILE_NAME: &str = "composed_enq_deq.pool";
+            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<QueueUnOpt<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+            run_test::<QueueUnOpt<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        }
     }
 }
