@@ -382,15 +382,8 @@ impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
 }
 
 impl<T: Clone> Collectable for Exchanger<T> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut slot = s.slot.load(Ordering::SeqCst, guard);
-        if !slot.is_null() {
-            let slot_ref = unsafe { slot.deref_mut(pool) };
-            Node::mark(slot_ref, gc);
-        }
+    fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        SMOAtomic::filter(&mut xchg.slot, gc, pool);
     }
 }
 
