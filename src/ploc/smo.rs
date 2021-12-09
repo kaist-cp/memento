@@ -324,14 +324,9 @@ where
             })
     }
 
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        let target = self.target_loc.load(Ordering::Relaxed, guard);
-
-        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         self.target_loc.store(PShared::null(), Ordering::Relaxed);
         persist_obj(&self.target_loc, true);
-        self.dealloc(target, guard, pool); // TODO(must): exchanger의 경우 실패(혹은 실행 안 함)일 때도 reset이 불릴 수 있음
     }
 }
 
