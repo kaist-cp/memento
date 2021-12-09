@@ -122,6 +122,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
         let slot = self
             .load

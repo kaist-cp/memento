@@ -6,7 +6,6 @@ use crossbeam_epoch::{self as epoch, Guard};
 use rand::{thread_rng, Rng};
 
 use crate::{
-    exchanger::{Exchanger, TryExchange},
     node::Node,
     pepoch::{PAtomic, POwned, PShared},
     persistent::{AtomicReset, Memento, PDefault},
@@ -15,9 +14,9 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    stack::{Stack, TryFail},
-    treiber_stack::{self, TreiberStack},
 };
+
+use super::{treiber_stack::{self, TreiberStack}, exchanger::{TryExchange, Exchanger}, stack::{TryFail, Stack}};
 
 const ELIM_SIZE: usize = 4;
 
@@ -422,7 +421,7 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::{stack::tests::*, test_utils::tests::*};
+    use crate::{test_utils::tests::*, ds::stack::tests::PushPop};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;

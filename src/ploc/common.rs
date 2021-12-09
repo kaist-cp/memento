@@ -105,7 +105,7 @@ where
     fn run<'o>(
         &'o mut self,
         (): Self::Object<'o>,
-        (save_loc, point): Self::Input<'o>,
+        (save_loc, point): Self::Input<'o>, // TODO: point는 object로, save_loc은 Load가 들고 있기
         rec: bool,
         guard: &'o Guard,
         _: &'static PoolHandle,
