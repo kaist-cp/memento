@@ -62,7 +62,7 @@
 //     }
 // }
 
-// /// TODO: doc
+// /// TODO(doc)
 // // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // #[derive(Debug)]
 // pub struct Delete<O, N: Node + Collectable, G: GetNext<O, N>> {
@@ -213,7 +213,7 @@
 //         Err(())
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
 //         if target.is_null() || target.tag() == Self::EMPTY {
 //             return;
@@ -235,7 +235,7 @@
 //         DeleteOrNode::set_delete(off)
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     // TODO: 공통 함수로 빼기
 //     #[inline]
 //     pub fn no_owner() -> usize {
@@ -244,7 +244,7 @@
 //     }
 // }
 
-// /// TODO: doc
+// /// TODO(doc)
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // #[derive(Debug)]
 // pub struct Update<O, N: Node + Collectable> {
@@ -367,7 +367,7 @@
 //         Err(())
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
 //         // TODO: 내가 넣었던 `new` 포인터와 비교해봐야 함
 
@@ -393,7 +393,7 @@
 //         unsafe { self.as_pptr(pool).into_offset() }
 //     }
 
-//     /// TODO: doc
+//     /// TODO(doc)
 //     #[inline]
 //     pub fn no_owner() -> usize {
 //         let null = PShared::<Self>::null();

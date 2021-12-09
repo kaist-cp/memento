@@ -12,7 +12,7 @@ use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct TryFail;
 
@@ -61,7 +61,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
-        let tail_ref = unsafe { tail.deref(pool) }; // TODO: filter 에서 tail align 해야 함
+        let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
 
         self.insert
             .run(
@@ -84,7 +84,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
                 if let InsertErr::PrepareFail = e {
                     // tail is stale
                     persist_obj(&tail_ref.next, true);
-                    let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO: 또 로드 해서 성능 저하. 어쩌면 insert의 로직을 더 줄여야 할 지도 모름.
+                    let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 또 로드 해서 성능 저하 생길지도?
                     let _ = queue.tail.compare_exchange(
                         tail,
                         next,
@@ -223,7 +223,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
                         .next
-                        .load(Ordering::SeqCst, guard); // TODO: next를 다시 load해서 성능 저하
+                        .load(Ordering::SeqCst, guard); // TODO(opt): next를 다시 load해서 성능 저하
                     let next_ref = unsafe { next.deref(pool) };
                     unsafe { guard.defer_pdestroy(popped) };
                     unsafe { (*next_ref.data.as_ptr()).clone() }
@@ -276,7 +276,7 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
         Ok(Some(next))
     }
 
-    // TODO(prof): How to refactor?
+    // TODO(opt): How to refactor?
     fn prepare_update<'g>(
         _: PShared<'_, Node<MaybeUninit<T>>>,
         _: PShared<'_, Node<MaybeUninit<T>>>,
@@ -385,7 +385,7 @@ impl<T: Clone> Traversable<Node<MaybeUninit<T>>> for Queue<T> {
     ) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
-        // TODO: null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
+        // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
             if curr == target {
                 return true;
@@ -495,7 +495,7 @@ mod test {
     impl TestRootObj for Queue<usize> {}
     impl TestRootMemento<Queue<usize>> for EnqDeq {}
 
-    // TODO: stack의 enq_deq과 합치기
+    // TODO(opt): queue의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // - pool을 2번째 열 때부터 gc 동작 확인가능:
     //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴

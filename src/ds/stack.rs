@@ -3,7 +3,7 @@
 use crate::pmem::ralloc::Collectable;
 use crate::*;
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct TryFail;
 

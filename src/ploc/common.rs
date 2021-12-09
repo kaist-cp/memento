@@ -1,7 +1,5 @@
 //! Atomic Update Common
 
-// TODO: Alloc도 memento가 될 수도 있음
-
 use std::{marker::PhantomData, sync::atomic::AtomicUsize};
 
 use crossbeam_epoch::Guard;
@@ -16,33 +14,33 @@ use crate::{
     Memento,
 };
 
-/// TODO: doc
+/// TODO(doc)
 pub trait Node: Sized {
-    /// TODO: doc
+    /// TODO(doc)
     fn ack(&self);
 
-    /// TODO: doc
+    /// TODO(doc)
     fn acked(&self) -> bool;
 
-    /// TODO: doc
+    /// TODO(doc)
     fn owner(&self) -> &AtomicUsize;
 }
 
-/// TODO: doc
+/// TODO(doc)
 pub trait NodeUnOpt: Sized {
-    /// TODO: doc
+    /// TODO(doc)
     fn ack_unopt(&self);
 
-    /// TODO: doc
+    /// TODO(doc)
     fn acked_unopt(&self) -> bool;
 
-    /// TODO: doc
+    /// TODO(doc)
     fn owner_unopt(&self) -> &AtomicUsize;
 }
 
-/// TODO: doc
+/// TODO(doc)
 pub trait DeallocNode<T, N: Node> {
-    /// TODO: doc
+    /// TODO(doc)
     fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle);
 }
 

@@ -53,7 +53,7 @@ impl<T: Clone> Default for TryPush<T> {
     fn default() -> Self {
         Self {
             try_push: Default::default(),
-            elim_idx: get_random_elim_index(), // TODO: Fixed index vs online random index 성능 비교
+            elim_idx: get_random_elim_index(), // TODO(opt): Fixed index vs online random index 성능 비교
             try_exchange: Default::default(),
         }
     }
@@ -122,7 +122,7 @@ pub struct TryPop<T: 'static + Clone> {
     pop_node: Checkpoint<PAtomic<Node<Request<T>>>>,
 
     /// elimination exchanger의 exchange client
-    try_exchange: TryExchange<Request<T>>, // TODO(must): No need to be AtomicReset
+    try_exchange: TryExchange<Request<T>>,
 }
 
 impl<T: 'static + Clone> Default for TryPop<T> {
@@ -173,7 +173,7 @@ where
         }
 
         // exchanger에 pop req를 담은 node를 넣어줘야 됨
-        // TODO(must): rec일 때에만 만들어줘도 됨
+        // TODO(must): (1) try_pop이 pop_node를 인풋으로 받고 (2) pop이 뭐로 성공했는지 인식해서 해제해줌?
         let pop_node = POwned::new(Node::from(Request::Pop), pool);
         persist_obj(unsafe { pop_node.deref(pool) }, true);
 
@@ -378,12 +378,6 @@ impl<T: Clone> Memento for Pop<T> {
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.try_pop.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> Drop for Pop<T> {
-    fn drop(&mut self) {
-        // TODO: trypop의 리셋여부 파악?
     }
 }
 

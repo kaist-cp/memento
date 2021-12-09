@@ -16,7 +16,7 @@ use crate::{
     Memento,
 };
 
-/// TODO: doc
+/// TODO(doc)
 ///
 /// 빠졌던 노드를 다시 넣으려 하면 안 됨
 #[derive(Debug)]
@@ -60,7 +60,7 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (mut new, obj, prepare): Self::Input<'o>, // TODO: prepare도 그냥 Prepare trait으로 할 수 있을 듯
+        (mut new, obj, prepare): Self::Input<'o>, // TODO(opt): prepare도 그냥 Prepare trait으로 할 수 있을 듯
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -109,7 +109,7 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
     }
 }
 
-// TODO: How to use union type for this purpose?
+// TODO(opt): How to use union type for this purpose?
 struct DeleteOrNode;
 
 impl DeleteOrNode {
@@ -127,16 +127,16 @@ impl DeleteOrNode {
 
     #[inline]
     fn set_delete(x: usize) -> usize {
-        (x & (!0 << 1)) | Self::DELETE_CLIENT // TODO: client가 align 되어있다는 확신이 없음. 일단 LSB를 그냥 맘대로 사용함.
+        (x & (!0 << 1)) | Self::DELETE_CLIENT // TODO(must): client가 align 되어있다는 확신이 없음. 일단 LSB를 그냥 맘대로 사용함.
     }
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct NeedRetry;
 
-/// TODO: doc
-// TODO: 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
+/// TODO(doc)
+// TODO(opt): 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
 pub trait DeleteHelper<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
     fn prepare_delete<'g>(
@@ -164,7 +164,7 @@ pub trait DeleteHelper<O, N> {
     ) -> PShared<'g, N>;
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct SMOAtomic<O, N: Collectable, G: DeleteHelper<O, N>> {
     ptr: PAtomic<N>,
@@ -206,8 +206,8 @@ impl<O, N: Collectable, G: DeleteHelper<O, N>> Deref for SMOAtomic<O, N, G> {
 unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Send for SMOAtomic<O, N, G> {}
 unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G> {}
 
-/// TODO: doc
-// TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+/// TODO(doc)
+/// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
 pub struct Delete<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
     target_loc: PAtomic<N>,
@@ -255,7 +255,7 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (forbidden, obj): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -377,7 +377,7 @@ where
     }
 }
 
-/// TODO: doc
+/// TODO(doc)
 ///
 /// # Safety
 ///
@@ -390,11 +390,11 @@ pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
     persist_obj(owner, true);
 }
 
-/// TODO: doc
+/// TODO(doc)
 ///
 /// 빠졌던 노드를 다시 넣으려 하면 안 됨
-// TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
-// TODO: update는 O 필요 없는 것 같음
+/// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+// TODO(opt): update는 O 필요 없는 것 같음
 #[derive(Debug)]
 pub struct Update<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
     target_loc: PAtomic<N>,
@@ -470,7 +470,7 @@ where
         let o = owner.load(Ordering::SeqCst);
 
         // 이미 주인이 있다면 point를 바꿔주고 페일 리턴
-        // TODO: 찜하기 전에 load 먼저 해보는 건데, 그 순서는 실험을 하고 나서 정하자
+        // TODO(opt): 찜하기 전에 load 먼저 해보는 건데, 그 순서는 실험을 하고 나서 정하자
         if o != no_owner() {
             persist_obj(owner, false);
             let next = DeleteOrNode::is_node(o)
@@ -562,7 +562,7 @@ where
     /// Update되어 owner가 node일 때만 사용해야 함
     pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N> {
         let u = old.owner().load(Ordering::SeqCst);
-        assert_ne!(u, no_owner()); // TODO: ABA 문제가 터지는지 확인하기 위해 달아놓은 assert
+        assert_ne!(u, no_owner()); // TODO(must): ABA 문제가 터지는지 확인하기 위해 달아놓은 assert
         PShared::from_usize(u)
     }
 }

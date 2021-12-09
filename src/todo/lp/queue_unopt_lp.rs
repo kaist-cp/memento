@@ -12,14 +12,14 @@ use crate::*;
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 
-/// TODO: doc
+/// TODO(doc)
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
 #[derive(Debug)]
 pub struct Node<T: Clone> {
-    /// TODO: doc
+    /// TODO(doc)
     pub data: MaybeUninit<T>,
 
-    /// TODO: doc
+    /// TODO(doc)
     pub next: PAtomic<Node<T>>,
 
     enqueued: AtomicBool,
@@ -82,7 +82,7 @@ impl<T: Clone> smo::Node for Node<T> {
     }
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct TryFail;
 

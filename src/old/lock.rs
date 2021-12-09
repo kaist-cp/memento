@@ -41,7 +41,7 @@ pub trait RawLock: Default + Send + Sync + Collectable {
     >;
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct Mutex<L: RawLock, T> {
     data: UnsafeCell<T>,
@@ -159,7 +159,7 @@ where
 {
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug)]
 pub struct MutexGuard<'l, L: RawLock, T> {
     mtx: &'l Mutex<L, T>,

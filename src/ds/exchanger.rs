@@ -176,7 +176,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         if !rec {
             // 누군가 update 해주길 기다림
             // (복구 아닐 때에만 기다림)
-            std::thread::sleep(Duration::from_nanos(100)); // TODO(opt): timeout 받으면 이제 이건 backoff로 바뀜
+            std::thread::sleep(Duration::from_nanos(100));
         }
 
         let slot = xchg.slot.load(Ordering::SeqCst, guard);

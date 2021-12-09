@@ -103,7 +103,7 @@ impl<T> Frozen<T> {
     ///    use memento::Frozen;
     ///
     ///    // 이 변수들은 언제나 pmem에서 접근 가능함을 가정
-    ///    let src = Frozen::<Box<i32>>::from(Box::new(42)); // TODO: use `PBox`
+    ///    let src = Frozen::<Box<i32>>::from(Box::new(42)); // TODO(opt): use `PBox`
     ///    let mut data = 0;
     ///    let mut flag = false;
     ///
@@ -162,7 +162,7 @@ pub trait Memento: Default + Collectable {
         &mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
-        rec: bool, // TODO: template parameter
+        rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>>;
@@ -181,7 +181,7 @@ pub trait Memento: Default + Collectable {
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle);
 }
 
-/// TODO: doc
+/// TODO(doc)
 #[derive(Debug, Default)]
 pub struct AtomicReset<M: Memento> {
     composed: M,
@@ -233,8 +233,8 @@ impl<M: Memento> Memento for AtomicReset<M> {
     }
 }
 
-/// TODO: doc
+/// TODO(doc)
 pub trait PDefault: Collectable {
-    /// TODO: doc
+    /// TODO(doc)
     fn pdefault(pool: &'static PoolHandle) -> Self;
 }
