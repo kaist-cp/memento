@@ -4,17 +4,18 @@
 
 use std::{sync::atomic::Ordering, time::Duration};
 
-use crossbeam_epoch::Guard;
+use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
     node::Node,
-    pepoch::{PAtomic, POwned, PShared},
+    pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
         smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
         Traversable,
     },
     pmem::{
+        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
@@ -101,7 +102,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         let slot = xchg.slot.load(Ordering::SeqCst, guard);
         let slot = self
             .init_slot
-            .run((), PAtomic::from(slot), rec, guard, pool)
+            .run((), (PAtomic::from(slot), |_| {}), rec, guard, pool)
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
@@ -198,7 +199,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         let slot = xchg.slot.load(Ordering::SeqCst, guard);
         let slot = self
             .wait_slot
-            .run((), PAtomic::from(slot), rec, guard, pool)
+            .run((), (PAtomic::from(slot), |_| {}), rec, guard, pool)
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
@@ -326,14 +327,23 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = POwned::new(Node::from(value), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
         let node = self
             .node
-            .run((), PAtomic::from(node), rec, guard, pool)
+            .run(
+                (),
+                (PAtomic::from(node), |aborted| {
+                    let guard = unsafe { epoch::unprotected() };
+                    let d = aborted.load(Ordering::Relaxed, guard);
+                    unsafe { guard.defer_pdestroy(d) };
+                }),
+                rec,
+                guard,
+                pool,
+            )
             .unwrap()
             .load(Ordering::Relaxed, guard);
-
-        // TODO: node persist 언제 해?
-        // TODO: invalid였을 때 free 어떻게?
 
         if let Ok(v) = self.try_xchg.run(xchg, (node, cond), rec, guard, pool) {
             return Ok(v);

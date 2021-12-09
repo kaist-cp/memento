@@ -87,20 +87,21 @@ where
     T: 'static + Invalid + Default + Clone + Collectable,
 {
     type Object<'o> = ();
-    type Input<'o> = T;
+    type Input<'o> = (T, fn(T));
     type Output<'o> = T;
     type Error<'o> = !;
 
     fn run<'o>(
         &'o mut self,
         (): Self::Object<'o>,
-        chk: Self::Input<'o>,
+        (chk, if_exists): Self::Input<'o>,
         rec: bool,
         _: &'o Guard,
         _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
             if let Some(saved) = self.result() {
+                if_exists(chk);
                 return Ok(saved);
             }
         }
