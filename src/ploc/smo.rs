@@ -7,7 +7,7 @@ use crossbeam_epoch::Guard;
 use super::{common::Node, no_owner, InsertErr, Traversable};
 
 use crate::{
-    pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
+    pepoch::{atomic::Pointer, PAtomic, PShared},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -363,21 +363,6 @@ where
         }
 
         Err(()) // 찜한 게 아무 의미가 없을 때는 실패로 간주 (Weak fail)
-    }
-
-    /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
-        if target.is_null() || target.tag() == Self::EMPTY {
-            return;
-        }
-
-        // owner가 내가 아닐 수 있음
-        // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
-        unsafe {
-            if target.deref(pool).owner().load(Ordering::SeqCst) == self.id(pool) {
-                guard.defer_pdestroy(target);
-            }
-        }
     }
 
     #[inline]

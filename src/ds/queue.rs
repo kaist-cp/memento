@@ -1,7 +1,6 @@
 //! Persistent opt queue
 
 use crate::node::Node;
-use crate::ploc::common::DeallocNode;
 use crate::ploc::smo::{Delete, DeleteHelper, Insert, SMOAtomic};
 use crate::ploc::{InsertErr, Traversable, Checkpoint};
 use core::sync::atomic::Ordering;
@@ -240,13 +239,6 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.delete_opt.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>>> for TryDequeue<T> {
-    #[inline]
-    fn dealloc(&self, target: PShared<'_, Node<MaybeUninit<T>>>, guard: &Guard, pool: &PoolHandle) {
-        self.delete_opt.dealloc(target, guard, pool);
     }
 }
 
