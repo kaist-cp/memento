@@ -6,15 +6,18 @@ use crossbeam_epoch::{self as epoch, Guard};
 use rand::{thread_rng, Rng};
 
 use crate::{
-    exchanger::{Exchanger, TryExchange},
     node::Node,
     pepoch::{PAtomic, POwned, PShared},
-    persistent::{AtomicReset, Memento, PDefault},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
+    AtomicReset, Memento, PDefault,
+};
+
+use super::{
+    exchanger::{Exchanger, TryExchange},
     stack::{Stack, TryFail},
     treiber_stack::{self, TreiberStack},
 };
@@ -118,7 +121,7 @@ pub struct TryPop<T: 'static + Clone> {
     exchange_pop_node: PAtomic<Node<Request<T>>>,
 
     /// elimination exchanger의 exchange client
-    try_exchange: AtomicReset<TryExchange<Request<T>>>,
+    try_exchange: AtomicReset<TryExchange<Request<T>>>, // TODO(must): No need to be AtomicReset
 }
 
 impl<T: 'static + Clone> Default for TryPop<T> {
@@ -422,7 +425,7 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::{stack::tests::*, test_utils::tests::*};
+    use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;

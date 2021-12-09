@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::{
-    persistent::{Memento, PDefault},
+    {Memento, PDefault},
     pipe::Pipe,
     pmem::{
         ll::persist_obj,

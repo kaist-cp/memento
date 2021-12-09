@@ -3,7 +3,7 @@
 use crossbeam_epoch::Guard;
 
 use crate::{
-    persistent::Memento,
+    Memento,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -119,7 +119,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistent::PDefault;
+    use crate::PDefault;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::queue::*;
     use crate::test_utils::tests::*;

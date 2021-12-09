@@ -29,10 +29,14 @@ use core::slice;
 use core::sync::atomic::Ordering;
 
 use super::Guard;
+use crate::ploc::Invalid;
 use crate::pmem::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::pool::PoolHandle;
 use crate::pmem::ptr::PPtr;
+use crate::pmem::Collectable;
+use crate::pmem::GarbageCollection;
+use crossbeam_epoch::unprotected;
 use crossbeam_utils::atomic::AtomicConsume;
 use std::alloc;
 use std::sync::atomic::AtomicUsize;
@@ -169,7 +173,7 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 /// ```
 /// # // 테스트용 pool 얻기
 /// # use memento::pmem::pool::*;
-/// # use memento::persistent::*;
+/// # use memento::*;
 /// # use memento::test_utils::tests::get_dummy_handle;
 /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
 /// use std::mem::MaybeUninit;
@@ -352,7 +356,7 @@ impl<T> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::PAtomic;
@@ -373,7 +377,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::PAtomic;
@@ -422,7 +426,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -454,7 +458,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -478,7 +482,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{PAtomic, POwned, PShared};
@@ -504,7 +508,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, PShared};
@@ -541,7 +545,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
@@ -603,7 +607,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
@@ -688,7 +692,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -754,7 +758,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
@@ -818,7 +822,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # #![allow(deprecated)]
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared};
@@ -881,7 +885,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, PShared};
@@ -910,7 +914,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, PShared};
@@ -938,7 +942,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, PShared};
@@ -1047,7 +1051,7 @@ impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{PAtomic, POwned};
@@ -1099,6 +1103,37 @@ impl<T> From<PPtr<T>> for PAtomic<T> {
     /// ```
     fn from(ptr: PPtr<T>) -> Self {
         Self::from_usize(ptr.into_offset())
+    }
+}
+
+#[inline]
+fn invalid_ptr<'g, T>() -> PShared<'g, T> {
+    const NO_READ: usize = usize::MAX - u32::MAX as usize;
+    unsafe { PShared::<T>::from_usize(NO_READ) }
+}
+
+impl<T> Invalid for PAtomic<T> {
+    fn invalidate(&mut self) {
+        self.store(invalid_ptr(), Ordering::Relaxed);
+    }
+
+    fn is_invalid(&self) -> bool {
+        let guard = unsafe { unprotected() };
+        let cur = self.load(Ordering::Relaxed, guard);
+        cur != invalid_ptr()
+    }
+}
+
+// TODO: PAtomic filter 쓰는 애들 싹 다
+impl<T: Collectable> Collectable for PAtomic<T> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { unprotected() };
+
+        let mut node = s.load(Ordering::Relaxed, guard);
+        if !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            T::mark(node_ref, gc);
+        }
     }
 }
 
@@ -1172,7 +1207,7 @@ impl<T> POwned<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pmem::ptr::PPtr;
@@ -1213,7 +1248,7 @@ impl<T> POwned<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::POwned;
@@ -1234,7 +1269,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::POwned;
@@ -1253,7 +1288,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, POwned};
@@ -1275,7 +1310,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::POwned;
@@ -1296,7 +1331,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::POwned;
@@ -1408,6 +1443,13 @@ impl<T: Clone> POwned<T> {
     }
 }
 
+impl<T: Collectable> Collectable for POwned<T> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let item = unsafe { (*s).deref_mut(pool) };
+        T::mark(item, gc);
+    }
+}
+
 // TODO: PersistentBox 구현할지 고민 필요
 // impl<T> From<Box<T>> for Owned<T> {
 //     /// Returns a new owned pointer pointing to `b`.
@@ -1472,7 +1514,7 @@ impl<T> PShared<'_, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pmem::ptr::PPtr;
@@ -1522,7 +1564,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, POwned};
@@ -1565,7 +1607,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -1604,7 +1646,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -1658,7 +1700,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -1699,7 +1741,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -1725,7 +1767,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, POwned};
@@ -1751,7 +1793,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic};
@@ -1791,7 +1833,7 @@ impl<T> From<PPtr<T>> for PShared<'_, T> {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::PShared;

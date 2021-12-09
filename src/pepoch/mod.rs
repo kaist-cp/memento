@@ -57,7 +57,7 @@ pub trait PDestroyable {
     /// ```
     /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
-    /// # use memento::persistent::*;
+    /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
     /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
     /// use memento::pepoch::{self as epoch, PAtomic, POwned, PShared, PDestroyable};

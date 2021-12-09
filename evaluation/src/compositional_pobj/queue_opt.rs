@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::composed_queue_opt::*;
-use memento::persistent::*;
+use memento::*;
 use memento::pmem::pool::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 

@@ -4,12 +4,15 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::{
     pepoch::{self as epoch, PAtomic},
+    ploc::{
+        common::{self},
+        no_owner,
+    },
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    ploc::common::{self, no_owner},
 };
 
 /// TODO: doc
