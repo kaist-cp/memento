@@ -4,9 +4,9 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use memento::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{ll::*, pool::*};
+use memento::*;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -407,7 +407,7 @@ impl Memento for DSSQueueEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -455,7 +455,7 @@ impl Memento for DSSQueueEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }

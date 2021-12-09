@@ -17,12 +17,12 @@ impl<T: 'static + Clone> TestQueue for QueueUnOpt<T> {
         let _ = enq.run(self, input, false, guard, pool);
 
         // TODO: custom logic 추상화
-        enq.reset(false, guard, pool);
+        enq.reset(guard, pool);
     }
 
     fn dequeue(&self, deq: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
         let _ = deq.run(self, (), false, guard, pool);
-        deq.reset(false, guard, pool);
+        deq.reset(guard, pool);
     }
 }
 
@@ -47,7 +47,7 @@ impl PDefault for TestMementoQueueUnOpt {
         let mut push_init = Enqueue::default();
         for i in 0..QUEUE_INIT_SIZE {
             let _ = push_init.run(&queue, i, false, &guard, pool);
-            push_init.reset(false, &guard, pool);
+            push_init.reset(&guard, pool);
         }
         Self { queue }
     }
@@ -114,7 +114,7 @@ impl Memento for MementoQueueUnOptEnqDeqPair {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }
@@ -181,7 +181,7 @@ impl Memento for MementoQueueUnOptEnqDeqProb {
         Ok(())
     }
 
-    fn reset(&mut self, _: bool, _: &Guard, _: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // no-op
     }
 }
