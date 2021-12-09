@@ -20,7 +20,7 @@
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-// #![deny(warnings)]
+#![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
@@ -39,7 +39,7 @@
 // Persistent objects collection
 pub mod ds;
 pub mod node;
-// pub mod pipe;
+// pub mod pipe; // TODO(must): 알 수 없는 컴파일 에러
 pub mod ploc;
 
 // Persistent memory underline
