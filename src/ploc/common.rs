@@ -59,7 +59,7 @@ pub trait Invalid {
 /// TODO(doc)
 #[derive(Debug)]
 pub struct Checkpoint<T: Invalid + Default + Clone + Collectable> {
-    saved: CachePadded<T>,
+    saved: T,
     _marker: PhantomData<*const T>,
 }
 
@@ -72,7 +72,7 @@ impl<T: Invalid + Default + Clone + Collectable> Default for Checkpoint<T> {
         t.invalidate();
 
         Self {
-            saved: CachePadded::from(t),
+            saved: t,
             _marker: Default::default(),
         }
     }
@@ -91,6 +91,7 @@ where
     type Output<'o> = T;
     type Error<'o> = !;
 
+    // #[inline]
     fn run<'o>(
         &'o mut self,
         (): Self::Object<'o>,
@@ -107,14 +108,14 @@ where
         }
 
         // Normal run
-        self.saved = CachePadded::from(chk.clone());
-        persist_obj(&*self.saved, true);
+        self.saved = chk.clone();
+        persist_obj(&self.saved, true);
         Ok(chk)
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         self.saved.invalidate();
-        persist_obj(&*self.saved, true);
+        persist_obj(&self.saved, true);
     }
 }
 
@@ -124,7 +125,7 @@ impl<T: Invalid + Default + Clone + Collectable> Checkpoint<T> {
         if self.saved.is_invalid() {
             None
         } else {
-            Some((*self.saved).clone())
+            Some(self.saved.clone())
         }
     }
 }
