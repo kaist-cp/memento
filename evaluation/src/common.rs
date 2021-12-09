@@ -1,8 +1,8 @@
 //! Abstraction for evaluation
 
 use crossbeam_epoch::Guard;
-use memento::{Memento, PDefault};
 use memento::pmem::Pool;
+use memento::{Memento, PDefault};
 use rand::Rng;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -315,7 +315,7 @@ impl Collectable for TestLogQueue {
 impl PDefault for TestLogQueue {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let queue = LogQueue::pdefault(pool);
-        let mut guard = epoch::pin();
+        let guard = epoch::pin();
 
         // 초기 노드 삽입
         for i in 0..QUEUE_INIT_SIZE {

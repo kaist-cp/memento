@@ -231,7 +231,7 @@ impl Collectable for TestDurableQueue {
 impl PDefault for TestDurableQueue {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let queue = DurableQueue::pdefault(pool);
-        let mut guard = epoch::pin();
+        let guard = epoch::pin();
 
         // 초기 노드 삽입
         for i in 0..QUEUE_INIT_SIZE {
