@@ -105,7 +105,12 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
             .run(&stack.top, (stack, Self::get_next), rec, guard, pool)
-            .map(|ret| ret.map(|popped| unsafe { popped.deref(pool) }.data.clone()))
+            .map(|ret| {
+                ret.map(|popped| unsafe {
+                    guard.defer_pdestroy(popped);
+                    popped.deref(pool).data.clone()
+                })
+            })
             .map_err(|_| TryFail)
     }
 

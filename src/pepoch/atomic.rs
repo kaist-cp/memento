@@ -1124,7 +1124,6 @@ impl<T> Invalid for PAtomic<T> {
     }
 }
 
-// TODO: PAtomic filter 쓰는 애들 싹 다
 impl<T: Collectable> Collectable for PAtomic<T> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { unprotected() };

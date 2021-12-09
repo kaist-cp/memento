@@ -153,8 +153,9 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         }
 
         // even으로 성공하면 성공 리턴
-        let partner_ref = unsafe { updated.deref(pool) };
-        assert!(cond(&partner_ref.data));
+        let partner = updated;
+        let partner_ref = unsafe { partner.deref(pool) };
+        unsafe { guard.defer_pdestroy(mine) };
         Ok(partner_ref.data.clone())
     }
 
@@ -193,18 +194,12 @@ impl<T: 'static + Clone> TryExchange<T> {
 
         // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if slot != mine {
-            return Ok(Self::succ_after_wait(mine, pool));
+            return Ok(Self::succ_after_wait(mine, guard, pool));
         }
 
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
-        let deleted = self.delete.run(
-            &xchg.slot,
-            (mine, xchg),
-            rec,
-            guard,
-            pool,
-        );
+        let deleted = self.delete.run(&xchg.slot, (mine, xchg), rec, guard, pool);
 
         if let Ok(res) = deleted {
             match res {
@@ -220,15 +215,16 @@ impl<T: 'static + Clone> TryExchange<T> {
             }
         }
 
-        return Ok(Self::succ_after_wait(mine, pool));
+        return Ok(Self::succ_after_wait(mine, guard, pool));
     }
 
     #[inline]
-    fn succ_after_wait(mine: PShared<'_, Node<T>>, pool: &PoolHandle) -> T {
+    fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
         let partner = unsafe { Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref) };
         let partner_ref = unsafe { partner.deref(pool) };
+        unsafe { guard.defer_pdestroy(mine) };
         partner_ref.data.clone()
     }
 
@@ -236,8 +232,6 @@ impl<T: 'static + Clone> TryExchange<T> {
     fn prepare_insert(_: &mut Node<T>) -> bool {
         true
     }
-
-    // TODO: dealloc
 }
 
 impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
@@ -347,7 +341,6 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.node.reset(guard, pool);
         self.try_xchg.reset(guard, pool);
-        // TODO(must): partner의 포인터와 함께 적절하게 destroy하는 방법 구상
     }
 }
 

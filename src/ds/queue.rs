@@ -1,14 +1,13 @@
 //! Persistent opt queue
 
 use crate::node::Node;
-use crate::ploc::common::DeallocNode;
 use crate::ploc::smo::{Delete, DeleteHelper, Insert, SMOAtomic};
-use crate::ploc::{InsertErr, Traversable, Checkpoint};
+use crate::ploc::{Checkpoint, InsertErr, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared, PDestroyable};
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -219,19 +218,14 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete_opt
-            .run(
-                &queue.head,
-                (PShared::null(), queue),
-                rec,
-                guard,
-                pool,
-            )
+            .run(&queue.head, (PShared::null(), queue), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
                         .next
                         .load(Ordering::SeqCst, guard); // TODO: next를 다시 load해서 성능 저하
                     let next_ref = unsafe { next.deref(pool) };
+                    unsafe { guard.defer_pdestroy(popped) };
                     unsafe { (*next_ref.data.as_ptr()).clone() }
                 })
             })
@@ -240,13 +234,6 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.delete_opt.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> DeallocNode<T, Node<MaybeUninit<T>>> for TryDequeue<T> {
-    #[inline]
-    fn dealloc(&self, target: PShared<'_, Node<MaybeUninit<T>>>, guard: &Guard, pool: &PoolHandle) {
-        self.delete_opt.dealloc(target, guard, pool);
     }
 }
 
