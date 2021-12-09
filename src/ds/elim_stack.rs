@@ -122,7 +122,7 @@ pub struct TryPop<T: 'static + Clone> {
     pop_node: Checkpoint<PAtomic<Node<Request<T>>>>,
 
     /// elimination exchanger의 exchange client
-    try_exchange: AtomicReset<TryExchange<Request<T>>>, // TODO(must): No need to be AtomicReset
+    try_exchange: TryExchange<Request<T>>, // TODO(must): No need to be AtomicReset
 }
 
 impl<T: 'static + Clone> Default for TryPop<T> {
@@ -130,8 +130,8 @@ impl<T: 'static + Clone> Default for TryPop<T> {
         Self {
             try_pop: Default::default(),
             elim_idx: get_random_elim_index(), // TODO(opt): Fixed index vs online random index 성능 비교
-            pop_node: Checkpoint::default(),
-            try_exchange: AtomicReset::default(),
+            pop_node: Default::default(),
+            try_exchange: Default::default(),
         }
     }
 }
@@ -140,7 +140,7 @@ impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         treiber_stack::TryPop::filter(&mut try_pop.try_pop, gc, pool);
         Checkpoint::filter(&mut try_pop.pop_node, gc, pool);
-        AtomicReset::filter(&mut try_pop.try_exchange, gc, pool);
+        TryExchange::filter(&mut try_pop.try_exchange, gc, pool);
     }
 }
 
