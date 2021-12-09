@@ -100,10 +100,10 @@ pub(crate) mod tests {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check empty
-                    assert!(S::Pop::default()
-                        .run(stack, (), rec, guard, pool)
-                        .unwrap()
-                        .is_none());
+                    let mut tmp_pop = S::Pop::default();
+                    let must_none = tmp_pop.run(stack, (), rec, guard, pool).unwrap();
+                    assert!(must_none.is_none());
+                    tmp_pop.reset(guard, pool);
 
                     // Check results
                     assert!(RESULTS[0].load(Ordering::SeqCst) == 0);

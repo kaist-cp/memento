@@ -7,7 +7,8 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     node::Node,
-    pepoch::{PAtomic, POwned, PShared},
+    pepoch::{PAtomic, POwned, PShared, PDestroyable},
+    ploc::Checkpoint,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -259,7 +260,7 @@ unsafe impl<T: Clone> Sync for ElimStack<T> {}
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
 pub struct Push<T: 'static + Clone> {
-    node: PAtomic<Node<Request<T>>>,
+    node: Checkpoint<PAtomic<Node<Request<T>>>>,
     try_push: TryPush<T>,
 }
 
@@ -274,17 +275,8 @@ impl<T: Clone> Default for Push<T> {
 
 impl<T: Clone> Collectable for Push<T> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut push.node, gc, pool);
+        Checkpoint::filter(&mut push.node, gc, pool);
         TryPush::filter(&mut push.try_push, gc, pool);
-    }
-}
-
-impl<T: Clone> Drop for Push<T> {
-    fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let node = self.node.load(Ordering::Relaxed, guard);
-        assert!(node.is_null(), "reset 되어있지 않음.")
-        // TODO: trypush의 리셋여부 파악?
     }
 }
 
@@ -305,16 +297,24 @@ impl<T: Clone> Memento for Push<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = if rec {
-            let node = self.node.load(Ordering::Relaxed, guard);
-            if node.is_null() {
-                self.new_node(value, guard, pool)
-            } else {
-                node
-            }
-        } else {
-            self.new_node(value, guard, pool)
-        };
+        let node = POwned::new(Node::from(Request::Push(value)), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
+        let node = self
+            .node
+            .run(
+                (),
+                (PAtomic::from(node), |aborted| {
+                    let guard = unsafe { epoch::unprotected() };
+                    let d = aborted.load(Ordering::Relaxed, guard);
+                    unsafe { guard.defer_pdestroy(d) };
+                }),
+                rec,
+                guard,
+                pool,
+            )
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
 
         if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
             return Ok(());
@@ -325,24 +325,8 @@ impl<T: Clone> Memento for Push<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO: node reset
+        self.node.reset(guard, pool);
         self.try_push.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> Push<T> {
-    #[inline]
-    fn new_node<'g>(
-        &self,
-        value: T,
-        guard: &'g Guard,
-        pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<Request<T>>> {
-        let node = POwned::new(Node::from(Request::Push(value)), pool).into_shared(guard);
-        persist_obj(unsafe { node.deref(pool) }, true);
-        self.node.store(node, Ordering::Relaxed);
-        persist_obj(&self.node, true);
-        node
     }
 }
 
@@ -421,7 +405,7 @@ mod tests {
     use super::*;
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
-    const NR_THREAD: usize = 12;
+    const NR_THREAD: usize = 2;
     const COUNT: usize = 10_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
