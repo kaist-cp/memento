@@ -3,12 +3,12 @@
 use crate::node::Node;
 use crate::ploc::common::DeallocNode;
 use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
-use crate::ploc::{InsertErr, Traversable};
+use crate::ploc::{InsertErr, Traversable, Checkpoint};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared, PDestroyable};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -106,7 +106,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
-    node: PAtomic<Node<MaybeUninit<T>>>,
+    node: Checkpoint<PAtomic<Node<MaybeUninit<T>>>>,
     try_enq: TryEnqueue<T>,
 }
 
@@ -121,17 +121,8 @@ impl<T: Clone> Default for Enqueue<T> {
 
 impl<T: Clone> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut enq.node, gc, pool);
+        Checkpoint::filter(&mut enq.node, gc, pool);
         TryEnqueue::filter(&mut enq.try_enq, gc, pool);
-    }
-}
-
-impl<T: Clone> Drop for Enqueue<T> {
-    fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let node = self.node.load(Ordering::Relaxed, guard);
-        assert!(node.is_null(), "reset 되어있지 않음.")
-        // TODO: tryenq의 리셋여부 파악?
     }
 }
 
@@ -152,16 +143,24 @@ impl<T: Clone> Memento for Enqueue<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = if rec {
-            let node = self.node.load(Ordering::Relaxed, guard);
-            if node.is_null() {
-                self.new_node(value, guard, pool)
-            } else {
-                node
-            }
-        } else {
-            self.new_node(value, guard, pool)
-        };
+        let node = POwned::new(Node::from(MaybeUninit::new(value)), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
+        let node = self
+            .node
+            .run(
+                (),
+                (PAtomic::from(node), |aborted| {
+                    let guard = unsafe { epoch::unprotected() };
+                    let d = aborted.load(Ordering::Relaxed, guard);
+                    unsafe { guard.defer_pdestroy(d) };
+                }),
+                rec,
+                guard,
+                pool,
+            )
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
 
         if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
             return Ok(());
@@ -174,22 +173,6 @@ impl<T: Clone> Memento for Enqueue<T> {
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // TODO: node reset
         self.try_enq.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> Enqueue<T> {
-    #[inline]
-    fn new_node<'g>(
-        &self,
-        value: T,
-        guard: &'g Guard,
-        pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<MaybeUninit<T>>> {
-        let node = POwned::new(Node::from(MaybeUninit::new(value)), pool).into_shared(guard);
-        persist_obj(unsafe { node.deref(pool) }, true);
-        self.node.store(node, Ordering::Relaxed);
-        persist_obj(&self.node, true);
-        node
     }
 }
 
@@ -363,12 +346,6 @@ impl<T: Clone> Memento for Dequeue<T> {
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.try_deq.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> Drop for Dequeue<T> {
-    fn drop(&mut self) {
-        // TODO: trydeq의 리셋여부 파악?
     }
 }
 
