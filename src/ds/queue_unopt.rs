@@ -121,16 +121,8 @@ impl<T: Clone> Default for Enqueue<T> {
 
 impl<T: Clone> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut node = enq.node.load(Ordering::Relaxed, guard);
-        if !node.is_null() {
-            let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<MaybeUninit<T>>::mark(node_ref, gc);
-        }
-
-        TryEnqueue::<T>::filter(&mut enq.try_enq, gc, pool);
+        PAtomic::filter(&mut enq.node, gc, pool);
+        TryEnqueue::filter(&mut enq.try_enq, gc, pool);
     }
 }
 
@@ -223,15 +215,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut param = try_deq.delete_param.load(Ordering::SeqCst, guard);
-        if !param.is_null() {
-            let param_ref = unsafe { param.deref_mut(pool) };
-            Node::<MaybeUninit<T>>::mark(param_ref, gc);
-        }
-
+        PAtomic::filter(&mut try_deq.delete_param, gc, pool);
         DeleteUnOpt::filter(&mut try_deq.delete, gc, pool);
     }
 }
@@ -412,14 +396,7 @@ impl<T: Clone> PDefault for QueueUnOpt<T> {
 
 impl<T: Clone> Collectable for QueueUnOpt<T> {
     fn filter(queue: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut head = queue.head.load(Ordering::SeqCst, guard);
-        if !head.is_null() {
-            let head_ref = unsafe { head.deref_mut(pool) };
-            Node::mark(head_ref, gc);
-        }
+        PAtomic::filter(&mut queue.head, gc, pool);
     }
 }
 
