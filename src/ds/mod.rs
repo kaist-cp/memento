@@ -1,7 +1,7 @@
 //! Persistent Data Structures
 
-// pub mod elim_stack;
-// pub mod exchanger;
+pub mod elim_stack;
+pub mod exchanger;
 // pub mod pipe;
 pub mod queue;
 pub mod queue_unopt;

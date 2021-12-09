@@ -43,15 +43,14 @@ pub enum TryFail {
 /// Exchanger의 try exchange
 #[derive(Debug)]
 pub struct TryExchange<T: Clone> {
-    init_slot: Checkpoint<PAtomic<Node<T>>>, // TODO: Is `PAtomic` right? Not `PShared`?
-    wait_slot: Checkpoint<PAtomic<Node<T>>>, // TODO: Is `PAtomic` right? Not `PShared`?
+    init_slot: Checkpoint<PAtomic<Node<T>>>,
+    wait_slot: Checkpoint<PAtomic<Node<T>>>,
 
     insert: Insert<Exchanger<T>, Node<T>>,
 
     update_param: PAtomic<Node<T>>,
     update: Update<Exchanger<T>, Node<T>, Self>,
 
-    delete_param: PAtomic<Node<T>>,
     delete: Delete<Exchanger<T>, Node<T>, Self>,
 }
 
@@ -63,7 +62,6 @@ impl<T: Clone> Default for TryExchange<T> {
             insert: Default::default(),
             update_param: PAtomic::null(),
             update: Default::default(),
-            delete_param: PAtomic::null(),
             delete: Default::default(),
         }
     }
@@ -72,7 +70,6 @@ impl<T: Clone> Default for TryExchange<T> {
 impl<T: Clone> Collectable for TryExchange<T> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         PAtomic::filter(&mut s.update_param, gc, pool);
-        PAtomic::filter(&mut s.delete_param, gc, pool);
 
         Checkpoint::filter(&mut s.init_slot, gc, pool);
         Checkpoint::filter(&mut s.wait_slot, gc, pool);
@@ -169,7 +166,6 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.update_param.store(PShared::null(), Ordering::Relaxed);
-        self.delete_param.store(PShared::null(), Ordering::Relaxed);
 
         self.init_slot.reset(guard, pool);
         self.wait_slot.reset(guard, pool);
@@ -212,7 +208,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = self.delete.run(
             &xchg.slot,
-            (&self.delete_param, mine, xchg),
+            (mine, xchg),
             rec,
             guard,
             pool,
