@@ -121,7 +121,7 @@ pub struct TryPop<T: 'static + Clone> {
     exchange_pop_node: PAtomic<Node<Request<T>>>,
 
     /// elimination exchanger의 exchange client
-    try_exchange: AtomicReset<TryExchange<Request<T>>>,
+    try_exchange: AtomicReset<TryExchange<Request<T>>>, // TODO(must): No need to be AtomicReset
 }
 
 impl<T: 'static + Clone> Default for TryPop<T> {

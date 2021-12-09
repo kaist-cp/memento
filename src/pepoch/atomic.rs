@@ -1114,7 +1114,7 @@ fn invalid_ptr<'g, T>() -> PShared<'g, T> {
 
 impl<T> Invalid for PAtomic<T> {
     fn invalidate(&mut self) {
-        self.store(PShared::null(), Ordering::Relaxed);
+        self.store(invalid_ptr(), Ordering::Relaxed);
     }
 
     fn is_invalid(&self) -> bool {
@@ -1440,6 +1440,13 @@ impl<T: Clone> POwned<T> {
     /// 주어진 pool에 clone
     pub fn clone(&self, pool: &PoolHandle) -> Self {
         POwned::new(unsafe { self.deref(pool) }.clone(), pool).with_tag(self.tag())
+    }
+}
+
+impl<T: Collectable> Collectable for POwned<T> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let item = unsafe { (*s).deref_mut(pool) };
+        T::mark(item, gc);
     }
 }
 
