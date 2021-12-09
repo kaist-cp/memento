@@ -4,18 +4,15 @@ use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 
-use super::{
-    common::{InsertErr, NodeUnOpt, EMPTY},
-    Traversable,
-};
+use super::{common::NodeUnOpt, InsertErr, Traversable, EMPTY};
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
-    Memento,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,
     },
+    Memento,
 };
 
 /// TODO: doc

@@ -1,17 +1,17 @@
 //! Persistent opt queue
 
 use crate::node::Node;
-use crate::ploc::common::{DeallocNode, InsertErr};
+use crate::ploc::common::DeallocNode;
 use crate::ploc::smo::{Delete, DeleteHelper, Insert, SMOAtomic};
-use crate::ploc::Traversable;
+use crate::ploc::{InsertErr, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
-use crate::*;
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
+use crate::*;
 
 /// TODO: doc
 #[derive(Debug)]
