@@ -4,7 +4,6 @@ use crossbeam_epoch::Guard;
 
 use crate::{
     pmem::{
-        ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
@@ -15,10 +14,10 @@ use crate::{
 ///
 /// - `'o`: 연결되는 두 Op(i.e. `Op1` 및 `Op2`)의 lifetime
 #[derive(Debug)]
-pub struct Pipe<Op1, T, Op2>
+pub struct Pipe<Op1, Op2>
 where
-    for<'o> Op1: 'static + Memento<Output<'o> = T>,
-    for<'o> Op2: 'static + Memento<Input<'o> = T>,
+    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input<'o>>,
+    Op2: Memento,
 {
     /// 먼저 실행될 op. `Pipe` op의 input은 `from` op의 input과 같음
     from: Op1,
@@ -30,10 +29,10 @@ where
     resetting: bool,
 }
 
-impl<Op1, T, Op2> Default for Pipe<Op1, T, Op2>
+impl<Op1, Op2> Default for Pipe<Op1, Op2>
 where
-    for<'o> Op1: 'static + Memento<Output<'o> = T>,
-    for<'o> Op2: 'static + Memento<Input<'o> = T>,
+    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input<'o>>,
+    Op2: Memento,
 {
     fn default() -> Self {
         Self {
@@ -44,10 +43,10 @@ where
     }
 }
 
-impl<Op1, T, Op2> Collectable for Pipe<Op1, T, Op2>
+impl<Op1, Op2> Collectable for Pipe<Op1, Op2>
 where
-    for<'o> Op1: 'static + Memento<Output<'o> = T>,
-    for<'o> Op2: 'static + Memento<Input<'o> = T>,
+    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input<'o>>,
+    Op2: Memento,
 {
     fn filter(pipe: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Op1::filter(&mut pipe.from, gc, pool);
@@ -55,72 +54,48 @@ where
     }
 }
 
-impl<Op1, T, Op2> Memento for Pipe<Op1, T, Op2>
+impl<Op1, Op2> Memento for Pipe<Op1, Op2>
 where
-    for<'o> Op1: 'static + Memento<Output<'o> = T>,
-    for<'o> Op2: 'static + Memento<Input<'o> = T>,
+    for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input<'o>>,
+    Op2: Memento,
 {
     type Object<'o> = (Op1::Object<'o>, Op2::Object<'o>);
     type Input<'o> = Op1::Input<'o>;
     type Output<'o>
     where
         Op2: 'o,
-        T: 'o,
     = Op2::Output<'o>;
-    type Error = ();
+    type Error<'o>
+    where
+        Op2: 'o,
+    = ();
 
     fn run<'o>(
         &mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input<'o>,
+        rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error> {
-        if self.resetting {
-            // TODO: This is unlikely. Use unstable `std::intrinsics::unlikely()`?
-            self.reset(false, guard, pool);
-        }
-
-        let v = self.from.run(from_obj, init, guard, pool).map_err(|_| ())?;
-        self.to.run(to_obj, v, guard, pool).map_err(|_| ())
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        let v = self
+            .from
+            .run(from_obj, init, rec, guard, pool)
+            .map_err(|_| ())?;
+        self.to.run(to_obj, v, rec, guard, pool).map_err(|_| ())
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        if !nested {
-            self.resetting = true;
-            persist_obj(&self.resetting, true);
-        }
-
-        self.from.reset(true, guard, pool);
-        self.to.reset(true, guard, pool);
-
-        if !nested {
-            self.resetting = false;
-            persist_obj(&self.resetting, true);
-        }
-    }
-
-    fn set_recovery(&mut self, _: &'static PoolHandle) {
-        // TODO: reset 중이었다가 crash난 애의 reset을 끝내줄 수 있음.
-        //       그러면 run에서 reset 중인지 검사 불필요.
-    }
-}
-
-impl<Op1, T, Op2> Drop for Pipe<Op1, T, Op2>
-where
-    for<'o> Op1: 'static + Memento<Output<'o> = T>,
-    for<'o> Op2: Memento<Input<'o> = T>,
-{
-    fn drop(&mut self) {
-        // TODO: "하위 Memento들이 reset 되어있지않으면 panic"
+        self.from.reset(guard, pool);
+        self.to.reset(guard, pool);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ds::queue::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
-    use crate::queue::*;
     use crate::test_utils::tests::*;
     use crate::PDefault;
     use rusty_fork::rusty_fork_test;
@@ -175,7 +150,7 @@ mod tests {
         type Object<'o> = &'o [Queue<usize>; 2];
         type Input<'o> = usize; // tid(mid)
         type Output<'o> = ();
-        type Error = !;
+        type Error<'o> = !;
 
         fn run<'o>(
             &mut self,
@@ -183,7 +158,7 @@ mod tests {
             tid: Self::Input<'o>,
             guard: &Guard,
             pool: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error> {
+        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             let (q1, q2) = (&q_arr[0], &q_arr[1]);
 
             match tid {
@@ -213,20 +188,6 @@ mod tests {
 
         fn reset(&mut self, _: &Guard, _: &PoolHandle) {
             todo!("reset test")
-        }
-
-        fn set_recovery(&mut self, pool: &'static PoolHandle) {
-            for m in self.pipes.iter_mut() {
-                m.set_recovery(pool);
-            }
-
-            for m in self.suppliers.iter_mut() {
-                m.set_recovery(pool);
-            }
-
-            for m in self.consumers.iter_mut() {
-                m.set_recovery(pool);
-            }
         }
     }
 
