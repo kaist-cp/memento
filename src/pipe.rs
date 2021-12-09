@@ -24,9 +24,6 @@ where
 
     /// 다음에 실행될 op. `Pipe` op의 output은 `to` op의 output과 같음
     to: Op2,
-
-    /// reset 중인지 나타내는 flag
-    resetting: bool,
 }
 
 impl<Op1, Op2> Default for Pipe<Op1, Op2>
@@ -38,7 +35,6 @@ where
         Self {
             from: Default::default(),
             to: Default::default(),
-            resetting: false,
         }
     }
 }
@@ -116,7 +112,7 @@ mod tests {
     }
 
     struct Transfer {
-        pipes: [Pipe<DequeueSome<usize>, usize, Enqueue<usize>>; COUNT],
+        pipes: [Pipe<DequeueSome<usize>, Enqueue<usize>>; COUNT],
         suppliers: [Enqueue<usize>; COUNT],
         consumers: [DequeueSome<usize>; COUNT],
     }
@@ -148,7 +144,7 @@ mod tests {
 
     impl Memento for Transfer {
         type Object<'o> = &'o [Queue<usize>; 2];
-        type Input<'o> = usize; // tid(mid)
+        type Input<'o> = usize; // tid
         type Output<'o> = ();
         type Error<'o> = !;
 
@@ -156,7 +152,8 @@ mod tests {
             &mut self,
             q_arr: Self::Object<'o>,
             tid: Self::Input<'o>,
-            guard: &Guard,
+            rec: bool,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             let (q1, q2) = (&q_arr[0], &q_arr[1]);
@@ -165,19 +162,19 @@ mod tests {
                 // T0: Supply q1
                 0 => {
                     for (i, enq) in self.suppliers.iter_mut().enumerate() {
-                        let _ = enq.run(q1, i, guard, pool);
+                        let _ = enq.run(q1, i, rec, guard, pool);
                     }
                 }
                 // T1: Transfer q1->q2
                 1 => {
                     for pipe in self.pipes.iter_mut() {
-                        let _ = pipe.run((q1, q2), (), guard, pool);
+                        let _ = pipe.run((q1, q2), (), rec, guard, pool);
                     }
                 }
                 // T2: Consume q2
                 2 => {
                     for (i, deq) in self.consumers.iter_mut().enumerate() {
-                        let v = deq.run(&q2, (), guard, pool).unwrap();
+                        let v = deq.run(&q2, (), rec, guard, pool).unwrap();
                         assert_eq!(v, i);
                     }
                 }
