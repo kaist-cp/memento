@@ -4,7 +4,7 @@
 
 use std::{sync::atomic::Ordering, time::Duration};
 
-use crossbeam_epoch::{self as epoch, Guard};
+use crossbeam_epoch::Guard;
 
 use crate::{
     node::Node,
