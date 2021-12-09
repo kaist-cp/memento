@@ -274,15 +274,7 @@ impl<T: Clone> Default for Push<T> {
 
 impl<T: Clone> Collectable for Push<T> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut node = push.node.load(Ordering::Relaxed, guard);
-        if !node.is_null() {
-            let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<Request<T>>::mark(node_ref, gc);
-        }
-
+        PAtomic::filter(&mut push.node, gc, pool);
         TryPush::filter(&mut push.try_push, gc, pool);
     }
 }

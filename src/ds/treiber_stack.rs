@@ -88,15 +88,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
 
 impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut param = try_pop.delete_param.load(Ordering::SeqCst, guard);
-        if !param.is_null() {
-            let param_ref = unsafe { param.deref_mut(pool) };
-            Node::<T>::mark(param_ref, gc);
-        }
-
+        PAtomic::filter(&mut try_pop.delete_param, gc, pool);
         DeleteUnOpt::filter(&mut try_pop.delete, gc, pool);
     }
 }
@@ -189,14 +181,7 @@ impl<T: Clone> Default for TreiberStack<T> {
 
 impl<T: Clone> Collectable for TreiberStack<T> {
     fn filter(stack: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut top = stack.top.load(Ordering::SeqCst, guard);
-        if !top.is_null() {
-            let top_ref = unsafe { top.deref_mut(pool) };
-            Node::mark(top_ref, gc);
-        }
+        PAtomic::filter(&mut stack.top, gc, pool);
     }
 }
 
@@ -244,15 +229,7 @@ impl<T: Clone> Default for Push<T> {
 
 impl<T: Clone> Collectable for Push<T> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark ptr if valid
-        let mut node = push.node.load(Ordering::Relaxed, guard);
-        if !node.is_null() {
-            let node_ref = unsafe { node.deref_mut(pool) };
-            Node::<T>::mark(node_ref, gc);
-        }
-
+        PAtomic::filter(&mut push.node, gc, pool);
         TryPush::filter(&mut push.try_push, gc, pool);
     }
 }
