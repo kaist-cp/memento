@@ -100,10 +100,10 @@ pub(crate) mod tests {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check empty
-                    assert!(S::Pop::default()
-                        .run(stack, (), rec, guard, pool)
-                        .unwrap()
-                        .is_none());
+                    let mut tmp_pop = S::Pop::default();
+                    let must_none = tmp_pop.run(stack, (), rec, guard, pool).unwrap();
+                    assert!(must_none.is_none());
+                    tmp_pop.reset(guard, pool);
 
                     // Check results
                     assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
@@ -124,7 +124,7 @@ pub(crate) mod tests {
 
                     // pop 결과를 실험결과에 전달
                     for pop in self.pops.as_mut() {
-                        let ret = pop.run(stack, (), rec, guard, pool).unwrap().unwrap();
+                        let ret = pop.run(stack, (), true, guard, pool).unwrap().unwrap();
                         let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
                     }
 

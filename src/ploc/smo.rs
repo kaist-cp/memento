@@ -206,6 +206,7 @@ unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
 pub struct Delete<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
+    target_loc: PAtomic<N>,
     _marker: PhantomData<*const (O, N, G)>,
 }
 
@@ -221,6 +222,7 @@ unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
 impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Delete<O, N, G> {
     fn default() -> Self {
         Self {
+            target_loc: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -237,7 +239,7 @@ where
     G: 'static + DeleteHelper<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o O);
+    type Input<'o> = (PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -249,13 +251,13 @@ where
     fn run<'o>(
         &'o mut self,
         point: Self::Object<'o>,
-        (target_loc, forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(target_loc, guard, pool);
+            return self.result(guard, pool);
         }
 
         // Normal run
@@ -264,16 +266,17 @@ where
         let next = match G::prepare_delete(target, forbidden, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
-                target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
-                persist_obj(&target_loc, true);
+                self.target_loc
+                    .store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
+                persist_obj(&self.target_loc, true);
                 return Ok(None);
             }
             Err(()) => return Err(()),
         };
 
         // 우선 내가 target을 가리키고
-        target_loc.store(target, Ordering::Relaxed);
-        persist_obj(target_loc, false);
+        self.target_loc.store(target, Ordering::Relaxed);
+        persist_obj(&self.target_loc, false);
 
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { target.deref(pool) };
@@ -321,7 +324,10 @@ where
             })
     }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
+        self.target_loc.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.target_loc, true);
+    }
 }
 
 impl<O, N, G> Delete<O, N, G>
@@ -336,11 +342,10 @@ where
     #[inline]
     fn result<'g>(
         &self,
-        target_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()> {
-        let target = target_loc.load(Ordering::Relaxed, guard);
+        let target = self.target_loc.load(Ordering::Relaxed, guard);
 
         if target.tag() & Self::EMPTY == Self::EMPTY {
             // post-crash execution (empty)
@@ -403,6 +408,7 @@ pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
 // TODO: update는 O 필요 없는 것 같음
 #[derive(Debug)]
 pub struct Update<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
+    target_loc: PAtomic<N>,
     _marker: PhantomData<*const (O, N, G)>,
 }
 
@@ -418,6 +424,7 @@ unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
 impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Update<O, N, G> {
     fn default() -> Self {
         Self {
+            target_loc: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -434,7 +441,7 @@ where
     G: 'static,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (PShared<'o, N>, &'o PAtomic<N>, PShared<'o, N>, &'o O);
+    type Input<'o> = (PShared<'o, N>, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -445,13 +452,13 @@ where
     fn run<'o>(
         &'o mut self,
         point: Self::Object<'o>,
-        (new, save_loc, expected, obj): Self::Input<'o>,
+        (new, expected, obj): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(new, save_loc, guard, pool);
+            return self.result(new, guard, pool);
         }
 
         // Normal run
@@ -485,8 +492,8 @@ where
         }
 
         // 우선 내가 target을 가리키고
-        save_loc.store(target, Ordering::Relaxed);
-        persist_obj(save_loc, false);
+        self.target_loc.store(target, Ordering::Relaxed);
+        persist_obj(&self.target_loc, false);
 
         // 빼려는 node가 내가 넣을 노드 가리키게 함
         owner
@@ -527,7 +534,10 @@ where
             })
     }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
+        self.target_loc.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.target_loc, true);
+    }
 }
 
 impl<O, N, G> Update<O, N, G>
@@ -540,11 +550,10 @@ where
     fn result<'g>(
         &self,
         new: PShared<'_, N>,
-        save_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<PShared<'g, N>, ()> {
-        let target = save_loc.load(Ordering::Relaxed, guard);
+        let target = self.target_loc.load(Ordering::Relaxed, guard);
 
         if !target.is_null() {
             let target_ref = unsafe { target.deref(pool) };
@@ -557,25 +566,6 @@ where
         }
 
         Err(())
-    }
-
-    /// TODO: doc
-    pub fn dealloc(
-        &self,
-        target: PShared<'_, N>,
-        new: PShared<'_, N>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
-        // owner가 내가 아닐 수 있음
-        // 따라서 owner를 확인 후 내가 update한 게 맞는다면 free
-        unsafe {
-            let owner = target.deref(pool).owner().load(Ordering::SeqCst);
-
-            if owner == new.into_usize() {
-                guard.defer_pdestroy(target);
-            }
-        }
     }
 
     /// # Safety

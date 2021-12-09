@@ -4,10 +4,9 @@ use core::sync::atomic::Ordering;
 
 use super::stack::*;
 use crate::node::Node;
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
-use crate::ploc::common::DeallocNode;
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
-use crate::ploc::Traversable;
+use crate::ploc::{Checkpoint, Traversable};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -71,14 +70,12 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 /// TreiberStack의 try pop operation
 #[derive(Debug)]
 pub struct TryPop<T: Clone> {
-    delete_param: PAtomic<Node<T>>,
     delete: DeleteUnOpt<TreiberStack<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryPop<T> {
     fn default() -> Self {
         Self {
-            delete_param: PAtomic::null(),
             delete: Default::default(),
         }
     }
@@ -88,7 +85,6 @@ unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
 
 impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut try_pop.delete_param, gc, pool);
         DeleteUnOpt::filter(&mut try_pop.delete, gc, pool);
     }
 }
@@ -108,42 +104,13 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
-            .run(
-                &stack.top,
-                (&self.delete_param, stack, Self::get_next),
-                rec,
-                guard,
-                pool,
-            )
+            .run(&stack.top, (stack, Self::get_next), rec, guard, pool)
             .map(|ret| ret.map(|popped| unsafe { popped.deref(pool) }.data.clone()))
             .map_err(|_| TryFail)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        let param = self.delete_param.load(Ordering::Relaxed, guard);
-
-        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        self.delete_param.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.delete_param, true);
-        self.dealloc(param, guard, pool);
-
         self.delete.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
-    #[inline]
-    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
-        self.delete.dealloc(target, guard, pool);
-    }
-}
-
-impl<T: Clone> Drop for TryPop<T> {
-    fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let param = self.delete_param.load(Ordering::Relaxed, guard);
-        assert!(param.is_null(), "reset 되어있지 않음.")
     }
 }
 
@@ -214,7 +181,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TreiberStack<T> {}
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
 pub struct Push<T: 'static + Clone> {
-    node: PAtomic<Node<T>>,
+    node: Checkpoint<PAtomic<Node<T>>>,
     try_push: TryPush<T>,
 }
 
@@ -229,17 +196,8 @@ impl<T: Clone> Default for Push<T> {
 
 impl<T: Clone> Collectable for Push<T> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut push.node, gc, pool);
+        Checkpoint::filter(&mut push.node, gc, pool);
         TryPush::filter(&mut push.try_push, gc, pool);
-    }
-}
-
-impl<T: Clone> Drop for Push<T> {
-    fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let node = self.node.load(Ordering::Relaxed, guard);
-        assert!(node.is_null(), "reset 되어있지 않음.")
-        // TODO: trypush의 리셋여부 파악?
     }
 }
 
@@ -260,16 +218,24 @@ impl<T: Clone> Memento for Push<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = if rec {
-            let node = self.node.load(Ordering::Relaxed, guard);
-            if node.is_null() {
-                self.new_node(value, guard, pool)
-            } else {
-                node
-            }
-        } else {
-            self.new_node(value, guard, pool)
-        };
+        let node = POwned::new(Node::from(value), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
+        let node = self
+            .node
+            .run(
+                (),
+                (PAtomic::from(node), |aborted| {
+                    let guard = unsafe { epoch::unprotected() };
+                    let d = aborted.load(Ordering::Relaxed, guard);
+                    unsafe { guard.defer_pdestroy(d) };
+                }),
+                rec,
+                guard,
+                pool,
+            )
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
 
         if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
             return Ok(());
@@ -280,24 +246,8 @@ impl<T: Clone> Memento for Push<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO: node reset
+        self.node.reset(guard, pool);
         self.try_push.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> Push<T> {
-    #[inline]
-    fn new_node<'g>(
-        &self,
-        value: T,
-        guard: &'g Guard,
-        pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<T>> {
-        let node = POwned::new(Node::from(value), pool).into_shared(guard);
-        persist_obj(unsafe { node.deref(pool) }, true);
-        self.node.store(node, Ordering::Relaxed);
-        persist_obj(&self.node, true);
-        node
     }
 }
 
@@ -356,12 +306,6 @@ impl<T: Clone> Memento for Pop<T> {
     }
 }
 
-impl<T: Clone> Drop for Pop<T> {
-    fn drop(&mut self) {
-        // TODO: trypop의 리셋여부 파악?
-    }
-}
-
 unsafe impl<T: Clone> Send for Pop<T> {}
 
 impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
@@ -377,7 +321,7 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 1_000_000;
+    const COUNT: usize = 10_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 

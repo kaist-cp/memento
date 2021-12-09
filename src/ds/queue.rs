@@ -221,7 +221,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete_opt
             .run(
                 &queue.head,
-                (&self.delete_param, PShared::null(), queue),
+                (PShared::null(), queue),
                 rec,
                 guard,
                 pool,
@@ -239,14 +239,6 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        let param = self.delete_param.load(Ordering::Relaxed, guard);
-
-        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        self.delete_param.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.delete_param, true);
-        self.dealloc(param, guard, pool);
-
         self.delete_opt.reset(guard, pool);
     }
 }
@@ -432,7 +424,7 @@ mod test {
     use serial_test::serial;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 1_000_000;
+    const COUNT: usize = 1000;
 
     struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],
@@ -481,7 +473,7 @@ mod test {
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<usize>::default();
                     let must_none = tmp_deq.run(queue, (), rec, guard, pool).unwrap();
-                    assert!(must_none.is_none()); // TODO(must): Cannot assert for the second execution.
+                    assert!(must_none.is_none());
                     tmp_deq.reset(guard, pool);
 
                     // Check results
@@ -493,16 +485,14 @@ mod test {
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ = self.enqs[i].run(queue, tid, false, guard, pool); // TODO: 두번째 실행에서 run이 아니라 result로 확인하도록 바꿔야 함
-                        assert!(self.deqs[i]
-                            .run(queue, (), false, guard, pool)
-                            .unwrap()
-                            .is_some());
+                        let _ = self.enqs[i].run(queue, tid, rec, guard, pool);
+                        let ret = self.deqs[i].run(queue, (), rec, guard, pool).unwrap();
+                        assert!(ret.is_some());
                     }
 
                     // deq 결과를 실험결과에 전달
                     for deq in self.deqs.as_mut() {
-                        let ret = deq.run(queue, (), rec, guard, pool).unwrap().unwrap();
+                        let ret = deq.run(queue, (), true, guard, pool).unwrap().unwrap();
                         let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
                     }
 

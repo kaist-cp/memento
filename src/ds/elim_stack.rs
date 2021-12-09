@@ -7,13 +7,14 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     node::Node,
-    pepoch::{PAtomic, POwned, PShared},
+    pepoch::{PAtomic, PDestroyable, POwned, PShared},
+    ploc::Checkpoint,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    AtomicReset, Memento, PDefault,
+    Memento, PDefault,
 };
 
 use super::{
@@ -22,7 +23,7 @@ use super::{
     treiber_stack::{self, TreiberStack},
 };
 
-const ELIM_SIZE: usize = 4;
+const ELIM_SIZE: usize = 1;
 
 #[inline]
 fn get_random_elim_index() -> usize {
@@ -118,10 +119,10 @@ pub struct TryPop<T: 'static + Clone> {
     elim_idx: usize,
 
     /// exchanger에 들어갈 node
-    exchange_pop_node: PAtomic<Node<Request<T>>>,
+    pop_node: Checkpoint<PAtomic<Node<Request<T>>>>,
 
     /// elimination exchanger의 exchange client
-    try_exchange: AtomicReset<TryExchange<Request<T>>>, // TODO(must): No need to be AtomicReset
+    try_exchange: TryExchange<Request<T>>, // TODO(must): No need to be AtomicReset
 }
 
 impl<T: 'static + Clone> Default for TryPop<T> {
@@ -129,8 +130,8 @@ impl<T: 'static + Clone> Default for TryPop<T> {
         Self {
             try_pop: Default::default(),
             elim_idx: get_random_elim_index(), // TODO(opt): Fixed index vs online random index 성능 비교
-            exchange_pop_node: PAtomic::null(),
-            try_exchange: AtomicReset::default(),
+            pop_node: Default::default(),
+            try_exchange: Default::default(),
         }
     }
 }
@@ -138,7 +139,8 @@ impl<T: 'static + Clone> Default for TryPop<T> {
 impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         treiber_stack::TryPop::filter(&mut try_pop.try_pop, gc, pool);
-        AtomicReset::filter(&mut try_pop.try_exchange, gc, pool);
+        Checkpoint::filter(&mut try_pop.pop_node, gc, pool);
+        TryExchange::filter(&mut try_pop.try_exchange, gc, pool);
     }
 }
 
@@ -171,22 +173,31 @@ where
         }
 
         // exchanger에 pop req를 담은 node를 넣어줘야 됨
-        let node = if rec {
-            let node = self.exchange_pop_node.load(Ordering::Relaxed, guard);
-            if node.is_null() {
-                self.new_pop_node(guard, pool)
-            } else {
-                node
-            }
-        } else {
-            self.new_pop_node(guard, pool)
-        };
+        // TODO(must): rec일 때에만 만들어줘도 됨
+        let pop_node = POwned::new(Node::from(Request::Pop), pool);
+        persist_obj(unsafe { pop_node.deref(pool) }, true);
+
+        let pop_node = self
+            .pop_node
+            .run(
+                (),
+                (PAtomic::from(pop_node), |aborted| {
+                    let guard = unsafe { epoch::unprotected() };
+                    let d = aborted.load(Ordering::Relaxed, guard);
+                    unsafe { guard.defer_pdestroy(d) };
+                }),
+                rec,
+                guard,
+                pool,
+            )
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
 
         let req = self
             .try_exchange
             .run(
                 &elim.slots[self.elim_idx],
-                (node, |req| matches!(req, Request::Push(_))),
+                (pop_node, |req| matches!(req, Request::Push(_))),
                 rec,
                 guard,
                 pool,
@@ -202,22 +213,8 @@ where
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.try_pop.reset(guard, pool);
+        self.pop_node.reset(guard, pool);
         self.try_exchange.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> TryPop<T> {
-    #[inline]
-    fn new_pop_node<'g>(
-        &self,
-        guard: &'g Guard,
-        pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<Request<T>>> {
-        let pop_node = POwned::new(Node::from(Request::Pop), pool).into_shared(guard);
-        persist_obj(unsafe { pop_node.deref(pool) }, true);
-        self.exchange_pop_node.store(pop_node, Ordering::Relaxed);
-        persist_obj(&self.exchange_pop_node, true);
-        pop_node
     }
 }
 
@@ -259,7 +256,7 @@ unsafe impl<T: Clone> Sync for ElimStack<T> {}
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
 pub struct Push<T: 'static + Clone> {
-    node: PAtomic<Node<Request<T>>>,
+    node: Checkpoint<PAtomic<Node<Request<T>>>>,
     try_push: TryPush<T>,
 }
 
@@ -274,17 +271,8 @@ impl<T: Clone> Default for Push<T> {
 
 impl<T: Clone> Collectable for Push<T> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut push.node, gc, pool);
+        Checkpoint::filter(&mut push.node, gc, pool);
         TryPush::filter(&mut push.try_push, gc, pool);
-    }
-}
-
-impl<T: Clone> Drop for Push<T> {
-    fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let node = self.node.load(Ordering::Relaxed, guard);
-        assert!(node.is_null(), "reset 되어있지 않음.")
-        // TODO: trypush의 리셋여부 파악?
     }
 }
 
@@ -305,16 +293,24 @@ impl<T: Clone> Memento for Push<T> {
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = if rec {
-            let node = self.node.load(Ordering::Relaxed, guard);
-            if node.is_null() {
-                self.new_node(value, guard, pool)
-            } else {
-                node
-            }
-        } else {
-            self.new_node(value, guard, pool)
-        };
+        let node = POwned::new(Node::from(Request::Push(value)), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
+        let node = self
+            .node
+            .run(
+                (),
+                (PAtomic::from(node), |aborted| {
+                    let guard = unsafe { epoch::unprotected() };
+                    let d = aborted.load(Ordering::Relaxed, guard);
+                    unsafe { guard.defer_pdestroy(d) };
+                }),
+                rec,
+                guard,
+                pool,
+            )
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
 
         if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
             return Ok(());
@@ -325,24 +321,8 @@ impl<T: Clone> Memento for Push<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO: node reset
+        self.node.reset(guard, pool);
         self.try_push.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> Push<T> {
-    #[inline]
-    fn new_node<'g>(
-        &self,
-        value: T,
-        guard: &'g Guard,
-        pool: &'static PoolHandle,
-    ) -> PShared<'g, Node<Request<T>>> {
-        let node = POwned::new(Node::from(Request::Push(value)), pool).into_shared(guard);
-        persist_obj(unsafe { node.deref(pool) }, true);
-        self.node.store(node, Ordering::Relaxed);
-        persist_obj(&self.node, true);
-        node
     }
 }
 
@@ -421,7 +401,7 @@ mod tests {
     use super::*;
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
-    const NR_THREAD: usize = 12;
+    const NR_THREAD: usize = 2;
     const COUNT: usize = 10_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
