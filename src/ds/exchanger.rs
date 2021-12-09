@@ -12,7 +12,7 @@ use crate::{
     ploc::{
         common::Checkpoint,
         smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
-        NeedRetry, Traversable,
+        NeedRetry, RetryLoop, Traversable,
     },
     pmem::{
         ll::persist_obj,
@@ -265,9 +265,9 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
 /// Exchanger의 exchange operation.
 /// 반드시 exchange에 성공함.
 #[derive(Debug)]
-pub struct Exchange<T: Clone> {
+pub struct Exchange<T: 'static + Clone> {
     node: Checkpoint<PAtomic<Node<T>>>,
-    try_xchg: TryExchange<T>,
+    try_xchg: RetryLoop<TryExchange<T>>,
 }
 
 impl<T: Clone> Default for Exchange<T> {
@@ -284,7 +284,7 @@ unsafe impl<T: Clone + Send + Sync> Send for Exchange<T> {}
 impl<T: Clone> Collectable for Exchange<T> {
     fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut xchg.node, gc, pool);
-        TryExchange::<T>::filter(&mut xchg.try_xchg, gc, pool);
+        RetryLoop::filter(&mut xchg.try_xchg, gc, pool);
     }
 }
 
@@ -321,15 +321,9 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        if let Ok(v) = self.try_xchg.run(xchg, (node, cond), rec, guard, pool) {
-            return Ok(v);
-        }
-
-        loop {
-            if let Ok(v) = self.try_xchg.run(xchg, (node, cond), false, guard, pool) {
-                return Ok(v);
-            }
-        }
+        self.try_xchg
+            .run(xchg, (node, cond), rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {

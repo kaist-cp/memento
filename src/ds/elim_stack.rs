@@ -8,7 +8,7 @@ use rand::{thread_rng, Rng};
 use crate::{
     node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
-    ploc::Checkpoint,
+    ploc::{Checkpoint, RetryLoop},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -257,7 +257,7 @@ unsafe impl<T: Clone> Sync for ElimStack<T> {}
 #[derive(Debug)]
 pub struct Push<T: 'static + Clone> {
     node: Checkpoint<PAtomic<Node<Request<T>>>>,
-    try_push: TryPush<T>,
+    try_push: RetryLoop<TryPush<T>>,
 }
 
 impl<T: Clone> Default for Push<T> {
@@ -272,7 +272,7 @@ impl<T: Clone> Default for Push<T> {
 impl<T: Clone> Collectable for Push<T> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut push.node, gc, pool);
-        TryPush::filter(&mut push.try_push, gc, pool);
+        RetryLoop::filter(&mut push.try_push, gc, pool);
     }
 }
 
@@ -312,12 +312,9 @@ impl<T: Clone> Memento for Push<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        if self.try_push.run(stack, node, rec, guard, pool).is_ok() {
-            return Ok(());
-        }
-
-        while self.try_push.run(stack, node, false, guard, pool).is_err() {}
-        Ok(())
+        self.try_push
+            .run(stack, node, rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -331,7 +328,7 @@ unsafe impl<T: 'static + Clone> Send for Push<T> {}
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
 pub struct Pop<T: 'static + Clone> {
-    try_pop: TryPop<T>,
+    try_pop: RetryLoop<TryPop<T>>,
 }
 
 impl<T: Clone> Default for Pop<T> {
@@ -344,7 +341,7 @@ impl<T: Clone> Default for Pop<T> {
 
 impl<T: Clone> Collectable for Pop<T> {
     fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        TryPop::filter(&mut pop.try_pop, gc, pool);
+        RetryLoop::filter(&mut pop.try_pop, gc, pool);
     }
 }
 
@@ -365,15 +362,9 @@ impl<T: Clone> Memento for Pop<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if let Ok(v) = self.try_pop.run(stack, (), rec, guard, pool) {
-            return Ok(v);
-        }
-
-        loop {
-            if let Ok(v) = self.try_pop.run(stack, (), false, guard, pool) {
-                return Ok(v);
-            }
-        }
+        self.try_pop
+            .run(stack, (), rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {

@@ -2,7 +2,7 @@
 
 use crate::node::Node;
 use crate::ploc::smo::{Delete, DeleteHelper, Insert, SMOAtomic};
-use crate::ploc::{Checkpoint, InsertErr, NeedRetry, Traversable};
+use crate::ploc::{Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -107,7 +107,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
     node: Checkpoint<PAtomic<Node<MaybeUninit<T>>>>,
-    try_enq: TryEnqueue<T>,
+    try_enq: RetryLoop<TryEnqueue<T>>,
 }
 
 impl<T: Clone> Default for Enqueue<T> {
@@ -122,7 +122,7 @@ impl<T: Clone> Default for Enqueue<T> {
 impl<T: Clone> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut enq.node, gc, pool);
-        TryEnqueue::filter(&mut enq.try_enq, gc, pool);
+        RetryLoop::filter(&mut enq.try_enq, gc, pool);
     }
 }
 
@@ -162,12 +162,9 @@ impl<T: Clone> Memento for Enqueue<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        if self.try_enq.run(queue, node, rec, guard, pool).is_ok() {
-            return Ok(());
-        }
-
-        while self.try_enq.run(queue, node, false, guard, pool).is_err() {}
-        Ok(())
+        self.try_enq
+            .run(queue, node, rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -301,7 +298,7 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    try_deq: TryDequeue<T>,
+    try_deq: RetryLoop<TryDequeue<T>>,
 }
 
 impl<T: Clone> Default for Dequeue<T> {
@@ -314,7 +311,7 @@ impl<T: Clone> Default for Dequeue<T> {
 
 impl<T: Clone> Collectable for Dequeue<T> {
     fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        TryDequeue::<T>::filter(&mut deq.try_deq, gc, pool);
+        RetryLoop::filter(&mut deq.try_deq, gc, pool);
     }
 }
 
@@ -332,15 +329,9 @@ impl<T: Clone> Memento for Dequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if let Ok(v) = self.try_deq.run(queue, (), rec, guard, pool) {
-            return Ok(v);
-        }
-
-        loop {
-            if let Ok(v) = self.try_deq.run(queue, (), false, guard, pool) {
-                return Ok(v);
-            }
-        }
+        self.try_deq
+            .run(queue, (), rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
