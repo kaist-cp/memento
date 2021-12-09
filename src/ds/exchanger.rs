@@ -136,13 +136,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
         let updated = self
             .update
-            .run(
-                &xchg.slot,
-                (mine, slot, xchg),
-                rec,
-                guard,
-                pool,
-            )
+            .run(&xchg.slot, (mine, slot, xchg), rec, guard, pool)
             .map_err(|_|
             // 실패하면 contention으로 인한 fail 리턴
             TryFail::Busy)?;
@@ -380,7 +374,7 @@ impl<T: Clone> Collectable for Exchanger<T> {
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
+    use rusty_fork::rusty_fork_test;
 
     use crate::{
         pmem::ralloc::{Collectable, GarbageCollection},
@@ -437,14 +431,14 @@ mod tests {
     impl TestRootObj for Exchanger<usize> {}
     impl TestRootMemento<Exchanger<usize>> for ExchangeOnce {}
 
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn exchange_once() {
-        const FILE_NAME: &str = "exchange_once.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    rusty_fork_test! {
+        #[test]
+        fn exchange_once() {
+            const FILE_NAME: &str = "exchange_once.pool";
+            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
+            run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
+        }
     }
 
     /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
@@ -548,13 +542,13 @@ mod tests {
     impl TestRootObj for [Exchanger<usize>; 2] {}
     impl TestRootMemento<[Exchanger<usize>; 2]> for RotateLeft {}
 
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn rotate_left() {
-        const FILE_NAME: &str = "rotate_left.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    rusty_fork_test! {
+        #[test]
+        fn rotate_left() {
+            const FILE_NAME: &str = "rotate_left.pool";
+            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
+            run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
+        }
     }
 }

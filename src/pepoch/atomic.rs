@@ -1889,7 +1889,7 @@ impl<T: ?Sized + Pointable> Default for PShared<'_, T> {
 #[cfg(all(test, not(crossbeam_loom)))]
 mod tests {
     use super::{POwned, PShared};
-    use serial_test::serial;
+    use rusty_fork::rusty_fork_test;
     use std::mem::MaybeUninit;
 
     use crate::test_utils::tests::*;
@@ -1911,13 +1911,13 @@ mod tests {
         static _U: PAtomic<u8> = PAtomic::<u8>::null();
     }
 
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn array_init() {
-        let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-        let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
-        let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
-        assert_eq!(arr.len(), 10);
+    rusty_fork_test! {
+        #[test]
+        fn array_init() {
+            let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
+            let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
+            let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
+            assert_eq!(arr.len(), 10);
+        }
     }
 }

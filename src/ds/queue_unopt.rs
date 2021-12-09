@@ -375,7 +375,7 @@ unsafe impl<T: Clone + Send + Sync> Send for QueueUnOpt<T> {}
 mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
-    use serial_test::serial;
+    use rusty_fork::rusty_fork_test;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;
@@ -473,13 +473,13 @@ mod test {
     //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
     //
-    // TODO: #[serial] 대신 https://crates.io/crates/rusty-fork 사용
-    #[test]
-    #[serial] // Ralloc은 동시에 두 개의 pool 사용할 수 없기 때문에 테스트를 병렬적으로 실행하면 안됨 (Ralloc은 global pool 하나로 관리)
-    fn enq_deq() {
-        const FILE_NAME: &str = "composed_enq_deq.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    rusty_fork_test! {
+        #[test]
+        fn enq_deq() {
+            const FILE_NAME: &str = "composed_enq_deq.pool";
+            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<QueueUnOpt<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+            run_test::<QueueUnOpt<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        }
     }
 }
