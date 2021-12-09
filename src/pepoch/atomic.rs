@@ -1129,10 +1129,10 @@ impl<T: Collectable> Collectable for PAtomic<T> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { unprotected() };
 
-        let mut node = s.load(Ordering::Relaxed, guard);
-        if !node.is_null() {
-            let node_ref = unsafe { node.deref_mut(pool) };
-            T::mark(node_ref, gc);
+        let mut ptr = s.load(Ordering::Relaxed, guard);
+        if !ptr.is_null() && ptr != invalid_ptr() {
+            let t_ref = unsafe { ptr.deref_mut(pool) };
+            T::mark(t_ref, gc);
         }
     }
 }
