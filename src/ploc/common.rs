@@ -107,13 +107,13 @@ where
 
         // Normal run
         self.saved = CachePadded::from(chk.clone());
-        persist_obj(&self.saved, true);
+        persist_obj(&*self.saved, true);
         Ok(chk)
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         self.saved.invalidate();
-        persist_obj(&self.saved, true);
+        persist_obj(&*self.saved, true);
     }
 }
 

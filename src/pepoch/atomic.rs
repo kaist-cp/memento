@@ -1120,7 +1120,7 @@ impl<T> Invalid for PAtomic<T> {
     fn is_invalid(&self) -> bool {
         let guard = unsafe { unprotected() };
         let cur = self.load(Ordering::Relaxed, guard);
-        cur != invalid_ptr()
+        cur == invalid_ptr()
     }
 }
 

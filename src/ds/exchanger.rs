@@ -331,6 +331,7 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
             .run((), PAtomic::from(node), rec, guard, pool)
             .unwrap()
             .load(Ordering::Relaxed, guard);
+
         // TODO: node persist 언제 해?
         // TODO: invalid였을 때 free 어떻게?
 
