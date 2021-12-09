@@ -27,7 +27,7 @@ use core::slice;
 use core::sync::atomic::Ordering;
 
 use super::Guard;
-use crate::ploc::Invalid;
+use crate::ploc::Checkpointable;
 use crate::pmem::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::pool::PoolHandle;
@@ -1110,7 +1110,7 @@ fn invalid_ptr<'g, T>() -> PShared<'g, T> {
     unsafe { PShared::<T>::from_usize(NO_READ) }
 }
 
-impl<T> Invalid for PAtomic<T> {
+impl<T> Checkpointable for PAtomic<T> {
     fn invalidate(&mut self) {
         self.store(invalid_ptr(), Ordering::Relaxed);
     }

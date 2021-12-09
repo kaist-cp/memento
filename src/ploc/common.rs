@@ -47,12 +47,9 @@ pub trait DeallocNode<T, N: Node> {
 }
 
 /// TODO(doc)
-pub trait Invalid {
-    // TODO: 이름 바꾸기->Checkpointable
+pub trait Checkpointable {
     /// TODO(doc)
     fn invalidate(&mut self);
-
-    // TODO: fn invalid() -> T
 
     /// TODO(doc)
     fn is_invalid(&self) -> bool;
@@ -60,15 +57,15 @@ pub trait Invalid {
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct Checkpoint<T: Invalid + Default + Clone + Collectable> {
+pub struct Checkpoint<T: Checkpointable + Default + Clone + Collectable> {
     saved: T,
     _marker: PhantomData<*const T>,
 }
 
-unsafe impl<T: Invalid + Default + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
-unsafe impl<T: Invalid + Default + Clone + Collectable + Send + Sync> Sync for Checkpoint<T> {}
+unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
+unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Sync for Checkpoint<T> {}
 
-impl<T: Invalid + Default + Clone + Collectable> Default for Checkpoint<T> {
+impl<T: Checkpointable + Default + Clone + Collectable> Default for Checkpoint<T> {
     fn default() -> Self {
         let mut t = T::default();
         t.invalidate();
@@ -80,7 +77,7 @@ impl<T: Invalid + Default + Clone + Collectable> Default for Checkpoint<T> {
     }
 }
 
-impl<T: Invalid + Default + Clone + Collectable> Collectable for Checkpoint<T> {
+impl<T: Checkpointable + Default + Clone + Collectable> Collectable for Checkpoint<T> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         T::filter(&mut s.saved, gc, pool);
     }
@@ -88,7 +85,7 @@ impl<T: Invalid + Default + Clone + Collectable> Collectable for Checkpoint<T> {
 
 impl<T> Memento for Checkpoint<T>
 where
-    T: 'static + Invalid + Default + Clone + Collectable,
+    T: 'static + Checkpointable + Default + Clone + Collectable,
 {
     type Object<'o> = ();
     type Input<'o> = (T, fn(T));
@@ -122,7 +119,7 @@ where
     }
 }
 
-impl<T: Invalid + Default + Clone + Collectable> Checkpoint<T> {
+impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
     #[inline]
     fn result<'g>(&self) -> Option<T> {
         if self.saved.is_invalid() {
