@@ -178,15 +178,13 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    delete_param: PAtomic<Node<MaybeUninit<T>>>,
-    delete_opt: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
+    delete: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
-            delete_param: PAtomic::null(),
-            delete_opt: Default::default(),
+            delete: Default::default(),
         }
     }
 }
@@ -195,8 +193,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut try_deq.delete_param, gc, pool);
-        Delete::filter(&mut try_deq.delete_opt, gc, pool);
+        Delete::filter(&mut try_deq.delete, gc, pool);
     }
 }
 
@@ -214,7 +211,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.delete_opt
+        self.delete
             .run(&queue.head, (PShared::null(), queue), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| {
@@ -230,15 +227,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete_opt.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> Drop for TryDequeue<T> {
-    fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let param = self.delete_param.load(Ordering::Relaxed, guard);
-        assert!(param.is_null(), "TryDequeue must be reset before dropped.")
+        self.delete.reset(guard, pool);
     }
 }
 
