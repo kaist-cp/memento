@@ -331,7 +331,7 @@ where
         // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
         self.target_loc.store(PShared::null(), Ordering::Relaxed);
         persist_obj(&self.target_loc, true);
-        self.dealloc(target, guard, pool); // TODO(must): elim stack의 경우 fail일 때도 reset이 불릴 수 있음
+        self.dealloc(target, guard, pool); // TODO(must): exchanger의 경우 실패(혹은 실행 안 함)일 때도 reset이 불릴 수 있음
     }
 }
 
@@ -413,6 +413,7 @@ pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
 // TODO: update는 O 필요 없는 것 같음
 #[derive(Debug)]
 pub struct Update<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
+    target_loc: PAtomic<N>,
     _marker: PhantomData<*const (O, N, G)>,
 }
 
@@ -428,6 +429,7 @@ unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
 impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Update<O, N, G> {
     fn default() -> Self {
         Self {
+            target_loc: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -444,7 +446,7 @@ where
     G: 'static,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (PShared<'o, N>, &'o PAtomic<N>, PShared<'o, N>, &'o O);
+    type Input<'o> = (PShared<'o, N>, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -455,13 +457,13 @@ where
     fn run<'o>(
         &'o mut self,
         point: Self::Object<'o>,
-        (new, save_loc, expected, obj): Self::Input<'o>,
+        (new, expected, obj): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(new, save_loc, guard, pool);
+            return self.result(new, guard, pool);
         }
 
         // Normal run
@@ -495,8 +497,8 @@ where
         }
 
         // 우선 내가 target을 가리키고
-        save_loc.store(target, Ordering::Relaxed);
-        persist_obj(save_loc, false);
+        self.target_loc.store(target, Ordering::Relaxed);
+        persist_obj(&self.target_loc, false);
 
         // 빼려는 node가 내가 넣을 노드 가리키게 함
         owner
@@ -537,7 +539,10 @@ where
             })
     }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
+        self.target_loc.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.target_loc, true);
+    }
 }
 
 impl<O, N, G> Update<O, N, G>
@@ -550,11 +555,10 @@ where
     fn result<'g>(
         &self,
         new: PShared<'_, N>,
-        save_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<PShared<'g, N>, ()> {
-        let target = save_loc.load(Ordering::Relaxed, guard);
+        let target = self.target_loc.load(Ordering::Relaxed, guard);
 
         if !target.is_null() {
             let target_ref = unsafe { target.deref(pool) };
@@ -567,25 +571,6 @@ where
         }
 
         Err(())
-    }
-
-    /// TODO: doc
-    pub fn dealloc(
-        &self,
-        target: PShared<'_, N>,
-        new: PShared<'_, N>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
-        // owner가 내가 아닐 수 있음
-        // 따라서 owner를 확인 후 내가 update한 게 맞는다면 free
-        unsafe {
-            let owner = target.deref(pool).owner().load(Ordering::SeqCst);
-
-            if owner == new.into_usize() {
-                guard.defer_pdestroy(target);
-            }
-        }
     }
 
     /// # Safety

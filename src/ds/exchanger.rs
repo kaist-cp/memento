@@ -47,10 +47,7 @@ pub struct TryExchange<T: Clone> {
     wait_slot: Checkpoint<PAtomic<Node<T>>>,
 
     insert: Insert<Exchanger<T>, Node<T>>,
-
-    update_param: PAtomic<Node<T>>,
     update: Update<Exchanger<T>, Node<T>, Self>,
-
     delete: Delete<Exchanger<T>, Node<T>, Self>,
 }
 
@@ -60,7 +57,6 @@ impl<T: Clone> Default for TryExchange<T> {
             init_slot: Default::default(),
             wait_slot: Default::default(),
             insert: Default::default(),
-            update_param: PAtomic::null(),
             update: Default::default(),
             delete: Default::default(),
         }
@@ -69,8 +65,6 @@ impl<T: Clone> Default for TryExchange<T> {
 
 impl<T: Clone> Collectable for TryExchange<T> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut s.update_param, gc, pool);
-
         Checkpoint::filter(&mut s.init_slot, gc, pool);
         Checkpoint::filter(&mut s.wait_slot, gc, pool);
         Insert::filter(&mut s.insert, gc, pool);
@@ -144,7 +138,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
             .update
             .run(
                 &xchg.slot,
-                (mine, &self.update_param, slot, xchg),
+                (mine, slot, xchg),
                 rec,
                 guard,
                 pool,
@@ -165,8 +159,6 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.update_param.store(PShared::null(), Ordering::Relaxed);
-
         self.init_slot.reset(guard, pool);
         self.wait_slot.reset(guard, pool);
         self.insert.reset(guard, pool);
