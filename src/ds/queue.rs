@@ -330,6 +330,58 @@ impl<T: Clone> Memento for Dequeue<T> {
 
 unsafe impl<T: Clone> Send for Dequeue<T> {}
 
+/// Must dequeue a value from Queue
+#[derive(Debug)]
+pub struct DequeueSome<T: 'static + Clone> {
+    deq: Dequeue<T>,
+}
+
+impl<T: Clone> Default for DequeueSome<T> {
+    fn default() -> Self {
+        Self {
+            deq: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for DequeueSome<T> {
+    fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Dequeue::filter(&mut deq.deq, gc, pool);
+    }
+}
+
+impl<T: Clone> Memento for DequeueSome<T> {
+    type Object<'o> = &'o Queue<T>;
+    type Input<'o> = ();
+    type Output<'o> = T;
+    type Error<'o> = !;
+
+    fn run<'o>(
+        &mut self,
+        queue: Self::Object<'o>,
+        (): Self::Input<'o>,
+        rec: bool,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if let Some(v) = self.deq.run(queue, (), rec, guard, pool).unwrap() {
+            return Ok(v);
+        }
+
+        loop {
+            if let Some(v) = self.deq.run(queue, (), false, guard, pool).unwrap() {
+                return Ok(v);
+            }
+        }
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.deq.reset(guard, pool);
+    }
+}
+
+unsafe impl<T: Clone> Send for DequeueSome<T> {}
+
 /// Persistent Queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
