@@ -4,10 +4,9 @@ use core::sync::atomic::Ordering;
 
 use super::stack::*;
 use crate::node::Node;
-use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared, PDestroyable};
-use crate::ploc::common::DeallocNode;
+use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
-use crate::ploc::{Traversable, Checkpoint};
+use crate::ploc::{Checkpoint, Traversable};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -71,14 +70,12 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
 /// TreiberStack의 try pop operation
 #[derive(Debug)]
 pub struct TryPop<T: Clone> {
-    delete_param: PAtomic<Node<T>>,
     delete: DeleteUnOpt<TreiberStack<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryPop<T> {
     fn default() -> Self {
         Self {
-            delete_param: PAtomic::null(),
             delete: Default::default(),
         }
     }
@@ -88,7 +85,6 @@ unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
 
 impl<T: Clone> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut try_pop.delete_param, gc, pool);
         DeleteUnOpt::filter(&mut try_pop.delete, gc, pool);
     }
 }
@@ -108,42 +104,13 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
-            .run(
-                &stack.top,
-                (&self.delete_param, stack, Self::get_next),
-                rec,
-                guard,
-                pool,
-            )
+            .run(&stack.top, (stack, Self::get_next), rec, guard, pool)
             .map(|ret| ret.map(|popped| unsafe { popped.deref(pool) }.data.clone()))
             .map_err(|_| TryFail)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        let param = self.delete_param.load(Ordering::Relaxed, guard);
-
-        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        self.delete_param.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.delete_param, true);
-        self.dealloc(param, guard, pool);
-
         self.delete.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> DeallocNode<T, Node<T>> for TryPop<T> {
-    #[inline]
-    fn dealloc(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) {
-        self.delete.dealloc(target, guard, pool);
-    }
-}
-
-impl<T: Clone> Drop for TryPop<T> {
-    fn drop(&mut self) {
-        let guard = unsafe { epoch::unprotected() };
-        let param = self.delete_param.load(Ordering::Relaxed, guard);
-        assert!(param.is_null(), "reset 되어있지 않음.")
     }
 }
 

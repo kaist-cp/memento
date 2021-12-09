@@ -6,7 +6,7 @@ use crossbeam_epoch::Guard;
 
 use super::{common::NodeUnOpt, InsertErr, Traversable, EMPTY};
 use crate::{
-    pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
+    pepoch::{atomic::Pointer, PAtomic, PShared},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -108,6 +108,7 @@ impl<O: Traversable<N>, N: NodeUnOpt + Collectable> InsertUnOpt<O, N> {
 /// TODO: doc
 #[derive(Debug)]
 pub struct DeleteUnOpt<O, N: NodeUnOpt + Collectable> {
+    target_loc: PAtomic<N>,
     _marker: PhantomData<*const (O, N)>,
 }
 
@@ -117,6 +118,7 @@ unsafe impl<O, N: NodeUnOpt + Collectable + Send + Sync> Sync for DeleteUnOpt<O,
 impl<O, N: NodeUnOpt + Collectable> Default for DeleteUnOpt<O, N> {
     fn default() -> Self {
         Self {
+            target_loc: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -133,7 +135,6 @@ where
 {
     type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (
-        &'o PAtomic<N>,
         &'o O,
         fn(PShared<'_, N>, &O, &'o Guard, &PoolHandle) -> Result<Option<PShared<'o, N>>, ()>, // OK(Some or None): next or empty, Err: need retry
     );
@@ -147,13 +148,13 @@ where
     fn run<'o>(
         &'o mut self,
         point: Self::Object<'o>,
-        (target_loc, obj, get_next): Self::Input<'o>,
+        (obj, get_next): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(obj, target_loc, guard, pool);
+            return self.result(obj, guard, pool);
         }
 
         // Normal run
@@ -162,16 +163,17 @@ where
         let next = match get_next(target, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
-                target_loc.store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
-                persist_obj(&target_loc, true);
+                self.target_loc
+                    .store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
+                persist_obj(&self.target_loc, true);
                 return Ok(None);
             }
             Err(()) => return Err(()),
         };
 
         // 우선 내가 target을 가리키고
-        target_loc.store(target, Ordering::Relaxed);
-        persist_obj(target_loc, false);
+        self.target_loc.store(target, Ordering::Relaxed);
+        persist_obj(&self.target_loc, false);
 
         // target을 ack해주고
         let target_ref = unsafe { target.deref(pool) };
@@ -213,11 +215,10 @@ where
     fn result<'g>(
         &self,
         obj: &O,
-        target_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()> {
-        let target = target_loc.load(Ordering::Relaxed, guard);
+        let target = self.target_loc.load(Ordering::Relaxed, guard);
 
         if target.tag() & EMPTY == EMPTY {
             // post-crash execution (empty)
@@ -255,21 +256,6 @@ where
         }
 
         Err(())
-    }
-
-    /// TODO: doc
-    pub fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) {
-        if target.is_null() || target.tag() == EMPTY {
-            return;
-        }
-
-        // owner가 내가 아닐 수 있음
-        // 따라서 owner를 확인 후 내가 delete한게 맞는다면 free
-        unsafe {
-            if target.deref(pool).owner_unopt().load(Ordering::SeqCst) == self.id(pool) {
-                guard.defer_pdestroy(target);
-            }
-        }
     }
 
     #[inline]
