@@ -8,11 +8,11 @@ use std::io::Error;
 use std::path::Path;
 use std::{fs, mem};
 
-use crate::*;
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
+use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
 
@@ -375,9 +375,9 @@ mod tests {
     use log::{self as _, debug};
     use serial_test::serial;
 
-    use crate::Memento;
     use crate::pmem::pool::*;
     use crate::test_utils::tests::*;
+    use crate::Memento;
 
     #[derive(Default)]
     struct RootMemento {

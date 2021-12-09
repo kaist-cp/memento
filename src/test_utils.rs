@@ -8,9 +8,9 @@ pub mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
-    use crate::{Memento, PDefault};
     use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
+    use crate::{Memento, PDefault};
 
     /// 테스트 파일이 위치할 경로 계산
     ///

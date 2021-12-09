@@ -1,16 +1,14 @@
 //! Persistent Stack
 
-use crate::*;
 use crate::pmem::ralloc::Collectable;
+use crate::*;
 
 /// TODO: doc
 #[derive(Debug)]
 pub struct TryFail;
 
 /// Persistent stack trait
-pub trait Stack<T: 'static + Clone>:
-    'static + Default + Collectable
-{
+pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
     type Push: for<'o> Memento<Object<'o> = &'o Self, Input<'o> = T, Output<'o> = (), Error<'o> = !>;
@@ -34,8 +32,8 @@ pub(crate) mod tests {
     use crossbeam_epoch::Guard;
 
     use super::*;
-    use crate::pmem::PoolHandle;
     use crate::pmem::ralloc::GarbageCollection;
+    use crate::pmem::PoolHandle;
     use crate::test_utils::tests::*;
 
     pub(crate) struct PushPop<S: Stack<usize>, const NR_THREAD: usize, const COUNT: usize> {

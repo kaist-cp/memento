@@ -2,16 +2,13 @@
 
 // TODO: Alloc도 memento가 될 수도 있음
 
-use std::{
-    marker::PhantomData,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{marker::PhantomData, sync::atomic::AtomicUsize};
 
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
 
 use crate::{
-    pepoch::{atomic::Pointer, PAtomic, PShared},
+    pepoch::PShared,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -53,7 +50,7 @@ pub trait DeallocNode<T, N: Node> {
 /// TODO(doc)
 pub trait Invalid {
     /// TODO(doc)
-    fn invalid() -> Self;
+    fn invalidate(&mut self);
 
     /// TODO(doc)
     fn is_invalid(&self) -> bool;
@@ -61,30 +58,33 @@ pub trait Invalid {
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct Checkpoint<T: Invalid + Clone + Collectable> {
+pub struct Checkpoint<T: Invalid + Default + Clone + Collectable> {
     saved: CachePadded<T>,
     _marker: PhantomData<*const T>,
 }
 
-unsafe impl<T: Invalid + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
-unsafe impl<T: Invalid + Clone + Collectable + Send + Sync> Sync for Checkpoint<T> {}
+unsafe impl<T: Invalid + Default + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
+unsafe impl<T: Invalid + Default + Clone + Collectable + Send + Sync> Sync for Checkpoint<T> {}
 
-impl<T: Invalid + Clone + Collectable> Default for Checkpoint<T> {
+impl<T: Invalid + Default + Clone + Collectable> Default for Checkpoint<T> {
     fn default() -> Self {
+        let mut t = T::default();
+        t.invalidate();
+
         Self {
-            saved: CachePadded::from(T::invalid()),
+            saved: CachePadded::from(t),
             _marker: Default::default(),
         }
     }
 }
 
-impl<T: Invalid + Clone + Collectable> Collectable for Checkpoint<T> {
+impl<T: Invalid + Default + Clone + Collectable> Collectable for Checkpoint<T> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<T> Memento for Checkpoint<T>
 where
-    T: 'static + Invalid + Clone + Collectable,
+    T: 'static + Invalid + Default + Clone + Collectable,
 {
     type Object<'o> = ();
     type Input<'o> = T;
@@ -96,7 +96,7 @@ where
         (): Self::Object<'o>,
         chk: Self::Input<'o>, // TODO: point는 object로, save_loc은 Load가 들고 있기
         rec: bool,
-        guard: &'o Guard,
+        _: &'o Guard,
         _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
@@ -111,16 +111,19 @@ where
         Ok(chk)
     }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
+        self.saved.invalidate();
+        persist_obj(&self.saved, true);
+    }
 }
 
-impl<T: Invalid + Clone + Collectable> Checkpoint<T> {
+impl<T: Invalid + Default + Clone + Collectable> Checkpoint<T> {
     #[inline]
     fn result<'g>(&self) -> Option<T> {
         if self.saved.is_invalid() {
             None
         } else {
-            Some(*self.saved.clone())
+            Some((*self.saved).clone())
         }
     }
 }
