@@ -29,6 +29,7 @@
 // #![deny(single_use_lifetimes)] // Allowed due to GAT
 // #![deny(unused_lifetimes)] // Allowed due to GAT
 // #![deny(unstable_features)] // Allowed due to GAT
+#![allow(clippy::type_complexity)] // to allow SMO prepare functions
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
 #![feature(generic_associated_types)] // to define fields of `Memento`
 #![feature(asm)]
@@ -213,11 +214,9 @@ impl<M: Memento> Memento for AtomicReset<M> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if rec {
-            if self.resetting {
-                self.reset(guard, pool);
-                return self.composed.run(object, input, false, guard, pool);
-            }
+        if rec && self.resetting {
+            self.reset(guard, pool);
+            return self.composed.run(object, input, false, guard, pool);
         }
 
         self.composed.run(object, input, rec, guard, pool)

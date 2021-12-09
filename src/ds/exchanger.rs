@@ -12,7 +12,7 @@ use crate::{
     ploc::{
         common::Checkpoint,
         smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
-        Traversable,
+        NeedRetry, Traversable,
     },
     pmem::{
         ll::persist_obj,
@@ -209,7 +209,7 @@ impl<T: 'static + Clone> TryExchange<T> {
             }
         }
 
-        return Ok(Self::succ_after_wait(mine, guard, pool));
+        Ok(Self::succ_after_wait(mine, guard, pool))
     }
 
     #[inline]
@@ -235,12 +235,12 @@ impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
         _: &Exchanger<T>,
         _: &'g Guard,
         _: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<T>>>, NeedRetry> {
         if cur == mine {
             return Ok(Some(PShared::<_>::null()));
         }
 
-        Err(())
+        Err(NeedRetry)
     }
 
     fn prepare_update<'g>(

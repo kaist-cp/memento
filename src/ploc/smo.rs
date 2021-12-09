@@ -132,6 +132,10 @@ impl DeleteOrNode {
 }
 
 /// TODO: doc
+#[derive(Debug)]
+pub struct NeedRetry;
+
+/// TODO: doc
 // TODO: 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
 pub trait DeleteHelper<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
@@ -141,7 +145,7 @@ pub trait DeleteHelper<O, N> {
         obj: &O,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, N>>, ()>;
+    ) -> Result<Option<PShared<'g, N>>, NeedRetry>;
 
     /// 계속 진행 여부를 리턴
     fn prepare_update<'g>(
@@ -271,7 +275,7 @@ where
                 persist_obj(&self.target_loc, true);
                 return Ok(None);
             }
-            Err(()) => return Err(()),
+            Err(NeedRetry) => return Err(()),
         };
 
         // 우선 내가 target을 가리키고
@@ -469,8 +473,8 @@ where
         // TODO: 찜하기 전에 load 먼저 해보는 건데, 그 순서는 실험을 하고 나서 정하자
         if o != no_owner() {
             persist_obj(owner, false);
-            let next =
-                DeleteOrNode::is_node(o).unwrap_or(G::node_when_deleted(target, guard, pool));
+            let next = DeleteOrNode::is_node(o)
+                .unwrap_or_else(|| G::node_when_deleted(target, guard, pool));
             let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
             // 빠졌던 노드를 다시 들어오게 되는 경우는 없어야 함
             return Err(());
@@ -510,8 +514,8 @@ where
                 persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
 
                 // point가 바뀌어야 할 next를 설정
-                let next =
-                    DeleteOrNode::is_node(cur).unwrap_or(G::node_when_deleted(target, guard, pool));
+                let next = DeleteOrNode::is_node(cur)
+                    .unwrap_or_else(|| G::node_when_deleted(target, guard, pool));
 
                 // point를 승자가 원하는 node로 바꿔줌
                 let _ =

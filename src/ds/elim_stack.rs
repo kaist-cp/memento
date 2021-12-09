@@ -23,7 +23,7 @@ use super::{
     treiber_stack::{self, TreiberStack},
 };
 
-const ELIM_SIZE: usize = 1;
+const ELIM_SIZE: usize = 2;
 
 #[inline]
 fn get_random_elim_index() -> usize {

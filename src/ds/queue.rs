@@ -2,7 +2,7 @@
 
 use crate::node::Node;
 use crate::ploc::smo::{Delete, DeleteHelper, Insert, SMOAtomic};
-use crate::ploc::{Checkpoint, InsertErr, Traversable};
+use crate::ploc::{Checkpoint, InsertErr, NeedRetry, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -252,7 +252,7 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
         queue: &Queue<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>>>>, ()> {
+    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>>>>, NeedRetry> {
         let old_head_ref = unsafe { old_head.deref(pool) };
         let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -270,7 +270,7 @@ impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
                     .tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-            return Err(());
+            return Err(NeedRetry);
         }
 
         Ok(Some(next))

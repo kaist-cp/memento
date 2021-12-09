@@ -62,8 +62,14 @@ pub struct Checkpoint<T: Checkpointable + Default + Clone + Collectable> {
     _marker: PhantomData<*const T>,
 }
 
-unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
-unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Sync for Checkpoint<T> {}
+unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Send
+    for Checkpoint<T>
+{
+}
+unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Sync
+    for Checkpoint<T>
+{
+}
 
 impl<T: Checkpointable + Default + Clone + Collectable> Default for Checkpoint<T> {
     fn default() -> Self {
@@ -121,7 +127,7 @@ where
 
 impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
     #[inline]
-    fn result<'g>(&self) -> Option<T> {
+    fn result(&self) -> Option<T> {
         if self.saved.is_invalid() {
             None
         } else {
