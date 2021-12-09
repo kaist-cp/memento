@@ -221,6 +221,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
                         .next
                         .load(Ordering::SeqCst, guard); // TODO: next를 다시 load해서 성능 저하
                     let next_ref = unsafe { next.deref(pool) };
+                    unsafe { guard.defer_pdestroy(popped) };
                     unsafe { (*next_ref.data.as_ptr()).clone() }
                 })
             })
