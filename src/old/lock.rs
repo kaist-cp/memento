@@ -9,7 +9,7 @@ use std::{
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
-    persistent::*,
+    *,
     pmem::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
@@ -78,7 +78,7 @@ impl<L: RawLock> PDefault for Mutex<L, usize> {
 /// ```rust
 /// # use memento::{
 /// #   pmem::pool::*,
-/// #   persistent::*,
+/// #   *,
 /// #   test_utils::tests::get_dummy_handle
 /// # };
 /// # let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();

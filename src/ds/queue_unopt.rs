@@ -9,7 +9,7 @@ use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
-use crate::persistent::*;
+use crate::*;
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 

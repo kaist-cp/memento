@@ -8,7 +8,7 @@ pub mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
-    use crate::persistent::{Memento, PDefault};
+    use crate::{Memento, PDefault};
     use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
 

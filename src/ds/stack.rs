@@ -1,6 +1,6 @@
 //! Persistent Stack
 
-use crate::persistent::*;
+use crate::*;
 use crate::pmem::ralloc::Collectable;
 
 /// TODO: doc

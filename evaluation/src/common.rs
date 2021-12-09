@@ -1,7 +1,7 @@
 //! Abstraction for evaluation
 
 use crossbeam_epoch::Guard;
-use memento::persistent::{Memento, PDefault};
+use memento::{Memento, PDefault};
 use memento::pmem::Pool;
 use rand::Rng;
 use std::ptr;

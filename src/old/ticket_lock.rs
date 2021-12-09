@@ -13,7 +13,7 @@ use crate::{
     list::{self, List},
     lock::RawLock,
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
-    persistent::*,
+    *,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},

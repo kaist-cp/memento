@@ -11,7 +11,7 @@ use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PShared},
-    persistent::Memento,
+    Memento,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},

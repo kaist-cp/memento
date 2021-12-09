@@ -8,15 +8,19 @@ use rand::{thread_rng, Rng};
 use crate::{
     node::Node,
     pepoch::{PAtomic, POwned, PShared},
-    persistent::{AtomicReset, Memento, PDefault},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
+    AtomicReset, Memento, PDefault,
 };
 
-use super::{treiber_stack::{self, TreiberStack}, exchanger::{TryExchange, Exchanger}, stack::{TryFail, Stack}};
+use super::{
+    exchanger::{Exchanger, TryExchange},
+    stack::{Stack, TryFail},
+    treiber_stack::{self, TreiberStack},
+};
 
 const ELIM_SIZE: usize = 4;
 
@@ -421,7 +425,7 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::{test_utils::tests::*, ds::stack::tests::PushPop};
+    use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;

@@ -8,7 +8,7 @@ use std::io::Error;
 use std::path::Path;
 use std::{fs, mem};
 
-use crate::persistent::*;
+use crate::*;
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
@@ -33,7 +33,7 @@ const IX_MEMENTO_START: u64 = 2; // root memento(s)는 Ralloc의 2번째 root부
 /// ```no_run
 /// # // "이렇게 사용한다"만 보이기 위해 파일을 실제로 만들진 않고 "no_run"으로 함
 /// # use memento::pmem::pool::*;
-/// # use memento::persistent::*;
+/// # use memento::*;
 /// # use memento::test_utils::tests::{DummyRootObj as MyRootObj, DummyRootMemento as MyRootMemento};
 /// # use crossbeam_epoch::{self as epoch};
 /// // 풀 생성 후 풀의 핸들러 얻기
@@ -375,7 +375,7 @@ mod tests {
     use log::{self as _, debug};
     use serial_test::serial;
 
-    use crate::persistent::Memento;
+    use crate::Memento;
     use crate::pmem::pool::*;
     use crate::test_utils::tests::*;
 

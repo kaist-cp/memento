@@ -3,7 +3,7 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use memento::{
     pepoch::PAtomic,
-    persistent::{Memento, PDefault},
+    {Memento, PDefault},
     pipe::Pipe,
     pmem::{ralloc::Collectable, PoolHandle},
     queue::{DequeueSome, Enqueue, Queue},

@@ -9,7 +9,7 @@ use crossbeam_epoch::{self as epoch, Guard};
 use crate::{
     node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
-    persistent::{Memento, PDefault},
+    {Memento, PDefault},
     ploc::{
         common::Load,
         smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update}, Traversable,

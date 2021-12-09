@@ -11,7 +11,7 @@ use super::{
 
 use crate::{
     pepoch::{atomic::Pointer, PAtomic, PDestroyable, PShared},
-    persistent::Memento,
+    Memento,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},

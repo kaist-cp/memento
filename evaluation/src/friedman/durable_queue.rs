@@ -4,7 +4,7 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
-use memento::persistent::*;
+use memento::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{ll::*, pool::*};
 use std::mem::MaybeUninit;

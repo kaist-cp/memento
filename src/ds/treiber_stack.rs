@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use super::stack::*;
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
-use crate::persistent::*;
+use crate::*;
 use crate::ploc::common::DeallocNode;
 use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
 use crate::ploc::Traversable;
