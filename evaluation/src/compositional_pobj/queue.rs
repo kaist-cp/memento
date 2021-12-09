@@ -2,8 +2,8 @@ use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::persistent::*;
-use memento::plocation::pool::*;
-use memento::plocation::ralloc::{Collectable, GarbageCollection};
+use memento::pmem::pool::*;
+use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::queue::*;
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
