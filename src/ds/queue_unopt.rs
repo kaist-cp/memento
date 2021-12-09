@@ -377,7 +377,7 @@ mod test {
     use serial_test::serial;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 1_000_000;
+    const COUNT: usize = 10_000;
 
     struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],

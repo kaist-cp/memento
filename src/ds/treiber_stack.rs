@@ -321,7 +321,7 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 1_000_000;
+    const COUNT: usize = 10_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 

@@ -6,13 +6,13 @@ use crossbeam_epoch::Guard;
 
 use super::{common::NodeUnOpt, InsertErr, Traversable, EMPTY};
 use crate::{
-    pepoch::{atomic::Pointer, PAtomic, PShared},
+    pepoch::{PAtomic, PShared},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,
     },
-    Memento,
+    Memento, ploc::no_owner,
 };
 
 /// TODO: doc
@@ -192,7 +192,7 @@ where
         target_ref
             .owner_unopt()
             .compare_exchange(
-                Self::no_owner(), // TODO: no_owner 통합
+                no_owner(),
                 self.id(pool),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
@@ -238,11 +238,11 @@ where
             if !obj.search(target, guard, pool) {
                 // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
                 // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
-                if owner == Self::no_owner()
+                if owner == no_owner()
                     && target_ref
                         .owner_unopt()
                         .compare_exchange(
-                            Self::no_owner(),
+                            no_owner(),
                             self.id(pool),
                             Ordering::SeqCst,
                             Ordering::SeqCst,
@@ -262,12 +262,5 @@ where
     fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴 때마다 주소 바뀌니 상대주소로 식별해야 함
         unsafe { self.as_pptr(pool).into_offset() }
-    }
-
-    /// TODO: doc
-    #[inline]
-    pub fn no_owner() -> usize {
-        let null = PShared::<Self>::null();
-        null.into_usize()
     }
 }
