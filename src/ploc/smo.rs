@@ -162,12 +162,18 @@ pub trait DeleteHelper<O, N> {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct SMOAtomic<O, N, G: DeleteHelper<O, N>> {
+pub struct SMOAtomic<O, N: Collectable, G: DeleteHelper<O, N>> {
     ptr: PAtomic<N>,
     _marker: PhantomData<*const (O, G)>,
 }
 
-impl<O, N, G: DeleteHelper<O, N>> Default for SMOAtomic<O, N, G> {
+impl<O, N: Collectable, G: DeleteHelper<O, N>> Collectable for SMOAtomic<O, N, G> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        PAtomic::filter(&mut s.ptr, gc, pool);
+    }
+}
+
+impl<O, N: Collectable, G: DeleteHelper<O, N>> Default for SMOAtomic<O, N, G> {
     fn default() -> Self {
         Self {
             ptr: PAtomic::null(),
@@ -176,7 +182,7 @@ impl<O, N, G: DeleteHelper<O, N>> Default for SMOAtomic<O, N, G> {
     }
 }
 
-impl<O, N, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
+impl<O, N: Collectable, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
             ptr: PAtomic::from(node),
@@ -185,7 +191,7 @@ impl<O, N, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
     }
 }
 
-impl<O, N, G: DeleteHelper<O, N>> Deref for SMOAtomic<O, N, G> {
+impl<O, N: Collectable, G: DeleteHelper<O, N>> Deref for SMOAtomic<O, N, G> {
     type Target = PAtomic<N>;
 
     fn deref(&self) -> &Self::Target {
@@ -193,8 +199,8 @@ impl<O, N, G: DeleteHelper<O, N>> Deref for SMOAtomic<O, N, G> {
     }
 }
 
-unsafe impl<O, N, G: DeleteHelper<O, N>> Send for SMOAtomic<O, N, G> {}
-unsafe impl<O, N, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G> {}
+unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Send for SMOAtomic<O, N, G> {}
+unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G> {}
 
 /// TODO: doc
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
