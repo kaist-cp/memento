@@ -115,11 +115,11 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         node: Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -215,11 +215,11 @@ impl<T: Clone> Memento for Enqueue<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         value: Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = if rec {
@@ -293,11 +293,11 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         mine_loc: Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete_opt
@@ -404,11 +404,11 @@ impl<T: Clone> Memento for Dequeue<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if let Ok(v) = self.try_deq.run(queue, &self.mine, rec, guard, pool) {
@@ -540,11 +540,11 @@ mod test {
 
         /// idempotent enq_deq
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             queue: Self::Object<'o>,
             tid: Self::Input<'o>,
             rec: bool,
-            guard: &Guard,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             match tid {

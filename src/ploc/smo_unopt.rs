@@ -56,7 +56,7 @@ where
     type Error<'o> = InsertErr<'o, N>;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         point: Self::Object<'o>,
         (mut new, obj, prepare): Self::Input<'o>,
         rec: bool,
@@ -147,7 +147,7 @@ where
     type Error<'o> = ();
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         point: Self::Object<'o>,
         (obj, get_next): Self::Input<'o>,
         rec: bool,

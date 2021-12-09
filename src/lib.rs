@@ -132,10 +132,10 @@ impl<T> Frozen<T> {
 /// * `Memento`는 자신 혹은 자신이 사용한 `Guard`가 Drop 될 때 *반드시* `reset()` 되어있는 상태여야 함.
 pub trait Memento: Default + Collectable {
     /// Persistent op의 target object
-    type Object<'o>;
+    type Object<'o>: Clone;
 
     /// Persistent op의 input type
-    type Input<'o>;
+    type Input<'o>: Clone;
 
     /// Persistent op의 output type
     type Output<'o>: Clone
@@ -158,7 +158,7 @@ pub trait Memento: Default + Collectable {
     /// ## Argument
     /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
         rec: bool, // TODO: template parameter
@@ -206,7 +206,7 @@ impl<M: Memento> Memento for AtomicReset<M> {
     = M::Error<'o>;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
         rec: bool,

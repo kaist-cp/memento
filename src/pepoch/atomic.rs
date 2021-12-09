@@ -19,8 +19,6 @@
 //!     - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
 //!     - 모든 test를 persistent 버전으로 변경
 
-// TODO: `*::new`, `*::from`은 함수 내에서 persist 하고 리턴해야 할 듯
-
 use core::cmp;
 use core::fmt;
 use core::marker::PhantomData;

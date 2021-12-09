@@ -128,7 +128,7 @@ impl<L: 'static + RawLock, T: 'static> Memento for Lock<L, T> {
     type Error = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         mtx: Self::Object<'o>,
         (): Self::Input<'o>,
         guard: &Guard,
@@ -253,7 +253,7 @@ pub(crate) mod tests {
         type Error = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             count: Self::Object<'o>,
             rhs: Self::Input<'o>,
             guard: &Guard,
@@ -356,7 +356,7 @@ pub(crate) mod tests {
         type Error = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             x: Self::Object<'o>,
             tid: Self::Input<'o>,
             guard: &Guard,

@@ -43,7 +43,7 @@
 //     type Error<'o> = InsertErr<'o, N>;
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (mut new, point, before_cas): Self::Input<'o>,
 //         rec: bool,
@@ -159,7 +159,7 @@
 //     type Error<'o> = ();
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (target_loc, point, get_next): Self::Input<'o>,
 //         rec: bool,
@@ -371,7 +371,7 @@
 //     type Error<'o> = ();
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (target_loc, point, get_next): Self::Input<'o>,
 //         rec: bool,

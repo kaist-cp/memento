@@ -48,8 +48,11 @@ pub trait DeallocNode<T, N: Node> {
 
 /// TODO(doc)
 pub trait Invalid {
+    // TODO: 이름 바꾸기->Checkpointable
     /// TODO(doc)
     fn invalidate(&mut self);
+
+    // TODO: fn invalid() -> T
 
     /// TODO(doc)
     fn is_invalid(&self) -> bool;
@@ -78,7 +81,9 @@ impl<T: Invalid + Default + Clone + Collectable> Default for Checkpoint<T> {
 }
 
 impl<T: Invalid + Default + Clone + Collectable> Collectable for Checkpoint<T> {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        T::filter(&mut s.saved, gc, pool);
+    }
 }
 
 impl<T> Memento for Checkpoint<T>
@@ -90,9 +95,8 @@ where
     type Output<'o> = T;
     type Error<'o> = !;
 
-    // #[inline]
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         (): Self::Object<'o>,
         (chk, if_exists): Self::Input<'o>,
         rec: bool,
@@ -129,8 +133,64 @@ impl<T: Invalid + Default + Clone + Collectable> Checkpoint<T> {
     }
 }
 
-impl<T: Invalid + Default + Clone + Collectable> Drop for Checkpoint<T> {
-    fn drop(&mut self) {
-        assert!(self.saved.is_invalid(), "Checkpoint must be reset before dropped.")
+/// TODO(doc)
+#[derive(Debug)]
+pub struct RetryLoop<M: Memento> {
+    try_mmt: M,
+}
+
+unsafe impl<M: Memento + Send + Sync> Send for RetryLoop<M> {}
+unsafe impl<M: Memento + Send + Sync> Sync for RetryLoop<M> {}
+
+impl<M: Memento> Default for RetryLoop<M> {
+    fn default() -> Self {
+        Self {
+            try_mmt: Default::default(),
+        }
+    }
+}
+
+impl<M: Memento> Collectable for RetryLoop<M> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        M::filter(&mut s.try_mmt, gc, pool);
+    }
+}
+
+impl<M> Memento for RetryLoop<M>
+where
+    M: 'static + Memento,
+{
+    type Object<'o> = M::Object<'o>;
+    type Input<'o> = M::Input<'o>;
+    type Output<'o> = M::Output<'o>;
+    type Error<'o> = M::Error<'o>;
+
+    fn run<'o>(
+        &mut self,
+        obj: Self::Object<'o>,
+        input: Self::Input<'o>,
+        rec: bool,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if let Ok(ret) = self
+            .try_mmt
+            .run(obj.clone(), input.clone(), rec, guard, pool)
+        {
+            return Ok(ret);
+        }
+
+        loop {
+            if let Ok(ret) = self
+                .try_mmt
+                .run(obj.clone(), input.clone(), false, guard, pool)
+            {
+                return Ok(ret);
+            }
+        }
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.try_mmt.reset(guard, pool);
     }
 }

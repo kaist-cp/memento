@@ -398,11 +398,11 @@ mod tests {
         type Error<'o> = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
             _: bool,
-            _: &Guard,
+            _: &'o Guard,
             _: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             if self.flag {

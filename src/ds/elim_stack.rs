@@ -76,11 +76,11 @@ where
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         elim: Self::Object<'o>,
         node: Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if self
@@ -154,11 +154,11 @@ where
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         elim: Self::Object<'o>,
         (): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if let Ok(popped) = self.try_pop.run(&elim.inner, (), rec, guard, pool) {
@@ -286,11 +286,11 @@ impl<T: Clone> Memento for Push<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         stack: Self::Object<'o>,
         value: Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = POwned::new(Node::from(Request::Push(value)), pool);
@@ -358,11 +358,11 @@ impl<T: Clone> Memento for Pop<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         stack: Self::Object<'o>,
         (): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if let Ok(v) = self.try_pop.run(stack, (), rec, guard, pool) {

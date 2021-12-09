@@ -70,7 +70,7 @@ where
     type Error = ();
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input<'o>,
         guard: &'o Guard,
@@ -178,7 +178,7 @@ mod tests {
         type Error = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             q_arr: Self::Object<'o>,
             tid: Self::Input<'o>,
             guard: &Guard,

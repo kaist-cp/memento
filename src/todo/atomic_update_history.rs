@@ -101,7 +101,7 @@
 //     type Error<'o> = ();
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (target_loc, point): Self::Input<'o>,
 //         rec: bool,
@@ -281,7 +281,7 @@
 //     type Error<'o> = ();
 
 //     fn run<'o>(
-//         &'o mut self,
+//         &mut self,
 //         obj: Self::Object<'o>,
 //         (new, save_loc, point): Self::Input<'o>,
 //         rec: bool,

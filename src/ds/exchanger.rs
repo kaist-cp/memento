@@ -82,7 +82,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Error<'o> = TryFail;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         xchg: Self::Object<'o>,
         (node, cond): Self::Input<'o>,
         rec: bool,
@@ -295,11 +295,11 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
     type Error<'o> = !;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         xchg: Self::Object<'o>,
         (value, cond): Self::Input<'o>,
         rec: bool,
-        guard: &Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let node = POwned::new(Node::from(value), pool);
@@ -402,11 +402,11 @@ mod tests {
         type Error<'o> = !;
 
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             xchg: Self::Object<'o>,
             tid: Self::Input<'o>,
             rec: bool,
-            guard: &Guard,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             assert!(tid == 0 || tid == 1);
@@ -470,11 +470,11 @@ mod tests {
         /// Before rotation : [0]  [1]  [2]
         /// After rotation  : [1]  [2]  [0]
         fn run<'o>(
-            &'o mut self,
+            &mut self,
             xchgs: Self::Object<'o>,
             tid: Self::Input<'o>,
             rec: bool,
-            guard: &Guard,
+            guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             // Alias

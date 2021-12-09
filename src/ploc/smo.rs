@@ -58,7 +58,7 @@ where
     type Error<'o> = InsertErr<'o, N>;
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         point: Self::Object<'o>,
         (mut new, obj, prepare): Self::Input<'o>, // TODO: prepare도 그냥 Prepare trait으로 할 수 있을 듯
         rec: bool,
@@ -249,7 +249,7 @@ where
     type Error<'o> = ();
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         point: Self::Object<'o>,
         (forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
@@ -435,7 +435,7 @@ where
     type Error<'o> = ();
 
     fn run<'o>(
-        &'o mut self,
+        &mut self,
         point: Self::Object<'o>,
         (new, expected, obj): Self::Input<'o>,
         rec: bool,
