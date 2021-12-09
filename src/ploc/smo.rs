@@ -326,7 +326,7 @@ where
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         self.target_loc.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.target_loc, true);
+        persist_obj(&self.target_loc, false);
     }
 }
 
@@ -521,7 +521,7 @@ where
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         self.target_loc.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.target_loc, true);
+        persist_obj(&self.target_loc, false);
     }
 }
 

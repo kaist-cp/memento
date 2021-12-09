@@ -7,12 +7,13 @@ use crossbeam_epoch::Guard;
 use super::{common::NodeUnOpt, InsertErr, Traversable, EMPTY};
 use crate::{
     pepoch::{PAtomic, PShared},
+    ploc::no_owner,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         AsPPtr, PoolHandle,
     },
-    Memento, ploc::no_owner,
+    Memento,
 };
 
 /// TODO: doc
@@ -204,7 +205,10 @@ where
             .map_err(|_| ()) // TODO: 실패했을 땐 정말 persist 안 해도 됨?
     }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
+        self.target_loc.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.target_loc, false);
+    }
 }
 
 impl<O, N> DeleteUnOpt<O, N>

@@ -223,7 +223,6 @@ impl<M: Memento> Memento for AtomicReset<M> {
         self.composed.run(object, input, rec, guard, pool)
     }
 
-    // TODO: 하위 메멘토의 리셋은 싹 다 async persist
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.resetting = true;
         persist_obj(&self.resetting, true);

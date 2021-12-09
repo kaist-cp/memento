@@ -114,7 +114,7 @@ where
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         self.saved.invalidate();
-        persist_obj(&self.saved, true);
+        persist_obj(&self.saved, false);
     }
 }
 
