@@ -503,7 +503,7 @@ mod test {
 
                     // deq 결과를 실험결과에 전달
                     for deq in self.deqs.as_mut() {
-                        let ret = deq.run(queue, (), rec, guard, pool).unwrap().unwrap();
+                        let ret = deq.run(queue, (), true, guard, pool).unwrap().unwrap();
                         let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
                     }
 

@@ -5,7 +5,6 @@
 use std::{marker::PhantomData, sync::atomic::AtomicUsize};
 
 use crossbeam_epoch::Guard;
-use crossbeam_utils::CachePadded;
 
 use crate::{
     pepoch::PShared,

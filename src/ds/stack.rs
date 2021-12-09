@@ -124,7 +124,7 @@ pub(crate) mod tests {
 
                     // pop 결과를 실험결과에 전달
                     for pop in self.pops.as_mut() {
-                        let ret = pop.run(stack, (), rec, guard, pool).unwrap().unwrap();
+                        let ret = pop.run(stack, (), true, guard, pool).unwrap().unwrap();
                         let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
                     }
 
