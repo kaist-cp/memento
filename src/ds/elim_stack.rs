@@ -14,7 +14,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    AtomicReset, Memento, PDefault,
+    Memento, PDefault,
 };
 
 use super::{

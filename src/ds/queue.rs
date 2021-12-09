@@ -221,7 +221,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete_opt
             .run(
                 &queue.head,
-                (&self.delete_param, PShared::null(), queue),
+                (PShared::null(), queue),
                 rec,
                 guard,
                 pool,
@@ -239,14 +239,6 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        let param = self.delete_param.load(Ordering::Relaxed, guard);
-
-        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
-        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
-        self.delete_param.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.delete_param, true);
-        self.dealloc(param, guard, pool);
-
         self.delete_opt.reset(guard, pool);
     }
 }

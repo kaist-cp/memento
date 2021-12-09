@@ -206,6 +206,7 @@ unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G
 // TODO: 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
 pub struct Delete<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
+    target_loc: PAtomic<N>,
     _marker: PhantomData<*const (O, N, G)>,
 }
 
@@ -221,6 +222,7 @@ unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
 impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Delete<O, N, G> {
     fn default() -> Self {
         Self {
+            target_loc: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -237,7 +239,7 @@ where
     G: 'static + DeleteHelper<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (&'o PAtomic<N>, PShared<'o, N>, &'o O);
+    type Input<'o> = (PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -249,13 +251,13 @@ where
     fn run<'o>(
         &'o mut self,
         point: Self::Object<'o>,
-        (target_loc, forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (forbidden, obj): Self::Input<'o>, // TODO: forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(target_loc, guard, pool);
+            return self.result(guard, pool);
         }
 
         // Normal run
@@ -264,16 +266,17 @@ where
         let next = match G::prepare_delete(target, forbidden, obj, guard, pool) {
             Ok(Some(n)) => n,
             Ok(None) => {
-                target_loc.store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
-                persist_obj(&target_loc, true);
+                self.target_loc
+                    .store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
+                persist_obj(&self.target_loc, true);
                 return Ok(None);
             }
             Err(()) => return Err(()),
         };
 
         // 우선 내가 target을 가리키고
-        target_loc.store(target, Ordering::Relaxed);
-        persist_obj(target_loc, false);
+        self.target_loc.store(target, Ordering::Relaxed);
+        persist_obj(&self.target_loc, false);
 
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { target.deref(pool) };
@@ -321,7 +324,15 @@ where
             })
     }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {}
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        let target = self.target_loc.load(Ordering::Relaxed, guard);
+
+        // null로 바꾼 후, free 하기 전에 crash 나도 상관없음.
+        // root로부터 도달 불가능해졌다면 GC가 수거해갈 것임.
+        self.target_loc.store(PShared::null(), Ordering::Relaxed);
+        persist_obj(&self.target_loc, true);
+        self.dealloc(target, guard, pool); // TODO(must): elim stack의 경우 fail일 때도 reset이 불릴 수 있음
+    }
 }
 
 impl<O, N, G> Delete<O, N, G>
@@ -336,11 +347,10 @@ where
     #[inline]
     fn result<'g>(
         &self,
-        target_loc: &PAtomic<N>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()> {
-        let target = target_loc.load(Ordering::Relaxed, guard);
+        let target = self.target_loc.load(Ordering::Relaxed, guard);
 
         if target.tag() & Self::EMPTY == Self::EMPTY {
             // post-crash execution (empty)
