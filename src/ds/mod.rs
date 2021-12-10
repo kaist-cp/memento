@@ -6,5 +6,5 @@ pub mod exchanger;
 pub mod queue;
 pub mod queue_unopt;
 pub mod stack;
-pub mod spin_lock;
+// pub mod spin_lock;
 pub mod treiber_stack;

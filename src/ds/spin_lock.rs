@@ -6,7 +6,7 @@ use crossbeam_epoch::Guard;
 
 use crate::{
     ploc::RetryLoop,
-    pmem::{AsPPtr, Collectable, GarbageCollection, PoolHandle},
+    pmem::{persist_obj, AsPPtr, Collectable, GarbageCollection, PoolHandle},
     Memento,
 };
 
@@ -54,13 +54,22 @@ impl Memento for TryLock {
                 Ordering::Acquire,
                 Ordering::Relaxed,
             )
-            .map(|_| ())
+            .map(|_| {
+                persist_obj(&spin_lock.inner, true);
+                ()
+            })
             .map_err(|_| ())
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO(must): reset이 obj를 받아야 함.
+        let cur = spin_lock.inner.load(Ordering::Relaxed);
+        if cur != self.id(pool) {
+            return;
+        }
 
-        // TODO(must): unlock
+        spin_lock.inner.store(SpinLock::RELEASED, Ordering::Release); // TODO(opt): Relaxed여도 됨. AtomicReset의 persist_obj에서 sfence를 함.
+        persist_obj(&spin_lock.inner, false);
     }
 }
 
