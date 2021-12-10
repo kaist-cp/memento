@@ -5,19 +5,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_epoch::Guard;
 
 use crate::{
+    ploc::RetryLoop,
     pmem::{AsPPtr, Collectable, GarbageCollection, PoolHandle},
     Memento,
 };
 
 /// TODO(doc)
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TryLock;
-
-impl Default for TryLock {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 unsafe impl Send for TryLock {}
 
@@ -73,6 +68,44 @@ impl TryLock {
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
         unsafe { self.as_pptr(pool) }.into_offset()
+    }
+}
+
+/// TODO(doc)
+#[derive(Debug, Default)]
+pub struct Lock {
+    try_lock: RetryLoop<TryLock>,
+}
+
+unsafe impl Send for Lock {}
+
+impl Collectable for Lock {
+    fn filter(lock: &mut Self, gc: &mut GarbageCollection, _: &PoolHandle) {
+        RetryLoop::mark(&mut lock.try_lock, gc);
+    }
+}
+
+impl Memento for Lock {
+    type Object<'o> = &'o SpinLock;
+    type Input<'o> = ();
+    type Output<'o> = ();
+    type Error<'o> = ();
+
+    fn run<'o>(
+        &mut self,
+        spin_lock: Self::Object<'o>,
+        (): Self::Input<'o>,
+        rec: bool,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        self.try_lock
+            .run(spin_lock, (), rec, guard, pool)
+            .map_err(|_| unreachable!("Retry never fails."))
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.try_lock.reset(guard, pool);
     }
 }
 
