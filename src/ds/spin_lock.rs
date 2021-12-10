@@ -1,64 +1,80 @@
 //! Persistent Spin Lock
 
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::pmem::{Collectable, GarbageCollection, PoolHandle};
+use crossbeam_epoch::Guard;
+
+use crate::{
+    pmem::{AsPPtr, Collectable, GarbageCollection, PoolHandle},
+    Memento,
+};
 
 /// TODO(doc)
-// #[derive(Debug)]
-// pub struct Lock<T: Clone> {
-//     delete: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
-// }
+#[derive(Debug)]
+pub struct TryLock;
 
-// impl<T: Clone> Default for Lock<T> {
-//     fn default() -> Self {
-//         Self {
-//             delete: Default::default(),
-//         }
-//     }
-// }
+impl Default for TryLock {
+    fn default() -> Self {
+        Self {}
+    }
+}
 
-// unsafe impl<T: Clone + Send + Sync> Send for Lock<T> {}
+unsafe impl Send for TryLock {}
 
-// impl<T: Clone> Collectable for Lock<T> {
-//     fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-//         Delete::filter(&mut try_deq.delete, gc, pool);
-//     }
-// }
+impl Collectable for TryLock {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+}
 
-// impl<T: 'static + Clone> Memento for Lock<T> {
-//     type Object<'o> = &'o Queue<T>;
-//     type Input<'o> = ();
-//     type Output<'o> = Option<T>;
-//     type Error<'o> = TryFail;
+impl Memento for TryLock {
+    type Object<'o> = &'o SpinLock;
+    type Input<'o> = ();
+    type Output<'o> = ();
+    type Error<'o> = ();
 
-//     fn run<'o>(
-//         &mut self,
-//         queue: Self::Object<'o>,
-//         (): Self::Input<'o>,
-//         rec: bool,
-//         guard: &'o Guard,
-//         pool: &'static PoolHandle,
-//     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-//         self.delete
-//             .run(&queue.head, (PShared::null(), queue), rec, guard, pool)
-//             .map(|ret| {
-//                 ret.map(|popped| {
-//                     let next = unsafe { popped.deref(pool) }
-//                         .next
-//                         .load(Ordering::SeqCst, guard); // TODO(opt): next를 다시 load해서 성능 저하
-//                     let next_ref = unsafe { next.deref(pool) };
-//                     unsafe { guard.defer_pdestroy(popped) };
-//                     unsafe { (*next_ref.data.as_ptr()).clone() }
-//                 })
-//             })
-//             .map_err(|_| TryFail)
-//     }
+    fn run<'o>(
+        &mut self,
+        spin_lock: Self::Object<'o>,
+        (): Self::Input<'o>,
+        rec: bool,
+        _: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        if rec {
+            let cur = spin_lock.inner.load(Ordering::Relaxed);
 
-//     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-//         self.delete.reset(guard, pool);
-//     }
-// }
+            if cur == self.id(pool) {
+                return Ok(());
+            }
+
+            if cur != SpinLock::RELEASED {
+                return Err(());
+            }
+        }
+
+        spin_lock
+            .inner
+            .compare_exchange(
+                SpinLock::RELEASED,
+                self.id(pool),
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            )
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+
+        // TODO(must): unlock
+    }
+}
+
+impl TryLock {
+    #[inline]
+    fn id(&self, pool: &PoolHandle) -> usize {
+        unsafe { self.as_pptr(pool) }.into_offset()
+    }
+}
 
 /// TODO(doc)
 #[derive(Debug)]
