@@ -99,7 +99,7 @@ where
         _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            if let Some(saved) = self.result() {
+            if let Some(saved) = self.peek() {
                 if_exists(chk);
                 return Ok(saved);
             }
@@ -118,8 +118,9 @@ where
 }
 
 impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
+    /// TODO(doc)
     #[inline]
-    fn result(&self) -> Option<T> {
+    pub fn peek(&self) -> Option<T> {
         if self.saved.is_invalid() {
             None
         } else {
