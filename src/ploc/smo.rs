@@ -118,7 +118,10 @@ impl DeleteOrNode {
 
     #[inline]
     fn is_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
-        if checked & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
+        // TODO(must): 깨끗하게 태깅하기
+        let converted = unsafe { PShared::<()>::from_usize(checked) };
+
+        if converted.high_tag() & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
             return None;
         }
 
@@ -127,7 +130,8 @@ impl DeleteOrNode {
 
     #[inline]
     fn set_delete(x: usize) -> usize {
-        (x & (!0 << 1)) | Self::DELETE_CLIENT // TODO(must): client가 align 되어있다는 확신이 없음. 일단 LSB를 그냥 맘대로 사용함.
+        // TODO(must): 깨끗하게 태깅하기
+        unsafe { PShared::<()>::from_usize(x) }.with_high_tag(Self::DELETE_CLIENT).into_usize()
     }
 }
 
@@ -488,7 +492,7 @@ where
         owner
             .compare_exchange(
                 no_owner(),
-                new.into_usize(),
+                new.with_high_tag(0).into_usize(),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
