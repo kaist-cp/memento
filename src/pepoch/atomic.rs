@@ -157,10 +157,13 @@ fn ensure_aligned<T: ?Sized + Pointable>(offset: usize) {
 ///
 /// `tag` is truncated to fit into the unused bits of the pointer to `T`.
 #[inline]
-fn compose_tag<T: ?Sized + Pointable>(htag: usize, data: usize, ltag: usize) -> usize {
-    (high_bits() & (htag.rotate_right(TWO_BYTES as u32)))
-        | (!high_bits() & data & !low_bits::<T>())
-        | (ltag & low_bits::<T>())
+fn compose_tag<T: ?Sized + Pointable>(data: usize, ltag: usize) -> usize {
+    (data & !low_bits::<T>()) | (ltag & low_bits::<T>())
+}
+
+#[inline]
+fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
+    (high_bits() & (htag.rotate_right(TWO_BYTES as u32))) | (!high_bits() & data)
 }
 
 /// Decomposes a tagged pointer `data` into the pointer and the tag.
@@ -1368,14 +1371,14 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// ```
     pub fn with_tag(self, tag: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_tag::<T>(0, data, tag)) }
+        unsafe { Self::from_usize(compose_tag::<T>(data, tag)) }
     }
 
     /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
     /// unused high bits of the pointer to `T`.
     pub fn with_high_tag(self, tag: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_tag::<T>(tag, data, 0)) }
+        unsafe { Self::from_usize(compose_high_tag::<T>(tag, data)) }
     }
 
     // PoolHandle을 받아야하므로 Deref trait impl 하던 것을 직접 구현
@@ -1848,13 +1851,13 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn with_tag(&self, tag: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_tag::<T>(0, self.data, tag)) }
+        unsafe { Self::from_usize(compose_tag::<T>(self.data, tag)) }
     }
 
     /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
     /// unused high bits of the pointer to `T`.
     pub fn with_high_tag(&self, tag: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_tag::<T>(tag, self.data, 0)) }
+        unsafe { Self::from_usize(compose_high_tag::<T>(tag, self.data)) }
     }
 
     // PoolHandle을 받아야하므로 fmt trait impl 하던 것을 직접 구현
