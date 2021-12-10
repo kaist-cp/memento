@@ -115,7 +115,13 @@ impl PoolHandle {
         .unwrap();
     }
 
-    /// TODO: doc
+    /// unsafe get root
+    ///
+    /// It is useful to check the object in the pool directly
+    ///
+    /// # Safety
+    ///
+    /// TODO
     // PiBench로 실험 돌릴 때 PiBench가 사용할 root obj, root memento를 세팅하기 위해 필요
     pub unsafe fn get_root(&self, ix: u64) -> *mut c_void {
         RP_get_root_c(ix)
