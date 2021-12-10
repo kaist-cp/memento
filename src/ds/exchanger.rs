@@ -11,7 +11,7 @@ use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
-        smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
+        smo::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
         NeedRetry, RetryLoop, Traversable,
     },
     pmem::{
