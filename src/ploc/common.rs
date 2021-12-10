@@ -5,7 +5,6 @@ use std::{marker::PhantomData, sync::atomic::AtomicUsize};
 use crossbeam_epoch::Guard;
 
 use crate::{
-    pepoch::PShared,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -36,12 +35,6 @@ pub trait NodeUnOpt: Sized {
 
     /// TODO(doc)
     fn owner_unopt(&self) -> &AtomicUsize;
-}
-
-/// TODO(doc)
-pub trait DeallocNode<T, N: Node> {
-    /// TODO(doc)
-    fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle);
 }
 
 /// TODO(doc)
@@ -105,7 +98,7 @@ where
         _: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            if let Some(saved) = self.result() {
+            if let Some(saved) = self.peek() {
                 if_exists(chk);
                 return Ok(saved);
             }
@@ -124,13 +117,42 @@ where
 }
 
 impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
+    /// TODO(doc)
     #[inline]
-    fn result(&self) -> Option<T> {
+    pub fn peek(&self) -> Option<T> {
         if self.saved.is_invalid() {
             None
         } else {
             Some(self.saved.clone())
         }
+    }
+}
+
+/// TODO(doc)
+#[derive(Debug, Clone, Copy)]
+pub struct CheckpointableUsize(pub usize);
+
+impl CheckpointableUsize {
+    const INVALID: usize = usize::MAX - u32::MAX as usize;
+}
+
+impl Default for CheckpointableUsize {
+    fn default() -> Self {
+        Self(Self::INVALID)
+    }
+}
+
+impl Collectable for CheckpointableUsize {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+}
+
+impl Checkpointable for CheckpointableUsize {
+    fn invalidate(&mut self) {
+        self.0 = CheckpointableUsize::INVALID;
+    }
+
+    fn is_invalid(&self) -> bool {
+        self.0 == CheckpointableUsize::INVALID
     }
 }
 

@@ -1106,8 +1106,8 @@ impl<T> From<PPtr<T>> for PAtomic<T> {
 
 #[inline]
 fn invalid_ptr<'g, T>() -> PShared<'g, T> {
-    const NO_READ: usize = usize::MAX - u32::MAX as usize;
-    unsafe { PShared::<T>::from_usize(NO_READ) }
+    const INVALID_PTR: usize = usize::MAX - u32::MAX as usize;
+    unsafe { PShared::<T>::from_usize(INVALID_PTR) }
 }
 
 impl<T> Checkpointable for PAtomic<T> {
