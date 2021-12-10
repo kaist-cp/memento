@@ -3,16 +3,20 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossbeam_epoch::Guard;
+use etrace::some_or;
 
 use crate::{
-    ploc::RetryLoop,
+    pepoch::{atomic::Pointer, PShared},
+    ploc::{Checkpoint, CheckpointableUsize, RetryLoop},
     pmem::{persist_obj, AsPPtr, Collectable, GarbageCollection, PoolHandle},
     Memento,
 };
 
 /// TODO(doc)
 #[derive(Debug, Default)]
-pub struct TryLock;
+pub struct TryLock {
+    target: Checkpoint<CheckpointableUsize>,
+}
 
 unsafe impl Send for TryLock {}
 
@@ -31,13 +35,14 @@ impl Memento for TryLock {
         spin_lock: Self::Object<'o>,
         (): Self::Input<'o>,
         rec: bool,
-        _: &'o Guard,
+        guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
             let cur = spin_lock.inner.load(Ordering::Relaxed);
 
             if cur == self.id(pool) {
+                self.acq_succ(spin_lock, rec, guard, pool);
                 return Ok(());
             }
 
@@ -56,24 +61,37 @@ impl Memento for TryLock {
             )
             .map(|_| {
                 persist_obj(&spin_lock.inner, true);
-                ()
+                self.acq_succ(spin_lock, rec, guard, pool);
             })
             .map_err(|_| ())
     }
 
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO(must): reset이 obj를 받아야 함.
-        let cur = spin_lock.inner.load(Ordering::Relaxed);
-        if cur != self.id(pool) {
-            return;
-        }
+    fn reset(&mut self, _: &Guard, pool: &'static PoolHandle) {
+        let lock_ptr = some_or!(self.target.peek(), return);
+        // I acquired lock before.
 
-        spin_lock.inner.store(SpinLock::RELEASED, Ordering::Release); // TODO(opt): Relaxed여도 됨. AtomicReset의 persist_obj에서 sfence를 함.
-        persist_obj(&spin_lock.inner, false);
+        let spin_lock = unsafe { PShared::<SpinLock>::from_usize(lock_ptr.0) }; // SAFE: Spin lock can't be dropped before released.
+        let spin_lock_ref = unsafe { spin_lock.deref(pool) };
+        spin_lock_ref
+            .inner
+            .store(SpinLock::RELEASED, Ordering::Release); // TODO(opt): Relaxed여도 됨. AtomicReset의 persist_obj에서 sfence를 함.
+        persist_obj(&spin_lock_ref.inner, false);
     }
 }
 
 impl TryLock {
+    #[inline]
+    fn acq_succ<O>(&mut self, spin_lock: &O, rec: bool, guard: &Guard, pool: &'static PoolHandle) {
+        let lock_ptr = unsafe { spin_lock.as_pptr(pool) }.into_offset();
+        let _ = self.target.run(
+            (),
+            (CheckpointableUsize(lock_ptr), |_| {}),
+            rec,
+            guard,
+            pool,
+        );
+    }
+
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
         unsafe { self.as_pptr(pool) }.into_offset()

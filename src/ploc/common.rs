@@ -5,7 +5,6 @@ use std::{marker::PhantomData, sync::atomic::AtomicUsize};
 use crossbeam_epoch::Guard;
 
 use crate::{
-    pepoch::PShared,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -130,8 +129,8 @@ impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
 }
 
 /// TODO(doc)
-#[derive(Debug)]
-pub struct CheckpointableUsize(usize);
+#[derive(Debug, Clone, Copy)]
+pub struct CheckpointableUsize(pub usize);
 
 impl CheckpointableUsize {
     const INVALID: usize = usize::MAX - u32::MAX as usize;
@@ -141,6 +140,10 @@ impl Default for CheckpointableUsize {
     fn default() -> Self {
         Self(Self::INVALID)
     }
+}
+
+impl Collectable for CheckpointableUsize {
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl Checkpointable for CheckpointableUsize {
