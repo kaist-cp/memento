@@ -39,12 +39,6 @@ pub trait NodeUnOpt: Sized {
 }
 
 /// TODO(doc)
-pub trait DeallocNode<T, N: Node> {
-    /// TODO(doc)
-    fn dealloc(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle);
-}
-
-/// TODO(doc)
 pub trait Checkpointable {
     /// TODO(doc)
     fn invalidate(&mut self);
@@ -131,6 +125,30 @@ impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
         } else {
             Some(self.saved.clone())
         }
+    }
+}
+
+/// TODO(doc)
+#[derive(Debug)]
+pub struct CheckpointableUsize(usize);
+
+impl CheckpointableUsize {
+    const INVALID: usize = usize::MAX - u32::MAX as usize;
+}
+
+impl Default for CheckpointableUsize {
+    fn default() -> Self {
+        Self(Self::INVALID)
+    }
+}
+
+impl Checkpointable for CheckpointableUsize {
+    fn invalidate(&mut self) {
+        self.0 = CheckpointableUsize::INVALID;
+    }
+
+    fn is_invalid(&self) -> bool {
+        self.0 == CheckpointableUsize::INVALID
     }
 }
 
