@@ -68,7 +68,7 @@ where
     V: Debug,
 {
     pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &PoolHandle) -> Option<&'g V> {
-        println!("[search]");
+        // TODO: persistent 버전이면 아마 search의 input에 pool 필요해질 것?
         self.kv.search(key, guard)
     }
 }
@@ -80,12 +80,10 @@ pub enum ModifyOp {
     Update,
 }
 
-// TODO: 이렇게 묶을 필요 있나?
 #[derive(Debug)]
 pub struct Modify<K, V> {
     insert: ClInsert<K, V>,
     delete: ClDelete<K, V>,
-    // search: ClSearch, TODO: memento?
     update: ClUpdate<K, V>,
 }
 
@@ -177,6 +175,8 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         println!("[run resize loop]");
         let mut g = guard.clone(); // TODO: clone API 없어도 그냥 새로 pin하면 되지 않나?
+
+        // TODO: persistent op
         inner.kv_resize.borrow_mut().resize_loop(&mut g);
         Ok(())
     }
@@ -224,6 +224,7 @@ where
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // TODO: persistent op
         Ok(inner.kv.insert(tid, k, v, guard))
     }
 
@@ -270,6 +271,7 @@ where
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // TODO: persistent op
         Ok(inner.kv.delete(&k, guard))
     }
 
@@ -316,6 +318,7 @@ where
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // TODO: persistent op
         Ok(inner.kv.update(tid, k, v, guard))
     }
 
