@@ -10,6 +10,7 @@ use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
 use std::marker::PhantomData;
+use std::mem;
 use std::sync::{mpsc, Arc};
 
 use cfg_if::cfg_if;
@@ -18,6 +19,7 @@ use derivative::Derivative;
 use etrace::*;
 use hashers::fx_hash::FxHasher;
 use itertools::*;
+use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
@@ -674,14 +676,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
 fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
     println!("[new_node] size: {size}");
 
-    // TODO: pallocation maybeuninit 잘 동작하나?
-    // let data = POwned::<[[MaybeUninit<Bucket<K, V>>]]>::init(size, &pool);
+    let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
+    let data_ref = unsafe { data.deref(pool) };
+    let bucket_size = mem::size_of::<Bucket<K, V>>();
+    for i in 0..size {
+        let addr = &data_ref[i] as *const _ as *mut c_void;
+        let _ = unsafe { libc::memset(addr, 0xff, bucket_size) };
+    }
 
     POwned::new(
         Node {
-            // data: Box::new_zeroed_slice(size), // TODO: 0xffff.... (최댓값 initialize)
-            // TODO: 0xfff 설정할때 system memset 써야 빠를듯. 성능 비교해보기
-            data: POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool).into(),
+            data: data.into(),
             next: PAtomic::null(),
         },
         pool,

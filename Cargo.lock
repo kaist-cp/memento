@@ -227,6 +227,7 @@ dependencies = [
  "hashers",
  "itertools",
  "lazy_static",
+ "libc",
  "log",
  "parking_lot",
  "rand",
