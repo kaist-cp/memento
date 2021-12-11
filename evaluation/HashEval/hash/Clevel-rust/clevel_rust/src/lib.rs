@@ -66,12 +66,6 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 }
 
 #[no_mangle]
-pub extern "C" fn search(clevel: &PClevelInner<Key, Value>, k: Key, pool: &PoolHandle) -> bool {
-    let guard = epoch::pin();
-    clevel.search(&k, &guard, pool).is_some()
-}
-
-#[no_mangle]
 pub extern "C" fn run_insert(
     m: &mut ClevelMemento,
     clevel: &PClevelInner<Key, Value>,
@@ -80,8 +74,9 @@ pub extern "C" fn run_insert(
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    let input = (tid, ModifyOp::Insert, k, v);
+    // TODO: maybe pinning for each operation is too pessimistic. Let's optimize it for Memento...
     let guard = epoch::pin();
+    let input = (tid, ModifyOp::Insert, k, v);
     let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
     m.modify.reset(&guard, pool);
     ret
@@ -96,8 +91,8 @@ pub extern "C" fn run_update(
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    let input = (tid, ModifyOp::Update, k, v);
     let guard = epoch::pin();
+    let input = (tid, ModifyOp::Update, k, v);
     let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
     m.modify.reset(&guard, pool);
     ret
@@ -111,8 +106,8 @@ pub extern "C" fn run_delete(
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
-    let input = (tid, ModifyOp::Delete, k, 0);
     let guard = epoch::pin();
+    let input = (tid, ModifyOp::Delete, k, 0);
     let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
     m.modify.reset(&guard, pool);
     ret
@@ -125,4 +120,16 @@ pub extern "C" fn run_resize_loop(
 ) {
     let guard = epoch::pin();
     let _ = m.resize_loop.run(clevel, (), false, &guard, pool);
+}
+
+#[no_mangle]
+pub extern "C" fn search(clevel: &PClevelInner<Key, Value>, k: Key, pool: &PoolHandle) -> bool {
+    let guard = epoch::pin();
+    clevel.search(&k, &guard, pool).is_some()
+}
+
+#[no_mangle]
+pub extern "C" fn get_capacity(c: &PClevelInner<Key, Value>, pool: &PoolHandle) -> usize {
+    let guard = crossbeam_epoch::pin();
+    c.get_capacity(&guard, pool)
 }
