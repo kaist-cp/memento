@@ -134,8 +134,8 @@ pub mod tests {
 
         let filepath = get_test_abs_path(pool_name);
 
-        // 풀 지우기
-        let _ = Pool::remove(&filepath);
+        // // 풀 지우기
+        // let _ = Pool::remove(&filepath);
 
         // 풀 열기 (없으면 새로 만듦)
         let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
