@@ -217,8 +217,8 @@ where
 {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = (usize, K, V); // tid, k, v
-    type Output<'o> = Result<(), InsertError>; // TODO
-    type Error<'o> = !; // TODO
+    type Output<'o> = (); // TODO
+    type Error<'o> = InsertError; // TODO
 
     fn run<'o>(
         &mut self,
@@ -229,7 +229,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Ok(inner.kv.insert(tid, k, v, guard))
+        inner.kv.insert(tid, k, v, guard)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -311,8 +311,8 @@ where
 {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = (usize, K, V); // tid, k, v
-    type Output<'o> = Result<(), (K, V)>; // TODO
-    type Error<'o> = !; // TODO
+    type Output<'o> = (); // TODO
+    type Error<'o> = (K, V); // TODO
 
     fn run<'o>(
         &mut self,
@@ -323,7 +323,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Ok(inner.kv.update(tid, k, v, guard))
+        inner.kv.update(tid, k, v, guard)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
