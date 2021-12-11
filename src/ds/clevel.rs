@@ -10,6 +10,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
+use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 
 use cfg_if::cfg_if;
@@ -24,40 +25,135 @@ use tinyvec::*;
 use crate::pmem::Collectable;
 use crate::pmem::GarbageCollection;
 use crate::pmem::PoolHandle;
+use crate::Memento;
 use crate::PDefault;
 
+#[derive(Debug)]
+pub struct PClevelInner<K, V> {
+    _marker: PhantomData<(K, V)>,
+}
+
 // Root obj
-impl<K, V> PDefault for ClevelInner<K, V> {
+impl<K, V> PDefault for PClevelInner<K, V> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         todo!()
     }
 }
-impl<K, V> Collectable for ClevelInner<K, V> {
+impl<K, V> Collectable for PClevelInner<K, V> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         todo!()
     }
 }
 
-// TODO: memento
-#[derive(Debug)]
-pub struct ClevelInsert {}
-
-// TODO: memento
-#[derive(Debug)]
-pub struct ClevelDelete {}
-
-// TODO: memento
+#[derive(Debug, Clone)]
+pub enum ModifyOp {
+    Insert,
+    Delete,
+    Update,
+}
 
 #[derive(Debug)]
-pub struct ClevelSearch {}
+pub struct Modify<K, V> {
+    ins: ClInsert<K, V>,
+    del: ClDelete<K, V>,
+    // sch: ClSearch, TODO: memento?
+    upd: ClUpdate<K, V>,
+}
 
-// TODO: memento
-#[derive(Debug)]
-pub struct ClevelUpdate {}
+impl<K, V> Default for Modify<K, V> {
+    fn default() -> Self {
+        todo!()
+    }
+}
 
-// TODO: memento
+impl<K, V> Collectable for Modify<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K: 'static, V: 'static> Memento for Modify<K, V> {
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = ModifyOp;
+    type Output<'o> = (); // TODO
+    type Error<'o> = !;
+
+    fn run<'o>(
+        &mut self,
+        inner: Self::Object<'o>,
+        op: Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        match op {
+            ModifyOp::Insert => todo!("run self.ins"),
+            ModifyOp::Delete => todo!("run self.del"),
+            ModifyOp::Update => todo!("run self.upd"),
+        }
+        Ok(())
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
-pub struct ClevelResizeLoop {}
+pub struct ClResize<K, V> {
+    _marker: PhantomData<(K, V)>,
+}
+
+impl<K, V> Default for ClResize<K, V> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
+
+impl<K, V> Collectable for ClResize<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K: 'static, V: 'static> Memento for ClResize<K, V> {
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = ();
+    type Output<'o> = (); // TODO
+    type Error<'o> = !; // TODO
+
+    fn run<'o>(
+        &mut self,
+        inner: Self::Object<'o>,
+        input: Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        todo!()
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+struct ClInsert<K, V> {
+    _marker: PhantomData<(K, V)>,
+}
+
+#[derive(Debug)]
+struct ClDelete<K, V> {
+    _marker: PhantomData<(K, V)>,
+}
+
+#[derive(Debug)]
+struct ClUpdate<K, V> {
+    _marker: PhantomData<(K, V)>,
+}
 
 // -- 아래부터는 conccurent 버전. 이걸 persistent 버전으로 바꿔야함
 const TINY_VEC_CAPACITY: usize = 8;
