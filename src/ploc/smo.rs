@@ -218,12 +218,13 @@ fn help<O, N: Collectable, G: UpdateDeleteInfo<O, N>>(
     old: PShared<'_, N>,
     owner: usize,
     point: &SMOAtomic<O, N, G>,
+    delete_next: Option<PShared<'_, N>>,
     guard: &Guard,
     pool: &PoolHandle,
 ) {
     // point가 바뀌어야 할 next를 설정
-    let next =
-        DeleteOrNode::is_node(owner).unwrap_or_else(|| G::node_when_deleted(old, guard, pool));
+    let next = DeleteOrNode::is_node(owner)
+        .unwrap_or_else(|| delete_next.unwrap_or_else(|| (G::node_when_deleted(old, guard, pool))));
 
     // point를 승자가 원하는 node로 바꿔줌
     let _ = point.compare_exchange(old, next, Ordering::SeqCst, Ordering::SeqCst, guard);
@@ -325,6 +326,7 @@ where
                     point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
 
                 // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
+                // post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
                 guard.defer_persist(point);
 
                 Some(target)
@@ -526,7 +528,7 @@ where
                 // same context
                 persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
 
-                help(target, cur, point, guard, pool);
+                help(target, cur, point, None, guard, pool);
             })
     }
 
