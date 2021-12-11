@@ -2,6 +2,8 @@
 
 use core::sync::atomic::Ordering;
 
+use etrace::*;
+
 use super::stack::*;
 use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
@@ -38,7 +40,7 @@ impl<T: Clone> TryPush<T> {
     #[inline]
     fn prepare(mine: &mut Node<T>, old_top: PShared<'_, Node<T>>) -> bool {
         mine.next.store(old_top, Ordering::SeqCst);
-        persist_obj(&mine.next, false);
+        persist_obj(&mine.next, false); // TODO: why? we do CAS right after that.
         true
     }
 }
@@ -58,7 +60,7 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.insert
-            .run(&stack.top, (node, stack, Self::prepare), rec, guard, pool)
+            .run(&stack.top, (node, stack, Self::prepare), rec, guard, pool) // TODO: input can be changed?
             .map_err(|_| TryFail)
     }
 
@@ -104,7 +106,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
-            .run(&stack.top, (stack, Self::get_next), rec, guard, pool)
+            .run(&stack.top, (stack, Self::prepare), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| unsafe {
                     // println!("treiber free {:?}", popped);
@@ -122,17 +124,13 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
 
 impl<T: Clone> TryPop<T> {
     #[inline]
-    fn get_next<'g>(
+    fn prepare<'g>(
         target: PShared<'_, Node<T>>,
         _: &TreiberStack<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
-        if target.is_null() {
-            return Ok(None);
-        }
-
-        let target_ref = unsafe { target.deref(pool) };
+        let target_ref = some_or!(unsafe { target.as_ref(pool) }, return Ok(None));
         let next = target_ref.next.load(Ordering::SeqCst, guard);
         Ok(Some(next))
     }
@@ -232,9 +230,11 @@ impl<T: Clone> Memento for Push<T> {
             .run(
                 (),
                 (PAtomic::from(node), |aborted| {
-                    let guard = unsafe { epoch::unprotected() };
-                    let d = aborted.load(Ordering::Relaxed, guard);
-                    unsafe { guard.defer_pdestroy(d) };
+                    drop(unsafe {
+                        aborted
+                            .load(Ordering::Relaxed, epoch::unprotected())
+                            .into_owned()
+                    });
                 }),
                 rec,
                 guard,
@@ -325,14 +325,14 @@ mod tests {
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // rusty_fork_test! {
-        #[test]
-        fn push_pop() {
-            const FILE_NAME: &str = "treiber_push_pop.pool";
-            run_test::<TreiberStack<usize>, PushPop<TreiberStack<usize>, NR_THREAD, COUNT>, _>(
-                FILE_NAME,
-                FILE_SIZE,
-                NR_THREAD + 1,
-            )
-        }
+    #[test]
+    fn push_pop() {
+        const FILE_NAME: &str = "treiber_push_pop.pool";
+        run_test::<TreiberStack<usize>, PushPop<TreiberStack<usize>, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
+    }
     // }
 }

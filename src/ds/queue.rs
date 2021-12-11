@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
 use crate::node::Node;
-use crate::ploc::smo::{Delete, UpdateDeleteInfo, Insert, SMOAtomic};
+use crate::ploc::smo::{Delete, Insert, SMOAtomic, UpdateDeleteInfo};
 use crate::ploc::{Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;

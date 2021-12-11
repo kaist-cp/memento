@@ -120,7 +120,9 @@ mod tests {
     impl Default for Transfer {
         fn default() -> Self {
             Self {
-                pipes: array_init::array_init(|_| Pipe::<DequeueSome<usize>, Enqueue<usize>>::default()),
+                pipes: array_init::array_init(|_| {
+                    Pipe::<DequeueSome<usize>, Enqueue<usize>>::default()
+                }),
                 suppliers: array_init::array_init(|_| Enqueue::default()),
                 consumers: array_init::array_init(|_| DequeueSome::default()),
             }

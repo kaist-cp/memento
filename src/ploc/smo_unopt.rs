@@ -3,6 +3,7 @@
 use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
+use etrace::*;
 
 use super::{common::NodeUnOpt, InsertErr, Traversable, EMPTY};
 use crate::{
@@ -225,38 +226,56 @@ where
         let target = self.target_loc.load(Ordering::Relaxed, guard);
 
         if target.tag() & EMPTY == EMPTY {
+            // if target == PShared::null().with_tag(EMPTY) {
             // post-crash execution (empty)
             return Ok(None);
         }
 
-        if !target.is_null() {
-            let target_ref = unsafe { target.deref(pool) };
-            let owner = target_ref.owner_unopt().load(Ordering::SeqCst);
-
-            // target이 내가 pop한 게 맞는지 확인
-            if owner == self.id(pool) {
-                return Ok(Some(target));
+        let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
+            return if target.tag() & EMPTY == EMPTY {
+                Ok(None)
+            } else {
+                Err(())
             };
+        });
 
-            // target이 obj에서 빠지긴 했는지 확인
-            if !obj.search(target, guard, pool) {
-                // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
-                // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
-                if owner == no_owner()
-                    && target_ref
-                        .owner_unopt()
-                        .compare_exchange(
-                            no_owner(),
-                            self.id(pool),
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        )
-                        .is_ok()
-                {
-                    persist_obj(target_ref.owner_unopt(), true);
-                    return Ok(Some(target));
-                }
-            }
+        // target이 내가 pop한 게 맞는지 확인
+        let owner = target_ref.owner_unopt().load(Ordering::SeqCst);
+        if owner == self.id(pool) {
+            return Ok(Some(target));
+        }
+
+        // target이 obj에 남아있거나 owner가 지정되지 않았으면 실패
+        if obj.search(target, guard, pool) {
+            return Err(());
+        }
+
+        let owner = target_ref.owner_unopt().load(Ordering::SeqCst);
+
+        // target이 내가 pop한 게 맞는지 확인
+        if owner == self.id(pool) {
+            return Ok(Some(target));
+        }
+
+        // owner가 지정되었으면 실패
+        if owner != no_owner() {
+            return Err(());
+        }
+
+        // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
+        // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
+        if target_ref
+            .owner_unopt()
+            .compare_exchange(
+                no_owner(),
+                self.id(pool),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+        {
+            persist_obj(target_ref.owner_unopt(), true);
+            return Ok(Some(target));
         }
 
         Err(())

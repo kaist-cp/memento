@@ -2,7 +2,6 @@
 #![allow(missing_docs)]
 #![allow(box_pointers)]
 #![allow(unreachable_pub)]
-#![recursion_limit = "512"]
 use core::cmp;
 use core::fmt::Debug;
 use core::fmt::Display;
@@ -1204,7 +1203,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             fence(Ordering::SeqCst);
 
             // If the context remains the same, it's done.
-            let mut context_new = self.inner.context.load(Ordering::Acquire, guard);
+            let context_new = self.inner.context.load(Ordering::Acquire, guard);
             if context == context_new {
                 return;
             }

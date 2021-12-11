@@ -157,6 +157,7 @@ impl Checkpointable for CheckpointableUsize {
 }
 
 /// TODO(doc)
+// TODO(@jeehoon.kang): move
 #[derive(Debug)]
 pub struct RetryLoop<M: Memento> {
     try_mmt: M,

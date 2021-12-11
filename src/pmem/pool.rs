@@ -6,6 +6,10 @@ use std::alloc::Layout;
 use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::path::Path;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::{fs, mem};
 
 use crate::pmem::global::global_pool;
@@ -85,18 +89,27 @@ impl PoolHandle {
         #[allow(box_pointers)]
         thread::scope(|scope| {
             // tid번째 스레드가 tid번째 memento를 성공할때까지 반복
+            let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
             for tid in 0..nr_memento {
                 // tid번째 root memento 얻기
                 let m_addr = unsafe { RP_get_root_c(IX_MEMENTO_START + tid as u64) as usize };
+                let barrier = barrier.clone();
 
                 let _ = scope.spawn(move |_| {
                     thread::scope(|scope| {
+                        let started = AtomicBool::new(false);
                         loop {
                             // memento 실행
                             let hanlder = scope.spawn(move |_| {
                                 let root_memento = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                                 let guard = epoch::old_guard(tid);
+
+                                if !started.load(Ordering::Relaxed) {
+                                    started.store(true, Ordering::Relaxed);
+                                    let _ = barrier.wait();
+                                }
+
                                 let _ = root_memento.run(root_obj, tid, true, &guard, self);
                             });
 
@@ -104,8 +117,11 @@ impl PoolHandle {
                             // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
                             match hanlder.join() {
                                 Ok(_) => break,
-                                Err(_) => std::process::exit(1),
-                                // Err(_) => println!("PANIC: Root memento No.{} re-executed.", tid),
+                                Err(_) => {
+                                    println!("PANIC: Root memento No.{} re-executed.", tid);
+                                    std::thread::sleep(std::time::Duration::from_secs(10000));
+                                    std::process::exit(1);
+                                }
                             }
                         }
                     })

@@ -11,7 +11,7 @@ use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
-        smo::{Delete, UpdateDeleteInfo, Insert, SMOAtomic, Update},
+        smo::{Delete, Insert, SMOAtomic, Update, UpdateDeleteInfo},
         NeedRetry, RetryLoop, Traversable,
     },
     pmem::{
@@ -266,7 +266,12 @@ impl<T: 'static + Clone> TryExchange<T> {
     }
 
     #[inline]
-    fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle, tid: usize) -> T {
+    fn succ_after_wait(
+        mine: PShared<'_, Node<T>>,
+        guard: &Guard,
+        pool: &PoolHandle,
+        tid: usize,
+    ) -> T {
         // 내 파트너는 나의 owner()임
         // println!("wait mine {} {:?}", tid, mine);
         let mine_ref = unsafe { mine.deref(pool) };
@@ -320,12 +325,12 @@ impl<T: Clone> UpdateDeleteInfo<Exchanger<T>, Node<T>> for TryExchange<T> {
 /// Exchanger의 exchange operation.
 /// 반드시 exchange에 성공함.
 #[derive(Debug)]
-pub struct Exchange<T: 'static + Clone+ std::fmt::Debug> {
+pub struct Exchange<T: 'static + Clone + std::fmt::Debug> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_xchg: RetryLoop<TryExchange<T>>,
 }
 
-impl<T: Clone+ std::fmt::Debug> Default for Exchange<T> {
+impl<T: Clone + std::fmt::Debug> Default for Exchange<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
@@ -334,16 +339,16 @@ impl<T: Clone+ std::fmt::Debug> Default for Exchange<T> {
     }
 }
 
-unsafe impl<T: Clone + Send + Sync+ std::fmt::Debug> Send for Exchange<T> {}
+unsafe impl<T: Clone + Send + Sync + std::fmt::Debug> Send for Exchange<T> {}
 
-impl<T: Clone+ std::fmt::Debug> Collectable for Exchange<T> {
+impl<T: Clone + std::fmt::Debug> Collectable for Exchange<T> {
     fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut xchg.node, gc, pool);
         RetryLoop::filter(&mut xchg.try_xchg, gc, pool);
     }
 }
 
-impl<T: 'static + Clone+ std::fmt::Debug> Memento for Exchange<T> {
+impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T;

@@ -23,7 +23,7 @@
 // #![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 #![deny(rustdoc::all)]
 #![deny(unreachable_pub)]
 // #![deny(single_use_lifetimes)] // Allowed due to GAT
@@ -36,6 +36,7 @@
 #![feature(never_type)] // to use `!`
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 #![feature(new_uninit)] // for clevel
+#![recursion_limit = "512"]
 
 // Persistent objects collection
 pub mod ds;

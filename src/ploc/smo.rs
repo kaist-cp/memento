@@ -77,6 +77,7 @@ where
         let old = point.load(Ordering::SeqCst, guard);
 
         if !old.is_null() || !prepare(new_ref) {
+            // TODO: prepare(new_ref, old)? for tags
             return Err(InsertErr::PrepareFail);
         }
 

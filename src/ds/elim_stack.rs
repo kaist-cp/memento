@@ -68,7 +68,7 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 impl<T> Memento for TryPush<T>
 where
-    T: 'static + Clone+ std::fmt::Debug,
+    T: 'static + Clone + std::fmt::Debug,
 {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = (PShared<'o, Node<Request<T>>>, usize);
@@ -152,7 +152,7 @@ impl<T: Clone> Collectable for TryPop<T> {
 
 impl<T> Memento for TryPop<T>
 where
-    T: 'static + Clone+ std::fmt::Debug,
+    T: 'static + Clone + std::fmt::Debug,
 {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = usize;
@@ -241,12 +241,12 @@ unsafe impl<T: Clone> Sync for ElimStack<T> {}
 
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
-pub struct Push<T: 'static + Clone+ std::fmt::Debug> {
+pub struct Push<T: 'static + Clone + std::fmt::Debug> {
     node: Checkpoint<PAtomic<Node<Request<T>>>>,
     try_push: RetryLoop<TryPush<T>>,
 }
 
-impl<T: Clone+ std::fmt::Debug> Default for Push<T> {
+impl<T: Clone + std::fmt::Debug> Default for Push<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
@@ -255,14 +255,14 @@ impl<T: Clone+ std::fmt::Debug> Default for Push<T> {
     }
 }
 
-impl<T: Clone+ std::fmt::Debug> Collectable for Push<T> {
+impl<T: Clone + std::fmt::Debug> Collectable for Push<T> {
     fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut push.node, gc, pool);
         RetryLoop::filter(&mut push.try_push, gc, pool);
     }
 }
 
-impl<T: Clone+ std::fmt::Debug> Memento for Push<T> {
+impl<T: Clone + std::fmt::Debug> Memento for Push<T> {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = (T, usize);
     type Output<'o>
@@ -309,15 +309,15 @@ impl<T: Clone+ std::fmt::Debug> Memento for Push<T> {
     }
 }
 
-unsafe impl<T: 'static + Clone+ std::fmt::Debug> Send for Push<T> {}
+unsafe impl<T: 'static + Clone + std::fmt::Debug> Send for Push<T> {}
 
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
-pub struct Pop<T: 'static + Clone+ std::fmt::Debug> {
+pub struct Pop<T: 'static + Clone + std::fmt::Debug> {
     try_pop: RetryLoop<TryPop<T>>,
 }
 
-impl<T: Clone+ std::fmt::Debug> Default for Pop<T> {
+impl<T: Clone + std::fmt::Debug> Default for Pop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
@@ -325,13 +325,13 @@ impl<T: Clone+ std::fmt::Debug> Default for Pop<T> {
     }
 }
 
-impl<T: Clone+ std::fmt::Debug> Collectable for Pop<T> {
+impl<T: Clone + std::fmt::Debug> Collectable for Pop<T> {
     fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         RetryLoop::filter(&mut pop.try_pop, gc, pool);
     }
 }
 
-impl<T: Clone+ std::fmt::Debug> Memento for Pop<T> {
+impl<T: Clone + std::fmt::Debug> Memento for Pop<T> {
     type Object<'o> = &'o ElimStack<T>;
     type Input<'o> = usize;
     type Output<'o>
@@ -358,9 +358,9 @@ impl<T: Clone+ std::fmt::Debug> Memento for Pop<T> {
     }
 }
 
-unsafe impl<T: Clone+ std::fmt::Debug> Send for Pop<T> {}
+unsafe impl<T: Clone + std::fmt::Debug> Send for Pop<T> {}
 
-impl<T: 'static + Clone+ std::fmt::Debug> Stack<T> for ElimStack<T> {
+impl<T: 'static + Clone + std::fmt::Debug> Stack<T> for ElimStack<T> {
     type Push = Push<T>;
     type Pop = Pop<T>;
 }
@@ -371,8 +371,8 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
     use rusty_fork::rusty_fork_test;
 
-    const NR_THREAD: usize = 2;
-    const COUNT: usize = 1;
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 100_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
@@ -380,14 +380,14 @@ mod tests {
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // rusty_fork_test! {
-        #[test]
-        fn push_pop() {
-            const FILE_NAME: &str = "elim_push_pop.pool";
-            run_test::<ElimStack<usize>, PushPop<ElimStack<usize>, NR_THREAD, COUNT>, _>(
-                FILE_NAME,
-                FILE_SIZE,
-                NR_THREAD + 1,
-            )
-        }
+    #[test]
+    fn push_pop() {
+        const FILE_NAME: &str = "elim_push_pop.pool";
+        run_test::<ElimStack<usize>, PushPop<ElimStack<usize>, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
+    }
     // }
 }
