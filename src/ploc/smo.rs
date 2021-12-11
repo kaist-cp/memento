@@ -340,6 +340,7 @@ where
                 persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
 
                 // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next(= node_when_delete(target))
+                // `next`를 알고 있으므로 `help()`를 굳이 쓰지 않음
                 let real_next = DeleteOrNode::is_node(cur).unwrap_or(next);
 
                 // point를 승리한 애와 관련된 것으로 바꿔주
@@ -525,13 +526,7 @@ where
                 // same context
                 persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
 
-                // point가 바뀌어야 할 next를 설정
-                let next = DeleteOrNode::is_node(cur)
-                    .unwrap_or_else(|| G::node_when_deleted(target, guard, pool));
-
-                // point를 승자가 원하는 node로 바꿔줌
-                let _ =
-                    point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+                help(target, cur, point, guard, pool);
             })
     }
 
