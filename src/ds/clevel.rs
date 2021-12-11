@@ -105,26 +105,36 @@ impl<K, V> Collectable for Modify<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> Memento for Modify<K, V> {
+impl<K: 'static, V: 'static> Memento for Modify<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
     type Object<'o> = &'o PClevelInner<K, V>;
-    type Input<'o> = ModifyOp;
-    type Output<'o> = (); // TODO: output도 enum으로 묶기?
+    type Input<'o> = (usize, ModifyOp, K, V);
+    type Output<'o> = bool; // TODO: output도 enum으로 묶기?
     type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
         inner: Self::Object<'o>,
-        op: Self::Input<'o>,
+        (tid, op, k, v): Self::Input<'o>,
         rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        match op {
-            ModifyOp::Insert => self.insert.run(inner, (), rec, guard, pool),
-            ModifyOp::Delete => self.delete.run(inner, (), rec, guard, pool),
-            ModifyOp::Update => self.update.run(inner, (), rec, guard, pool),
+        let ret = match op {
+            ModifyOp::Insert => self
+                .insert
+                .run(inner, (tid, k, v), rec, guard, pool)
+                .is_ok(),
+            ModifyOp::Delete => self.delete.run(inner, &k, rec, guard, pool).is_ok(),
+            ModifyOp::Update => self
+                .update
+                .run(inner, (tid, k, v), rec, guard, pool)
+                .is_ok(),
         };
-        Ok(())
+        Ok(ret)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -196,22 +206,25 @@ impl<K, V> Collectable for ClInsert<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> Memento for ClInsert<K, V> {
+impl<K, V> Memento for ClInsert<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
     type Object<'o> = &'o PClevelInner<K, V>;
-    type Input<'o> = ();
-    type Output<'o> = (); // TODO
+    type Input<'o> = (usize, K, V); // tid, k, v
+    type Output<'o> = Result<(), InsertError>; // TODO
     type Error<'o> = !; // TODO
 
     fn run<'o>(
         &mut self,
-        object: Self::Object<'o>,
-        input: Self::Input<'o>,
+        inner: Self::Object<'o>,
+        (tid, k, v): Self::Input<'o>,
         rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        println!("[run insert m]");
-        Ok(())
+        Ok(inner.kv.insert(tid, k, v, guard))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -239,22 +252,25 @@ impl<K, V> Collectable for ClDelete<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> Memento for ClDelete<K, V> {
+impl<K, V> Memento for ClDelete<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
     type Object<'o> = &'o PClevelInner<K, V>;
-    type Input<'o> = ();
+    type Input<'o> = &'o K;
     type Output<'o> = (); // TODO
     type Error<'o> = !; // TODO
 
     fn run<'o>(
         &mut self,
-        object: Self::Object<'o>,
-        input: Self::Input<'o>,
+        inner: Self::Object<'o>,
+        k: Self::Input<'o>,
         rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        println!("[run delete m]");
-        Ok(())
+        Ok(inner.kv.delete(&k, guard))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -282,22 +298,25 @@ impl<K, V> Collectable for ClUpdate<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> Memento for ClUpdate<K, V> {
+impl<K: 'static, V: 'static> Memento for ClUpdate<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
     type Object<'o> = &'o PClevelInner<K, V>;
-    type Input<'o> = ();
-    type Output<'o> = (); // TODO
+    type Input<'o> = (usize, K, V); // tid, k, v
+    type Output<'o> = Result<(), (K, V)>; // TODO
     type Error<'o> = !; // TODO
 
     fn run<'o>(
         &mut self,
-        object: Self::Object<'o>,
-        input: Self::Input<'o>,
+        inner: Self::Object<'o>,
+        (tid, k, v): Self::Input<'o>,
         rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        println!("[run update m]");
-        Ok(())
+        Ok(inner.kv.update(tid, k, v, guard))
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -1043,7 +1062,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InsertError {
     Occupied,
 }
@@ -1179,6 +1198,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     where
         V: Clone,
     {
+        // println!("[insert] tid: {}, key: {}", tid, key);
         let key_hashes = hashes(&key);
         let (context, find_result) = self.inner.find(&key, key_hashes, guard);
         if find_result.is_some() {
@@ -1229,6 +1249,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     }
 
     pub fn delete(&self, key: &K, guard: &Guard) {
+        // println!("[delete] key: {}", key);
         let key_hashes = hashes(&key);
         loop {
             let (_, find_result) = self.inner.find(key, key_hashes, guard);
@@ -1253,6 +1274,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             unsafe {
                 guard.defer_destroy(find_result.slot_ptr);
             }
+            // println!("[delete] finish!");
             return;
         }
     }

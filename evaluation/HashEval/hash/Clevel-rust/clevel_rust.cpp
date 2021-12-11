@@ -13,6 +13,7 @@
 
 #include "pair.h"
 #include "persist.h"
+#include <thread>
 
 #ifndef _EXAMPLE_H
 #define _EXAMPLE_H
@@ -37,9 +38,9 @@ extern "C"
     bool search(Clevel *obj, Key k, PoolHandle *pool);
 
     typedef struct _memento ClevelMemento;
-    bool run_insert(ClevelMemento *m, Clevel *obj, Key k, Value v, PoolHandle *pool);
-    bool run_update(ClevelMemento *m, Clevel *obj, Key k, Value v, PoolHandle *pool);
-    bool run_delete(ClevelMemento *m, Clevel *obj, Key k, PoolHandle *pool);
+    bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
+    bool run_update(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
+    bool run_delete(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, PoolHandle *pool);
     void run_resize_loop(ClevelMemento *m, Clevel *obj, PoolHandle *pool);
 
 #ifdef __cplusplus
@@ -64,14 +65,15 @@ public:
         c = reinterpret_cast<Clevel *>(get_root(IX_OBJ, pool));
         m = (ClevelMemento **)malloc(sizeof(ClevelMemento *) * tnum);
 
-        // 0~tnum-1 for insert, delete, search
+        // `0~tnum-1` thread for insert, delete, search
         for (int tid = 0; tid < tnum; ++tid)
         {
             m[tid] = reinterpret_cast<ClevelMemento *>(get_root(IX_MEMENTO_START + tid, pool));
         }
-        // tnum for resize loop
+
+        // `tnum` thread is only for resize loop
         ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(IX_MEMENTO_START + tnum, pool));
-        // TODO: 스레드 하나 만들어서 resize_loop 돌리기 (`run_resize_loop(m_resize, c, pool)`)
+        std::thread{run_resize_loop, m_resize, c, pool}.detach();
     }
     ~CLevelMemento(){};
     std::string hash_name()
@@ -89,14 +91,14 @@ public:
     {
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
-        return run_insert(m[tid], c, k, v, pool);
+        return run_insert(m[tid], c, tid, k, v, pool);
     }
     bool insertResize(const char *key, size_t key_sz, const char *value,
                       size_t value_sz, unsigned tid, unsigned t)
     {
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
-        return run_insert(m[tid], c, k, v, pool);
+        return run_insert(m[tid], c, tid, k, v, pool);
     }
     bool update(const char *key, size_t key_sz, const char *value,
                 size_t value_sz)
@@ -108,7 +110,7 @@ public:
     bool remove(const char *key, size_t key_sz, unsigned tid)
     {
         auto k = *reinterpret_cast<const Key *>(key);
-        return run_delete(m[tid], c, k, pool);
+        return run_delete(m[tid], c, tid, k, pool);
     }
 
     int scan(const char *key, size_t key_sz, int scan_sz, char *&values_out)
