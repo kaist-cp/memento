@@ -14,7 +14,7 @@ REMOVE_RT=0             # Run phase에 실행시킬 op 중 몇 %를 remove로 �
 NEGATIVE_RT=0           # Run phase에 실행시킬 read 중 몇 %를 negative search로 할건가
 MODE="THROUGHPUT"       # Evaluation mode (possbile arg: THROUGHPUT, LATENCY, LOAD_FACTOR)
 DISTRIBUTION="UNIFORM"  # Key distribution (possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN)
-THREAD=8
+THREAD=48
 
 # NUMA node 0에 pinning하여 테스트하려면 아래처럼 실행해야함
 # numactl --cpunodebind=0 --membind=0 sudo ./$BIN/PiBench ...
