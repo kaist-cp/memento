@@ -1,5 +1,7 @@
 #!/bin/bash
 
+rm -rf /mnt/pmem0/clevel_memento*
+
 BIN="bin"
 target="clevel_rust"
 
