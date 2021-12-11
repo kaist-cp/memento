@@ -123,13 +123,17 @@ pub extern "C" fn run_resize_loop(
 }
 
 #[no_mangle]
-pub extern "C" fn search(clevel: &PClevelInner<Key, Value>, k: Key, pool: &PoolHandle) -> bool {
+pub extern "C" fn search(
+    clevel: &PClevelInner<Key, Value>,
+    k: Key,
+    pool: &'static PoolHandle,
+) -> bool {
     let guard = epoch::pin();
     clevel.search(&k, &guard, pool).is_some()
 }
 
 #[no_mangle]
-pub extern "C" fn get_capacity(c: &PClevelInner<Key, Value>, pool: &PoolHandle) -> usize {
+pub extern "C" fn get_capacity(c: &PClevelInner<Key, Value>, pool: &'static PoolHandle) -> usize {
     let guard = crossbeam_epoch::pin();
     c.get_capacity(&guard, pool)
 }
