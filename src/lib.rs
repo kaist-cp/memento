@@ -35,6 +35,7 @@
 #![feature(asm)]
 #![feature(never_type)] // to use `!`
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
+#![feature(new_uninit)] // for clevel
 
 // Persistent objects collection
 pub mod ds;
