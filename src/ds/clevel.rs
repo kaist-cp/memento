@@ -325,8 +325,8 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        // Ok(inner.kv.delete(&k, guard, pool))
-        todo!()
+        Clevel::delete(inner, &k, guard, pool);
+        Ok(())
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -334,7 +334,6 @@ where
     }
 }
 
-// TODO: memento
 #[derive(Debug)]
 struct ClUpdate<K, V> {
     _marker: PhantomData<(K, V)>,
@@ -373,8 +372,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        // inner.kv.update(tid, k, v, guard, pool)
-        todo!()
+        Clevel::update(inner, tid, k, v, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -1411,11 +1409,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         }
     }
 
-    pub fn delete(&self, key: &K, guard: &Guard, pool: &'static PoolHandle) {
+    pub fn delete<'g>(
+        inner: &'g ClevelInner<K, V>,
+        key: &K,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) {
         // println!("[delete] key: {}", key);
         let key_hashes = hashes(&key);
         loop {
-            let (_, find_result) = self.inner.find(key, key_hashes, guard, pool);
+            let (_, find_result) = inner.find(key, key_hashes, guard, pool);
             let find_result = some_or!(find_result, {
                 println!("[delete] suspicious...");
                 return;
@@ -1457,8 +1460,8 @@ mod tests {
 
     struct Smoke {
         insert: ClInsert<usize, usize>,
-        update: ClInsert<usize, usize>,
-        delete: ClInsert<usize, usize>,
+        update: ClUpdate<usize, usize>,
+        delete: ClDelete<usize, usize>,
         resize: ResizeLoop<usize, usize>,
     }
 
@@ -1505,15 +1508,15 @@ mod tests {
                     let _ = self.insert.run(object, (0, i, i), rec, guard, pool);
                     assert_eq!(Clevel::search(object, &i, &guard, pool), Some(&i));
 
-                    // let _ = kv.update(0, i, i + RANGE, &guard);
-                    // assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
+                    let _ = self.update.run(object, (0, i, i + RANGE), rec, guard, pool);
+                    assert_eq!(Clevel::search(object, &i, &guard, pool), Some(&(i + RANGE)));
                 }
 
-                // for i in 0..RANGE {
-                //     assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
-                //     kv.delete(&i, &guard);
-                //     assert_eq!(kv.search(&i, &guard), None);
-                // }
+                for i in 0..RANGE {
+                    assert_eq!(Clevel::search(object, &i, &guard, pool), Some(&(i + RANGE)));
+                    let _ = self.delete.run(object, &i, rec, guard, pool);
+                    assert_eq!(Clevel::search(object, &i, &guard, pool), None);
+                }
             })
             .unwrap();
             Ok(())
