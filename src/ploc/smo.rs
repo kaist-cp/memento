@@ -7,7 +7,10 @@ use crossbeam_epoch::Guard;
 use super::{common::Node, no_owner, InsertErr, Traversable};
 
 use crate::{
-    pepoch::{atomic::Pointer, PAtomic, PShared},
+    pepoch::{
+        atomic::{with_tag, Pointer, tag},
+        PAtomic, PShared,
+    },
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -117,9 +120,7 @@ impl DeleteOrNode {
 
     #[inline]
     fn is_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
-        let converted = unsafe { PShared::<()>::from_usize(checked) };
-
-        if converted.tag() & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
+        if tag(checked) & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
             return None;
         }
 
@@ -128,9 +129,7 @@ impl DeleteOrNode {
 
     #[inline]
     fn set_delete(x: usize) -> usize {
-        unsafe { PShared::<()>::from_usize(x) }
-            .with_tag(Self::DELETE_CLIENT)
-            .into_usize()
+        with_tag(x, Self::DELETE_CLIENT)
     }
 
     #[inline]
