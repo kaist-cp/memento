@@ -77,23 +77,30 @@ impl<T: Clone> Collectable for TryExchange<T> {
 
 type ExchangeCond<T> = fn(&T) -> bool;
 
-impl<T: 'static + Clone> Memento for TryExchange<T> {
+impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = (T, ExchangeCond<T>);
+    type Input<'o> = (T, ExchangeCond<T>, usize);
     type Output<'o> = T; // TODO(opt): input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &mut self,
         xchg: Self::Object<'o>,
-        (value, cond): Self::Input<'o>,
+        (value, cond, tid): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // println!("before alloc node value {} {:?}", tid, value);
         let node = POwned::new(Node::from(value), pool);
+        // println!("xchg alloc node {} {:?}", tid, node);
         persist_obj(unsafe { node.deref(pool) }, true);
 
+        if tid > 99999 {
+            // println!("{}", tid);
+        }
+
+        // println!("checkpoint {} {:?}", tid, node);
         let node = self
             .node
             .run(
@@ -101,7 +108,8 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
                 (PAtomic::from(node), |aborted| {
                     let guard = unsafe { epoch::unprotected() };
                     let d = aborted.load(Ordering::Relaxed, guard);
-                    unsafe { guard.defer_pdestroy(d) };
+                    // // println!("no need free node {} {:?}", tid, d);
+                    unsafe { guard.defer_pdestroy(d) }; // TODO: into_owned -> drop
                 }),
                 rec,
                 guard,
@@ -110,19 +118,23 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
+        // println!("init slot {} {:?}", tid, node);
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
-        let slot = xchg.slot.load(Ordering::SeqCst, guard);
+        let slot = xchg.slot.load(guard, pool);
         let slot = self
             .init_slot
             .run((), (PAtomic::from(slot), |_| {}), rec, guard, pool)
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
+        // println!("end init slot {} {:?}", tid, node);
+
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
         if slot.is_null() {
             let mine = node.with_high_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
+            // println!("insert {} {:?}", tid, node);
             let inserted = self.insert.run(
                 &xchg.slot,
                 (mine, xchg, Self::prepare_insert),
@@ -133,11 +145,16 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
 
             if inserted.is_err() {
                 // contention
+
+                // println!("err insert {} {:?}", tid, node);
+
                 unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
+
+                // println!("free insert {} {:?}", tid, node);
                 return Err(TryFail::Busy);
             }
 
-            return self.wait(mine, xchg, rec, guard, pool);
+            return self.wait(mine, xchg, rec, guard, pool, tid);
         }
 
         // slot이 null이 아니면 tag를 확인하고 반대껄 장착하고 update
@@ -149,6 +166,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
 
         // 상대가 기다리는 입장인 경우
         if my_tag != WAITING {
+            // println!("cond check {} {:?}", tid, slot);
             let slot_ref = unsafe { slot.deref(pool) }; // SAFE: free되지 않은 node임. 왜냐하면 WAITING 하던 애가 그냥 나갈 때는 반드시 slot을 비우고 나감.
             if !cond(&slot_ref.data) {
                 return Err(TryFail::Busy);
@@ -162,17 +180,19 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
             .run(&xchg.slot, (mine, slot, xchg), rec, guard, pool)
             .map_err(|_| {
                 // 실패하면 contention으로 인한 fail 리턴
+                // println!("update fail free node {} {:?}", tid, node);
                 unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
                 TryFail::Busy
             })?;
 
         // 내가 기다린다고 선언한 거면 기다림
         if my_tag == WAITING {
-            return self.wait(mine, xchg, rec, guard, pool);
+            return self.wait(mine, xchg, rec, guard, pool, tid);
         }
 
         // even으로 성공하면 성공 리턴
         let partner = updated;
+        // println!("dash partner {} {:?}", tid, partner);
         let partner_ref = unsafe { partner.deref(pool) };
         unsafe { guard.defer_pdestroy(mine) };
         Ok(partner_ref.data.clone())
@@ -195,6 +215,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
+        tid: usize,
     ) -> Result<T, TryFail> {
         // TODO(opt): timeout을 받고 loop을 쓰자
 
@@ -204,18 +225,24 @@ impl<T: 'static + Clone> TryExchange<T> {
             std::thread::sleep(Duration::from_nanos(100));
         }
 
-        let slot = xchg.slot.load(Ordering::SeqCst, guard);
+        let slot = xchg.slot.load(guard, pool);
+
+        // println!("wait mine slot {} {:?} {:?}", tid, mine, slot);
+
         let slot = self
             .wait_slot
             .run((), (PAtomic::from(slot), |_| {}), rec, guard, pool)
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
+        // println!("end wait mine {} {:?} {:?}", tid, mine, slot);
+
         // slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if slot != mine {
-            return Ok(Self::succ_after_wait(mine, guard, pool));
+            return Ok(Self::succ_after_wait(mine, guard, pool, tid));
         }
 
+        // println!("delete mine {} {:?} {:?}", tid, mine, slot);
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = self.delete.run(&xchg.slot, (mine, xchg), rec, guard, pool);
@@ -223,6 +250,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         if let Ok(res) = deleted {
             match res {
                 Some(d) => {
+                    // println!("delete d {} {:?}", tid, d);
                     unsafe { guard.defer_pdestroy(d) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
                     return Err(TryFail::Timeout);
                 }
@@ -234,14 +262,16 @@ impl<T: 'static + Clone> TryExchange<T> {
             }
         }
 
-        Ok(Self::succ_after_wait(mine, guard, pool))
+        Ok(Self::succ_after_wait(mine, guard, pool, tid))
     }
 
     #[inline]
-    fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> T {
+    fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle, tid: usize) -> T {
         // 내 파트너는 나의 owner()임
+        // println!("wait mine {} {:?}", tid, mine);
         let mine_ref = unsafe { mine.deref(pool) };
         let partner = unsafe { Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref) };
+        // println!("wait partner {} {:?}", tid, partner);
         let partner_ref = unsafe { partner.deref(pool) };
         unsafe { guard.defer_pdestroy(mine) };
         partner_ref.data.clone()
@@ -290,12 +320,12 @@ impl<T: Clone> UpdateDeleteInfo<Exchanger<T>, Node<T>> for TryExchange<T> {
 /// Exchanger의 exchange operation.
 /// 반드시 exchange에 성공함.
 #[derive(Debug)]
-pub struct Exchange<T: 'static + Clone> {
+pub struct Exchange<T: 'static + Clone+ std::fmt::Debug> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_xchg: RetryLoop<TryExchange<T>>,
 }
 
-impl<T: Clone> Default for Exchange<T> {
+impl<T: Clone+ std::fmt::Debug> Default for Exchange<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
@@ -304,16 +334,16 @@ impl<T: Clone> Default for Exchange<T> {
     }
 }
 
-unsafe impl<T: Clone + Send + Sync> Send for Exchange<T> {}
+unsafe impl<T: Clone + Send + Sync+ std::fmt::Debug> Send for Exchange<T> {}
 
-impl<T: Clone> Collectable for Exchange<T> {
+impl<T: Clone+ std::fmt::Debug> Collectable for Exchange<T> {
     fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut xchg.node, gc, pool);
         RetryLoop::filter(&mut xchg.try_xchg, gc, pool);
     }
 }
 
-impl<T: 'static + Clone> Memento for Exchange<T> {
+impl<T: 'static + Clone+ std::fmt::Debug> Memento for Exchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T;
@@ -347,7 +377,7 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         //     .load(Ordering::Relaxed, guard);
 
         self.try_xchg
-            .run(xchg, (value, cond), rec, guard, pool)
+            .run(xchg, (value, cond, 1), rec, guard, pool)
             .map_err(|_| unreachable!("Retry never fails."))
     }
 
@@ -379,8 +409,8 @@ impl<T: Clone> PDefault for Exchanger<T> {
 }
 
 impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
-    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
-        let slot = self.slot.load(Ordering::SeqCst, guard);
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
+        let slot = self.slot.load(guard, pool);
         slot == target
     }
 }

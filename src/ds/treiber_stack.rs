@@ -107,6 +107,7 @@ impl<T: 'static + Clone> Memento for TryPop<T> {
             .run(&stack.top, (stack, Self::get_next), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| unsafe {
+                    // println!("treiber free {:?}", popped);
                     guard.defer_pdestroy(popped);
                     popped.deref(pool).data.clone()
                 })
@@ -208,7 +209,7 @@ impl<T: Clone> Collectable for Push<T> {
 
 impl<T: Clone> Memento for Push<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = T;
+    type Input<'o> = (T, usize);
     type Output<'o>
     where
         T: 'o,
@@ -218,7 +219,7 @@ impl<T: Clone> Memento for Push<T> {
     fn run<'o>(
         &mut self,
         stack: Self::Object<'o>,
-        value: Self::Input<'o>,
+        (value, _): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -277,7 +278,7 @@ impl<T: Clone> Collectable for Pop<T> {
 
 impl<T: Clone> Memento for Pop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = ();
+    type Input<'o> = usize;
     type Output<'o>
     where
         T: 'o,
@@ -287,7 +288,7 @@ impl<T: Clone> Memento for Pop<T> {
     fn run<'o>(
         &mut self,
         stack: Self::Object<'o>,
-        (): Self::Input<'o>,
+        _: Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -315,15 +316,15 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
     use rusty_fork::rusty_fork_test;
 
-    const NR_THREAD: usize = 12;
-    const COUNT: usize = 10_000;
+    const NR_THREAD: usize = 2;
+    const COUNT: usize = 1;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     impl TestRootObj for TreiberStack<usize> {}
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
-    rusty_fork_test! {
+    // rusty_fork_test! {
         #[test]
         fn push_pop() {
             const FILE_NAME: &str = "treiber_push_pop.pool";
@@ -333,5 +334,5 @@ mod tests {
                 NR_THREAD + 1,
             )
         }
-    }
+    // }
 }

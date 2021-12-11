@@ -104,7 +104,8 @@ impl PoolHandle {
                             // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
                             match hanlder.join() {
                                 Ok(_) => break,
-                                Err(_) => println!("PANIC: Root memento No.{} re-executed.", tid),
+                                Err(_) => std::process::exit(1),
+                                // Err(_) => println!("PANIC: Root memento No.{} re-executed.", tid),
                             }
                         }
                     })

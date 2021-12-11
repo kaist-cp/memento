@@ -299,6 +299,8 @@ impl<T> Pointable for T {
     }
 
     unsafe fn drop(offset: usize, pool: &PoolHandle) {
+        println!("drop {}", offset);
+        std::process::exit(1);
         pool.free(PPtr::<T>::from(offset));
     }
 }

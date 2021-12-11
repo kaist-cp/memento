@@ -213,13 +213,15 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O,
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
-    fn load<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
+    // TODO: 버그잡고 lookup과 분리
+    pub fn load<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
         loop {
             let p = self.ptr.load(Ordering::SeqCst, guard);
             if p.is_null() {
                 return p;
             }
 
+            // println!("load {:?}", p);
             let p_ref = unsafe { p.deref(pool) };
             let owner = p_ref.owner();
             let o = owner.load(Ordering::SeqCst);
@@ -516,6 +518,7 @@ where
             return Err(());
         }
 
+        // println!("update zzim {:?}", target);
         let target_ref = unsafe { target.deref(pool) };
 
         // 우선 내가 target을 가리키고
@@ -578,6 +581,7 @@ where
         let target = self.target_loc.load(Ordering::Relaxed, guard);
 
         if !target.is_null() {
+            // println!("update result {:?}", target);
             let target_ref = unsafe { target.deref(pool) };
             let owner = target_ref.owner().load(Ordering::SeqCst);
 

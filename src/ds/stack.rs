@@ -11,14 +11,14 @@ pub struct TryFail;
 pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// Push 연산을 위한 Persistent op.
     /// 반드시 push에 성공함.
-    type Push: for<'o> Memento<Object<'o> = &'o Self, Input<'o> = T, Output<'o> = (), Error<'o> = !>;
+    type Push: for<'o> Memento<Object<'o> = &'o Self, Input<'o> = (T, usize), Output<'o> = (), Error<'o> = !>;
 
     /// Pop 연산을 위한 Persistent op.
     /// 반드시 pop에 성공함.
     /// pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
     type Pop: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = (),
+        Input<'o> = usize,
         Output<'o> = Option<T>,
         Error<'o> = !,
     >;
@@ -96,41 +96,53 @@ pub(crate) mod tests {
             match tid {
                 // T0: 다른 스레드들의 실행결과를 확인
                 0 => {
-                    // 다른 스레드들이 다 끝날때까지 기다림
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+                    // // 다른 스레드들이 다 끝날때까지 기다림
+                    // while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
-                    // Check empty
-                    let mut tmp_pop = S::Pop::default();
-                    let must_none = tmp_pop.run(stack, (), rec, guard, pool).unwrap();
-                    assert!(must_none.is_none());
-                    tmp_pop.reset(guard, pool);
+                    // // Check empty
+                    // let mut tmp_pop = S::Pop::default();
+                    // let must_none = tmp_pop.run(stack, 1, rec, guard, pool).unwrap();
+                    // assert!(must_none.is_none());
+                    // tmp_pop.reset(guard, pool);
 
-                    // Check results
-                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
-                    for tid in 1..NR_THREAD + 1 {
-                        assert!(RESULTS[tid].load(Ordering::SeqCst) == COUNT);
-                    }
+                    // // Check results
+                    // assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
+                    // for tid in 1..NR_THREAD + 1 {
+                    //     assert!(RESULTS[tid].load(Ordering::SeqCst) == COUNT);
+                    // }
                 }
                 // T0이 아닌 다른 스레드들은 stack에 { push; pop; } 수행
                 _ => {
+                    let mut v = vec!();
+
                     // push; pop;
                     for i in 0..COUNT {
-                        let _ = self.pushes[i].run(stack, tid, rec, guard, pool);
-                        assert!(self.pops[i]
-                            .run(stack, (), rec, guard, pool)
-                            .unwrap()
-                            .is_some());
+                        let _ = self.pushes[i].run(stack, (tid * 100_000 + i, tid), rec, guard, pool);
+                        let ret = self.pops[i].run(stack, tid, rec, guard, pool).unwrap();
+
+                        v.push(ret);
+                        assert!(ret.is_some());
                     }
 
+                    println!("{} done!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", tid);
+
                     // pop 결과를 실험결과에 전달
-                    for pop in self.pops.as_mut() {
-                        let ret = pop.run(stack, (), true, guard, pool).unwrap().unwrap();
-                        let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
+                    for (i, pop) in self.pops.iter_mut().enumerate() {
+                        let ret = pop
+                            .run(stack, tid * 100_000 + i, true, guard, pool)
+                            .unwrap();
+                        if ret.is_none() {
+                            println!("tid: {:?}, expected: {:?}", tid, v[i])
+                        }
+
+                        assert!(ret.is_some());
+                        // let _ = RESULTS[ret.unwrap()].fetch_add(1, Ordering::SeqCst);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
+            println!("{} real done", tid);
             Ok(())
         }
 
