@@ -176,8 +176,8 @@ impl<K, V> Collectable for ResizeLoop<K, V> {
 impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = ();
-    type Output<'o> = (); // TODO
-    type Error<'o> = !; // TODO
+    type Output<'o> = ();
+    type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
@@ -227,8 +227,8 @@ where
 {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = (usize, K, V); // tid, k, v
-    type Output<'o> = (); // TODO
-    type Error<'o> = InsertError; // TODO
+    type Output<'o> = ();
+    type Error<'o> = InsertError;
 
     fn run<'o>(
         &mut self,
@@ -274,8 +274,8 @@ where
 {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = &'o K;
-    type Output<'o> = (); // TODO
-    type Error<'o> = !; // TODO
+    type Output<'o> = ();
+    type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
@@ -321,8 +321,8 @@ where
 {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = (usize, K, V); // tid, k, v
-    type Output<'o> = (); // TODO
-    type Error<'o> = (K, V); // TODO
+    type Output<'o> = ();
+    type Error<'o> = ();
 
     fn run<'o>(
         &mut self,
@@ -1288,7 +1288,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         value: V,
         guard: &Guard,
         pool: &'static PoolHandle,
-    ) -> Result<(), (K, V)>
+    ) -> Result<(), ()>
     where
         K: Clone,
     {
@@ -1304,10 +1304,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         loop {
             let (context, find_result) = self.inner.find(&key, key_hashes, guard, pool);
             let find_result = some_or!(find_result, {
-                let slot_ref = unsafe { slot_new.deref(pool) };
-                // TODO: 이렇게 k,v 리턴하면 안됨. 그냥 update 실패 리턴값 없애자
-                let (k, v) = (slot_ref.key.clone(), unsafe { ptr::read(&slot_ref.value) });
-                return Err((k, v));
+                return Err(());
             });
 
             if let Err(e) = find_result.slot.compare_exchange(
