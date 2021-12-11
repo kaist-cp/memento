@@ -8,7 +8,7 @@ use super::{common::Node, no_owner, InsertErr, Traversable};
 
 use crate::{
     pepoch::{
-        atomic::{with_tag, Pointer, tag},
+        atomic::{tag, with_tag, Pointer},
         PAtomic, PShared,
     },
     pmem::{
@@ -212,6 +212,22 @@ impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O, N, G> 
 
 unsafe impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Send for SMOAtomic<O, N, G> {}
 unsafe impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Sync for SMOAtomic<O, N, G> {}
+
+#[inline]
+fn help<O, N: Collectable, G: UpdateDeleteInfo<O, N>>(
+    old: PShared<'_, N>,
+    owner: usize,
+    point: &SMOAtomic<O, N, G>,
+    guard: &Guard,
+    pool: &PoolHandle,
+) {
+    // point가 바뀌어야 할 next를 설정
+    let next =
+        DeleteOrNode::is_node(owner).unwrap_or_else(|| G::node_when_deleted(old, guard, pool));
+
+    // point를 승자가 원하는 node로 바꿔줌
+    let _ = point.compare_exchange(old, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+}
 
 /// TODO(doc)
 /// Do not use LSB while using `Delete` or `Update`.
