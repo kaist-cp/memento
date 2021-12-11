@@ -503,7 +503,12 @@ impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
         } else {
             inner_ref.next.load(Ordering::Acquire, self.guard)
         };
-        Some(unsafe { inner_ref.data.load(Ordering::Relaxed, self.guard).deref(pool) })
+        Some(unsafe {
+            inner_ref
+                .data
+                .load(Ordering::Relaxed, self.guard)
+                .deref(pool)
+        })
     }
 }
 
@@ -722,7 +727,8 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
         println!("[add_level] hi");
-        let first_level_data = unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
+        let first_level_data =
+            unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
         let next_level_size = level_size_next(first_level_data.len());
 
         // insert a new level to the next of the first level.
@@ -819,7 +825,12 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
             let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
             let last_level_ref = unsafe { last_level.deref(pool) };
-            let last_level_data = unsafe { last_level_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+            let last_level_data = unsafe {
+                last_level_ref
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            };
             let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
@@ -833,7 +844,12 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
             let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let mut first_level_ref = unsafe { first_level.deref(pool) };
-            let mut first_level_data = unsafe { first_level_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+            let mut first_level_data = unsafe {
+                first_level_ref
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            };
             let mut first_level_size = first_level_data.len();
             println!(
                 "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
@@ -940,7 +956,12 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                         context_ref = unsafe { context.deref(pool) };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
                         first_level_ref = unsafe { first_level.deref(pool) };
-                        first_level_data = unsafe { first_level_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+                        first_level_data = unsafe {
+                            first_level_ref
+                                .data
+                                .load(Ordering::Relaxed, guard)
+                                .deref(pool)
+                        };
                         first_level_size = first_level_data.len();
                     }
                 }
@@ -1169,8 +1190,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
 
-        (unsafe { first_level.deref(pool).data.load(Ordering::Relaxed, guard).deref(pool).len() * 2 - last_level.deref(pool).data.load(Ordering::Relaxed, guard).deref(pool).len() })
-            * SLOTS_IN_BUCKET
+        (unsafe {
+            first_level
+                .deref(pool)
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+                .len()
+                * 2
+                - last_level
+                    .deref(pool)
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+                    .len()
+        }) * SLOTS_IN_BUCKET
     }
 
     pub fn search<'g>(

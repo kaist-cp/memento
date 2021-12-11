@@ -38,8 +38,6 @@
 #![feature(new_uninit)] // for clevel
 #![recursion_limit = "512"]
 
-#![recursion_limit = "512"]
-
 // Persistent objects collection
 pub mod ds;
 pub mod node;
