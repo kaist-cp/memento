@@ -11,18 +11,18 @@ type Key = u64;
 type Value = u64;
 
 #[derive(Default)]
-pub struct ClevelClient {
+pub struct ClevelMemento {
     modify: Modify<Key, Value>,
     resize_loop: ResizeLoop<Key, Value>,
 }
 
-impl Collectable for ClevelClient {
+impl Collectable for ClevelMemento {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         todo!()
     }
 }
 
-impl Memento for ClevelClient {
+impl Memento for ClevelMemento {
     type Object<'o> = &'o PClevelInner<Key, Value>;
     type Input<'o> = usize; // tid
     type Output<'o> = ();
@@ -52,7 +52,7 @@ pub extern "C" fn pool_create(
     nr_thread: usize,
 ) -> &'static PoolHandle {
     let c_str: &CStr = unsafe { CStr::from_ptr(path) };
-    Pool::create::<PClevelInner<Key, Value>, ClevelClient>(
+    Pool::create::<PClevelInner<Key, Value>, ClevelMemento>(
         c_str.to_str().unwrap(),
         size,
         nr_thread + 1, // +1은 resize loop 역할
@@ -73,64 +73,56 @@ pub extern "C" fn search(clevel: &PClevelInner<Key, Value>, k: Key, pool: &PoolH
 
 #[no_mangle]
 pub extern "C" fn run_insert(
-    client: &mut ClevelClient, // TODO: ClevelClient
+    m: &mut ClevelMemento,
     clevel: &PClevelInner<Key, Value>,
+    tid: usize,
     k: Key,
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
+    let input = (tid, ModifyOp::Insert, k, v);
     let guard = epoch::pin();
-    let ret = client
-        .modify
-        .run(clevel, ModifyOp::Insert, false, &guard, pool)
-        .is_ok();
-    client.modify.reset(&guard, pool);
+    let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
+    m.modify.reset(&guard, pool);
     ret
 }
 
 #[no_mangle]
 pub extern "C" fn run_update(
-    client: &mut ClevelClient, // TODO: ClevelClient
+    m: &mut ClevelMemento,
     clevel: &PClevelInner<Key, Value>,
+    tid: usize,
     k: Key,
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
+    let input = (tid, ModifyOp::Update, k, v);
     let guard = epoch::pin();
-    let ret = client
-        .modify
-        .run(clevel, ModifyOp::Update, false, &guard, pool)
-        .is_ok();
-    client.modify.reset(&guard, pool);
+    let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
+    m.modify.reset(&guard, pool);
     ret
 }
 
 #[no_mangle]
 pub extern "C" fn run_delete(
-    client: &mut ClevelClient, // TODO: ClevelClient
+    m: &mut ClevelMemento,
     clevel: &PClevelInner<Key, Value>,
+    tid: usize,
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
+    let input = (tid, ModifyOp::Delete, k, 0);
     let guard = epoch::pin();
-    let ret = client
-        .modify
-        .run(clevel, ModifyOp::Delete, false, &guard, pool)
-        .is_ok();
-    client.modify.reset(&guard, pool);
+    let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
+    m.modify.reset(&guard, pool);
     ret
 }
 #[no_mangle]
 pub extern "C" fn run_resize_loop(
-    client: &mut ClevelClient, // TODO: ClevelClient
+    m: &mut ClevelMemento,
     clevel: &PClevelInner<Key, Value>,
     pool: &'static PoolHandle,
-) -> bool {
+) {
     let guard = epoch::pin();
-    let ret = client
-        .resize_loop
-        .run(clevel, (), false, &guard, pool)
-        .is_ok();
-    client.resize_loop.reset(&guard, pool);
-    ret
+    let _ = m.resize_loop.run(clevel, (), false, &guard, pool);
 }

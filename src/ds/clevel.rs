@@ -10,6 +10,8 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 
@@ -31,10 +33,8 @@ use crate::PDefault;
 // Root obj
 #[derive(Debug)]
 pub struct PClevelInner<K, V> {
-    _marker: PhantomData<(K, V)>,
-    // TODO concurrent
-    // kv: Clevel<K, V>,
-    // kv_resize: ClevelResize<K, V>,
+    kv: Clevel<K, V>, // TODO: persistent version으로 만들며 이 필드 빼기. 현재는 내부가 concurrent 로직으로 돌아가게끔 되있음
+    kv_resize: RefCell<ClevelResize<K, V>>, // TODO: persistent version으로 만들며 이 필드 빼기. 현재는 내부가 concurrent 로직으로 돌아가게끔 되있음
 }
 
 impl<K, V> PDefault for PClevelInner<K, V>
@@ -46,8 +46,10 @@ where
     V: Debug,
 {
     fn pdefault(pool: &'static PoolHandle) -> Self {
+        let (kv, kv_resize) = Clevel::new();
         Self {
-            _marker: PhantomData,
+            kv,
+            kv_resize: RefCell::new(kv_resize),
         }
     }
 }
@@ -66,9 +68,8 @@ where
     V: Debug,
 {
     pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &PoolHandle) -> Option<&'g V> {
-        println!("[search]");
-        // TODO: self.kv.search(key, guard)
-        None
+        // TODO: persistent 버전이면 아마 search의 input에 pool 필요해질 것?
+        self.kv.search(key, guard)
     }
 }
 
@@ -79,12 +80,10 @@ pub enum ModifyOp {
     Update,
 }
 
-// TODO: 이렇게 묶을 필요 있나?
 #[derive(Debug)]
 pub struct Modify<K, V> {
     insert: ClInsert<K, V>,
     delete: ClDelete<K, V>,
-    // search: ClSearch, TODO: memento?
     update: ClUpdate<K, V>,
 }
 
@@ -104,26 +103,36 @@ impl<K, V> Collectable for Modify<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> Memento for Modify<K, V> {
+impl<K: 'static, V: 'static> Memento for Modify<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
     type Object<'o> = &'o PClevelInner<K, V>;
-    type Input<'o> = ModifyOp;
-    type Output<'o> = (); // TODO: output도 enum으로 묶기?
+    type Input<'o> = (usize, ModifyOp, K, V);
+    type Output<'o> = bool; // TODO: output도 enum으로 묶기?
     type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
         inner: Self::Object<'o>,
-        op: Self::Input<'o>,
+        (tid, op, k, v): Self::Input<'o>,
         rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        match op {
-            ModifyOp::Insert => println!("[run insert]"),
-            ModifyOp::Delete => println!("[run delete]"),
-            ModifyOp::Update => println!("[run update]"),
-        }
-        Ok(())
+        let ret = match op {
+            ModifyOp::Insert => self
+                .insert
+                .run(inner, (tid, k, v), rec, guard, pool)
+                .is_ok(),
+            ModifyOp::Delete => self.delete.run(inner, &k, rec, guard, pool).is_ok(),
+            ModifyOp::Update => self
+                .update
+                .run(inner, (tid, k, v), rec, guard, pool)
+                .is_ok(),
+        };
+        Ok(ret)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -150,7 +159,7 @@ impl<K, V> Collectable for ResizeLoop<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> Memento for ResizeLoop<K, V> {
+impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = ();
     type Output<'o> = (); // TODO
@@ -165,6 +174,10 @@ impl<K: 'static, V: 'static> Memento for ResizeLoop<K, V> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         println!("[run resize loop]");
+        let mut g = guard.clone(); // TODO: clone API 없어도 그냥 새로 pin하면 되지 않나?
+
+        // TODO: persistent op
+        inner.kv_resize.borrow_mut().resize_loop(&mut g);
         Ok(())
     }
 
@@ -187,6 +200,39 @@ impl<K, V> Default for ClInsert<K, V> {
     }
 }
 
+impl<K, V> Collectable for ClInsert<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K, V> Memento for ClInsert<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = (usize, K, V); // tid, k, v
+    type Output<'o> = Result<(), InsertError>; // TODO
+    type Error<'o> = !; // TODO
+
+    fn run<'o>(
+        &mut self,
+        inner: Self::Object<'o>,
+        (tid, k, v): Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // TODO: persistent op
+        Ok(inner.kv.insert(tid, k, v, guard))
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
+    }
+}
+
 // TODO: memento
 #[derive(Debug)]
 struct ClDelete<K, V> {
@@ -201,6 +247,39 @@ impl<K, V> Default for ClDelete<K, V> {
     }
 }
 
+impl<K, V> Collectable for ClDelete<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K, V> Memento for ClDelete<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = &'o K;
+    type Output<'o> = (); // TODO
+    type Error<'o> = !; // TODO
+
+    fn run<'o>(
+        &mut self,
+        inner: Self::Object<'o>,
+        k: Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // TODO: persistent op
+        Ok(inner.kv.delete(&k, guard))
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
+    }
+}
+
 // TODO: memento
 #[derive(Debug)]
 struct ClUpdate<K, V> {
@@ -212,6 +291,39 @@ impl<K, V> Default for ClUpdate<K, V> {
         Self {
             _marker: Default::default(),
         }
+    }
+}
+
+impl<K, V> Collectable for ClUpdate<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K: 'static, V: 'static> Memento for ClUpdate<K, V>
+where
+    K: 'static + Debug + Display + PartialEq + Hash + Clone,
+    V: 'static + Debug + Clone,
+{
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = (usize, K, V); // tid, k, v
+    type Output<'o> = Result<(), (K, V)>; // TODO
+    type Error<'o> = !; // TODO
+
+    fn run<'o>(
+        &mut self,
+        inner: Self::Object<'o>,
+        (tid, k, v): Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        // TODO: persistent op
+        Ok(inner.kv.update(tid, k, v, guard))
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
     }
 }
 
@@ -953,7 +1065,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InsertError {
     Occupied,
 }
@@ -1089,6 +1201,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     where
         V: Clone,
     {
+        // println!("[insert] tid: {}, key: {}", tid, key);
         let key_hashes = hashes(&key);
         let (context, find_result) = self.inner.find(&key, key_hashes, guard);
         if find_result.is_some() {
@@ -1139,6 +1252,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     }
 
     pub fn delete(&self, key: &K, guard: &Guard) {
+        // println!("[delete] key: {}", key);
         let key_hashes = hashes(&key);
         loop {
             let (_, find_result) = self.inner.find(key, key_hashes, guard);
@@ -1163,6 +1277,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             unsafe {
                 guard.defer_destroy(find_result.slot_ptr);
             }
+            // println!("[delete] finish!");
             return;
         }
     }
