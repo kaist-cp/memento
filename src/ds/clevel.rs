@@ -1391,34 +1391,45 @@ impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
 // TODO: 테스트도 컴파일시키기
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::tests::{TestRootMemento, TestRootObj};
+
     use super::*;
 
     use crossbeam_epoch::pin;
     use crossbeam_utils::thread;
 
-    struct Smoke<K, V> {
-        insert: ClInsert<K, V>,
-        update: ClInsert<K, V>,
-        delete: ClInsert<K, V>,
+    impl TestRootObj for ClevelInner<usize, usize> {}
+
+    struct Smoke {
+        insert: ClInsert<usize, usize>,
+        update: ClInsert<usize, usize>,
+        delete: ClInsert<usize, usize>,
+        resize: ResizeLoop<usize, usize>,
     }
 
-    impl<K, V> Default for Smoke<K, V> {
+    impl Default for Smoke {
         fn default() -> Self {
             Self {
                 insert: Default::default(),
                 update: Default::default(),
                 delete: Default::default(),
+                resize: Default::default(),
             }
         }
     }
 
-    impl<K, V> Collectable for Smoke<K, V> {
+    impl Collectable for Smoke {
         fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
             todo!()
         }
     }
 
-    impl<K, V> Memento for Smoke<K, V> {
+    impl Memento for Smoke {
+        type Object<'o> = &'o ClevelInner<usize, usize>;
+        type Input<'o> = usize;
+        type Output<'o> = ();
+        type Error<'o> = ();
+
         fn run<'o>(
             &mut self,
             object: Self::Object<'o>,
@@ -1428,15 +1439,6 @@ mod tests {
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             thread::scope(|s| {
-                let clevel_inner = ClevelInner::<usize, usize>::pdefault(pool);
-
-                let insert = ClInsert::<usize, usize>::default();
-                let update = ClUpdate::<usize, usize>::default();
-                let delete = ClDelete::<usize, usize>::default();
-                let resize = ResizeLoop::<usize, usize>::default();
-
-                // TODO: 필드 정리
-
                 // let _ = s.spawn(move |_| {
                 //     let mut guard = pin();
                 //     kv_resize.resize_loop(&mut guard);
@@ -1462,10 +1464,13 @@ mod tests {
                 // }
             })
             .unwrap();
+            Ok(())
         }
 
         fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {}
     }
+
+    impl TestRootMemento<ClevelInner<usize, usize>> for Smoke {}
 
     #[test]
     fn smoke() {
