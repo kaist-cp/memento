@@ -107,9 +107,8 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
                 (),
                 (PAtomic::from(node), |aborted| {
                     let guard = unsafe { epoch::unprotected() };
-                    let d = aborted.load(Ordering::Relaxed, guard);
                     // // println!("no need free node {} {:?}", tid, d);
-                    unsafe { guard.defer_pdestroy(d) }; // TODO: into_owned -> drop
+                    drop(unsafe { aborted.load(Ordering::Relaxed, guard).into_owned() });
                 }),
                 rec,
                 guard,

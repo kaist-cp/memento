@@ -3,6 +3,7 @@
 use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
+use etrace::*;
 
 use super::{common::Node, no_owner, InsertErr, Traversable};
 
@@ -120,7 +121,7 @@ impl DeleteOrNode {
     const DELETE_CLIENT: usize = 1;
 
     #[inline]
-    fn is_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
+    fn as_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
         if tag(checked) & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
             return None;
         }
@@ -129,12 +130,12 @@ impl DeleteOrNode {
     }
 
     #[inline]
-    fn set_delete(x: usize) -> usize {
+    fn delete(x: usize) -> usize {
         with_tag(x, Self::DELETE_CLIENT)
     }
 
     #[inline]
-    fn set_updated_node<N>(n: PShared<'_, N>) -> usize {
+    fn updated_node<N>(n: PShared<'_, N>) -> usize {
         n.with_tag(Self::UPDATED_NODE).into_usize()
     }
 }
@@ -175,20 +176,20 @@ pub trait UpdateDeleteInfo<O, N> {
 /// TODO(doc)
 #[derive(Debug)]
 pub struct SMOAtomic<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> {
-    ptr: PAtomic<N>,
+    inner: PAtomic<N>,
     _marker: PhantomData<*const (O, G)>,
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Collectable for SMOAtomic<O, N, G> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut s.ptr, gc, pool);
+        PAtomic::filter(&mut s.inner, gc, pool);
     }
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Default for SMOAtomic<O, N, G> {
     fn default() -> Self {
         Self {
-            ptr: PAtomic::null(),
+            inner: PAtomic::null(),
             _marker: Default::default(),
         }
     }
@@ -199,7 +200,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> From<PShared<'_, N>>
 {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
-            ptr: PAtomic::from(node),
+            inner: PAtomic::from(node),
             _marker: Default::default(),
         }
     }
@@ -209,53 +210,55 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O,
     type Target = PAtomic<N>;
 
     fn deref(&self) -> &Self::Target {
-        &self.ptr
+        &self.inner
     }
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
     // TODO: 버그잡고 lookup과 분리
     pub fn load<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
+        let mut p = self.inner.load(Ordering::SeqCst, guard);
         loop {
-            let p = self.ptr.load(Ordering::SeqCst, guard);
-            if p.is_null() {
-                return p;
-            }
+            let p_ref = some_or!(unsafe { p.as_ref(pool) }, return p);
 
-            // println!("load {:?}", p);
-            let p_ref = unsafe { p.deref(pool) };
             let owner = p_ref.owner();
             let o = owner.load(Ordering::SeqCst);
-
             if o == no_owner() {
                 return p;
             }
 
             persist_obj(owner, true);
-            help(p, o, self, None, guard, pool);
+            p = self.help(p, o, None, guard, pool);
+        }
+    }
+
+    #[inline]
+    fn help<'g>(
+        &self,
+        old: PShared<'g, N>,
+        owner: usize,
+        delete_next: Option<PShared<'g, N>>,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> PShared<'g, N> {
+        // self가 바뀌어야 할 next를 설정
+        let next = DeleteOrNode::as_node(owner).unwrap_or_else(|| {
+            delete_next.unwrap_or_else(|| (G::node_when_deleted(old, guard, pool)))
+        });
+
+        // self를 승자가 원하는 node로 바꿔줌
+        match self
+            .inner
+            .compare_exchange(old, next, Ordering::SeqCst, Ordering::SeqCst, guard)
+        {
+            Ok(n) => n,
+            Err(e) => e.current,
         }
     }
 }
 
 unsafe impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Send for SMOAtomic<O, N, G> {}
 unsafe impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Sync for SMOAtomic<O, N, G> {}
-
-#[inline]
-fn help<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>>(
-    old: PShared<'_, N>,
-    owner: usize,
-    point: &SMOAtomic<O, N, G>,
-    delete_next: Option<PShared<'_, N>>,
-    guard: &Guard,
-    pool: &PoolHandle,
-) {
-    // point가 바뀌어야 할 next를 설정
-    let next = DeleteOrNode::is_node(owner)
-        .unwrap_or_else(|| delete_next.unwrap_or_else(|| (G::node_when_deleted(old, guard, pool))));
-
-    // point를 승자가 원하는 node로 바꿔줌
-    let _ = point.compare_exchange(old, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-}
 
 /// TODO(doc)
 /// Do not use LSB while using `Delete` or `Update`.
@@ -319,68 +322,63 @@ where
 
         // Normal run
         let target = point.load(guard, pool);
-
-        let next = match G::prepare_delete(target, forbidden, obj, guard, pool) {
-            Ok(Some(n)) => n,
-            Ok(None) => {
-                self.target_loc
-                    .store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
-                persist_obj(&self.target_loc, true);
-                return Ok(None);
+        let next = ok_or!(
+            G::prepare_delete(target, forbidden, obj, guard, pool),
+            NeedRetry,
+            {
+                return Err(());
             }
-            Err(NeedRetry) => return Err(()),
-        };
+        );
+        let next = some_or!(next, {
+            self.target_loc
+                .store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
+            persist_obj(&self.target_loc, true);
+            return Ok(None);
+        });
 
         // 우선 내가 target을 가리키고
         self.target_loc.store(target, Ordering::Relaxed);
-        persist_obj(&self.target_loc, false);
+        persist_obj(&self.target_loc, false); // we're doing CAS soon.
 
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { target.deref(pool) };
         let owner = target_ref.owner();
-        owner
-            .compare_exchange(
-                no_owner(),
-                self.id(pool),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .map(|_| {
-                persist_obj(owner, false);
+        if let Err(e) = owner.compare_exchange(
+            no_owner(),
+            self.id(pool),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            // point를 다시 load해보고, 바뀌었으면 바로 리턴.
+            let p = point.load(guard, pool);
+            if p != target {
+                return Err(());
+            }
 
-                // 주인을 정했으니 이제 point를 바꿔줌
-                let _ =
-                    point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+            // same context
+            persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist. we're doing CAS soon.
 
-                // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
-                // post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
-                guard.defer_persist(point);
+            // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next(= node_when_delete(target))
+            // `next`를 알고 있으므로 `help()`를 굳이 쓰지 않음
+            let next = DeleteOrNode::as_node(e).unwrap_or(next);
 
-                Some(target)
-            })
-            .map_err(|cur| {
-                let p = point.load(guard, pool);
+            // point를 승리한 애와 관련된 것으로 바꿔줌
+            let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-                if p != target {
-                    return;
-                }
+            return Err(());
+        }
 
-                // same context
-                persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
+        // Now I own the location. flush the owner.
+        persist_obj(owner, false);
 
-                // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next(= node_when_delete(target))
-                // `next`를 알고 있으므로 `help()`를 굳이 쓰지 않음
-                let real_next = DeleteOrNode::is_node(cur).unwrap_or(next);
+        // 주인을 정했으니 이제 point를 바꿔줌
+        let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-                // point를 승리한 애와 관련된 것으로 바꿔주
-                let _ = point.compare_exchange(
-                    target,
-                    real_next,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            })
+        // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
+        // post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
+        guard.defer_persist(point);
+
+        Ok(Some(target))
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
@@ -405,30 +403,30 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = self.target_loc.load(Ordering::Relaxed, guard);
-
-        if target.tag() & Self::EMPTY == Self::EMPTY {
-            // post-crash execution (empty)
-            return Ok(None);
-        }
-
-        if !target.is_null() {
-            let target_ref = unsafe { target.deref(pool) };
-            let owner = target_ref.owner().load(Ordering::SeqCst);
-
-            // target이 내가 pop한 게 맞는지 확인
-            if owner == self.id(pool) {
-                return Ok(Some(target));
+        let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
+            return if target.tag() & Self::EMPTY == Self::EMPTY {
+                // empty라고 명시됨
+                Ok(None)
+            } else {
+                // 내가 찜한게 없으면 실패
+                Err(())
             };
-        }
+        });
 
-        Err(()) // 찜한 게 아무 의미가 없을 때는 실패로 간주 (Weak fail)
+        // 내가 찜한 target의 owner가 나이면 성공, 아니면 실패
+        let owner = target_ref.owner().load(Ordering::SeqCst);
+        if owner == self.id(pool) {
+            Ok(Some(target))
+        } else {
+            Err(())
+        }
     }
 
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴 때마다 주소 바뀌니 상대주소로 식별해야 함
         let off = unsafe { self.as_pptr(pool).into_offset() };
-        DeleteOrNode::set_delete(off)
+        DeleteOrNode::delete(off)
     }
 }
 
@@ -531,7 +529,7 @@ where
         owner
             .compare_exchange(
                 no_owner(),
-                DeleteOrNode::set_updated_node(new),
+                DeleteOrNode::updated_node(new),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
@@ -556,7 +554,7 @@ where
                 // same context
                 persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist
 
-                help(target, cur, point, None, guard, pool);
+                let _ = point.help(target, cur, None, guard, pool);
             })
     }
 
@@ -580,19 +578,15 @@ where
         pool: &'static PoolHandle,
     ) -> Result<PShared<'g, N>, ()> {
         let target = self.target_loc.load(Ordering::Relaxed, guard);
+        let target_ref = some_or!(unsafe { target.as_ref(pool) }, return Err(()));
 
-        if !target.is_null() {
-            // println!("update result {:?}", target);
-            let target_ref = unsafe { target.deref(pool) };
-            let owner = target_ref.owner().load(Ordering::SeqCst);
-
-            // target이 내가 pop한 게 맞는지 확인
-            if owner == DeleteOrNode::set_updated_node(new) {
-                return Ok(target);
-            };
+        // 내가 찜한 target의 owner가 new이면 성공, 아니면 실패
+        let owner = target_ref.owner().load(Ordering::SeqCst);
+        if owner == DeleteOrNode::updated_node(new) {
+            Ok(target)
+        } else {
+            Err(())
         }
-
-        Err(())
     }
 
     /// # Safety
