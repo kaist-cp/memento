@@ -28,20 +28,47 @@ use crate::pmem::PoolHandle;
 use crate::Memento;
 use crate::PDefault;
 
+// Root obj
 #[derive(Debug)]
 pub struct PClevelInner<K, V> {
     _marker: PhantomData<(K, V)>,
+    // TODO concurrent
+    // kv: Clevel<K, V>,
+    // kv_resize: ClevelResize<K, V>,
 }
 
-// Root obj
-impl<K, V> PDefault for PClevelInner<K, V> {
+impl<K, V> PDefault for PClevelInner<K, V>
+where
+    K: Debug,
+    K: Display,
+    K: PartialEq,
+    K: Hash,
+    V: Debug,
+{
     fn pdefault(pool: &'static PoolHandle) -> Self {
-        todo!()
+        Self {
+            _marker: PhantomData,
+        }
     }
 }
 impl<K, V> Collectable for PClevelInner<K, V> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         todo!()
+    }
+}
+
+impl<K, V> PClevelInner<K, V>
+where
+    K: Debug,
+    K: Display,
+    K: PartialEq,
+    K: Hash,
+    V: Debug,
+{
+    pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &PoolHandle) -> Option<&'g V> {
+        println!("[search]");
+        // TODO: self.kv.search(key, guard)
+        None
     }
 }
 
@@ -63,7 +90,11 @@ pub struct Modify<K, V> {
 
 impl<K, V> Default for Modify<K, V> {
     fn default() -> Self {
-        todo!()
+        Self {
+            insert: ClInsert::default(),
+            delete: ClDelete::default(),
+            update: ClUpdate::default(),
+        }
     }
 }
 
@@ -88,15 +119,15 @@ impl<K: 'static, V: 'static> Memento for Modify<K, V> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         match op {
-            ModifyOp::Insert => println!("run insert"),
-            ModifyOp::Delete => println!("run delete"),
-            ModifyOp::Update => println!("run update"),
+            ModifyOp::Insert => println!("[run insert]"),
+            ModifyOp::Delete => println!("[run delete]"),
+            ModifyOp::Update => println!("[run update]"),
         }
         Ok(())
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        todo!()
+        // TODO
     }
 }
 
@@ -133,7 +164,7 @@ impl<K: 'static, V: 'static> Memento for ResizeLoop<K, V> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        println!("run resize loop");
+        println!("[run resize loop]");
         Ok(())
     }
 
@@ -148,16 +179,40 @@ struct ClInsert<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
+impl<K, V> Default for ClInsert<K, V> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
+
 // TODO: memento
 #[derive(Debug)]
 struct ClDelete<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
+impl<K, V> Default for ClDelete<K, V> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
+
 // TODO: memento
 #[derive(Debug)]
 struct ClUpdate<K, V> {
     _marker: PhantomData<(K, V)>,
+}
+
+impl<K, V> Default for ClUpdate<K, V> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
 }
 
 // -- 아래부터는 conccurent 버전. 이걸 persistent 버전으로 바꿔야함
