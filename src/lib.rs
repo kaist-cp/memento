@@ -17,7 +17,7 @@
 // #![deny(unused_crate_dependencies)]
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
-#![deny(unused_qualifications)]
+// #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
 // #![deny(warnings)]
