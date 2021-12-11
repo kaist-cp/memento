@@ -40,7 +40,7 @@
 // Persistent objects collection
 pub mod ds;
 pub mod node;
-// pub mod pipe; // TODO(must): 알 수 없는 컴파일 에러
+pub mod pipe;
 pub mod ploc;
 
 // Persistent memory underline
