@@ -9,13 +9,12 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 
 use cfg_if::cfg_if;
-use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{unprotected, Guard};
 use derivative::Derivative;
 use etrace::*;
 use hashers::fx_hash::FxHasher;
@@ -429,13 +428,13 @@ struct Bucket<K, V> {
 }
 
 #[derive(Debug)]
-struct Node<T: ?Sized> {
-    data: Box<T>, // TODO: PAtomic
+struct Node<T> {
+    data: PAtomic<[MaybeUninit<T>]>,
     next: PAtomic<Node<T>>,
 }
 
 #[derive(Debug)]
-struct NodeIter<'g, T: ?Sized> {
+struct NodeIter<'g, T> {
     inner: PShared<'g, Node<T>>,
     last: PShared<'g, Node<T>>,
     guard: &'g Guard,
@@ -443,12 +442,12 @@ struct NodeIter<'g, T: ?Sized> {
 
 #[derive(Debug)]
 struct Context<K, V> {
-    first_level: PAtomic<Node<[MaybeUninit<Bucket<K, V>>]>>,
-    last_level: PAtomic<Node<[MaybeUninit<Bucket<K, V>>]>>,
+    first_level: PAtomic<Node<Bucket<K, V>>>,
+    last_level: PAtomic<Node<Bucket<K, V>>>,
 
     /// Should resize until the last level's size > resize_size
     ///
-    /// invariant: resize_size = first_level_size / 2 / 2
+    /// invariant: resize_size = level_size_prev(level_size_prev(first_level_size))
     resize_size: usize,
 }
 
@@ -493,8 +492,8 @@ impl<'g, K, V> Default for FindResult<'g, K, V> {
     }
 }
 
-impl<'g, T: ?Sized + Debug> Iterator for NodeIter<'g, T> {
-    type Item = &'g T;
+impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
+    type Item = &'g [MaybeUninit<T>];
 
     fn next(&mut self) -> Option<Self::Item> {
         let pool = global_pool().unwrap(); // TODO: global pool 안쓰기
@@ -504,12 +503,17 @@ impl<'g, T: ?Sized + Debug> Iterator for NodeIter<'g, T> {
         } else {
             inner_ref.next.load(Ordering::Acquire, self.guard)
         };
-        Some(&inner_ref.data)
+        Some(unsafe {
+            inner_ref
+                .data
+                .load(Ordering::Relaxed, self.guard)
+                .deref(pool)
+        })
     }
 }
 
 impl<K: PartialEq + Hash, V> Context<K, V> {
-    pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, [MaybeUninit<Bucket<K, V>>]> {
+    pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
         NodeIter {
             inner: self.last_level.load(Ordering::Acquire, guard),
             last: self.first_level.load(Ordering::Acquire, guard),
@@ -519,9 +523,7 @@ impl<K: PartialEq + Hash, V> Context<K, V> {
 }
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
-    /// `Ok`: found something (may not be unique)
-    ///
-    /// `Err` means contention
+    /// `Ok` means we found something (may not be unique); and `Err` means contention.
     fn find_fast<'g>(
         &'g self,
         key: &K,
@@ -568,19 +570,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         }
 
         if found_moved {
-            // 1. the moved item may already have been removed by another thread.
-            // 2. the being moved item may not yet been added again.
-            //
-            // so we cannot conclude neither we found an item nor we found none.
+            // We cannot conclude whether we the moved item is in the hash table. On the one hand,
+            // the moved item may already have been removed by another thread. On the other hand,
+            // the being moved item may not yet been added again.
             Err(())
         } else {
             Ok(None)
         }
     }
 
-    /// `Ok`: found a unique item (by deduplication)
-    ///
-    /// `Err` means contention
+    /// `Ok` means we found a unique tem (by deduplication); and `Err` means contention.
     fn find<'g>(
         &'g self,
         key: &K,
@@ -673,13 +672,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     }
 }
 
-fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<[MaybeUninit<Bucket<K, V>>]>> {
+fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
     println!("[new_node] size: {size}");
 
     // TODO: pallocation maybeuninit 잘 동작하나?
+    // let data = POwned::<[[MaybeUninit<Bucket<K, V>>]]>::init(size, &pool);
+
     POwned::new(
         Node {
-            data: Box::new_zeroed_slice(size), // TODO: PAtomic
+            // data: Box::new_zeroed_slice(size), // TODO: 0xffff.... (최댓값 initialize)
+            // TODO: 0xfff 설정할때 system memset 써야 빠를듯. 성능 비교해보기
+            data: POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool).into(),
             next: PAtomic::null(),
         },
         pool,
@@ -696,7 +699,8 @@ impl<K, V> Drop for ClevelInner<K, V> {
         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
         while let Some(node_ref) = unsafe { node.as_ref(pool) } {
             let next = node_ref.next.load(Ordering::Relaxed, guard);
-            for bucket in node_ref.data.iter() {
+            let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+            for bucket in data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
                     let slot_ptr = slot.load(Ordering::Relaxed, guard);
                     if !slot_ptr.is_null() {
@@ -718,12 +722,14 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
     fn add_level<'g>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
-        first_level: &'g Node<[MaybeUninit<Bucket<K, V>>]>,
+        first_level: &'g Node<Bucket<K, V>>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
         println!("[add_level] hi");
-        let next_level_size = level_size_next(first_level.data.len());
+        let first_level_data =
+            unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
+        let next_level_size = level_size_next(first_level_data.len());
 
         // insert a new level to the next of the first level.
         let next_level = first_level.next.load(Ordering::Acquire, guard);
@@ -783,8 +789,10 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                             .first_level
                             .load(Ordering::Acquire, guard)
                             .deref(pool)
+                            .data
+                            .load(Ordering::Relaxed, guard)
+                            .deref(pool)
                     }
-                    .data
                     .len()
                         >= next_level_size
                     {
@@ -817,7 +825,13 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
             let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
             let last_level_ref = unsafe { last_level.deref(pool) };
-            let last_level_size = last_level_ref.data.len();
+            let last_level_data = unsafe {
+                last_level_ref
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            };
+            let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
             println!(
@@ -830,12 +844,18 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
             let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let mut first_level_ref = unsafe { first_level.deref(pool) };
-            let mut first_level_size = first_level_ref.data.len();
+            let mut first_level_data = unsafe {
+                first_level_ref
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            };
+            let mut first_level_size = first_level_data.len();
             println!(
                 "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
             );
 
-            for (bid, bucket) in last_level_ref.data.iter().enumerate() {
+            for (bid, bucket) in last_level_data.iter().enumerate() {
                 for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
@@ -882,7 +902,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                         for i in 0..SLOTS_IN_BUCKET {
                             for key_hash in key_hashes.clone() {
                                 let slot = unsafe {
-                                    first_level_ref.data[key_hash]
+                                    first_level_data[key_hash]
                                         .assume_init_ref()
                                         .slots
                                         .get_unchecked(i)
@@ -936,7 +956,13 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                         context_ref = unsafe { context.deref(pool) };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
                         first_level_ref = unsafe { first_level.deref(pool) };
-                        first_level_size = first_level_ref.data.len();
+                        first_level_data = unsafe {
+                            first_level_ref
+                                .data
+                                .load(Ordering::Relaxed, guard)
+                                .deref(pool)
+                        };
+                        first_level_size = first_level_data.len();
                     }
                 }
             }
@@ -1164,8 +1190,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
 
-        (unsafe { first_level.deref(pool).data.len() * 2 - last_level.deref(pool).data.len() })
-            * SLOTS_IN_BUCKET
+        (unsafe {
+            first_level
+                .deref(pool)
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+                .len()
+                * 2
+                - last_level
+                    .deref(pool)
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+                    .len()
+        }) * SLOTS_IN_BUCKET
     }
 
     pub fn search<'g>(
