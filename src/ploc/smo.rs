@@ -228,6 +228,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
                 return p;
             }
 
+            persist_obj(owner, true);
             help(p, o, self, None, guard, pool);
         }
     }
