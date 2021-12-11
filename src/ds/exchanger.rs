@@ -11,7 +11,7 @@ use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
-        smo::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
+        smo::{Delete, UpdateDeleteInfo, Insert, SMOAtomic, Update},
         NeedRetry, RetryLoop, Traversable,
     },
     pmem::{
@@ -253,7 +253,7 @@ impl<T: 'static + Clone> TryExchange<T> {
     }
 }
 
-impl<T: Clone> DeleteHelper<Exchanger<T>, Node<T>> for TryExchange<T> {
+impl<T: Clone> UpdateDeleteInfo<Exchanger<T>, Node<T>> for TryExchange<T> {
     fn prepare_delete<'g>(
         cur: PShared<'_, Node<T>>,
         mine: PShared<'_, Node<T>>,

@@ -144,7 +144,7 @@ pub struct NeedRetry;
 
 /// TODO(doc)
 // TODO(opt): 이거 나중에 unopt랑도 같이 쓸 수 있을 듯
-pub trait DeleteHelper<O, N> {
+pub trait UpdateDeleteInfo<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
     fn prepare_delete<'g>(
         cur: PShared<'_, N>,
@@ -173,18 +173,18 @@ pub trait DeleteHelper<O, N> {
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct SMOAtomic<O, N: Collectable, G: DeleteHelper<O, N>> {
+pub struct SMOAtomic<O, N: Collectable, G: UpdateDeleteInfo<O, N>> {
     ptr: PAtomic<N>,
     _marker: PhantomData<*const (O, G)>,
 }
 
-impl<O, N: Collectable, G: DeleteHelper<O, N>> Collectable for SMOAtomic<O, N, G> {
+impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Collectable for SMOAtomic<O, N, G> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         PAtomic::filter(&mut s.ptr, gc, pool);
     }
 }
 
-impl<O, N: Collectable, G: DeleteHelper<O, N>> Default for SMOAtomic<O, N, G> {
+impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Default for SMOAtomic<O, N, G> {
     fn default() -> Self {
         Self {
             ptr: PAtomic::null(),
@@ -193,7 +193,7 @@ impl<O, N: Collectable, G: DeleteHelper<O, N>> Default for SMOAtomic<O, N, G> {
     }
 }
 
-impl<O, N: Collectable, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
+impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
             ptr: PAtomic::from(node),
@@ -202,7 +202,7 @@ impl<O, N: Collectable, G: DeleteHelper<O, N>> From<PShared<'_, N>> for SMOAtomi
     }
 }
 
-impl<O, N: Collectable, G: DeleteHelper<O, N>> Deref for SMOAtomic<O, N, G> {
+impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O, N, G> {
     type Target = PAtomic<N>;
 
     fn deref(&self) -> &Self::Target {
@@ -210,29 +210,29 @@ impl<O, N: Collectable, G: DeleteHelper<O, N>> Deref for SMOAtomic<O, N, G> {
     }
 }
 
-unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Send for SMOAtomic<O, N, G> {}
-unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G> {}
+unsafe impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Send for SMOAtomic<O, N, G> {}
+unsafe impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Sync for SMOAtomic<O, N, G> {}
 
 /// TODO(doc)
 /// Do not use LSB while using `Delete` or `Update`.
 /// It's reserved for them.
 /// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
-pub struct Delete<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
+pub struct Delete<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> {
     target_loc: PAtomic<N>,
     _marker: PhantomData<*const (O, N, G)>,
 }
 
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Send
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: UpdateDeleteInfo<O, N>> Send
     for Delete<O, N, G>
 {
 }
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: UpdateDeleteInfo<O, N>> Sync
     for Delete<O, N, G>
 {
 }
 
-impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Delete<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Default for Delete<O, N, G> {
     fn default() -> Self {
         Self {
             target_loc: Default::default(),
@@ -241,7 +241,7 @@ impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Delete<O, N, G
     }
 }
 
-impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Collectable for Delete<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Collectable for Delete<O, N, G> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
@@ -249,7 +249,7 @@ impl<O, N, G> Memento for Delete<O, N, G>
 where
     O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
-    G: 'static + DeleteHelper<O, N>,
+    G: 'static + UpdateDeleteInfo<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
     type Input<'o> = (PShared<'o, N>, &'o O);
@@ -347,7 +347,7 @@ impl<O, N, G> Delete<O, N, G>
 where
     O: Traversable<N>,
     N: Node + Collectable,
-    G: DeleteHelper<O, N>,
+    G: UpdateDeleteInfo<O, N>,
 {
     /// `pop()` 결과 중 Empty를 표시하기 위한 태그
     const EMPTY: usize = 2;
@@ -406,21 +406,21 @@ pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
 /// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // TODO(opt): update는 O 필요 없는 것 같음
 #[derive(Debug)]
-pub struct Update<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
+pub struct Update<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> {
     target_loc: PAtomic<N>,
     _marker: PhantomData<*const (O, N, G)>,
 }
 
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Send
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: UpdateDeleteInfo<O, N>> Send
     for Update<O, N, G>
 {
 }
-unsafe impl<O, N: Node + Collectable + Send + Sync, G: DeleteHelper<O, N>> Sync
+unsafe impl<O, N: Node + Collectable + Send + Sync, G: UpdateDeleteInfo<O, N>> Sync
     for Update<O, N, G>
 {
 }
 
-impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Update<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Default for Update<O, N, G> {
     fn default() -> Self {
         Self {
             target_loc: Default::default(),
@@ -429,11 +429,11 @@ impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Default for Update<O, N, G
     }
 }
 
-impl<O, N: Node + Collectable, G: DeleteHelper<O, N>> Collectable for Update<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Collectable for Update<O, N, G> {
     fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<O, N, G: DeleteHelper<O, N>> Memento for Update<O, N, G>
+impl<O, N, G: UpdateDeleteInfo<O, N>> Memento for Update<O, N, G>
 where
     O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
@@ -529,7 +529,7 @@ impl<O, N, G> Update<O, N, G>
 where
     O: Traversable<N>,
     N: Node + Collectable,
-    G: DeleteHelper<O, N>,
+    G: UpdateDeleteInfo<O, N>,
 {
     #[inline]
     fn result<'g>(

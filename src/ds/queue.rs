@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
 use crate::node::Node;
-use crate::ploc::smo::{Delete, DeleteHelper, Insert, SMOAtomic};
+use crate::ploc::smo::{Delete, UpdateDeleteInfo, Insert, SMOAtomic};
 use crate::ploc::{Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -231,7 +231,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> DeleteHelper<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
+impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
     fn prepare_delete<'g>(
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
         _: PShared<'_, Node<MaybeUninit<T>>>,
@@ -440,7 +440,7 @@ mod test {
     use rusty_fork::rusty_fork_test;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 1000;
+    const COUNT: usize = 100_000;
 
     struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],
