@@ -447,7 +447,7 @@ struct Context<K, V> {
 
     /// Should resize until the last level's size > resize_size
     ///
-    /// invariant: resize_size = first_level_size / 2 / 2
+    /// invariant: resize_size = level_size_prev(level_size_prev(first_level_size))
     resize_size: usize,
 }
 
@@ -518,9 +518,7 @@ impl<K: PartialEq + Hash, V> Context<K, V> {
 }
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
-    /// `Ok`: found something (may not be unique)
-    ///
-    /// `Err` means contention
+    /// `Ok` means we found something (may not be unique); and `Err` means contention.
     fn find_fast<'g>(
         &'g self,
         key: &K,
@@ -567,19 +565,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         }
 
         if found_moved {
-            // 1. the moved item may already have been removed by another thread.
-            // 2. the being moved item may not yet been added again.
-            //
-            // so we cannot conclude neither we found an item nor we found none.
+            // We cannot conclude whether we the moved item is in the hash table. On the one hand,
+            // the moved item may already have been removed by another thread. On the other hand,
+            // the being moved item may not yet been added again.
             Err(())
         } else {
             Ok(None)
         }
     }
 
-    /// `Ok`: found a unique item (by deduplication)
-    ///
-    /// `Err` means contention
+    /// `Ok` means we found a unique tem (by deduplication); and `Err` means contention.
     fn find<'g>(
         &'g self,
         key: &K,
