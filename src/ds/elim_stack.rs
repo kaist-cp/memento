@@ -23,7 +23,7 @@ use super::{
     treiber_stack::{self, TreiberStack},
 };
 
-const ELIM_SIZE: usize = 2;
+const ELIM_SIZE: usize = 1;
 
 #[inline]
 fn get_random_elim_index() -> usize {
@@ -366,7 +366,7 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
     use rusty_fork::rusty_fork_test;
 
-    const NR_THREAD: usize = 2;
+    const NR_THREAD: usize = 12;
     const COUNT: usize = 10_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;

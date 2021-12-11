@@ -121,7 +121,7 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 페일 리턴
         if slot.is_null() {
-            let mine = node.with_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
+            let mine = node.with_high_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
             let inserted = self.insert.run(
                 &xchg.slot,
@@ -144,8 +144,8 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         // - 내가 WAITING으로 성공하면 기다림
         // - 내가 non WAITING으로 성공하면 성공 리턴
         // - 실패하면 contention으로 인한 fail 리턴
-        let my_tag = opposite_tag(slot.tag());
-        let mine = node.with_tag(my_tag);
+        let my_tag = opposite_tag(slot.high_tag());
+        let mine = node.with_high_tag(my_tag);
 
         // 상대가 기다리는 입장인 경우
         if my_tag != WAITING {
