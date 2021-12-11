@@ -52,12 +52,13 @@ pub enum ModifyOp {
     Update,
 }
 
+// TODO: 이렇게 묶을 필요 있나?
 #[derive(Debug)]
 pub struct Modify<K, V> {
-    ins: ClInsert<K, V>,
-    del: ClDelete<K, V>,
-    // sch: ClSearch, TODO: memento?
-    upd: ClUpdate<K, V>,
+    insert: ClInsert<K, V>,
+    delete: ClDelete<K, V>,
+    // search: ClSearch, TODO: memento?
+    update: ClUpdate<K, V>,
 }
 
 impl<K, V> Default for Modify<K, V> {
@@ -75,7 +76,7 @@ impl<K, V> Collectable for Modify<K, V> {
 impl<K: 'static, V: 'static> Memento for Modify<K, V> {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = ModifyOp;
-    type Output<'o> = (); // TODO
+    type Output<'o> = (); // TODO: output도 enum으로 묶기?
     type Error<'o> = !;
 
     fn run<'o>(
@@ -87,9 +88,9 @@ impl<K: 'static, V: 'static> Memento for Modify<K, V> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         match op {
-            ModifyOp::Insert => todo!("run self.ins"),
-            ModifyOp::Delete => todo!("run self.del"),
-            ModifyOp::Update => todo!("run self.upd"),
+            ModifyOp::Insert => println!("run insert"),
+            ModifyOp::Delete => println!("run delete"),
+            ModifyOp::Update => println!("run update"),
         }
         Ok(())
     }
@@ -100,11 +101,11 @@ impl<K: 'static, V: 'static> Memento for Modify<K, V> {
 }
 
 #[derive(Debug)]
-pub struct ClResize<K, V> {
+pub struct ResizeLoop<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
-impl<K, V> Default for ClResize<K, V> {
+impl<K, V> Default for ResizeLoop<K, V> {
     fn default() -> Self {
         Self {
             _marker: Default::default(),
@@ -112,13 +113,13 @@ impl<K, V> Default for ClResize<K, V> {
     }
 }
 
-impl<K, V> Collectable for ClResize<K, V> {
+impl<K, V> Collectable for ResizeLoop<K, V> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         todo!()
     }
 }
 
-impl<K: 'static, V: 'static> Memento for ClResize<K, V> {
+impl<K: 'static, V: 'static> Memento for ResizeLoop<K, V> {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = ();
     type Output<'o> = (); // TODO
@@ -132,7 +133,8 @@ impl<K: 'static, V: 'static> Memento for ClResize<K, V> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        todo!()
+        println!("run resize loop");
+        Ok(())
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -140,16 +142,19 @@ impl<K: 'static, V: 'static> Memento for ClResize<K, V> {
     }
 }
 
+// TODO: memento
 #[derive(Debug)]
 struct ClInsert<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
+// TODO: memento
 #[derive(Debug)]
 struct ClDelete<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
+// TODO: memento
 #[derive(Debug)]
 struct ClUpdate<K, V> {
     _marker: PhantomData<(K, V)>,
