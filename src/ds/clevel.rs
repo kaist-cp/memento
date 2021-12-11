@@ -102,72 +102,73 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 //     }
 // }
 
-#[derive(Debug, Clone)]
-pub enum ModifyOp {
-    Insert,
-    Delete,
-    Update,
-}
+// TODO: 나중에 통합해서 벤치에 연결
+// #[derive(Debug, Clone)]
+// pub enum ModifyOp {
+//     Insert,
+//     Delete,
+//     Update,
+// }
 
-#[derive(Debug)]
-pub struct Modify<K, V> {
-    insert: ClInsert<K, V>,
-    delete: ClDelete<K, V>,
-    update: ClUpdate<K, V>,
-}
+// #[derive(Debug)]
+// pub struct Modify<K, V> {
+//     insert: ClInsert<K, V>,
+//     delete: ClDelete<K, V>,
+//     update: ClUpdate<K, V>,
+// }
 
-impl<K, V> Default for Modify<K, V> {
-    fn default() -> Self {
-        Self {
-            insert: ClInsert::default(),
-            delete: ClDelete::default(),
-            update: ClUpdate::default(),
-        }
-    }
-}
+// impl<K, V> Default for Modify<K, V> {
+//     fn default() -> Self {
+//         Self {
+//             insert: ClInsert::default(),
+//             delete: ClDelete::default(),
+//             update: ClUpdate::default(),
+//         }
+//     }
+// }
 
-impl<K, V> Collectable for Modify<K, V> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        todo!()
-    }
-}
+// impl<K, V> Collectable for Modify<K, V> {
+//     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+//         todo!()
+//     }
+// }
 
-impl<K: 'static, V: 'static> Memento for Modify<K, V>
-where
-    K: 'static + Debug + Display + PartialEq + Hash + Clone,
-    V: 'static + Debug + Clone,
-{
-    type Object<'o> = &'o ClevelInner<K, V>;
-    type Input<'o> = (usize, ModifyOp, K, V);
-    type Output<'o> = bool; // TODO: output도 enum으로 묶기?
-    type Error<'o> = !;
+// impl<K: 'static, V: 'static> Memento for Modify<K, V>
+// where
+//     K: 'static + Debug + Display + PartialEq + Hash + Clone,
+//     V: 'static + Debug + Clone,
+// {
+//     type Object<'o> = &'o ClevelInner<K, V>;
+//     type Input<'o> = (usize, ModifyOp, K, V);
+//     type Output<'o> = bool; // TODO: output도 enum으로 묶기?
+//     type Error<'o> = !;
 
-    fn run<'o>(
-        &mut self,
-        inner: Self::Object<'o>,
-        (tid, op, k, v): Self::Input<'o>,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let ret = match op {
-            ModifyOp::Insert => self
-                .insert
-                .run(inner, (tid, k, v), rec, guard, pool)
-                .is_ok(),
-            ModifyOp::Delete => self.delete.run(inner, &k, rec, guard, pool).is_ok(),
-            ModifyOp::Update => self
-                .update
-                .run(inner, (tid, k, v), rec, guard, pool)
-                .is_ok(),
-        };
-        Ok(ret)
-    }
+//     fn run<'o>(
+//         &mut self,
+//         inner: Self::Object<'o>,
+//         (tid, op, k, v): Self::Input<'o>,
+//         rec: bool,
+//         guard: &'o Guard,
+//         pool: &'static PoolHandle,
+//     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+//         let ret = match op {
+//             ModifyOp::Insert => self
+//                 .insert
+//                 .run(inner, (tid, k, v), rec, guard, pool)
+//                 .is_ok(),
+//             ModifyOp::Delete => self.delete.run(inner, &k, rec, guard, pool).is_ok(),
+//             ModifyOp::Update => self
+//                 .update
+//                 .run(inner, (tid, k, v), rec, guard, pool)
+//                 .is_ok(),
+//         };
+//         Ok(ret)
+//     }
 
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        // TODO
-    }
-}
+//     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+//         // TODO
+//     }
+// }
 
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
 #[derive(Debug)]
@@ -191,25 +192,25 @@ impl<K, V> Collectable for ResizeLoop<K, V> {
 
 impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     type Object<'o> = &'o ClevelInner<K, V>;
-    type Input<'o> = (); // TODO: receiver clone이 안 됨 global로 해야할 듯
+    type Input<'o> = &'o mpsc::Receiver<()>; // TODO: receiver clone이 안 됨 global로 해야할 듯
     type Output<'o> = ();
     type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
         inner: Self::Object<'o>,
-        input: Self::Input<'o>,
+        resize_recv: Self::Input<'o>,
         rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        // let mut g = guard.clone();
-        // println!("[resize loop] start loop");
-        // while let Ok(()) = self.resize_recv.recv() {
-        //     println!("[resize_loop] do resize!");
-        //     self.inner.resize(g, pool);
-        //     g.repin_after(|| {}); // TODO: drop?
-        // }
+        let mut g = guard.clone();
+        println!("[resize loop] start loop");
+        while let Ok(()) = resize_recv.recv() {
+            println!("[resize_loop] do resize!");
+            inner.resize(&mut g, pool);
+            g.repin_after(|| {}); // TODO: drop?
+        }
 
         // let mut g = guard.clone(); // TODO: clone API 없어도 그냥 새로 pin하면 되지 않나?
 
@@ -266,20 +267,20 @@ where
     V: 'static + Debug + Clone,
 {
     type Object<'o> = &'o ClevelInner<K, V>;
-    type Input<'o> = (usize, K, V); // tid, k, v
+    type Input<'o> = (usize, K, V, &'o mpsc::Sender<()>); // tid, k, v
     type Output<'o> = ();
     type Error<'o> = InsertError;
 
     fn run<'o>(
         &mut self,
         inner: Self::Object<'o>,
-        (tid, k, v): Self::Input<'o>,
+        (tid, k, v, resize_send): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::insert(inner, tid, k, v, guard, pool)
+        Clevel::insert(inner, tid, k, v, resize_send, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -359,20 +360,20 @@ where
     V: 'static + Debug + Clone,
 {
     type Object<'o> = &'o ClevelInner<K, V>;
-    type Input<'o> = (usize, K, V); // tid, k, v
+    type Input<'o> = (usize, K, V, &'o mpsc::Sender<()>); // tid, k, v
     type Output<'o> = ();
     type Error<'o> = ();
 
     fn run<'o>(
         &mut self,
         inner: Self::Object<'o>,
-        (tid, k, v): Self::Input<'o>,
+        (tid, k, v, resize_send): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::update(inner, tid, k, v, guard, pool)
+        Clevel::update(inner, tid, k, v, guard, resize_send, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -853,7 +854,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
             // if we don't need to resize, break out.
             println!(
-                "[reisze] reisze_size: {}, last_level_size: {}",
+                "[resize] resize_size: {}, last_level_size: {}",
                 context_ref.resize_size, last_level_size
             );
             if context_ref.resize_size < last_level_size {
@@ -1243,6 +1244,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         mut context: PShared<'g, Context<K, V>>,
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
+        resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) {
@@ -1291,6 +1293,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                 context_new,
                 insert_result.slot_ptr,
                 key_hashes,
+                resize_send,
                 guard,
                 pool,
             );
@@ -1307,6 +1310,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         tid: usize,
         key: K,
         value: V,
+        resize_send: &mpsc::Sender<()>,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertError>
@@ -1323,14 +1327,23 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
 
         let slot = POwned::new(Slot { key, value }, pool).into_shared(guard);
         // question: why `context_new` is created?
-        let (context_new, insert_result) =
-            Self::insert_inner(inner, tid, context, slot, key_hashes, guard, pool);
+        let (context_new, insert_result) = Self::insert_inner(
+            inner,
+            tid,
+            context,
+            slot,
+            key_hashes,
+            resize_send,
+            guard,
+            pool,
+        );
         Self::move_if_resized(
             inner,
             tid,
             context_new,
             insert_result,
             key_hashes,
+            resize_send,
             guard,
             pool,
         );
@@ -1343,6 +1356,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         mut context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
+        resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
@@ -1357,9 +1371,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
             let (context_new, added) = inner.add_level(context, first_level_ref, guard, pool);
-            // if added {
-            //     let _ = self.resize_send.send(()); // TODO: channel
-            // }
+            if added {
+                let _ = resize_send.send(()); // TODO: channel
+            }
             context = context_new;
         }
     }
@@ -1370,6 +1384,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         key: K,
         value: V,
         guard: &Guard,
+        resize_send: &mpsc::Sender<()>,
         pool: &'static PoolHandle,
     ) -> Result<(), ()>
     where
@@ -1404,7 +1419,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             unsafe {
                 guard.defer_pdestroy(find_result.slot_ptr);
             }
-            Self::move_if_resized(inner, tid, context, find_result, key_hashes, guard, pool);
+            Self::move_if_resized(
+                inner,
+                tid,
+                context,
+                find_result,
+                key_hashes,
+                resize_send,
+                guard,
+                pool,
+            );
             return Ok(());
         }
     }
@@ -1449,7 +1473,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
 // TODO: 테스트도 컴파일시키기
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::tests::{TestRootMemento, TestRootObj};
+    use std::sync::mpsc::channel;
+
+    use crate::test_utils::tests::{run_test, TestRootMemento, TestRootObj};
 
     use super::*;
 
@@ -1496,26 +1522,32 @@ mod tests {
             guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-            thread::scope(|s| {
-                // let _ = s.spawn(move |_| {
-                //     let mut guard = pin();
-                //     kv_resize.resize_loop(&mut guard);
-                // });
+            let (send, recv) = mpsc::channel();
 
-                const RANGE: usize = 1usize << 8;
+            thread::scope(|s| {
+                let (insert, update, delete, resize) =
+                    (&mut self.insert, &mut self.update, &mut self.delete, &mut self.resize);
+
+                let _ = s.spawn(move |_| {
+                    let g = pin();
+                    let recv = recv;
+                    let _ = resize.run(object, &recv, rec, &g, pool);
+                });
+
+                const RANGE: usize = 1;
 
                 for i in 0..RANGE {
-                    let _ = self.insert.run(object, (0, i, i), rec, guard, pool);
-                    assert_eq!(Clevel::search(object, &i, &guard, pool), Some(&i));
+                    let _ = insert.run(object, (0, i, i, &send), rec, guard, pool);
+                    assert_eq!(Clevel::search(object, &i, guard, pool), Some(&i));
 
-                    let _ = self.update.run(object, (0, i, i + RANGE), rec, guard, pool);
-                    assert_eq!(Clevel::search(object, &i, &guard, pool), Some(&(i + RANGE)));
+                    let _ = update.run(object, (0, i, i + RANGE, &send), rec, guard, pool);
+                    assert_eq!(Clevel::search(object, &i, guard, pool), Some(&(i + RANGE)));
                 }
 
                 for i in 0..RANGE {
-                    assert_eq!(Clevel::search(object, &i, &guard, pool), Some(&(i + RANGE)));
-                    let _ = self.delete.run(object, &i, rec, guard, pool);
-                    assert_eq!(Clevel::search(object, &i, &guard, pool), None);
+                    assert_eq!(Clevel::search(object, &i, guard, pool), Some(&(i + RANGE)));
+                    let _ = delete.run(object, &i, rec, guard, pool);
+                    assert_eq!(Clevel::search(object, &i, guard, pool), None);
                 }
             })
             .unwrap();
@@ -1529,38 +1561,10 @@ mod tests {
 
     #[test]
     fn smoke() {
-        thread::scope(|s| {
-            // let clevel_inner = ClevelInner::<usize, usize>::pdefault(pool);
+        const FILE_NAME: &str = "composed_opt_enq_deq.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-            // let insert = ClInsert::<usize, usize>::default();
-            // let update = ClUpdate::<usize, usize>::default();
-            // let delete = ClDelete::<usize, usize>::default();
-            // let resize = ResizeLoop::<usize, usize>::default();
-
-            // let _ = s.spawn(move |_| {
-            //     let mut guard = pin();
-            //     kv_resize.resize_loop(&mut guard);
-            // });
-
-            // let guard = pin();
-
-            // const RANGE: usize = 1usize << 8;
-
-            // for i in 0..RANGE {
-            //     let _ = kv.insert(0, i, i, &guard);
-            //     assert_eq!(kv.search(&i, &guard), Some(&i));
-
-            //     let _ = kv.update(0, i, i + RANGE, &guard);
-            //     assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
-            // }
-
-            // for i in 0..RANGE {
-            //     assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
-            //     kv.delete(&i, &guard);
-            //     assert_eq!(kv.search(&i, &guard), None);
-            // }
-        })
-        .unwrap();
+        run_test::<ClevelInner<usize, usize>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
     }
 
     #[test]
