@@ -127,6 +127,14 @@ pub(crate) mod tests {
 
                         v.push(ret);
                         assert!(ret.is_some());
+
+                        // let ret2 = self.pops[i].run(stack, tid, true, guard, pool).unwrap();
+                        // if ret2.is_none() {
+                        //     println!("bug");
+                        // }
+                        // assert!(ret2.is_some());
+
+                        // let _ = RESULTS[ret2.unwrap()].fetch_add(1, Ordering::SeqCst);
                     }
 
                     println!("{} done!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", tid);

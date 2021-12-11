@@ -243,9 +243,7 @@ impl<T: Clone> Memento for Push<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        self.try_push
-            .run(stack, node, rec, guard, pool)
-            .map_err(|_| unreachable!("Retry never fails."))
+        self.try_push.run(stack, node, rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -293,9 +291,7 @@ impl<T: Clone> Memento for Pop<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.try_pop
-            .run(stack, (), rec, guard, pool)
-            .map_err(|_| unreachable!("Retry never fails."))
+        self.try_pop.run(stack, (), rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -316,8 +312,8 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
     use rusty_fork::rusty_fork_test;
 
-    const NR_THREAD: usize = 2;
-    const COUNT: usize = 1;
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 100_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 

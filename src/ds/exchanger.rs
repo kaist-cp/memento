@@ -371,8 +371,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
         //     .unwrap()
         //     .load(Ordering::Relaxed, guard);
 
-        self.try_xchg
-            .run(xchg, (value, cond, 1), rec, guard, pool)
+        self.try_xchg.run(xchg, (value, cond, 1), rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {

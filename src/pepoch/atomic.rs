@@ -132,7 +132,7 @@ const TWO_BYTES: usize = 16;
 /// Returns a bitmask containing the unused most significant bits of an aligned pointer to `T`.
 #[inline]
 fn high_bits() -> usize {
-    usize::MAX ^ (usize::MAX >> TWO_BYTES)
+    !(usize::MAX >> TWO_BYTES)
 }
 
 /// TODO(doc)

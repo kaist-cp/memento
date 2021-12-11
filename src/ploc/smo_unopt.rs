@@ -150,7 +150,7 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (obj, get_next): Self::Input<'o>,
+        (obj, prepare): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -161,17 +161,13 @@ where
 
         // Normal run
         let target = point.load(Ordering::SeqCst, guard);
-
-        let next = match get_next(target, obj, guard, pool) {
-            Ok(Some(n)) => n,
-            Ok(None) => {
-                self.target_loc
-                    .store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
-                persist_obj(&self.target_loc, true);
-                return Ok(None);
-            }
-            Err(()) => return Err(()),
-        };
+        let next = ok_or!(prepare(target, obj, guard, pool), return Err(()));
+        let next = some_or!(next, {
+            self.target_loc
+                .store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
+            persist_obj(&self.target_loc, true);
+            return Ok(None);
+        });
 
         // 우선 내가 target을 가리키고
         self.target_loc.store(target, Ordering::Relaxed);
@@ -186,12 +182,14 @@ where
         persist_obj(point, true);
 
         if res.is_err() {
+            self.target_loc.store(PShared::null(), Ordering::Relaxed);
+            persist_obj(&self.target_loc, true);
             return Err(());
         }
 
         // 빼려는 node에 내 이름 새겨넣음
         // CAS인 이유: delete 복구 중인 스레드와 경합이 일어날 수 있음
-        target_ref
+        if target_ref
             .owner_unopt()
             .compare_exchange(
                 no_owner(),
@@ -199,11 +197,13 @@ where
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
-            .map(|_| {
-                persist_obj(target_ref.owner_unopt(), true);
-                Some(target)
-            })
-            .map_err(|_| ()) // TODO(must): 실패했을 땐 정말 persist 안 해도 됨?
+            .is_ok()
+        {
+            persist_obj(target_ref.owner_unopt(), true);
+            return Ok(Some(target));
+        }
+
+        Err(())
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
@@ -225,14 +225,8 @@ where
     ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = self.target_loc.load(Ordering::Relaxed, guard);
 
-        if target.tag() & EMPTY == EMPTY {
-            // if target == PShared::null().with_tag(EMPTY) {
-            // post-crash execution (empty)
-            return Ok(None);
-        }
-
         let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
-            return if target.tag() & EMPTY == EMPTY {
+            return if target.tag() & EMPTY != 0 {
                 Ok(None)
             } else {
                 Err(())

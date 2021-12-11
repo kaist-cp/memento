@@ -7,4 +7,5 @@ while true; do
     rm -rf test
     # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --features no_persist elim -- --nocapture
     RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist elim -- --nocapture
+    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist treiber_stack -- --nocapture
 done
