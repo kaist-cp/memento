@@ -118,7 +118,10 @@ impl DeleteOrNode {
 
     #[inline]
     fn is_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
-        if checked & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
+        // TODO(must): 깨끗하게 태깅하기
+        let converted = unsafe { PShared::<()>::from_usize(checked) };
+
+        if converted.high_tag() & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
             return None;
         }
 
@@ -127,7 +130,10 @@ impl DeleteOrNode {
 
     #[inline]
     fn set_delete(x: usize) -> usize {
-        (x & (!0 << 1)) | Self::DELETE_CLIENT // TODO(must): client가 align 되어있다는 확신이 없음. 일단 LSB를 그냥 맘대로 사용함.
+        // TODO(must): 깨끗하게 태깅하기
+        unsafe { PShared::<()>::from_usize(x) }
+            .with_high_tag(Self::DELETE_CLIENT)
+            .into_usize()
     }
 }
 
@@ -465,30 +471,16 @@ where
 
         let target_ref = unsafe { target.deref(pool) };
 
-        // owner의 주인이 없는지 확인
-        let owner = target_ref.owner();
-        let o = owner.load(Ordering::SeqCst);
-
-        // 이미 주인이 있다면 point를 바꿔주고 페일 리턴
-        // TODO(opt): 찜하기 전에 load 먼저 해보는 건데, 그 순서는 실험을 하고 나서 정하자
-        if o != no_owner() {
-            persist_obj(owner, false);
-            let next = DeleteOrNode::is_node(o)
-                .unwrap_or_else(|| G::node_when_deleted(target, guard, pool));
-            let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-            // 빠졌던 노드를 다시 들어오게 되는 경우는 없어야 함
-            return Err(());
-        }
-
         // 우선 내가 target을 가리키고
         self.target_loc.store(target, Ordering::Relaxed);
         persist_obj(&self.target_loc, false);
 
         // 빼려는 node가 내가 넣을 노드 가리키게 함
+        let owner = target_ref.owner();
         owner
             .compare_exchange(
                 no_owner(),
-                new.into_usize(),
+                new.with_high_tag(0).into_usize(), // TODO(must): 태깅은 DeleteOrNode에서..
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )

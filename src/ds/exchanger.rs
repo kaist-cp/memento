@@ -11,7 +11,7 @@ use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
-        smo::{clear_owner, Delete, DeleteHelper, Insert, SMOAtomic, Update},
+        smo::{Delete, DeleteHelper, Insert, SMOAtomic, Update},
         NeedRetry, RetryLoop, Traversable,
     },
     pmem::{
@@ -43,6 +43,7 @@ pub enum TryFail {
 /// Exchanger의 try exchange
 #[derive(Debug)]
 pub struct TryExchange<T: Clone> {
+    node: Checkpoint<PAtomic<Node<T>>>,
     init_slot: Checkpoint<PAtomic<Node<T>>>,
     wait_slot: Checkpoint<PAtomic<Node<T>>>,
 
@@ -54,6 +55,7 @@ pub struct TryExchange<T: Clone> {
 impl<T: Clone> Default for TryExchange<T> {
     fn default() -> Self {
         Self {
+            node: Default::default(),
             init_slot: Default::default(),
             wait_slot: Default::default(),
             insert: Default::default(),
@@ -77,18 +79,37 @@ type ExchangeCond<T> = fn(&T) -> bool;
 
 impl<T: 'static + Clone> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = (PShared<'o, Node<T>>, ExchangeCond<T>);
+    type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T; // TODO(opt): input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &mut self,
         xchg: Self::Object<'o>,
-        (node, cond): Self::Input<'o>,
+        (value, cond): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        let node = POwned::new(Node::from(value), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
+        let node = self
+            .node
+            .run(
+                (),
+                (PAtomic::from(node), |aborted| {
+                    let guard = unsafe { epoch::unprotected() };
+                    let d = aborted.load(Ordering::Relaxed, guard);
+                    unsafe { guard.defer_pdestroy(d) };
+                }),
+                rec,
+                guard,
+                pool,
+            )
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
+
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
         let slot = xchg.slot.load(Ordering::SeqCst, guard);
         let slot = self
@@ -109,8 +130,10 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
                 guard,
                 pool,
             );
+
             if inserted.is_err() {
                 // contention
+                unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
                 return Err(TryFail::Busy);
             }
 
@@ -137,9 +160,11 @@ impl<T: 'static + Clone> Memento for TryExchange<T> {
         let updated = self
             .update
             .run(&xchg.slot, (mine, slot, xchg), rec, guard, pool)
-            .map_err(|_|
-            // 실패하면 contention으로 인한 fail 리턴
-            TryFail::Busy)?;
+            .map_err(|_| {
+                // 실패하면 contention으로 인한 fail 리턴
+                unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
+                TryFail::Busy
+            })?;
 
         // 내가 기다린다고 선언한 거면 기다림
         if my_tag == WAITING {
@@ -198,7 +223,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         if let Ok(res) = deleted {
             match res {
                 Some(d) => {
-                    unsafe { clear_owner(d.deref(pool)) };
+                    unsafe { guard.defer_pdestroy(d) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
                     return Err(TryFail::Timeout);
                 }
                 None => {
@@ -302,27 +327,27 @@ impl<T: 'static + Clone> Memento for Exchange<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = POwned::new(Node::from(value), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
+        // let node = POwned::new(Node::from(value), pool);
+        // persist_obj(unsafe { node.deref(pool) }, true);
 
-        let node = self
-            .node
-            .run(
-                (),
-                (PAtomic::from(node), |aborted| {
-                    let guard = unsafe { epoch::unprotected() };
-                    let d = aborted.load(Ordering::Relaxed, guard);
-                    unsafe { guard.defer_pdestroy(d) };
-                }),
-                rec,
-                guard,
-                pool,
-            )
-            .unwrap()
-            .load(Ordering::Relaxed, guard);
+        // let node = self
+        //     .node
+        //     .run(
+        //         (),
+        //         (PAtomic::from(node), |aborted| {
+        //             let guard = unsafe { epoch::unprotected() };
+        //             let d = aborted.load(Ordering::Relaxed, guard);
+        //             unsafe { guard.defer_pdestroy(d) };
+        //         }),
+        //         rec,
+        //         guard,
+        //         pool,
+        //     )
+        //     .unwrap()
+        //     .load(Ordering::Relaxed, guard);
 
         self.try_xchg
-            .run(xchg, (node, cond), rec, guard, pool)
+            .run(xchg, (value, cond), rec, guard, pool)
             .map_err(|_| unreachable!("Retry never fails."))
     }
 
