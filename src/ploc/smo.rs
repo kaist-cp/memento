@@ -7,7 +7,10 @@ use crossbeam_epoch::Guard;
 use super::{common::Node, no_owner, InsertErr, Traversable};
 
 use crate::{
-    pepoch::{atomic::Pointer, PAtomic, PShared},
+    pepoch::{
+        atomic::{with_tag, Pointer, tag},
+        PAtomic, PShared,
+    },
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -109,19 +112,15 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
     }
 }
 
-// TODO(opt): How to use union type for this purpose?
 struct DeleteOrNode;
 
 impl DeleteOrNode {
-    /// Delete client id임을 표시하기 위한 태그
+    const UPDATED_NODE: usize = 0;
     const DELETE_CLIENT: usize = 1;
 
     #[inline]
     fn is_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
-        // TODO(must): 깨끗하게 태깅하기
-        let converted = unsafe { PShared::<()>::from_usize(checked) };
-
-        if converted.high_tag() & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
+        if tag(checked) & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
             return None;
         }
 
@@ -130,10 +129,12 @@ impl DeleteOrNode {
 
     #[inline]
     fn set_delete(x: usize) -> usize {
-        // TODO(must): 깨끗하게 태깅하기
-        unsafe { PShared::<()>::from_usize(x) }
-            .with_high_tag(Self::DELETE_CLIENT)
-            .into_usize()
+        with_tag(x, Self::DELETE_CLIENT)
+    }
+
+    #[inline]
+    fn set_updated_node<N>(n: PShared<'_, N>) -> usize {
+        n.with_tag(Self::UPDATED_NODE).into_usize()
     }
 }
 
@@ -213,6 +214,8 @@ unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Send for SMOAtomic<O, N, G
 unsafe impl<O, N: Collectable, G: DeleteHelper<O, N>> Sync for SMOAtomic<O, N, G> {}
 
 /// TODO(doc)
+/// Do not use LSB while using `Delete` or `Update`.
+/// It's reserved for them.
 /// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
 pub struct Delete<O, N: Node + Collectable, G: DeleteHelper<O, N>> {
@@ -397,7 +400,8 @@ pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
 }
 
 /// TODO(doc)
-///
+/// Do not use LSB while using `Delete` or `Update`.
+/// It's reserved for them.
 /// 빠졌던 노드를 다시 넣으려 하면 안 됨
 /// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 // TODO(opt): update는 O 필요 없는 것 같음
@@ -480,7 +484,7 @@ where
         owner
             .compare_exchange(
                 no_owner(),
-                new.with_high_tag(0).into_usize(), // TODO(must): 태깅은 DeleteOrNode에서..
+                DeleteOrNode::set_updated_node(new),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
@@ -541,7 +545,7 @@ where
             let owner = target_ref.owner().load(Ordering::SeqCst);
 
             // target이 내가 pop한 게 맞는지 확인
-            if owner == new.into_usize() {
+            if owner == DeleteOrNode::set_updated_node(new) {
                 return Ok(target);
             };
         }
