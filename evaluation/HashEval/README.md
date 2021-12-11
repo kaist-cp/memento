@@ -1,12 +1,16 @@
-Build
+## Build
 
 ```
 make -j
 ```
 
+## Test
+
+현재는 clevel-rust만 테스트하게 되어있음. Full test 돌리려면 run.sh에서 비교군 테스트 주석 해제해야함
+
 Test single
 
-- 실험 세팅: my_run.sh를 보면 바꿀수있음
+- 실험 세팅: my_run.sh 보면 바꿀수있음
 - 실험 결과: 터미널에 찍힘
 
 ```
