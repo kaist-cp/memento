@@ -26,6 +26,7 @@ use super::{
 const ELIM_SIZE: usize = 1;
 
 #[inline]
+#[allow(clippy::modulo_one)]
 fn get_random_elim_index() -> usize {
     thread_rng().gen::<usize>() % ELIM_SIZE
 }

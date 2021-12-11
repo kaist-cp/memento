@@ -337,32 +337,14 @@ where
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { target.deref(pool) };
         let owner = target_ref.owner();
-        if let Err(e) = owner.compare_exchange(
-            no_owner(),
-            self.id(pool),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            return Err(());
-
-            // // point를 다시 load해보고, 바뀌었으면 바로 리턴.
-            // let p = point.load(guard, pool);
-            // if p != target {
-            //     return Err(());
-            // }
-
-            // // same context
-            // persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist. we're doing CAS soon.
-
-            // // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next(= node_when_delete(target))
-            // // `next`를 알고 있으므로 `help()`를 굳이 쓰지 않음
-            // let next = DeleteOrNode::as_node(e).unwrap_or(next);
-
-            // // point를 승리한 애와 관련된 것으로 바꿔줌
-            // let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-            // return Err(());
-        }
+        let _ = owner
+            .compare_exchange(
+                no_owner(),
+                self.id(pool),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map_err(|_| ())?;
 
         // Now I own the location. flush the owner.
         persist_obj(owner, false);
@@ -400,7 +382,7 @@ where
     ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = self.target_loc.load(Ordering::Relaxed, guard);
         let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
-            return if target.tag() & Self::EMPTY == Self::EMPTY {
+            return if target.tag() & Self::EMPTY != 0 {
                 // empty라고 명시됨
                 Ok(None)
             } else {

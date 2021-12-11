@@ -147,7 +147,6 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
             if inserted.is_err() {
                 // println!("err insert {} {:?}", tid, node);
                 unsafe { guard.defer_pdestroy(node) }; // TODO(must): crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
-                // println!("free insert {} {:?}", tid, node);
                 return Err(TryFail::Busy);
             }
 
@@ -251,7 +250,7 @@ impl<T: 'static + Clone> TryExchange<T> {
 
         // println!("delete d {} {:?}", tid, d);
         unsafe { guard.defer_pdestroy(deleted) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
-        return Err(TryFail::Timeout);
+        Err(TryFail::Timeout)
     }
 
     #[inline]

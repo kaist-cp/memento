@@ -17,6 +17,7 @@ use crate::{
 
 /// TODO(doc)
 // TODO(must): T가 포인터일 수 있으니 T도 Collectable이여야함
+// TODO: Node, NodeUnopt 쪼개기
 #[derive(Debug)]
 pub struct Node<T> {
     /// TODO(doc)
@@ -61,7 +62,9 @@ impl<T> Collectable for Node<T> {
 
 impl<T> common::Node for Node<T> {
     #[inline]
-    fn ack(&self) {}
+    fn ack(&self) {
+        panic!("Node cannot be acked.");
+    }
 
     #[inline]
     fn acked(&self) -> bool {
