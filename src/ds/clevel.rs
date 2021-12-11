@@ -430,7 +430,7 @@ struct Bucket<K, V> {
 
 #[derive(Debug)]
 struct Node<T: ?Sized> {
-    data: Box<T>, // TODO: PAtomic
+    data: PAtomic<T>,
     next: PAtomic<Node<T>>,
 }
 
@@ -677,9 +677,13 @@ fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<[MaybeUninit<Bu
     println!("[new_node] size: {size}");
 
     // TODO: pallocation maybeuninit 잘 동작하나?
+    // let data = POwned::<[[MaybeUninit<Bucket<K, V>>]]>::init(size, &pool);
+
     POwned::new(
         Node {
-            data: Box::new_zeroed_slice(size), // TODO: PAtomic
+            // data: Box::new_zeroed_slice(size), // TODO: 0xffff.... (최댓값 initialize)
+            // TODO: 0xfff 설정할때 system memset 써야 빠를듯. 성능 비교해보기
+            data: POwned::<[[MaybeUninit<Bucket<K, V>>]]>::init(size, &pool),
             next: PAtomic::null(),
         },
         pool,
