@@ -146,7 +146,7 @@ namespace PiBench
     std::cout << "mode throughput: " << opt_.throughput << std::endl;
     std::cout << "mode latency: " << opt_.latency << std::endl;
     std::cout << "mode load_factor: " << opt_.load_factor << std::endl;
-    std::cout << "if test mode is `load_factor`, " << opt_.num_ops << " thread num will be 1. " << std::endl;
+    std::cout << "if test mode is `load_factor`, thread num will be 1. " << std::endl;
     kvs = new pair[opt_.num_ops];
     auto kvs1 = new pair[opt_.num_ops];
     stopwatch_t sw;

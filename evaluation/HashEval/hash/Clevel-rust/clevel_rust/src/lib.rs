@@ -77,7 +77,7 @@ pub extern "C" fn run_insert(
     // TODO: maybe pinning for each operation is too pessimistic. Let's optimize it for Memento...
     let guard = epoch::pin();
     let input = (tid, ModifyOp::Insert, k, v);
-    let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
+    let ret = m.modify.run(clevel, input, false, &guard, pool) == Ok(true);
     m.modify.reset(&guard, pool);
     ret
 }
@@ -93,7 +93,7 @@ pub extern "C" fn run_update(
 ) -> bool {
     let guard = epoch::pin();
     let input = (tid, ModifyOp::Update, k, v);
-    let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
+    let ret = m.modify.run(clevel, input, false, &guard, pool) == Ok(true);
     m.modify.reset(&guard, pool);
     ret
 }
@@ -108,7 +108,7 @@ pub extern "C" fn run_delete(
 ) -> bool {
     let guard = epoch::pin();
     let input = (tid, ModifyOp::Delete, k, 0);
-    let ret = m.modify.run(clevel, input, false, &guard, pool).is_ok();
+    let ret = m.modify.run(clevel, input, false, &guard, pool) == Ok(true);
     m.modify.reset(&guard, pool);
     ret
 }
