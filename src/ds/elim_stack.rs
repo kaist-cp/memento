@@ -174,27 +174,6 @@ where
             return Ok(ret);
         }
 
-        // // exchanger에 pop req를 담은 node를 넣어줘야 됨
-        // // TODO(must): (1) try_pop이 pop_node를 인풋으로 받고 (2) pop이 뭐로 성공했는지 인식해서 해제해줌?
-        // let pop_node = POwned::new(Node::from(Request::Pop), pool);
-        // persist_obj(unsafe { pop_node.deref(pool) }, true);
-
-        // let pop_node = self
-        //     .pop_node
-        //     .run(
-        //         (),
-        //         (PAtomic::from(pop_node), |aborted| {
-        //             let guard = unsafe { epoch::unprotected() };
-        //             let d = aborted.load(Ordering::Relaxed, guard);
-        //             unsafe { guard.defer_pdestroy(d) };
-        //         }),
-        //         rec,
-        //         guard,
-        //         pool,
-        //     )
-        //     .unwrap()
-        //     .load(Ordering::Relaxed, guard);
-
         let req = self
             .try_exchange
             .run(
