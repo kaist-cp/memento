@@ -21,6 +21,45 @@ use itertools::*;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
+use crate::pmem::Collectable;
+use crate::pmem::GarbageCollection;
+use crate::pmem::PoolHandle;
+use crate::PDefault;
+
+// Root obj
+impl<K, V> PDefault for ClevelInner<K, V> {
+    fn pdefault(pool: &'static PoolHandle) -> Self {
+        todo!()
+    }
+}
+impl<K, V> Collectable for ClevelInner<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+// TODO: memento
+#[derive(Debug)]
+pub struct ClevelInsert {}
+
+// TODO: memento
+#[derive(Debug)]
+pub struct ClevelDelete {}
+
+// TODO: memento
+
+#[derive(Debug)]
+pub struct ClevelSearch {}
+
+// TODO: memento
+#[derive(Debug)]
+pub struct ClevelUpdate {}
+
+// TODO: memento
+#[derive(Debug)]
+pub struct ClevelResizeLoop {}
+
+// -- 아래부터는 conccurent 버전. 이걸 persistent 버전으로 바꿔야함
 const TINY_VEC_CAPACITY: usize = 8;
 
 cfg_if! {
