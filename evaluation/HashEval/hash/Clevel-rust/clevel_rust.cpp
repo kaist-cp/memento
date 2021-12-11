@@ -36,6 +36,7 @@ extern "C"
 
     typedef struct _clevel Clevel;
     bool search(Clevel *obj, Key k, PoolHandle *pool);
+    size_t get_capacity(Clevel *c, PoolHandle *pool);
 
     typedef struct _memento ClevelMemento;
     bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
@@ -49,7 +50,7 @@ extern "C"
 #endif
 
 using namespace std;
-
+uint64_t inserted = 0;
 class CLevelMemento : public hash_api
 {
     PoolHandle *pool;
@@ -75,11 +76,19 @@ public:
         ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(IX_MEMENTO_START + tnum, pool));
         std::thread{run_resize_loop, m_resize, c, pool}.detach();
     }
-    ~CLevelMemento(){};
+    ~CLevelMemento(){
+        // TODO: pool close?
+    };
     std::string hash_name()
     {
         return "clevel-memento";
     };
+    hash_Utilization utilization()
+    {
+        hash_Utilization h;
+        h.load_factor = (float)inserted / get_capacity(c, pool);
+        return h;
+    }
     bool find(const char *key, size_t key_sz, char *value_out, unsigned tid)
     {
         auto k = *reinterpret_cast<const Key *>(key);
@@ -91,7 +100,13 @@ public:
     {
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
-        return run_insert(m[tid], c, tid, k, v, pool);
+
+        bool ret = run_insert(m[tid], c, tid, k, v, pool);
+        if (ret)
+        {
+            inserted += 1;
+        }
+        return ret;
     }
     bool insertResize(const char *key, size_t key_sz, const char *value,
                       size_t value_sz, unsigned tid, unsigned t)

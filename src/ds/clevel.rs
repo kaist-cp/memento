@@ -31,10 +31,11 @@ use crate::Memento;
 use crate::PDefault;
 
 // Root obj
+// TODO: persistent version으로 만들며 필드 재구성. 현재는 내부가 concurrent clevel을 사용하게끔 되있음
 #[derive(Debug)]
 pub struct PClevelInner<K, V> {
-    kv: Clevel<K, V>, // TODO: persistent version으로 만들며 이 필드 빼기. 현재는 내부가 concurrent 로직으로 돌아가게끔 되있음
-    kv_resize: RefCell<ClevelResize<K, V>>, // TODO: persistent version으로 만들며 이 필드 빼기. 현재는 내부가 concurrent 로직으로 돌아가게끔 되있음
+    kv: Clevel<K, V>,
+    kv_resize: RefCell<ClevelResize<K, V>>,
 }
 
 impl<K, V> PDefault for PClevelInner<K, V>
@@ -68,8 +69,11 @@ where
     V: Debug,
 {
     pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &PoolHandle) -> Option<&'g V> {
-        // TODO: persistent 버전이면 아마 search의 input에 pool 필요해질 것?
         self.kv.search(key, guard)
+    }
+
+    pub fn get_capacity<'g>(&'g self, guard: &'g Guard, pool: &PoolHandle) -> usize {
+        self.kv.get_capacity(guard)
     }
 }
 
