@@ -173,18 +173,18 @@ pub trait UpdateDeleteInfo<O, N> {
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct SMOAtomic<O, N: Collectable, G: UpdateDeleteInfo<O, N>> {
+pub struct SMOAtomic<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> {
     ptr: PAtomic<N>,
     _marker: PhantomData<*const (O, G)>,
 }
 
-impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Collectable for SMOAtomic<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Collectable for SMOAtomic<O, N, G> {
     fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
         PAtomic::filter(&mut s.ptr, gc, pool);
     }
 }
 
-impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Default for SMOAtomic<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Default for SMOAtomic<O, N, G> {
     fn default() -> Self {
         Self {
             ptr: PAtomic::null(),
@@ -193,7 +193,9 @@ impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Default for SMOAtomic<O, N, G
     }
 }
 
-impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> From<PShared<'_, N>> for SMOAtomic<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> From<PShared<'_, N>>
+    for SMOAtomic<O, N, G>
+{
     fn from(node: PShared<'_, N>) -> Self {
         Self {
             ptr: PAtomic::from(node),
@@ -202,7 +204,7 @@ impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> From<PShared<'_, N>> for SMOA
     }
 }
 
-impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O, N, G> {
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O, N, G> {
     type Target = PAtomic<N>;
 
     fn deref(&self) -> &Self::Target {
@@ -210,11 +212,32 @@ impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O, N, G> 
     }
 }
 
-unsafe impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Send for SMOAtomic<O, N, G> {}
-unsafe impl<O, N: Collectable, G: UpdateDeleteInfo<O, N>> Sync for SMOAtomic<O, N, G> {}
+impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
+    fn load<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
+        loop {
+            let p = self.ptr.load(Ordering::SeqCst, guard);
+            if p.is_null() {
+                return p;
+            }
+
+            let p_ref = unsafe { p.deref(pool) };
+            let owner = p_ref.owner();
+            let o = owner.load(Ordering::SeqCst);
+
+            if o == no_owner() {
+                return p;
+            }
+
+            help(p, o, self, None, guard, pool);
+        }
+    }
+}
+
+unsafe impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Send for SMOAtomic<O, N, G> {}
+unsafe impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Sync for SMOAtomic<O, N, G> {}
 
 #[inline]
-fn help<O, N: Collectable, G: UpdateDeleteInfo<O, N>>(
+fn help<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>>(
     old: PShared<'_, N>,
     owner: usize,
     point: &SMOAtomic<O, N, G>,
@@ -291,7 +314,7 @@ where
         }
 
         // Normal run
-        let target = point.load(Ordering::SeqCst, guard);
+        let target = point.load(guard, pool);
 
         let next = match G::prepare_delete(target, forbidden, obj, guard, pool) {
             Ok(Some(n)) => n,
@@ -332,7 +355,7 @@ where
                 Some(target)
             })
             .map_err(|cur| {
-                let p = point.load(Ordering::SeqCst, guard);
+                let p = point.load(guard, pool);
 
                 if p != target {
                     return;
@@ -482,7 +505,7 @@ where
         // Normal run
 
         // 포인트의 현재 타겟 불러옴
-        let target = point.load(Ordering::SeqCst, guard);
+        let target = point.load(guard, pool);
 
         if target.is_null() {
             return Err(());
@@ -519,7 +542,7 @@ where
                 target
             })
             .map_err(|cur| {
-                let p = point.load(Ordering::SeqCst, guard);
+                let p = point.load(guard, pool);
 
                 if p != target {
                     return;
