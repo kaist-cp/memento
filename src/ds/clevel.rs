@@ -10,6 +10,8 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 
@@ -31,10 +33,8 @@ use crate::PDefault;
 // Root obj
 #[derive(Debug)]
 pub struct PClevelInner<K, V> {
-    _marker: PhantomData<(K, V)>,
-    // TODO concurrent
-    // kv: Clevel<K, V>,
-    // kv_resize: ClevelResize<K, V>,
+    kv: Clevel<K, V>, // TODO: persistent version으로 만들며 이 필드 빼기. 현재는 내부가 concurrent 로직으로 돌아가게끔 되있음
+    kv_resize: RefCell<ClevelResize<K, V>>, // TODO: persistent version으로 만들며 이 필드 빼기. 현재는 내부가 concurrent 로직으로 돌아가게끔 되있음
 }
 
 impl<K, V> PDefault for PClevelInner<K, V>
@@ -46,8 +46,10 @@ where
     V: Debug,
 {
     fn pdefault(pool: &'static PoolHandle) -> Self {
+        let (kv, kv_resize) = Clevel::new();
         Self {
-            _marker: PhantomData,
+            kv,
+            kv_resize: RefCell::new(kv_resize),
         }
     }
 }
@@ -67,8 +69,7 @@ where
 {
     pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &PoolHandle) -> Option<&'g V> {
         println!("[search]");
-        // TODO: self.kv.search(key, guard)
-        None
+        self.kv.search(key, guard)
     }
 }
 
@@ -119,10 +120,10 @@ impl<K: 'static, V: 'static> Memento for Modify<K, V> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         match op {
-            ModifyOp::Insert => println!("[run insert]"),
-            ModifyOp::Delete => println!("[run delete]"),
-            ModifyOp::Update => println!("[run update]"),
-        }
+            ModifyOp::Insert => self.insert.run(inner, (), rec, guard, pool),
+            ModifyOp::Delete => self.delete.run(inner, (), rec, guard, pool),
+            ModifyOp::Update => self.update.run(inner, (), rec, guard, pool),
+        };
         Ok(())
     }
 
@@ -150,7 +151,7 @@ impl<K, V> Collectable for ResizeLoop<K, V> {
     }
 }
 
-impl<K: 'static, V: 'static> Memento for ResizeLoop<K, V> {
+impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     type Object<'o> = &'o PClevelInner<K, V>;
     type Input<'o> = ();
     type Output<'o> = (); // TODO
@@ -165,6 +166,8 @@ impl<K: 'static, V: 'static> Memento for ResizeLoop<K, V> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         println!("[run resize loop]");
+        let mut g = guard.clone(); // TODO: clone API 없어도 그냥 새로 pin하면 되지 않나?
+        inner.kv_resize.borrow_mut().resize_loop(&mut g);
         Ok(())
     }
 
@@ -187,6 +190,35 @@ impl<K, V> Default for ClInsert<K, V> {
     }
 }
 
+impl<K, V> Collectable for ClInsert<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K: 'static, V: 'static> Memento for ClInsert<K, V> {
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = ();
+    type Output<'o> = (); // TODO
+    type Error<'o> = !; // TODO
+
+    fn run<'o>(
+        &mut self,
+        object: Self::Object<'o>,
+        input: Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        println!("[run insert m]");
+        Ok(())
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
+    }
+}
+
 // TODO: memento
 #[derive(Debug)]
 struct ClDelete<K, V> {
@@ -201,6 +233,35 @@ impl<K, V> Default for ClDelete<K, V> {
     }
 }
 
+impl<K, V> Collectable for ClDelete<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K: 'static, V: 'static> Memento for ClDelete<K, V> {
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = ();
+    type Output<'o> = (); // TODO
+    type Error<'o> = !; // TODO
+
+    fn run<'o>(
+        &mut self,
+        object: Self::Object<'o>,
+        input: Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        println!("[run delete m]");
+        Ok(())
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
+    }
+}
+
 // TODO: memento
 #[derive(Debug)]
 struct ClUpdate<K, V> {
@@ -212,6 +273,35 @@ impl<K, V> Default for ClUpdate<K, V> {
         Self {
             _marker: Default::default(),
         }
+    }
+}
+
+impl<K, V> Collectable for ClUpdate<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K: 'static, V: 'static> Memento for ClUpdate<K, V> {
+    type Object<'o> = &'o PClevelInner<K, V>;
+    type Input<'o> = ();
+    type Output<'o> = (); // TODO
+    type Error<'o> = !; // TODO
+
+    fn run<'o>(
+        &mut self,
+        object: Self::Object<'o>,
+        input: Self::Input<'o>,
+        rec: bool, // TODO(opt): template parameter
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        println!("[run update m]");
+        Ok(())
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        todo!()
     }
 }
 
