@@ -189,7 +189,7 @@ where
 
         // 빼려는 node에 내 이름 새겨넣음
         // CAS인 이유: delete 복구 중인 스레드와 경합이 일어날 수 있음
-        if target_ref
+        let result = target_ref
             .owner_unopt()
             .compare_exchange(
                 no_owner(),
@@ -197,13 +197,11 @@ where
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
-            .is_ok()
-        {
-            persist_obj(target_ref.owner_unopt(), true);
-            return Ok(Some(target));
-        }
+            .map(|_| Some(target))
+            .map_err(|_| ());
 
-        Err(())
+        persist_obj(target_ref.owner_unopt(), true);
+        result
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
@@ -258,7 +256,7 @@ where
 
         // 누군가가 target을 obj에서 빼고 owner 기록 전에 crash가 남. 그러므로 owner를 마저 기록해줌
         // CAS인 이유: 서로 누가 진짜 owner인 줄 모르고 모두가 복구하면서 같은 target을 노리고 있을 수 있음
-        if target_ref
+        let result = target_ref
             .owner_unopt()
             .compare_exchange(
                 no_owner(),
@@ -266,13 +264,11 @@ where
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
-            .is_ok()
-        {
-            persist_obj(target_ref.owner_unopt(), true);
-            return Ok(Some(target));
-        }
+            .map(|_| Some(target))
+            .map_err(|_| ());
 
-        Err(())
+        persist_obj(target_ref.owner_unopt(), true);
+        result
     }
 
     #[inline]
