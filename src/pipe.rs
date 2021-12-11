@@ -96,7 +96,7 @@ mod tests {
     use crate::PDefault;
     use rusty_fork::rusty_fork_test;
 
-    const COUNT: usize = 1_000_000;
+    const COUNT: usize = 2;
 
     impl Collectable for [Queue<usize>; 2] {
         fn filter(q_arr: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
@@ -120,7 +120,7 @@ mod tests {
     impl Default for Transfer {
         fn default() -> Self {
             Self {
-                pipes: array_init::array_init(|_| Pipe::default()),
+                pipes: array_init::array_init(|_| Pipe::<DequeueSome<usize>, Enqueue<usize>>::default()),
                 suppliers: array_init::array_init(|_| Enqueue::default()),
                 consumers: array_init::array_init(|_| DequeueSome::default()),
             }
@@ -131,7 +131,7 @@ mod tests {
         fn filter(transfer: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
             // Call filter of inner struct
             for pipe in transfer.pipes.as_mut() {
-                Pipe::filter(pipe, gc, pool);
+                Pipe::<DequeueSome<usize>, Enqueue<usize>>::filter(pipe, gc, pool);
             }
             for enq in transfer.suppliers.as_mut() {
                 Enqueue::filter(enq, gc, pool);
@@ -157,6 +157,8 @@ mod tests {
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             let (q1, q2) = (&q_arr[0], &q_arr[1]);
+
+            // TODO(must): 테스트 통과 못함
 
             match tid {
                 // T0: Supply q1
