@@ -9,7 +9,6 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 

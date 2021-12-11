@@ -8,10 +8,7 @@ use etrace::*;
 use super::{common::Node, no_owner, InsertErr, Traversable};
 
 use crate::{
-    pepoch::{
-        atomic::{tag, with_tag, Pointer},
-        PAtomic, PShared,
-    },
+    pepoch::{atomic::Pointer, PAtomic, PShared},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
