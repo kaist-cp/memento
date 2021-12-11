@@ -176,28 +176,6 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize) {
     )
 }
 
-/// low tag just for usize
-pub fn with_tag(origin: usize, tag: usize) -> usize {
-    compose_tag::<usize>(origin, tag)
-}
-
-/// high tag just for usize
-pub fn with_high_tag(tag: usize, origin: usize) -> usize {
-    compose_high_tag::<usize>(tag, origin)
-}
-
-/// get low tag for usize
-pub fn tag(x: usize) -> usize {
-    let (_, _, tag) = decompose_tag::<usize>(x);
-    tag
-}
-
-/// get high tag for usize
-pub fn high_tag(x: usize) -> usize {
-    let (tag, _, _) = decompose_tag::<usize>(x);
-    tag
-}
-
 // TODO: 배포 전에 주석을 persistent 버전에 알맞게 수정
 /// Types that are pointed to by a single word.
 ///

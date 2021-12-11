@@ -8,10 +8,7 @@ use etrace::*;
 use super::{common::Node, no_owner, InsertErr, Traversable};
 
 use crate::{
-    pepoch::{
-        atomic::{tag, with_tag, Pointer},
-        PAtomic, PShared,
-    },
+    pepoch::{atomic::Pointer, PAtomic, PShared},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -122,7 +119,7 @@ impl DeleteOrNode {
 
     #[inline]
     fn as_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
-        if tag(checked) & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
+        if checked & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
             return None;
         }
 
@@ -131,7 +128,7 @@ impl DeleteOrNode {
 
     #[inline]
     fn delete(x: usize) -> usize {
-        with_tag(x, Self::DELETE_CLIENT)
+        (x << 1) | Self::DELETE_CLIENT
     }
 
     #[inline]
@@ -324,10 +321,7 @@ where
         let target = point.load(guard, pool);
         let next = ok_or!(
             G::prepare_delete(target, forbidden, obj, guard, pool),
-            NeedRetry,
-            {
-                return Err(());
-            }
+            return Err(())
         );
         let next = some_or!(next, {
             self.target_loc
@@ -349,23 +343,25 @@ where
             Ordering::SeqCst,
             Ordering::SeqCst,
         ) {
-            // point를 다시 load해보고, 바뀌었으면 바로 리턴.
-            let p = point.load(guard, pool);
-            if p != target {
-                return Err(());
-            }
-
-            // same context
-            persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist. we're doing CAS soon.
-
-            // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next(= node_when_delete(target))
-            // `next`를 알고 있으므로 `help()`를 굳이 쓰지 않음
-            let next = DeleteOrNode::as_node(e).unwrap_or(next);
-
-            // point를 승리한 애와 관련된 것으로 바꿔줌
-            let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
             return Err(());
+
+            // // point를 다시 load해보고, 바뀌었으면 바로 리턴.
+            // let p = point.load(guard, pool);
+            // if p != target {
+            //     return Err(());
+            // }
+
+            // // same context
+            // persist_obj(owner, false); // insert한 애에게 insert 되었다는 확신을 주기 위해서 struct advanve 시키기 전에 반드시 persist. we're doing CAS soon.
+
+            // // 승리한 애가 (1) update면 걔의 node, (2) delete면 그냥 next(= node_when_delete(target))
+            // // `next`를 알고 있으므로 `help()`를 굳이 쓰지 않음
+            // let next = DeleteOrNode::as_node(e).unwrap_or(next);
+
+            // // point를 승리한 애와 관련된 것으로 바꿔줌
+            // let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+            // return Err(());
         }
 
         // Now I own the location. flush the owner.
@@ -495,7 +491,7 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (new, expected, obj): Self::Input<'o>,
+        (expected, new, obj): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -508,12 +504,7 @@ where
 
         // 포인트의 현재 타겟 불러옴
         let target = point.load(guard, pool);
-
-        if target.is_null() {
-            return Err(());
-        }
-
-        if !G::prepare_update(target, expected, obj, guard, pool) {
+        if target.is_null() || !G::prepare_update(target, expected, obj, guard, pool) {
             return Err(());
         }
 
@@ -589,12 +580,9 @@ where
         }
     }
 
-    /// # Safety
-    ///
-    /// Update되어 owner가 node일 때만 사용해야 함
-    pub unsafe fn next_updated_node<'g>(old: &N) -> PShared<'g, N> {
+    pub fn next_updated_node<'g>(old: &N) -> Option<PShared<'g, N>> {
         let u = old.owner().load(Ordering::SeqCst);
         assert_ne!(u, no_owner()); // TODO(must): ABA 문제가 터지는지 확인하기 위해 달아놓은 assert
-        PShared::from_usize(u)
+        DeleteOrNode::as_node(u)
     }
 }

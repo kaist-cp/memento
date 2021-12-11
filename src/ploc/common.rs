@@ -187,7 +187,7 @@ where
     type Object<'o> = M::Object<'o>;
     type Input<'o> = M::Input<'o>;
     type Output<'o> = M::Output<'o>;
-    type Error<'o> = M::Error<'o>;
+    type Error<'o> = !;
 
     fn run<'o>(
         &mut self,

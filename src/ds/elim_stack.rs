@@ -173,7 +173,7 @@ where
                     // println!("pop {} -> {:?}", tid, v);
                     v
                 } else {
-                    unreachable!("stack에 Pop req가 들어가진 않음")
+                    panic!("stack에 Pop req가 들어가진 않음")
                 }
             });
             return Ok(ret);
@@ -193,7 +193,7 @@ where
         if let Request::Push(v) = req {
             Ok(Some(v))
         } else {
-            unreachable!("exchange 조건으로 인해 Push랑만 교환함")
+            panic!("exchange 조건으로 인해 Push랑만 교환함")
         }
     }
 
@@ -298,9 +298,7 @@ impl<T: Clone + std::fmt::Debug> Memento for Push<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        self.try_push
-            .run(stack, (node, tid), rec, guard, pool)
-            .map_err(|_| unreachable!("Retry never fails."))
+        self.try_push.run(stack, (node, tid), rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -348,9 +346,7 @@ impl<T: Clone + std::fmt::Debug> Memento for Pop<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.try_pop
-            .run(stack, tid, rec, guard, pool)
-            .map_err(|_| unreachable!("Retry never fails."))
+        self.try_pop.run(stack, tid, rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
