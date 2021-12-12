@@ -428,24 +428,16 @@ cfg_if! {
     }
 }
 
-fn hashes<T: Hash>(t: &T) -> [u32; 2] {
+fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
     let mut hasher = Murmur3HasherExt::default();
     t.hash(&mut hasher);
     let hash = hasher.finish() as usize;
 
-    // 32/32 비트로 쪼개서 반환
-    let left = hash >> 32;
-    let right = hash & ((1 << 32) - 1);
-    debug_assert_eq!(hash, (left << 32) | right);
+    let tag = hash.rotate_left(16) as u16;
+    let left = hash as u32;
+    let right = hash.rotate_right(32) as u32;
 
-    [
-        left as u32,
-        if left != right {
-            right as u32
-        } else {
-            right as u32 + 1
-        },
-    ]
+    (tag, [left, if left != right { right } else { right + 1 }])
 }
 
 #[derive(Debug, Default)]
@@ -578,6 +570,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     fn find_fast<'g>(
         &'g self,
         key: &K,
+        key_tag: u16,
         key_hashes: [u32; 2],
         guard: &'g Guard,
         pool: &'static PoolHandle,
@@ -595,7 +588,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
                     let slot_ptr = slot.load(guard, pool);
-                    // TODO: check 2-byte tag: slot_ptr's high 2 bytes should be the 2-byte LSB of key. otherwise, continue.
+
+                    // check 2-byte tag
+                    if slot_ptr.high_tag() != key_tag as usize {
+                        continue;
+                    }
 
                     let slot_ref = &some_or!(unsafe { slot_ptr.as_ref(pool) }, continue).data;
                     if *key != slot_ref.key {
@@ -634,6 +631,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     fn find<'g>(
         &'g self,
         key: &K,
+        key_tag: u16,
         key_hashes: [u32; 2],
         guard: &'g Guard,
         pool: &'static PoolHandle,
@@ -651,7 +649,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
                     let slot_ptr = slot.load(guard, pool);
-                    // TODO: check 2-byte tag
+
+                    // check 2-byte tag
+                    if slot_ptr.high_tag() != key_tag as usize {
+                        continue;
+                    }
 
                     let slot_ref = &some_or!(unsafe { slot_ptr.as_ref(pool) }, continue).data;
                     if *key != slot_ref.key {
@@ -949,7 +951,9 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
                     let mut moved = false;
                     loop {
-                        let key_hashes = hashes(&unsafe { slot_ptr.deref(pool) }.data.key)
+                        let (key_tag, key_hashes) =
+                            hashes(&unsafe { slot_ptr.deref(pool) }.data.key);
+                        let key_hashes = key_hashes
                             .into_iter()
                             .map(|key_hash| key_hash as usize % first_level_size)
                             .sorted()
@@ -963,14 +967,19 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                         .get_unchecked(i)
                                 };
 
-                                if let Some(slot) = unsafe { slot.load(guard, pool).as_ref(pool) } {
-                                    // TODO: 2-byte tag checking
-
-                                    if slot.data.key == unsafe { slot_ptr.deref(pool) }.data.key {
-                                        moved = true;
-                                        break;
+                                let slot_first_level = slot.load(guard, pool);
+                                if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
+                                    // 2-byte tag checking
+                                    if slot_first_level.high_tag() != key_tag as usize {
+                                        continue;
                                     }
-                                    continue;
+
+                                    if slot.data.key != unsafe { slot_ptr.deref(pool) }.data.key {
+                                        continue;
+                                    }
+
+                                    moved = true;
+                                    break;
                                 }
 
                                 if slot
@@ -1079,6 +1088,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
     fn find_fast<'g>(
         &'g self,
         key: &K,
+        key_tag: u16,
         key_hashes: [u32; 2],
         guard: &'g Guard,
         pool: &'static PoolHandle,
@@ -1086,7 +1096,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find_fast(key, key_hashes, guard, pool);
+            let find_result = context_ref.find_fast(key, key_tag, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
                 context = self.context.load(Ordering::Acquire, guard);
                 continue;
@@ -1117,6 +1127,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
     fn find<'g>(
         &'g self,
         key: &K,
+        key_tag: u16,
         key_hashes: [u32; 2],
         guard: &'g Guard,
         pool: &'static PoolHandle,
@@ -1124,7 +1135,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find(key, key_hashes, guard, pool);
+            let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
                 context = self.context.load(Ordering::Acquire, guard);
                 continue;
@@ -1309,8 +1320,8 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Option<&'g V> {
-        let key_hashes = hashes(key);
-        let (_, find_result) = inner.find_fast(key, key_hashes, guard, pool);
+        let (key_tag, key_hashes) = hashes(key);
+        let (_, find_result) = inner.find_fast(key, key_tag, key_hashes, guard, pool);
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.data.value)
     }
 
@@ -1400,13 +1411,15 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         V: Clone,
     {
         // println!("[insert] tid: {}, key: {}", tid, key);
-        let key_hashes = hashes(&key);
-        let (context, find_result) = inner.find(&key, key_hashes, guard, pool);
+        let (key_tag, key_hashes) = hashes(&key);
+        let (context, find_result) = inner.find(&key, key_tag, key_hashes, guard, pool);
         if find_result.is_some() {
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new(Node::from(Slot { key, value }), pool).into_shared(guard);
+        let slot = POwned::new(Node::from(Slot { key, value }), pool)
+            .with_high_tag(key_tag as usize)
+            .into_shared(guard);
         // question: why `context_new` is created?
         let (context_new, insert_result) = Self::insert_inner(
             client,
@@ -1482,17 +1495,18 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
     where
         K: Clone,
     {
-        let key_hashes = hashes(&key);
+        let (key_tag, key_hashes) = hashes(&key);
         let mut slot_new = POwned::new(
             Node::from(Slot {
                 key: key.clone(),
                 value,
             }),
             pool,
-        );
+        )
+        .with_high_tag(key_tag as usize);
 
         loop {
-            let (context, find_result) = inner.find(&key, key_hashes, guard, pool);
+            let (context, find_result) = inner.find(&key, key_tag, key_hashes, guard, pool);
             let find_result = some_or!(find_result, {
                 return Err(());
             });
@@ -1535,9 +1549,9 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         pool: &'static PoolHandle,
     ) {
         // println!("[delete] key: {}", key);
-        let key_hashes = hashes(&key);
+        let (key_tag, key_hashes) = hashes(&key);
         loop {
-            let (_, find_result) = inner.find(key, key_hashes, guard, pool);
+            let (_, find_result) = inner.find(key, key_tag, key_hashes, guard, pool);
             let find_result = some_or!(find_result, {
                 println!("[delete] suspicious...");
                 return;
