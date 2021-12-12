@@ -147,7 +147,7 @@ pub trait UpdateDeleteInfo<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
     fn prepare_delete<'g>(
         cur: PShared<'_, N>,
-        forbidden: PShared<'_, N>,
+        aux: PShared<'_, N>,
         obj: &O,
         guard: &'g Guard,
         pool: &PoolHandle,

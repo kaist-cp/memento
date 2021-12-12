@@ -463,12 +463,16 @@ struct Bucket<K, V> {
 impl<K, V> UpdateDeleteInfo<(), Node<Slot<K, V>>> for Bucket<K, V> {
     fn prepare_delete<'g>(
         cur: PShared<'_, Node<Slot<K, V>>>,
-        forbidden: PShared<'_, Node<Slot<K, V>>>,
+        expected: PShared<'_, Node<Slot<K, V>>>,
         obj: &(),
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, Node<Slot<K, V>>>>, NeedRetry> {
-        todo!()
+        if cur == expected {
+            Ok(Some(PShared::null()))
+        } else {
+            Err(NeedRetry)
+        }
     }
 
     fn prepare_update<'g>(
