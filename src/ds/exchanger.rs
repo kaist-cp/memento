@@ -308,8 +308,8 @@ impl<T: Clone> UpdateDeleteInfo<Exchanger<T>, Node<T>> for TryExchange<T> {
         _: PShared<'_, Node<T>>,
         _: &'g Guard,
         _: &PoolHandle,
-    ) -> PShared<'g, Node<T>> {
-        PShared::<_>::null()
+    ) -> Option<PShared<'g, Node<T>>> {
+        Some(PShared::<_>::null())
     }
 }
 

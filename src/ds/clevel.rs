@@ -148,7 +148,7 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 //     }
 // }
 
-// TODO: for inser, update, resize
+// TODO: rename
 trait InsertInner<K, V> {
     fn insert_inner(
         &mut self,
@@ -158,14 +158,16 @@ trait InsertInner<K, V> {
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
 #[derive(Debug)]
 pub struct ResizeLoop<K, V> {
-    insert_inner: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
+    resize_move: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
+    resize_tag: Delete<(), Node<Slot<K, V>>, Bucket<K, V>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ResizeLoop<K, V> {
     fn default() -> Self {
         Self {
-            insert_inner: Default::default(),
+            resize_move: Default::default(),
+            resize_tag: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -209,14 +211,6 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // TODO
-    }
-}
-
-impl<K, V> InsertInner<K, V> for ResizeLoop<K, V> {
-    fn insert_inner(
-        &mut self,
-    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
-        &mut self.insert_inner
     }
 }
 
@@ -457,15 +451,27 @@ impl<K, V> UpdateDeleteInfo<(), Node<Slot<K, V>>> for Bucket<K, V> {
     fn prepare_delete<'g>(
         del_type: u16,
         cur: PShared<'_, Node<Slot<K, V>>>,
-        expected: PShared<'_, Node<Slot<K, V>>>,
+        expected: PShared<'g, Node<Slot<K, V>>>,
         obj: &(),
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, Node<Slot<K, V>>>>, NeedRetry> {
-        if cur == expected {
-            Ok(Some(PShared::null()))
-        } else {
-            Err(NeedRetry)
+        match del_type {
+            0 => {
+                if cur == expected {
+                    Ok(Some(PShared::null()))
+                } else {
+                    Err(NeedRetry)
+                }
+            }
+            1 => {
+                if cur == expected {
+                    Ok(Some(expected.with_tag(1)))
+                } else {
+                    Err(NeedRetry)
+                }
+            }
+            _ => panic!("not used"),
         }
     }
 
@@ -480,12 +486,22 @@ impl<K, V> UpdateDeleteInfo<(), Node<Slot<K, V>>> for Bucket<K, V> {
     }
 
     fn node_when_deleted<'g>(
-        _: u16,
-        deleted: PShared<'_, Node<Slot<K, V>>>,
+        del_type: u16,
+        deleted: PShared<'g, Node<Slot<K, V>>>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> PShared<'g, Node<Slot<K, V>>> {
-        PShared::null()
+    ) -> Option<PShared<'g, Node<Slot<K, V>>>> {
+        match del_type {
+            0 => Some(PShared::null()),
+            1 => {
+                if deleted.tag() == 1 {
+                    // println!("hey");
+                    return None;
+                }
+                Some(deleted.with_tag(1))
+            }
+            _ => panic!("not used"),
+        }
     }
 }
 
@@ -812,9 +828,8 @@ impl<K, V> Drop for ClevelInner<K, V> {
 }
 
 impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
-    fn add_level<'g, A: InsertInner<K, V>>(
+    fn add_level<'g>(
         &'g self,
-        client: &mut A,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
         guard: &'g Guard,
@@ -965,15 +980,29 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                     continue;
                                 }
 
-                                // TODO(slot)
-                                if let Err(e) = slot.compare_exchange(
-                                    slot_ptr,
-                                    slot_ptr.with_tag(1),
-                                    Ordering::AcqRel,
-                                    Ordering::Acquire,
+                                // TODO(check slot): before
+                                // if let Err(e) = slot.compare_exchange(
+                                //     slot_ptr,
+                                //     slot_ptr.with_tag(1),
+                                //     Ordering::AcqRel,
+                                //     Ordering::Acquire,
+                                //     guard,
+                                // ) {
+                                //     slot_ptr = e.current;
+                                //     continue;
+                                // }
+
+                                // TODO(check slot): after
+                                let res = client.resize_tag.run(
+                                    slot,
+                                    (1, slot_ptr, &()),
+                                    false, // TODO(must): normal run을 가정함
                                     guard,
-                                ) {
-                                    slot_ptr = e.current;
+                                    pool,
+                                );
+
+                                if res.is_err() {
+                                    slot_ptr = slot.load(guard, pool);
                                     continue;
                                 }
 
@@ -1034,8 +1063,8 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                 // }
 
                                 // TODO(check slot): after
-                                let move_insert = client.insert_inner();
-                                if move_insert
+                                if client
+                                    .resize_move
                                     .run(slot, (slot_ptr, slot, |_| true), false, guard, pool) // TODO(must): normal run을 가정함
                                     .is_ok()
                                 {
@@ -1060,7 +1089,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
-                            self.add_level(client, context, first_level_ref, guard, pool);
+                            self.add_level(context, first_level_ref, guard, pool);
                         context = context_new;
                         context_ref = unsafe { context.deref(pool) };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
@@ -1403,6 +1432,8 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             // Move the slot if the slot is not already (being) moved.
             //
             // the resize thread may already have passed the slot. I need to move it.
+
+            // TODO(slot)
             if insert_result
                 .slot
                 .compare_exchange(
@@ -1520,7 +1551,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
             let (context_new, added) =
-                inner.add_level(client, context, first_level_ref, guard, pool);
+                inner.add_level(context, first_level_ref, guard, pool);
             if added {
                 let _ = resize_send.send(()); // TODO: channel
             }

@@ -162,7 +162,7 @@ pub trait UpdateDeleteInfo<O, N> {
     fn prepare_delete<'g>(
         del_type: u16,
         cur: PShared<'_, N>,
-        aux: PShared<'_, N>,
+        aux: PShared<'g, N>,
         obj: &O,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -180,10 +180,10 @@ pub trait UpdateDeleteInfo<O, N> {
     /// A pointer that should be next after a node is deleted
     fn node_when_deleted<'g>(
         del_type: u16,
-        deleted: PShared<'_, N>,
+        deleted: PShared<'g, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> PShared<'g, N>;
+    ) -> Option<PShared<'g, N>>;
 }
 
 /// TODO(doc)
@@ -241,41 +241,45 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
             }
 
             persist_obj(owner, true);
-            p = self.help(p, o, None, guard, pool);
+            p = ok_or!(self.help(p, o, None, guard, pool), e, return e);
         }
     }
 
+    /// Ok(ptr): required to be checked if the node is owned by someone
+    /// Err(ptr): No need to help anymore
     #[inline]
     fn help<'g>(
         &self,
         old: PShared<'g, N>,
         owner: usize,
-        del_type_next: Option<(u16, PShared<'g, N>)>,
+        helper_del_type_next: Option<(u16, PShared<'g, N>)>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> PShared<'g, N> {
+    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         // self가 바뀌어야 할 next를 설정
         let next = ok_or!(DeleteOrNode::get_node(owner), d, {
-            match del_type_next {
-                Some((del_type, next)) => {
-                    if del_type == d {
+            match helper_del_type_next {
+                Some((helper_del_type, next)) => {
+                    if helper_del_type == d {
                         next
                     } else {
-                        G::node_when_deleted(d, old, guard, pool)
+                        some_or!(G::node_when_deleted(d, old, guard, pool), return Err(old))
                     }
                 }
-                None => G::node_when_deleted(d, old, guard, pool),
+                None => some_or!(G::node_when_deleted(d, old, guard, pool), return Err(old)),
             }
         });
 
         // self를 승자가 원하는 node로 바꿔줌
-        match self
-            .inner
-            .compare_exchange(old, next, Ordering::SeqCst, Ordering::SeqCst, guard)
-        {
-            Ok(n) => n,
-            Err(e) => e.current,
-        }
+        let ret =
+            match self
+                .inner
+                .compare_exchange(old, next, Ordering::SeqCst, Ordering::SeqCst, guard)
+            {
+                Ok(n) => n,
+                Err(e) => e.current,
+            };
+        Ok(ret)
     }
 }
 

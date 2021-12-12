@@ -280,9 +280,9 @@ impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> PShared<'g, Node<MaybeUninit<T>>> {
+    ) -> Option<PShared<'g, Node<MaybeUninit<T>>>> {
         let old_head_ref = unsafe { old_head.deref(pool) }; // SAFE: old_head는 null일 수 없음
-        old_head_ref.next.load(Ordering::SeqCst, guard)
+        Some(old_head_ref.next.load(Ordering::SeqCst, guard))
     }
 }
 
