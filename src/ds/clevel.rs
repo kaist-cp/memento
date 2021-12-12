@@ -1328,7 +1328,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> bool {
-        let context = inner.context.load(Ordering::Acquire, guard);
+        let context = inner.context.load(guard, pool);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let resize_size = context_ref.resize_size;
