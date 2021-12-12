@@ -269,7 +269,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::insert(self, inner, tid, k, v, resize_send, guard, pool)
+        Clevel::insert(self, inner, tid, k, v, resize_send, rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -370,7 +370,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::update(self, inner, tid, k, v, guard, resize_send, pool)
+        Clevel::update(self, inner, tid, k, v, guard, rec, resize_send, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -1064,7 +1064,7 @@ impl<K, V> Clone for Clevel<K, V> {
     }
 }
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
+impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> ClevelInner<K, V> {
     fn find_fast<'g>(
         &'g self,
         key: &K,
@@ -1139,6 +1139,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Node<Slot<K, V>>>,
         key_hashes: [u32; 2],
+        rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
@@ -1169,19 +1170,30 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                         continue;
                     }
 
-                    // TODO(slot)
-                    if let Ok(slot_ptr) = slot.compare_exchange(
-                        PShared::null(),
-                        slot_new,
-                        Ordering::AcqRel,
-                        Ordering::Relaxed,
-                        guard,
-                    ) {
+                    // TODO(slot): before
+                    // if let Ok(slot_ptr) = slot.compare_exchange(
+                    //     PShared::null(),
+                    //     slot_new,
+                    //     Ordering::AcqRel,
+                    //     Ordering::Relaxed,
+                    //     guard,
+                    // ) {
+                    //     return Ok(FindResult {
+                    //         size,
+                    //         bucket_index: key_hash,
+                    //         slot,
+                    //         slot_ptr,
+                    //     });
+                    // }
+
+                    // TODO(slot): after
+                    let insert = client.insert_inner();
+                    if insert.run(slot, (slot_new, slot, |_| true), false, guard, pool).is_ok() { // TODO(must): normal run을 가정함
                         return Ok(FindResult {
                             size,
                             bucket_index: key_hash,
                             slot,
-                            slot_ptr,
+                            slot_ptr: slot_new,
                         });
                     }
                 }
@@ -1199,7 +1211,7 @@ pub enum InsertError {
     Occupied,
 }
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
+impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel<K, V> {
     // pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
     //     let guard = unsafe { unprotected() };
 
@@ -1295,6 +1307,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
+        rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) {
@@ -1345,6 +1358,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                 insert_result.slot_ptr,
                 key_hashes,
                 resize_send,
+                rec,
                 guard,
                 pool,
             );
@@ -1363,6 +1377,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         key: K,
         value: V,
         resize_send: &mpsc::Sender<()>,
+        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertError>
@@ -1386,6 +1401,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             slot,
             key_hashes,
             resize_send,
+            rec,
             guard,
             pool,
         );
@@ -1397,6 +1413,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             insert_result,
             key_hashes,
             resize_send,
+            rec,
             guard,
             pool,
         );
@@ -1411,12 +1428,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         slot: PShared<'g, Node<Slot<K, V>>>,
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
+        rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         loop {
             if let Ok(result) =
-                inner.insert_inner(tid, client, context, slot, key_hashes, guard, pool)
+                inner.insert_inner(tid, client, context, slot, key_hashes, rec, guard, pool)
             {
                 return (context, result);
             }
@@ -1442,6 +1460,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         key: K,
         value: V,
         guard: &Guard,
+        rec: bool,
         resize_send: &mpsc::Sender<()>,
         pool: &'static PoolHandle,
     ) -> Result<(), ()>
@@ -1486,6 +1505,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                 find_result,
                 key_hashes,
                 resize_send,
+                rec,
                 guard,
                 pool,
             );
