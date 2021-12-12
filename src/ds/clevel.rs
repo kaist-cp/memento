@@ -1581,6 +1581,7 @@ mod tests {
             guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+            // TODO: mpsc 나눠갖기
             let (send, recv) = mpsc::channel();
 
             match tid {
@@ -1663,6 +1664,7 @@ mod tests {
             guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+            // TODO: mpsc 나눠갖기
             let (send, recv) = mpsc::channel();
 
             match tid {
