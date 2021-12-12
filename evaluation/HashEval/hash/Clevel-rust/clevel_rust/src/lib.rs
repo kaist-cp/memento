@@ -10,10 +10,6 @@ use std::ptr;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc};
 
-const MAX_THREAD: usize = 256;
-static mut SEND: Option<[Sender<()>; MAX_THREAD]> = None;
-static mut RECV: Option<Receiver<()>> = None;
-
 type Key = u64;
 type Value = u64;
 
@@ -53,6 +49,34 @@ impl Memento for ClevelMemento {
     }
 }
 
+const MAX_THREAD: usize = 256;
+static mut SEND: Option<[Sender<()>; MAX_THREAD]> = None;
+static mut RECV: Option<Receiver<()>> = None;
+static mut GUARD: Option<[Option<Guard>; MAX_THREAD]> = None;
+static mut CNT: [usize; MAX_THREAD] = [0; MAX_THREAD];
+
+fn get_guard(tid: usize) -> &'static mut Guard {
+    let guard = unsafe { GUARD.as_mut().unwrap()[tid].as_mut().unwrap() };
+    unsafe {
+        CNT[tid] += 1;
+        if CNT[tid] % 1024 == 0 {
+            guard.repin_after(|| {});
+        }
+    }
+    guard
+}
+
+fn get_send(tid: usize) -> &'static Sender<()> {
+    unsafe { &SEND.as_ref().unwrap()[tid] }
+}
+
+#[no_mangle]
+pub extern "C" fn thread_init(tid: usize) {
+    // println!("[thread_init] thread {tid} init");
+    let guards = unsafe { GUARD.get_or_insert(array_init::array_init(|_| None)) };
+    guards[tid] = Some(epoch::pin());
+}
+
 // TODO: Queue-memento API로 동작시켜 놓은 걸 Clevel-memento API로 동작시키게 하기
 #[no_mangle]
 pub extern "C" fn pool_create(
@@ -89,9 +113,8 @@ pub extern "C" fn run_insert(
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    // TODO: maybe pinning for each operation is too pessimistic. Let's optimize it for Memento...
-    let guard = epoch::pin();
-    let input = (tid, k, v, unsafe { &SEND.as_ref().unwrap()[tid] });
+    let guard = get_guard(tid);
+    let input = (tid, k, v, get_send(tid));
     let ret = m.insert.run(obj, input, false, &guard, pool).is_ok();
     m.insert.reset(&guard, pool);
     ret
@@ -106,8 +129,8 @@ pub extern "C" fn run_update(
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    let guard = epoch::pin();
-    let input = (tid, k, v, unsafe { &SEND.as_ref().unwrap()[tid] });
+    let guard = get_guard(tid);
+    let input = (tid, k, v, get_send(tid));
     let ret = m.update.run(obj, input, false, &guard, pool).is_ok();
     m.update.reset(&guard, pool);
     ret
@@ -117,10 +140,11 @@ pub extern "C" fn run_update(
 pub extern "C" fn run_delete(
     m: &mut ClevelMemento,
     obj: &ClevelInner<Key, Value>,
+    tid: usize,
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
-    let guard = epoch::pin();
+    let guard = get_guard(tid);
     let ret = m.delete.run(obj, &k, false, &guard, pool).is_ok();
     m.delete.reset(&guard, pool);
     ret
@@ -138,8 +162,13 @@ pub extern "C" fn run_resize_loop(
 }
 
 #[no_mangle]
-pub extern "C" fn search(obj: &ClevelInner<Key, Value>, k: Key, pool: &'static PoolHandle) -> bool {
-    let guard = epoch::pin();
+pub extern "C" fn search(
+    obj: &ClevelInner<Key, Value>,
+    tid: usize,
+    k: Key,
+    pool: &'static PoolHandle,
+) -> bool {
+    let guard = get_guard(tid);
     Clevel::search(obj, &k, &guard, pool).is_some()
 }
 

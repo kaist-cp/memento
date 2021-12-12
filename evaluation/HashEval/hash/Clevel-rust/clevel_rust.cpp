@@ -33,16 +33,17 @@ extern "C"
     typedef struct _poolhandle PoolHandle;
     PoolHandle *pool_create(char *path, size_t size, int tnum);
     void *get_root(size_t ix, PoolHandle *pool);
+    void thread_init(int tid);
 
     typedef struct _clevel Clevel;
-    bool search(Clevel *obj, Key k, PoolHandle *pool);
+    bool search(Clevel *obj, unsigned tid, Key k, PoolHandle *pool);
     size_t get_capacity(Clevel *c, PoolHandle *pool);
     bool is_resizing(Clevel *c, PoolHandle *pool);
 
     typedef struct _memento ClevelMemento;
     bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
     bool run_update(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
-    bool run_delete(ClevelMemento *m, Clevel *obj, Key k, PoolHandle *pool);
+    bool run_delete(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, PoolHandle *pool);
     void run_resize_loop(ClevelMemento *m, Clevel *obj, PoolHandle *pool);
 
 #ifdef __cplusplus
@@ -94,10 +95,14 @@ public:
         h.load_factor = (float)inserted / get_capacity(c, pool);
         return h;
     }
+    void thread_ini(int id)
+    {
+        thread_init(id);
+    }
     bool find(const char *key, size_t key_sz, char *value_out, unsigned tid)
     {
         auto k = *reinterpret_cast<const Key *>(key);
-        return search(c, k, pool);
+        return search(c, tid, k, pool);
     }
 
     bool insert(const char *key, size_t key_sz, const char *value,
@@ -130,7 +135,7 @@ public:
     bool remove(const char *key, size_t key_sz, unsigned tid)
     {
         auto k = *reinterpret_cast<const Key *>(key);
-        return run_delete(m[tid], c, k, pool);
+        return run_delete(m[tid], c, tid, k, pool);
     }
 
     int scan(const char *key, size_t key_sz, int scan_sz, char *&values_out)
