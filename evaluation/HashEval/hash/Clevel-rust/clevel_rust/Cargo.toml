@@ -19,6 +19,7 @@ cfg-if = "1.0.0"
 parking_lot = "0.11.2"
 derivative = "2.2.0"
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
+array-init = "2.0.0"
 
 [lib]
 name = "clevel_rust"

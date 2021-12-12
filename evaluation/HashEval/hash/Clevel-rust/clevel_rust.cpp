@@ -41,7 +41,7 @@ extern "C"
     typedef struct _memento ClevelMemento;
     bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
     bool run_update(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
-    bool run_delete(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, PoolHandle *pool);
+    bool run_delete(ClevelMemento *m, Clevel *obj, Key k, PoolHandle *pool);
     void run_resize_loop(ClevelMemento *m, Clevel *obj, PoolHandle *pool);
 
 #ifdef __cplusplus
@@ -125,7 +125,7 @@ public:
     bool remove(const char *key, size_t key_sz, unsigned tid)
     {
         auto k = *reinterpret_cast<const Key *>(key);
-        return run_delete(m[tid], c, tid, k, pool);
+        return run_delete(m[tid], c, k, pool);
     }
 
     int scan(const char *key, size_t key_sz, int scan_sz, char *&values_out)
