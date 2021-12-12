@@ -1,6 +1,6 @@
 #!/bin/bash
 
-rm -rf /mnt/pmem0/pibench*
+rm -rf /mnt/pmem0/*
 
 BIN="bin"
 OUT="out"
@@ -22,16 +22,16 @@ function bench() {
     thread=$5
 
     # output 설정
+    rm -rf /mnt/pmem0/*
     out_dir=./$OUT/$mode/$dist/$workload
     mkdir -p $out_dir
     out=$out_dir/$target.out
     echo "out: $out"
 
-    # # clevel 제외한 나머지는 libvmmalloc과 함께 잘 동작하기 위해 더미 폴더 만들어줌
-    # rm -rf /mnt/pmem0/pibench*
-    # if [ "$target" != "clevel" ]; then
-    #     mkdir /mnt/pmem0/pibench
-    # fi
+    # clevel, clevel-rust 제외한 나머지는 더미 폴더 필요
+    if [[ "$target" != "clevel" && "$target" != "clevel_rust" ]]; then
+        mkdir /mnt/pmem0/pibench
+    fi
 
     # workload에 맞게 파라미터 설정
     HASH_SIZE=16777216      # Initial capacity of hash table (TODO: SOFT는 init capacity 0으로 하고 다른 설정 필요)
@@ -89,9 +89,9 @@ function bench() {
     # 맞춘 파라미터로 실행
     echo "start target: $target, workload: $workload, mode: $mode, dist: $dist, thread: $thread"
     dmsg  "start target: $target, workload: $workload, mode: $mode, dist: $dist, thread: $thread"
-    # NOTE: NUMA node 0에 pinning하여 테스트하려면 아래처럼 실행해야함
-    # numactl --cpunodebind=0 --membind=0 sudo ./$BIN/PiBench ...
-    ./$BIN/PiBench ./$BIN/$target.so \
+
+    # NUMA node 0 pinning
+    numactl --cpunodebind=0 --membind=0 ./$BIN/PiBench ./$BIN/$target.so \
         -S $HASH_SIZE \
         -p $OP \
         --skip_load=$SKIP_LOAD \
@@ -124,7 +124,7 @@ function bench_all() {
         # bench clevel $workload $mode $dist $THREAD
         # bench CCEH $workload $mode $dist $THREAD
         # bench Level $workload $mode $dist $THREAD
-        # # bench Dash $workload $mode $dist $THREAD # (TODO: compile)
+        # bench Dash $workload $mode $dist $THREAD
         # bench PCLHT $workload $mode $dist $THREAD
         # # bench SOFT $workload $mode $dist $THREAD # (TODO: 필요하면 추가, 추가시 init capacity 확인 필요)
 
@@ -158,7 +158,7 @@ bench_all read_heavy THROUGHPUT SELFSIMILAR
 dmsg "throughput with self-similar distribution was done."
 dmsg "all throughput was done."
 
-# # Fig 7. Latency
+# Fig 7. Latency
 dmsg "start latency with uniform distribution."
 bench_all insert LATENCY UNIFORM
 bench_all pos_search LATENCY UNIFORM

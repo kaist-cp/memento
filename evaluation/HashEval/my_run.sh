@@ -1,6 +1,6 @@
 #!/bin/bash
 
-rm -rf /mnt/pmem0/clevel_memento*
+rm -rf /mnt/pmem0/*
 
 BIN="bin"
 target="clevel_rust"
@@ -16,9 +16,8 @@ MODE="THROUGHPUT"       # Evaluation mode (possbile arg: THROUGHPUT, LATENCY, LO
 DISTRIBUTION="UNIFORM"  # Key distribution (possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN)
 THREAD=48
 
-# NUMA node 0에 pinning하여 테스트하려면 아래처럼 실행해야함
-# numactl --cpunodebind=0 --membind=0 sudo ./$BIN/PiBench ...
-./$BIN/PiBench ./$BIN/$target.so \
+# NUMA node 0 pinning
+numactl --cpunodebind=0 --membind=0 ./$BIN/PiBench ./$BIN/$target.so \
     -S $HASH_SIZE \
     -p $OP \
     --skip_load=$SKIP_LOAD \

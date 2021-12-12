@@ -1,5 +1,6 @@
 #pragma once
 #include <libpmemobj.h>
+
 #include "utils.h"
 
 namespace very_pm {
@@ -19,6 +20,7 @@ class Allocator {
     PMEMobjpool* pm_pool{nullptr};
     if (!very_pm::FileExists(pool_name)) {
       LOG(INFO) << "creating a new pool" << std::endl;
+      std::cout << "pool_name: " << pool_name << std::endl;
       pm_pool =
           pmemobj_create(pool_name, layout_name, pool_size, CREATE_MODE_RW);
       if (pm_pool == nullptr) {
