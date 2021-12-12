@@ -701,7 +701,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 owned_found.push(find_result);
             }
         }
+        // TODO: store tag는 async persist 하고 여기서 fence
 
+        // TODO: delete reset -> run
         // last is the find result to return.
         // remove everything else.
         for find_result in owned_found.into_iter() {
