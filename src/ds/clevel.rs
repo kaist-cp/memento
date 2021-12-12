@@ -28,9 +28,11 @@ use crate::node::Node;
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
 use crate::ploc::Insert;
+use crate::ploc::NeedRetry;
 use crate::ploc::SMOAtomic;
 use crate::ploc::Traversable;
 use crate::ploc::Update;
+use crate::ploc::UpdateDeleteInfo;
 use crate::pmem::global_pool;
 use crate::pmem::persist_obj;
 use crate::pmem::Collectable;
@@ -153,14 +155,14 @@ trait AddLevel<K, V> {
 
 #[derive(Debug)]
 struct ContextSwitch<K, V> {
-    // update: Update<SMOAtomic..., Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    update: Update<ClevelInner<K, V>, Node<Context<K, V>>, Self>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ContextSwitch<K, V> {
     fn default() -> Self {
         Self {
-            // update: Default::default(),
+            update: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -173,24 +175,56 @@ impl<K, V> Collectable for ContextSwitch<K, V> {
 }
 
 impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ContextSwitch<K, V> {
-    type Object<'o> = &'o PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
-    type Input<'o> = ();
+    type Object<'o> = &'o ClevelInner<K, V>;
+    type Input<'o> = PShared<'o, Node<Context<K, V>>>;
     type Output<'o> = ();
     type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
         inner: Self::Object<'o>,
-        _: Self::Input<'o>,
+        context_new: Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        todo!()
+        // self.update.run()
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // TODO
+    }
+}
+
+impl<K, V> UpdateDeleteInfo<ClevelInner<K, V>, Node<Context<K, V>>>
+    for ContextSwitch<K, V>
+{
+    fn prepare_delete<'g>(
+        _: PShared<'_, Node<Context<K, V>>>,
+        _: PShared<'_, Node<Context<K, V>>>,
+        _: &ClevelInner<K, V>,
+        _: &'g Guard,
+        _: &PoolHandle,
+    ) -> Result<Option<PShared<'g, Node<Context<K, V>>>>, NeedRetry> {
+        panic!("not used.")
+    }
+
+    fn prepare_update<'g>(
+        cur: PShared<'_, Node<Context<K, V>>>,
+        expected: PShared<'_, Node<Context<K, V>>>,
+        _: &ClevelInner<K, V>,
+        _: &'g Guard,
+        _: &PoolHandle,
+    ) -> bool {
+        cur == expected
+    }
+
+    fn node_when_deleted<'g>(
+        _: PShared<'_, Node<Context<K, V>>>,
+        _: &'g Guard,
+        _: &PoolHandle,
+    ) -> PShared<'g, Node<Context<K, V>>> {
+        panic!("not used.")
     }
 }
 
