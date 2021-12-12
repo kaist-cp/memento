@@ -11,6 +11,7 @@ use core::ptr;
 use core::sync::atomic::{fence, Ordering};
 use std::marker::PhantomData;
 use std::mem;
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Receiver;
 use std::sync::{mpsc, Arc};
 
@@ -27,6 +28,8 @@ use tinyvec::*;
 use crate::node::Node;
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
+use crate::ploc::common;
+use crate::ploc::no_owner;
 use crate::ploc::Insert;
 use crate::ploc::NeedRetry;
 use crate::ploc::SMOAtomic;
@@ -59,13 +62,17 @@ where
         persist_obj(&last_level_ref.next, true); // TODO(opt): false
 
         ClevelInner {
-            context: PAtomic::new(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: last_level.into(),
-                    resize_size: 0,
-                },
-                pool,
+            context: SMOAtomic::from(
+                POwned::new(
+                    Context {
+                        first_level: first_level.into(),
+                        last_level: last_level.into(),
+                        resize_size: 0,
+                        owner: AtomicUsize::from(no_owner()),
+                    },
+                    pool,
+                )
+                .into_shared(guard),
             ),
             add_level_lock: RawMutexImpl::INIT, // TODO: use our spinlock
         }
@@ -155,7 +162,7 @@ trait AddLevel<K, V> {
 
 #[derive(Debug)]
 struct ContextSwitch<K, V> {
-    update: Update<ClevelInner<K, V>, Node<Context<K, V>>, Self>,
+    update: Update<ClevelInner<K, V>, Context<K, V>, Self>,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -176,19 +183,26 @@ impl<K, V> Collectable for ContextSwitch<K, V> {
 
 impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ContextSwitch<K, V> {
     type Object<'o> = &'o ClevelInner<K, V>;
-    type Input<'o> = PShared<'o, Node<Context<K, V>>>;
+    type Input<'o> = (PShared<'o, Context<K, V>>, PShared<'o, Context<K, V>>);
     type Output<'o> = ();
     type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
         inner: Self::Object<'o>,
-        context_new: Self::Input<'o>,
+        (context, context_new): Self::Input<'o>,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        // self.update.run()
+        let res = self.update.run(
+            &inner.context,
+            (context, context_new, inner),
+            rec,
+            guard,
+            pool,
+        );
+        todo!()
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -196,22 +210,20 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ContextSwitch<K, V> 
     }
 }
 
-impl<K, V> UpdateDeleteInfo<ClevelInner<K, V>, Node<Context<K, V>>>
-    for ContextSwitch<K, V>
-{
+impl<K, V> UpdateDeleteInfo<ClevelInner<K, V>, Context<K, V>> for ContextSwitch<K, V> {
     fn prepare_delete<'g>(
-        _: PShared<'_, Node<Context<K, V>>>,
-        _: PShared<'_, Node<Context<K, V>>>,
+        _: PShared<'_, Context<K, V>>,
+        _: PShared<'_, Context<K, V>>,
         _: &ClevelInner<K, V>,
         _: &'g Guard,
         _: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<Context<K, V>>>>, NeedRetry> {
+    ) -> Result<Option<PShared<'g, Context<K, V>>>, NeedRetry> {
         panic!("not used.")
     }
 
     fn prepare_update<'g>(
-        cur: PShared<'_, Node<Context<K, V>>>,
-        expected: PShared<'_, Node<Context<K, V>>>,
+        cur: PShared<'_, Context<K, V>>,
+        expected: PShared<'_, Context<K, V>>,
         _: &ClevelInner<K, V>,
         _: &'g Guard,
         _: &PoolHandle,
@@ -220,10 +232,10 @@ impl<K, V> UpdateDeleteInfo<ClevelInner<K, V>, Node<Context<K, V>>>
     }
 
     fn node_when_deleted<'g>(
-        _: PShared<'_, Node<Context<K, V>>>,
+        _: PShared<'_, Context<K, V>>,
         _: &'g Guard,
         _: &PoolHandle,
-    ) -> PShared<'g, Node<Context<K, V>>> {
+    ) -> PShared<'g, Context<K, V>> {
         panic!("not used.")
     }
 }
@@ -530,12 +542,35 @@ struct Context<K, V> {
     ///
     /// invariant: resize_size = level_size_prev(level_size_prev(first_level_size))
     resize_size: usize,
+
+    owner: AtomicUsize,
+}
+
+impl<K, V> common::Node for Context<K, V> {
+    fn ack(&self) {
+        panic!("Node cannot be acked.");
+    }
+
+    fn acked(&self) -> bool {
+        self.owner().load(Ordering::SeqCst) != no_owner()
+    }
+
+    fn owner(&self) -> &AtomicUsize {
+        &self.owner
+    }
+}
+
+impl<K, V> Collectable for Context<K, V> {
+    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        // TODO(must): first, last mark
+        todo!()
+    }
 }
 
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct ClevelInner<K, V> {
-    context: PAtomic<Context<K, V>>,
+    context: SMOAtomic<Self, Context<K, V>, ContextSwitch<K, V>>,
 
     #[derivative(Debug = "ignore")]
     add_level_lock: RawMutexImpl,
@@ -768,7 +803,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
     fn drop(&mut self) {
         let pool = global_pool().unwrap(); // TODO: global pool 안쓰기?
         let guard = unsafe { unprotected() };
-        let context = self.context.load(Ordering::Relaxed, guard);
+        let context = self.context.load(guard, pool);
         let context_ref = unsafe { context.deref(pool) };
 
         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
@@ -842,6 +877,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 first_level: PAtomic::from(next_level),
                 last_level: context_ref.last_level.clone(),
                 resize_size: level_size_prev(level_size_prev(next_level_size)),
+                owner: AtomicUsize::from(no_owner()),
             },
             pool,
         );
@@ -893,7 +929,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
     pub fn resize(&self, client: &mut ResizeLoop<K, V>, guard: &Guard, pool: &'static PoolHandle) {
         println!("[resize]");
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(guard, pool);
         loop {
             let mut context_ref = unsafe { context.deref(pool) };
 
@@ -1047,6 +1083,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                     first_level: first_level.into(),
                     last_level: next_level.into(),
                     resize_size: context_ref.resize_size,
+                    owner: AtomicUsize::from(no_owner()),
                 },
                 pool,
             );
@@ -1104,16 +1141,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(guard, pool);
         loop {
             let context_ref = unsafe { context.deref(pool) };
             let find_result = context_ref.find_fast(key, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard);
+                context = self.context.load(guard, pool);
                 continue;
             });
             let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard);
+                let context_new = self.context.load(guard, pool);
 
                 // However, a rare case for missing is: after a search operation starts, other
                 // threads add a new level through expansion and rehashing threads move the item
@@ -1142,16 +1179,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(guard, pool);
         loop {
             let context_ref = unsafe { context.deref(pool) };
             let find_result = context_ref.find(key, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard);
+                context = self.context.load(guard, pool);
                 continue;
             });
             let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard);
+                let context_new = self.context.load(guard, pool);
 
                 // the same possible corner case as `find_fast`
                 if context != context_new {
@@ -1264,7 +1301,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> usize {
-        let context = inner.context.load(Ordering::Acquire, guard);
+        let context = inner.context.load(guard, pool);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
@@ -1333,7 +1370,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             fence(Ordering::SeqCst);
 
             // If the context remains the same, it's done.
-            let context_new = inner.context.load(Ordering::Acquire, guard);
+            let context_new = inner.context.load(guard, pool);
             if context == context_new {
                 return;
             }
