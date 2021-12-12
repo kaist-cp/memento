@@ -457,7 +457,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Collectable for Update
 
 impl<O, N, G: UpdateDeleteInfo<O, N>> Memento for Update<O, N, G>
 where
-    O: 'static,
+    O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
     G: 'static,
 {
@@ -539,6 +539,7 @@ where
 
 impl<O, N, G> Update<O, N, G>
 where
+    O: Traversable<N>,
     N: Node + Collectable,
     G: UpdateDeleteInfo<O, N>,
 {
