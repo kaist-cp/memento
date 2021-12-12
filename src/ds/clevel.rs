@@ -26,6 +26,7 @@ use tinyvec::*;
 
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
+use crate::ploc::Insert;
 use crate::pmem::global_pool;
 use crate::pmem::persist_obj;
 use crate::pmem::Collectable;
@@ -60,7 +61,7 @@ where
                 },
                 pool,
             ),
-            add_level_lock: RawMutexImpl::INIT,
+            add_level_lock: RawMutexImpl::INIT, // TODO: use our spinlock
         }
     }
 }
@@ -331,6 +332,10 @@ where
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // TODO
     }
+}
+
+trait AddLevel {
+    fn add_level_mmt<K, V>(&self) -> &Insert<ClevelInner<K, V>, Node<Bucket<K, V>>>;
 }
 
 // -- 아래부터는 conccurent 버전. 이걸 persistent 버전으로 바꿔야함
@@ -692,6 +697,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
 impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
     fn add_level<'g>(
         &'g self,
+        // &mut client:
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<Bucket<K, V>>,
         guard: &'g Guard,
@@ -707,7 +713,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         let next_level = if !next_level.is_null() {
             next_level
         } else {
-            self.add_level_lock.lock();
+            self.add_level_lock.lock(); // TODO: persistent spin lock
             let next_level = first_level.next.load(Ordering::Acquire, guard);
             let next_level = if !next_level.is_null() {
                 next_level
