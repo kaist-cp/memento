@@ -736,7 +736,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Contex
 
             let res = vdel.run(
                 find_result.slot,
-                (find_result.slot_ptr, &()),
+                (0, find_result.slot_ptr, &()),
                 false, // TODO(must): normal run을 가정함
                 guard,
                 pool,
@@ -1621,7 +1621,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             // TODO(check slot): after
             let res = client.delete.run(
                 find_result.slot,
-                (find_result.slot_ptr, &()),
+                (0, find_result.slot_ptr, &()),
                 false,
                 guard,
                 pool,

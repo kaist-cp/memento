@@ -80,7 +80,7 @@ type ExchangeCond<T> = fn(&T) -> bool;
 
 impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = (T, ExchangeCond<T>, usize);
+    type Input<'o> = (T, ExchangeCond<T>, usize); // TODO(must): tid 지워
     type Output<'o> = T; // TODO(opt): input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
@@ -97,7 +97,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
         // println!("xchg alloc node {} {:?}", tid, node);
         persist_obj(unsafe { node.deref(pool) }, true);
 
-        if tid > 99999 {
+        if tid > 99999 {// TODO(must): debug의 흔적 지워
             // println!("{}", tid);
         }
 
@@ -242,7 +242,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = ok_or!(
-            self.delete.run(&xchg.slot, (mine, xchg), rec, guard, pool),
+            self.delete.run(&xchg.slot, (0, mine, xchg), rec, guard, pool),
             return Ok(Self::succ_after_wait(mine, guard, pool, tid))
         );
         let deleted =
@@ -351,25 +351,6 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        // let node = POwned::new(Node::from(value), pool);
-        // persist_obj(unsafe { node.deref(pool) }, true);
-
-        // let node = self
-        //     .node
-        //     .run(
-        //         (),
-        //         (PAtomic::from(node), |aborted| {
-        //             let guard = unsafe { epoch::unprotected() };
-        //             let d = aborted.load(Ordering::Relaxed, guard);
-        //             unsafe { guard.defer_pdestroy(d) };
-        //         }),
-        //         rec,
-        //         guard,
-        //         pool,
-        //     )
-        //     .unwrap()
-        //     .load(Ordering::Relaxed, guard);
-
         self.try_xchg.run(xchg, (value, cond, 1), rec, guard, pool)
     }
 

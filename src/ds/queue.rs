@@ -212,7 +212,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
-            .run(&queue.head, (PShared::null(), queue), rec, guard, pool)
+            .run(&queue.head, (0, PShared::null(), queue), rec, guard, pool)
             .map(|ret| {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }

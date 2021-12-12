@@ -127,7 +127,8 @@ impl DeleteOrNode {
     }
 
     #[inline]
-    fn delete(x: usize) -> usize {
+    fn delete(x: usize, del_type: u16) -> usize {
+        // TODO: del_type을 high tag 16bit
         (x << 1) | Self::DELETE_CLIENT
     }
 
@@ -296,7 +297,7 @@ where
     G: 'static + UpdateDeleteInfo<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (PShared<'o, N>, &'o O);
+    type Input<'o> = (u16, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -308,13 +309,13 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (forbidden, obj): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (del_type, forbidden, obj): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(guard, pool);
+            return self.result(del_type, guard, pool);
         }
 
         // Normal run
@@ -340,7 +341,7 @@ where
         let _ = owner
             .compare_exchange(
                 no_owner(),
-                self.id(pool),
+                self.id(del_type, pool),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
@@ -376,6 +377,7 @@ where
     #[inline]
     fn result<'g>(
         &self,
+        del_type: u16,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, ()> {
@@ -392,7 +394,7 @@ where
 
         // 내가 찜한 target의 owner가 나이면 성공, 아니면 실패
         let owner = target_ref.owner().load(Ordering::SeqCst);
-        if owner == self.id(pool) {
+        if owner == self.id(del_type, pool) {
             Ok(Some(target))
         } else {
             Err(())
@@ -400,10 +402,10 @@ where
     }
 
     #[inline]
-    fn id(&self, pool: &PoolHandle) -> usize {
+    fn id(&self, del_type: u16, pool: &PoolHandle) -> usize {
         // 풀 열릴 때마다 주소 바뀌니 상대주소로 식별해야 함
         let off = unsafe { self.as_pptr(pool).into_offset() };
-        DeleteOrNode::delete(off)
+        DeleteOrNode::delete(off, del_type)
     }
 }
 
