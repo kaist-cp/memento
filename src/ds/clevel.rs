@@ -724,11 +724,10 @@ fn new_node<K, V>(
 
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
-    let bucket_size = mem::size_of::<Bucket<K, V>>();
-    for i in 0..size {
-        let addr = &data_ref[i] as *const _ as *mut c_void;
-        let _ = unsafe { libc::memset(addr, 0x0, bucket_size) };
+    unsafe {
+        let _ = libc::memset(data_ref as *const _ as *mut c_void, 0x0, size * mem::size_of::<Bucket<K, V>>());
     }
+    persist_obj(&data_ref, true);
 
     POwned::new(Node::from(PAtomic::from(data)), pool)
 }
