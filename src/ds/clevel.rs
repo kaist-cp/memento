@@ -243,7 +243,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
 // }
 
 #[derive(Debug)]
-struct ClInsert<K, V> {
+pub struct ClInsert<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
@@ -289,7 +289,7 @@ where
 }
 
 #[derive(Debug)]
-struct ClDelete<K, V> {
+pub struct ClDelete<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
@@ -336,7 +336,7 @@ where
 }
 
 #[derive(Debug)]
-struct ClUpdate<K, V> {
+pub struct ClUpdate<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
