@@ -24,6 +24,7 @@ use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
+use crate::node::Node;
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
 use crate::ploc::Insert;
@@ -334,9 +335,10 @@ where
     }
 }
 
-trait AddLevel {
-    fn add_level_mmt<K, V>(&self) -> &Insert<ClevelInner<K, V>, Node<Bucket<K, V>>>;
-}
+// TODO: for inser, update, resize
+// trait AddLevel {
+//     fn add_level_mmt<K, V>(&self) -> &Insert<ClevelInner<K, V>, Node<Bucket<K, V>>>;
+// }
 
 // -- 아래부터는 conccurent 버전. 이걸 persistent 버전으로 바꿔야함
 const TINY_VEC_CAPACITY: usize = 8;
@@ -407,22 +409,16 @@ struct Bucket<K, V> {
 }
 
 #[derive(Debug)]
-struct Node<T> {
-    data: PAtomic<[MaybeUninit<T>]>,
-    next: PAtomic<Node<T>>,
-}
-
-#[derive(Debug)]
 struct NodeIter<'g, T> {
-    inner: PShared<'g, Node<T>>,
-    last: PShared<'g, Node<T>>,
+    inner: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
+    last: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
     guard: &'g Guard,
 }
 
 #[derive(Debug)]
 struct Context<K, V> {
-    first_level: PAtomic<Node<Bucket<K, V>>>,
-    last_level: PAtomic<Node<Bucket<K, V>>>,
+    first_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    last_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
 
     /// Should resize until the last level's size > resize_size
     ///
@@ -645,7 +641,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     }
 }
 
-fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
+fn new_node<K, V>(
+    size: usize,
+    pool: &PoolHandle,
+) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
     println!("[new_node] size: {size}");
 
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
@@ -656,13 +655,7 @@ fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> 
         let _ = unsafe { libc::memset(addr, 0x0, bucket_size) };
     }
 
-    POwned::new(
-        Node {
-            data: data.into(),
-            next: PAtomic::null(),
-        },
-        pool,
-    )
+    POwned::new(Node::from(PAtomic::from(data)), pool)
 }
 
 impl<K, V> Drop for ClevelInner<K, V> {
@@ -699,7 +692,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         &'g self,
         // &mut client:
         mut context: PShared<'g, Context<K, V>>,
-        first_level: &'g Node<Bucket<K, V>>,
+        first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
