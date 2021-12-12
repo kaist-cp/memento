@@ -151,13 +151,13 @@ trait AddLevel<K, V> {
     // TODO: update smo로
     // fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
     // fn context_update_mmt(&mut self) -> &mut Update<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
-    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>;
+    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
 }
 
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
 #[derive(Debug)]
 pub struct ResizeLoop<K, V> {
-    insert_inner: Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>,
+    insert_inner: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -212,14 +212,25 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
 }
 
 impl<K, V> AddLevel<K, V> for ResizeLoop<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>> {
+    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
+    }
+}
+
+impl<K, V> Traversable<Node<Slot<K, V>>> for SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>> {
+    fn search(
+        &self,
+        target: PShared<'_, Node<Slot<K, V>>>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> bool {
+        todo!()
     }
 }
 
 #[derive(Debug)]
 pub struct ClInsert<K, V> {
-    insert_inner: Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>,
+    insert_inner: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -266,7 +277,7 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClInsert<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>> {
+    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
@@ -320,7 +331,7 @@ where
 
 #[derive(Debug)]
 pub struct ClUpdate<K, V> {
-    insert_inner: Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>,
+    insert_inner: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -367,7 +378,7 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClUpdate<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>> {
+    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
@@ -1403,7 +1414,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         loop {
-            if let Ok(result) = inner.insert_inner(tid, context, slot, key_hashes, guard, pool) {
+            if let Ok(result) =
+                inner.insert_inner(tid, client, context, slot, key_hashes, guard, pool)
+            {
                 return (context, result);
             }
 
