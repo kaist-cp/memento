@@ -679,6 +679,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         // remove everything else.
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
+            // TODO(slot)
             match find_result.slot.compare_exchange(
                 find_result.slot_ptr,
                 PShared::null(),
@@ -902,6 +903,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     continue;
                                 }
 
+                                // TODO(slot)
                                 if let Err(e) = slot.compare_exchange(
                                     slot_ptr,
                                     slot_ptr.with_tag(1),
@@ -1153,6 +1155,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                         continue;
                     }
 
+                    // TODO(slot)
                     if let Ok(slot_ptr) = slot.compare_exchange(
                         PShared::null(),
                         slot_new,
@@ -1444,6 +1447,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                 return Err(());
             });
 
+            // TODO(slot)
             if let Err(e) = find_result.slot.compare_exchange(
                 find_result.slot_ptr,
                 slot_new,
