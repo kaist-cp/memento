@@ -19,14 +19,16 @@
 #include <iostream>
 #include <string>
 
-struct tree_options_t {
+struct tree_options_t
+{
   size_t key_size = 8;
   size_t value_size = 8;
   std::string pool_path = "";
   size_t pool_size = 0;
   size_t num_threads = 1;
 };
-struct hash_Utilization {
+struct hash_Utilization
+{
   float load_factor;
   float utilization;
 };
@@ -34,8 +36,10 @@ class hash_api;
 extern "C" hash_api *create_tree(const tree_options_t &opt, unsigned sz,
                                  unsigned tnum);
 
-class hash_api {
- public:
+class hash_api
+{
+public:
+  virtual bool hash_is_resizing() { return false; };
   virtual void thread_ini(int id) {}
   virtual void forsoft() {}
   virtual std::string hash_name() { return ""; };
@@ -68,7 +72,8 @@ class hash_api {
   virtual bool insert(const char *key, size_t key_sz, const char *value,
                       size_t value_sz, unsigned tid, unsigned t) = 0;
   virtual bool insertResize(const char *key, size_t key_sz, const char *value,
-                            size_t value_sz, unsigned tid, unsigned t) {
+                            size_t value_sz, unsigned tid, unsigned t)
+  {
     return false;
   }
   /**
@@ -127,7 +132,8 @@ class hash_api {
   virtual int scan(const char *key, size_t key_sz, int scan_sz,
                    char *&values_out) = 0;
   virtual int scan(const char *key, size_t key_sz, int scan_sz,
-                   char *values_out) {
+                   char *values_out)
+  {
     return true;
   };
 };

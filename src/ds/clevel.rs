@@ -725,7 +725,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
-        println!("[add_level] hi");
         let first_level_data =
             unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
         let next_level_size = level_size_next(first_level_data.len());
@@ -1211,6 +1210,26 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         }) * SLOTS_IN_BUCKET
     }
 
+    pub fn is_resizing<'g>(
+        inner: &'g ClevelInner<K, V>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> bool {
+        let context = inner.context.load(Ordering::Acquire, guard);
+        let context_ref = unsafe { context.deref(pool) };
+        let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
+        let resize_size = context_ref.resize_size;
+
+        (unsafe {
+            last_level
+                .deref(pool)
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+                .len()
+        }) <= context_ref.resize_size
+    }
+
     pub fn search<'g>(
         inner: &'g ClevelInner<K, V>,
         key: &K,
@@ -1304,7 +1323,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     where
         V: Clone,
     {
-        println!("[insert] tid: {tid} do insert");
         // println!("[insert] tid: {}, key: {}", tid, key);
         let key_hashes = hashes(&key);
         let (context, find_result) = inner.find(&key, key_hashes, guard, pool);

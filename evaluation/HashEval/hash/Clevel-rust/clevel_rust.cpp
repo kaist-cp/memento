@@ -37,6 +37,7 @@ extern "C"
     typedef struct _clevel Clevel;
     bool search(Clevel *obj, Key k, PoolHandle *pool);
     size_t get_capacity(Clevel *c, PoolHandle *pool);
+    bool is_resizing(Clevel *c, PoolHandle *pool);
 
     typedef struct _memento ClevelMemento;
     bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
@@ -79,6 +80,10 @@ public:
     ~CLevelMemento(){
         // TODO: pool close?
     };
+    bool hash_is_resizing()
+    {
+        return is_resizing(c, pool);
+    }
     std::string hash_name()
     {
         return "clevel-memento";

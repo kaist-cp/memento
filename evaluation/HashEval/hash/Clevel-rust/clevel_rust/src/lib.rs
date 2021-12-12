@@ -148,3 +148,9 @@ pub extern "C" fn get_capacity(obj: &ClevelInner<Key, Value>, pool: &'static Poo
     let guard = crossbeam_epoch::pin();
     Clevel::get_capacity(obj, &guard, pool)
 }
+
+#[no_mangle]
+pub extern "C" fn is_resizing(obj: &ClevelInner<Key, Value>, pool: &'static PoolHandle) -> bool {
+    let guard = crossbeam_epoch::pin();
+    Clevel::is_resizing(obj, &guard, pool)
+}
