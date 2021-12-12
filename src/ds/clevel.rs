@@ -34,14 +34,6 @@ use crate::pmem::PoolHandle;
 use crate::Memento;
 use crate::PDefault;
 
-// Root obj
-// TODO: persistent version으로 만들며 필드 재구성. 현재는 내부가 concurrent clevel을 사용하게끔 되있음
-// #[derive(Debug)]
-// pub struct PClevelInner<K, V> {
-//     kv: Clevel<K, V>,
-//     kv_resize: RefCell<ClevelResize<K, V>>,
-// }
-
 impl<K, V> PDefault for ClevelInner<K, V>
 where
     K: Debug,
@@ -78,29 +70,6 @@ impl<K, V> Collectable for ClevelInner<K, V> {
         todo!()
     }
 }
-
-// TODO: search, get_capacity 각각 호출하면 돼서 필요 없을 듯
-// impl<K, V> ClevelInner<K, V>
-// where
-//     K: Debug,
-//     K: Display,
-//     K: PartialEq,
-//     K: Hash,
-//     V: Debug,
-// {
-//     pub fn search<'g>(
-//         &'g self,
-//         key: &K,
-//         guard: &'g Guard,
-//         pool: &'static PoolHandle,
-//     ) -> Option<&'g V> {
-//         self.kv.search(key, guard, pool)
-//     }
-
-//     pub fn get_capacity<'g>(&'g self, guard: &'g Guard, pool: &'static PoolHandle) -> usize {
-//         self.kv.get_capacity(guard, pool)
-//     }
-// }
 
 // TODO: 나중에 통합해서 벤치에 연결
 // #[derive(Debug, Clone)]
@@ -1204,7 +1173,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     //     )
     // }
 
-    pub fn get_capacity<'g>(inner: &'g ClevelInner<K, V>, guard: &'g Guard, pool: &'static PoolHandle) -> usize {
+    pub fn get_capacity<'g>(
+        inner: &'g ClevelInner<K, V>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> usize {
         let context = inner.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
