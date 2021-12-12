@@ -194,23 +194,6 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     }
 }
 
-// #[derive(Debug)]
-// pub struct ClevelResize<K, V> {
-//     inner: Arc<ClevelInner<K, V>>,
-//     resize_recv: mpsc::Receiver<()>, // TODO: channel
-// }
-
-// impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
-//     pub fn resize_loop(&mut self, guard: &mut Guard, pool: &'static PoolHandle) {
-//         println!("[resize loop] start loop");
-//         while let Ok(()) = self.resize_recv.recv() {
-//             println!("[resize_loop] do resize!");
-//             self.inner.resize(guard, pool);
-//             guard.repin_after(|| {});
-//         }
-//     }
-// }
-
 #[derive(Debug)]
 pub struct ClInsert<K, V> {
     _marker: PhantomData<(K, V)>,
