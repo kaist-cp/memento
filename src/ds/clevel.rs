@@ -480,6 +480,7 @@ impl<K, V> UpdateDeleteInfo<(), Node<Slot<K, V>>> for Bucket<K, V> {
     }
 
     fn node_when_deleted<'g>(
+        _: u16,
         deleted: PShared<'_, Node<Slot<K, V>>>,
         guard: &'g Guard,
         pool: &PoolHandle,

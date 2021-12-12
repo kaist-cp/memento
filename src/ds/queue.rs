@@ -276,6 +276,7 @@ impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T
 
     #[inline]
     fn node_when_deleted<'g>(
+        _: u16,
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -440,8 +441,8 @@ mod test {
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
     use rusty_fork::rusty_fork_test;
 
-    const NR_THREAD: usize = 1;
-    const COUNT: usize = 1;
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 10_000;
 
     struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],

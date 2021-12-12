@@ -117,13 +117,14 @@ impl DeleteOrNode {
     const UPDATED_NODE: usize = 0;
     const DELETE_CLIENT: usize = 1;
 
+    /// Ok(node_ptr) if node, otherwise Err(del_type)
     #[inline]
-    fn as_node<'g, N>(checked: usize) -> Option<PShared<'g, N>> {
+    fn get_node<'g, N>(checked: usize) -> Result<PShared<'g, N>, u16> {
         if checked & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
-            return None;
+            return Err(0); // TODO(must): high_tag
         }
 
-        unsafe { Some(PShared::<_>::from_usize(checked)) }
+        unsafe { Ok(PShared::<_>::from_usize(checked)) }
     }
 
     #[inline]
@@ -166,6 +167,7 @@ pub trait UpdateDeleteInfo<O, N> {
 
     /// A pointer that should be next after a node is deleted
     fn node_when_deleted<'g>(
+        del_type: u16,
         deleted: PShared<'_, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -236,13 +238,22 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
         &self,
         old: PShared<'g, N>,
         owner: usize,
-        delete_next: Option<PShared<'g, N>>,
+        del_type_next: Option<(u16, PShared<'g, N>)>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> PShared<'g, N> {
         // self가 바뀌어야 할 next를 설정
-        let next = DeleteOrNode::as_node(owner).unwrap_or_else(|| {
-            delete_next.unwrap_or_else(|| (G::node_when_deleted(old, guard, pool)))
+        let next = ok_or!(DeleteOrNode::get_node(owner), d, {
+            match del_type_next {
+                Some((del_type, next)) => {
+                    if del_type == d {
+                        next
+                    } else {
+                        G::node_when_deleted(d, old, guard, pool)
+                    }
+                }
+                None => G::node_when_deleted(d, old, guard, pool),
+            }
         });
 
         // self를 승자가 원하는 node로 바꿔줌
@@ -566,6 +577,8 @@ where
     pub fn next_updated_node<'g>(old: &N) -> Option<PShared<'g, N>> {
         let u = old.owner().load(Ordering::SeqCst);
         assert_ne!(u, no_owner()); // TODO(must): ABA 문제가 터지는지 확인하기 위해 달아놓은 assert
-        DeleteOrNode::as_node(u)
+
+        let n = ok_or!(DeleteOrNode::get_node(u), return None);
+        Some(n)
     }
 }

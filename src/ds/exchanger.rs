@@ -304,6 +304,7 @@ impl<T: Clone> UpdateDeleteInfo<Exchanger<T>, Node<T>> for TryExchange<T> {
     }
 
     fn node_when_deleted<'g>(
+        _: u16,
         _: PShared<'_, Node<T>>,
         _: &'g Guard,
         _: &PoolHandle,
