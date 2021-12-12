@@ -1525,8 +1525,12 @@ mod tests {
             let (send, recv) = mpsc::channel();
 
             thread::scope(|s| {
-                let (insert, update, delete, resize) =
-                    (&mut self.insert, &mut self.update, &mut self.delete, &mut self.resize);
+                let (insert, update, delete, resize) = (
+                    &mut self.insert,
+                    &mut self.update,
+                    &mut self.delete,
+                    &mut self.resize,
+                );
 
                 let _ = s.spawn(move |_| {
                     let g = pin();
@@ -1564,41 +1568,91 @@ mod tests {
 
     #[test]
     fn smoke() {
-        const FILE_NAME: &str = "composed_opt_enq_deq.pool";
+        const FILE_NAME: &str = "clevel_smoke.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<ClevelInner<usize, usize>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
     }
 
+    struct InsertSearch {
+        insert: ClInsert<usize, usize>,
+        resize: ResizeLoop<usize, usize>,
+    }
+
+    impl Default for InsertSearch {
+        fn default() -> Self {
+            Self {
+                insert: Default::default(),
+                resize: Default::default(),
+            }
+        }
+    }
+
+    impl Collectable for InsertSearch {
+        fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            todo!()
+        }
+    }
+
+    impl Memento for InsertSearch {
+        type Object<'o> = &'o ClevelInner<usize, usize>;
+        type Input<'o> = usize;
+        type Output<'o> = ();
+        type Error<'o> = ();
+
+        fn run<'o>(
+            &mut self,
+            object: Self::Object<'o>,
+            tid: Self::Input<'o>,
+            rec: bool,
+            guard: &'o Guard,
+            pool: &'static PoolHandle,
+        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+            let (send, recv) = mpsc::channel();
+
+            match tid {
+                0 => {
+                    // TODO: mpsc 나눠가진 뒤 리사이즈 실행
+                    // let recv = recv;
+                    // let _ = self.resize.run(object, &recv, rec, guard, pool);
+                    println!("{tid}(resize) insert search done");
+                }
+
+                _ => {
+                    const RANGE: usize = 1usize << 6;
+
+                    for i in 0..RANGE {
+                        // println!("[test] tid = {tid}, i = {i}, insert");
+                        let _ = self
+                            .insert
+                            .run(object, (tid, i, i, &send), rec, guard, pool);
+
+                        // println!("[test] tid = {tid}, i = {i}, search");
+                        if Clevel::search(object, &i, guard, pool) != Some(&i) {
+                            panic!("[test] tid = {tid} fail on {i}");
+                            // assert_eq!(kv.search(&i, &guard), Some(&i));
+                        }
+                    }
+
+                    drop(send);
+                    println!("{tid} insert search done");
+                }
+            }
+
+            Ok(())
+        }
+
+        fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {}
+    }
+
+    impl TestRootMemento<ClevelInner<usize, usize>> for InsertSearch {}
+
     #[test]
     fn insert_search() {
-        // thread::scope(|s| {
-        //     let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
-        //     let _ = s.spawn(move |_| {
-        //         let mut guard = pin();
-        //         kv_resize.resize_loop(&mut guard);
-        //     });
+        const FILE_NAME: &str = "clevel_insert_search.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        //     const THREADS: usize = 1usize << 4;
-        //     const RANGE: usize = 1usize << 6;
-        //     for tid in 0..THREADS {
-        //         let kv = kv.clone();
-        //         let _ = s.spawn(move |_| {
-        //             let guard = pin();
-        //             for i in 0..RANGE {
-        //                 // println!("[test] tid = {tid}, i = {i}, insert");
-        //                 let _ = kv.insert(tid, i, i, &guard);
-
-        //                 // println!("[test] tid = {tid}, i = {i}, search");
-        //                 if kv.search(&i, &guard) != Some(&i) {
-        //                     panic!("[test] tid = {tid} fail on {i}");
-        //                     // assert_eq!(kv.search(&i, &guard), Some(&i));
-        //                 }
-        //             }
-        //         });
-        //     }
-        // })
-        // .unwrap();
+        run_test::<ClevelInner<usize, usize>, InsertSearch, _>(FILE_NAME, FILE_SIZE, 4)
     }
 
     #[test]
