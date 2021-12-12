@@ -149,21 +149,22 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 // TODO: for inser, update, resize
 trait AddLevel<K, V> {
     // TODO: update smo로
-    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
+    // fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
     // fn context_update_mmt(&mut self) -> &mut Update<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
+    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>;
 }
 
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
 #[derive(Debug)]
 pub struct ResizeLoop<K, V> {
-    add_level: Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    insert_inner: Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ResizeLoop<K, V> {
     fn default() -> Self {
         Self {
-            add_level: Default::default(),
+            insert_inner: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -211,21 +212,21 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
 }
 
 impl<K, V> AddLevel<K, V> for ResizeLoop<K, V> {
-    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-        &mut self.add_level
+    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>> {
+        &mut self.insert_inner
     }
 }
 
 #[derive(Debug)]
 pub struct ClInsert<K, V> {
-    add_level: Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    insert_inner: Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ClInsert<K, V> {
     fn default() -> Self {
         Self {
-            add_level: Default::default(),
+            insert_inner: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -265,8 +266,8 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClInsert<K, V> {
-    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-        &mut self.add_level
+    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>> {
+        &mut self.insert_inner
     }
 }
 
@@ -319,14 +320,14 @@ where
 
 #[derive(Debug)]
 pub struct ClUpdate<K, V> {
-    add_level: Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    insert_inner: Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ClUpdate<K, V> {
     fn default() -> Self {
         Self {
-            add_level: Default::default(),
+            insert_inner: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -366,8 +367,8 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClUpdate<K, V> {
-    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-        &mut self.add_level
+    fn insert_inner(&mut self) -> &mut Insert<PAtomic<Node<Slot<K, V>>>, Node<Slot<K, V>>> {
+        &mut self.insert_inner
     }
 }
 
@@ -1119,9 +1120,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn insert_inner<'g>(
+    fn insert_inner<'g, C: AddLevel<K, V>>(
         &'g self,
         tid: usize,
+        client: &mut C,
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Node<Slot<K, V>>>,
         key_hashes: [u32; 2],
