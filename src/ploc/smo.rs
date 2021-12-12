@@ -111,6 +111,13 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
     }
 }
 
+// TODO(opt): go_to_utils
+#[inline]
+fn with_high_tag(htag: u16, data: usize) -> usize {
+    let high_bits = !(usize::MAX >> 16);
+    (high_bits & ((htag as usize).rotate_right(16))) | (!high_bits & data)
+}
+
 struct DeleteOrNode;
 
 impl DeleteOrNode {
@@ -129,8 +136,7 @@ impl DeleteOrNode {
 
     #[inline]
     fn delete(x: usize, del_type: u16) -> usize {
-        // TODO: del_type을 high tag 16bit
-        (x << 1) | Self::DELETE_CLIENT
+        with_high_tag(del_type, x) & (!0 << 1) | Self::DELETE_CLIENT
     }
 
     #[inline]
