@@ -1204,8 +1204,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     //     )
     // }
 
-    pub fn get_capacity<'g>(&'g self, guard: &'g Guard, pool: &'static PoolHandle) -> usize {
-        let context = self.inner.context.load(Ordering::Acquire, guard);
+    pub fn get_capacity<'g>(inner: &'g ClevelInner<K, V>, guard: &'g Guard, pool: &'static PoolHandle) -> usize {
+        let context = inner.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
