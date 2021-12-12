@@ -1582,7 +1582,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
 // TODO: 테스트도 컴파일시키기
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::channel;
+    use std::sync::mpsc::{channel, Sender};
 
     use crate::test_utils::tests::{run_test, TestRootMemento, TestRootObj};
 
@@ -1592,6 +1592,9 @@ mod tests {
     use crossbeam_utils::thread;
 
     impl TestRootObj for ClevelInner<usize, usize> {}
+
+    static mut SEND: Option<Vec<Sender<()>>> = None;
+    static mut RECV: Option<Receiver<()>> = None;
 
     struct Smoke {
         insert: ClInsert<usize, usize>,
@@ -1717,18 +1720,15 @@ mod tests {
             guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-            // TODO: mpsc 나눠갖기
-            let (send, recv) = mpsc::channel();
-
             match tid {
                 0 => {
-                    // TODO: mpsc 나눠가진 뒤 리사이즈 실행
-                    // let recv = recv;
-                    // let _ = self.resize.run(object, &recv, rec, guard, pool);
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let _ = self.resize.run(object, recv, rec, guard, pool);
                     println!("{tid}(resize) insert search done");
                 }
 
                 _ => {
+                    let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
                     const RANGE: usize = 1usize << 6;
 
                     for i in 0..RANGE {
@@ -1743,8 +1743,6 @@ mod tests {
                             // assert_eq!(kv.search(&i, &guard), Some(&i));
                         }
                     }
-
-                    drop(send);
                     println!("{tid} insert search done");
                 }
             }
@@ -1762,6 +1760,17 @@ mod tests {
         const FILE_NAME: &str = "clevel_insert_search.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         const THREADS: usize = 1usize << 4;
+
+        let (send, recv) = mpsc::channel();
+        let mut vec_s = Vec::new();
+        for _ in 0..THREADS - 1 {
+            vec_s.push(send.clone());
+        }
+        drop(send);
+        unsafe {
+            SEND = Some(vec_s);
+            RECV = Some(recv);
+        }
 
         run_test::<ClevelInner<usize, usize>, InsertSearch, _>(FILE_NAME, FILE_SIZE, THREADS)
     }
@@ -1800,19 +1809,17 @@ mod tests {
             guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-            // TODO: mpsc 나눠갖기
-            let (send, recv) = mpsc::channel();
-
             match tid {
                 0 => {
-                    // TODO: mpsc 나눠가진 뒤 리사이즈 실행
-                    // let recv = recv;
-                    // let _ = self.resize.run(object, &recv, rec, guard, pool);
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+
+                    let _ = self.resize.run(object, &recv, rec, guard, pool);
                     println!("{tid}(resize) insert search done");
                 }
 
                 _ => {
                     const RANGE: usize = 1usize << 6;
+                    let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
 
                     for i in 0..RANGE {
                         // println!("[test] tid = {tid}, i = {i}, insert");
@@ -1864,6 +1871,17 @@ mod tests {
         const FILE_NAME: &str = "clevel_insert_search.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         const THREADS: usize = 1usize << 4;
+
+        let (send, recv) = mpsc::channel();
+        let mut vec_s = Vec::new();
+        for _ in 0..THREADS - 1 {
+            vec_s.push(send.clone());
+        }
+        drop(send);
+        unsafe {
+            SEND = Some(vec_s);
+            RECV = Some(recv);
+        }
 
         run_test::<ClevelInner<usize, usize>, InsertUpdateSearch, _>(FILE_NAME, FILE_SIZE, THREADS)
     }
