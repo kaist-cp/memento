@@ -28,6 +28,7 @@ use crate::node::Node;
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
 use crate::ploc::Insert;
+use crate::ploc::Traversable;
 use crate::pmem::global_pool;
 use crate::pmem::persist_obj;
 use crate::pmem::Collectable;
@@ -736,6 +737,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 next_level
             } else {
                 let next_node = new_node(next_level_size, pool);
+                // TODO: Should we use `Insert` for this?
                 first_level
                     .next
                     .compare_exchange(
@@ -764,45 +766,44 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
             pool,
         );
         loop {
-            context = ok_or!(
-                self.context.compare_exchange(
-                    context,
-                    context_new,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard
-                ),
-                e,
-                {
-                    context = e.current;
-                    context_new = e.new;
-                    let context_ref = unsafe { e.current.deref(pool) };
-
-                    if unsafe {
-                        context_ref
-                            .first_level
-                            .load(Ordering::Acquire, guard)
-                            .deref(pool)
-                            .data
-                            .load(Ordering::Relaxed, guard)
-                            .deref(pool)
-                    }
-                    .len()
-                        >= next_level_size
-                    {
-                        return (context, false);
-                    }
-
-                    // TODO: maybe unreachable...
-                    let context_new_ref = unsafe { context_new.deref(pool) };
-                    context_new_ref.last_level.store(
-                        context_ref.last_level.load(Ordering::Acquire, guard),
-                        Ordering::Relaxed,
-                    );
-                    continue;
-                }
+            let res = self.context.compare_exchange(
+                context,
+                context_new,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                guard,
             );
 
+            if let Err(e) = res {
+                context = e.current;
+                context_new = e.new;
+                let context_ref = unsafe { e.current.deref(pool) };
+
+                if unsafe {
+                    context_ref
+                        .first_level
+                        .load(Ordering::Acquire, guard)
+                        .deref(pool)
+                        .data
+                        .load(Ordering::Relaxed, guard)
+                        .deref(pool)
+                }
+                .len()
+                    >= next_level_size
+                {
+                    return (context, false);
+                }
+
+                // TODO: maybe unreachable...
+                let context_new_ref = unsafe { context_new.deref(pool) };
+                context_new_ref.last_level.store(
+                    context_ref.last_level.load(Ordering::Acquire, guard),
+                    Ordering::Relaxed,
+                );
+                continue;
+            }
+
+            context = res.unwrap();
             println!("[add_level] next_level_size: {next_level_size}");
             break;
         }
