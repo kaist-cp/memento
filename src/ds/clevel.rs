@@ -184,8 +184,8 @@ impl<K, V> Collectable for ContextSwitch<K, V> {
 impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ContextSwitch<K, V> {
     type Object<'o> = &'o ClevelInner<K, V>;
     type Input<'o> = (PShared<'o, Context<K, V>>, PShared<'o, Context<K, V>>);
-    type Output<'o> = PShared<'o, Context<K, V>>;
-    type Error<'o> = ();
+    type Output<'o> = ();
+    type Error<'o> = !;
 
     fn run<'o>(
         &mut self,
@@ -195,13 +195,14 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ContextSwitch<K, V> 
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.update.run(
+        let res = self.update.run(
             &inner.context,
             (context, context_new, inner),
             rec,
             guard,
             pool,
-        )
+        );
+        todo!()
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -279,7 +280,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
         println!("[resize loop] start loop");
         while let Ok(()) = resize_recv.recv() {
             println!("[resize_loop] do resize!");
-            inner.resize(self, rec, &mut g, pool);
+            inner.resize(self, &mut g, pool);
             g.repin_after(|| {}); // TODO: drop?
         }
         Ok(())
@@ -342,7 +343,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::insert(self, inner, tid, k, v, resize_send, rec, guard, pool)
+        Clevel::insert(self, inner, tid, k, v, resize_send, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -443,7 +444,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::update(self, inner, tid, k, v, resize_send, rec, guard, pool)
+        Clevel::update(self, inner, tid, k, v, guard, resize_send, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -857,13 +858,12 @@ impl<K, V> Drop for ClevelInner<K, V> {
     }
 }
 
-impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
+impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
     fn add_level<'g, A: AddLevel<K, V>>(
         &'g self,
         client: &mut A,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
@@ -902,9 +902,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
-
-        // TODO: checkpoint
-        let context_new = POwned::new(
+        let mut context_new = POwned::new(
             Context {
                 first_level: PAtomic::from(next_level),
                 last_level: context_ref.last_level.clone(),
@@ -912,60 +910,54 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                 owner: AtomicUsize::from(no_owner()),
             },
             pool,
-        )
-        .into_shared(guard);
-
-        let mut r = rec;
-
+        );
         loop {
-            let res = client
-                .context_switch()
-                .run(self, (context, context_new), r, guard, pool);
-
-            if res.is_ok() {
-                context = context_new;
-                println!("[add_level] next_level_size: {next_level_size}");
-                break;
-            }
-
-            context = self.context.load(guard, pool);
-
-            let context_ref = unsafe { context.deref(pool) };
-
-            if unsafe {
-                context_ref
-                    .first_level
-                    .load(Ordering::Acquire, guard)
-                    .deref(pool)
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            }
-            .len()
-                >= next_level_size
-            {
-                return (context, false);
-            }
-
-            let context_new_ref = unsafe { context_new.deref(pool) };
-            context_new_ref.last_level.store(
-                context_ref.last_level.load(Ordering::Acquire, guard),
-                Ordering::Relaxed,
+            let res = self.context.compare_exchange(
+                context,
+                context_new,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                guard,
             );
-            r = false;
+
+            if let Err(e) = res {
+                context = e.current;
+                context_new = e.new;
+                let context_ref = unsafe { e.current.deref(pool) };
+
+                if unsafe {
+                    context_ref
+                        .first_level
+                        .load(Ordering::Acquire, guard)
+                        .deref(pool)
+                        .data
+                        .load(Ordering::Relaxed, guard)
+                        .deref(pool)
+                }
+                .len()
+                    >= next_level_size
+                {
+                    return (context, false);
+                }
+
+                let context_new_ref = unsafe { context_new.deref(pool) };
+                context_new_ref.last_level.store(
+                    context_ref.last_level.load(Ordering::Acquire, guard),
+                    Ordering::Relaxed,
+                );
+                continue;
+            }
+
+            context = res.unwrap();
+            println!("[add_level] next_level_size: {next_level_size}");
+            break;
         }
 
         fence(Ordering::SeqCst);
-        (context, true) // TODO: 예전 context free 안 해도 됨?
+        (context, true)
     }
 
-    pub fn resize(
-        &self,
-        client: &mut ResizeLoop<K, V>,
-        rec: bool,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) {
+    pub fn resize(&self, client: &mut ResizeLoop<K, V>, guard: &Guard, pool: &'static PoolHandle) {
         println!("[resize]");
         let mut context = self.context.load(guard, pool);
         loop {
@@ -1097,7 +1089,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
-                            self.add_level(client, context, first_level_ref, rec, guard, pool);
+                            self.add_level(client, context, first_level_ref, guard, pool);
                         context = context_new;
                         context_ref = unsafe { context.deref(pool) };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
@@ -1302,7 +1294,7 @@ pub enum InsertError {
     Occupied,
 }
 
-impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel<K, V> {
+impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     // pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
     //     let guard = unsafe { unprotected() };
 
@@ -1398,7 +1390,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
-        rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) {
@@ -1449,7 +1440,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                 insert_result.slot_ptr,
                 key_hashes,
                 resize_send,
-                rec,
                 guard,
                 pool,
             );
@@ -1468,7 +1458,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         key: K,
         value: V,
         resize_send: &mpsc::Sender<()>,
-        rec: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
     ) -> Result<(), InsertError>
@@ -1492,7 +1481,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             slot,
             key_hashes,
             resize_send,
-            rec,
             guard,
             pool,
         );
@@ -1504,7 +1492,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             insert_result,
             key_hashes,
             resize_send,
-            rec,
             guard,
             pool,
         );
@@ -1519,7 +1506,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         slot: PShared<'g, Node<Slot<K, V>>>,
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
-        rec: bool,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
@@ -1534,7 +1520,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
             let (context_new, added) =
-                inner.add_level(client, context, first_level_ref, rec, guard, pool);
+                inner.add_level(client, context, first_level_ref, guard, pool);
             if added {
                 let _ = resize_send.send(()); // TODO: channel
             }
@@ -1548,9 +1534,8 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         tid: usize,
         key: K,
         value: V,
-        resize_send: &mpsc::Sender<()>,
-        rec: bool,
         guard: &Guard,
+        resize_send: &mpsc::Sender<()>,
         pool: &'static PoolHandle,
     ) -> Result<(), ()>
     where
@@ -1593,7 +1578,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                 find_result,
                 key_hashes,
                 resize_send,
-                rec,
                 guard,
                 pool,
             );
