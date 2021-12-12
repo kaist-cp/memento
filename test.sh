@@ -5,9 +5,9 @@ set -e
 
 while true; do
     rm -rf test
-    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --features no_persist elim -- --nocapture
     RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress insert_update_search -- --nocapture
-    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist queue:: -- --nocapture
-    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist queue:: -- --nocapture
-    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist treiber_stack -- --nocapture
+    rm -rf test
+    RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress smoke -- --nocapture
+    rm -rf test
+    RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress insert_search -- --nocapture
 done

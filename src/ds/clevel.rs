@@ -28,7 +28,9 @@ use crate::node::Node;
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
 use crate::ploc::Insert;
+use crate::ploc::SMOAtomic;
 use crate::ploc::Traversable;
+use crate::ploc::Update;
 use crate::pmem::global_pool;
 use crate::pmem::persist_obj;
 use crate::pmem::Collectable;
@@ -144,7 +146,9 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 
 // TODO: for inser, update, resize
 trait AddLevel<K, V> {
-    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
+    // TODO: update smo로
+    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
+    // fn context_update_mmt(&mut self) -> &mut Update<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
 }
 
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
@@ -179,7 +183,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
         &mut self,
         inner: Self::Object<'o>,
         resize_recv: Self::Input<'o>,
-        rec: bool, // TODO(opt): template parameter
+        rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
@@ -205,7 +209,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
 }
 
 impl<K, V> AddLevel<K, V> for ResizeLoop<K, V> {
-    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
         &mut self.add_level
     }
 }
@@ -259,7 +263,7 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClInsert<K, V> {
-    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
         &mut self.add_level
     }
 }
@@ -360,7 +364,7 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClUpdate<K, V> {
-    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+    fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
         &mut self.add_level
     }
 }
