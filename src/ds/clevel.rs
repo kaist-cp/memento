@@ -224,7 +224,8 @@ impl<K, V> Traversable<Node<Slot<K, V>>> for SMOAtomic<(), Node<Slot<K, V>>, Buc
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
-        todo!()
+        let cur = self.load(guard, pool);
+        cur.as_ptr() == target.as_ptr()
     }
 }
 
