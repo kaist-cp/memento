@@ -1439,18 +1439,30 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             //
             // the resize thread may already have passed the slot. I need to move it.
 
-            // TODO(slot)
-            if insert_result
-                .slot
-                .compare_exchange(
-                    insert_result.slot_ptr,
-                    insert_result.slot_ptr.with_tag(1),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard,
-                )
-                .is_err()
-            {
+            // TODO(check slot): before
+            // if insert_result
+            //     .slot
+            //     .compare_exchange(
+            //         insert_result.slot_ptr,
+            //         insert_result.slot_ptr.with_tag(1),
+            //         Ordering::AcqRel,
+            //         Ordering::Acquire,
+            //         guard,
+            //     )
+            //     .is_err()
+            // {
+            //     break;
+            // }
+
+            // TODO(check slot): after
+            let res = client.resize_tag().run(
+                insert_result.slot,
+                (1, insert_result.slot_ptr, &()),
+                false, // TODO(must): normal run을 가정함
+                guard,
+                pool,
+            );
+            if res.is_err() {
                 break;
             }
 
