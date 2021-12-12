@@ -221,7 +221,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        todo!()
+        // TODO
     }
 }
 
@@ -284,7 +284,7 @@ where
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        todo!()
+        // TODO
     }
 }
 
@@ -331,7 +331,7 @@ where
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        todo!()
+        // TODO
     }
 }
 
@@ -377,7 +377,7 @@ where
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        todo!()
+        // TODO
     }
 }
 
