@@ -27,6 +27,7 @@ use tinyvec::*;
 use crate::node::Node;
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
+use crate::ploc::Delete;
 use crate::ploc::Insert;
 use crate::ploc::NeedRetry;
 use crate::ploc::SMOAtomic;
@@ -148,7 +149,9 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 
 // TODO: for inser, update, resize
 trait InsertInner<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
 }
 
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
@@ -209,7 +212,9 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
 }
 
 impl<K, V> InsertInner<K, V> for ResizeLoop<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
@@ -275,19 +280,23 @@ where
 }
 
 impl<K, V> InsertInner<K, V> for ClInsert<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
 
 #[derive(Debug)]
 pub struct ClDelete<K, V> {
+    delete: Delete<(), Node<Slot<K, V>>, Bucket<K, V>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ClDelete<K, V> {
     fn default() -> Self {
         Self {
+            delete: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -318,7 +327,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::delete(inner, &k, guard, pool);
+        Clevel::delete(self, inner, &k, guard, pool);
         Ok(())
     }
 
@@ -376,7 +385,9 @@ where
 }
 
 impl<K, V> InsertInner<K, V> for ClUpdate<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
@@ -1185,7 +1196,11 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
 
                     // TODO(check): after
                     let insert = client.insert_inner();
-                    if insert.run(slot, (slot_new, slot, |_| true), false, guard, pool).is_ok() { // TODO(must): normal run을 가정함
+                    if insert
+                        .run(slot, (slot_new, slot, |_| true), false, guard, pool)
+                        .is_ok()
+                    {
+                        // TODO(must): normal run을 가정함
                         return Ok(FindResult {
                             size,
                             bucket_index: key_hash,
@@ -1527,7 +1542,6 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             });
 
             // TODO(slot)
-
 
             if find_result
                 .slot
