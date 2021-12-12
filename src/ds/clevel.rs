@@ -18,7 +18,7 @@ use cfg_if::cfg_if;
 use crossbeam_epoch::{unprotected, Guard};
 use derivative::Derivative;
 use etrace::*;
-use hashers::fx_hash::FxHasher;
+use fasthash::Murmur3HasherExt;
 use itertools::*;
 use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
@@ -151,7 +151,9 @@ trait AddLevel<K, V> {
     // TODO: update smo로
     // fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
     // fn context_update_mmt(&mut self) -> &mut Update<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
 }
 
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
@@ -212,7 +214,9 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
 }
 
 impl<K, V> AddLevel<K, V> for ResizeLoop<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
@@ -278,7 +282,9 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClInsert<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
@@ -379,7 +385,9 @@ where
 }
 
 impl<K, V> AddLevel<K, V> for ClUpdate<K, V> {
-    fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
+    fn insert_inner(
+        &mut self,
+    ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
 }
@@ -421,7 +429,7 @@ cfg_if! {
 }
 
 fn hashes<T: Hash>(t: &T) -> [u32; 2] {
-    let mut hasher = FxHasher::default();
+    let mut hasher = Murmur3HasherExt::default();
     t.hash(&mut hasher);
     let hash = hasher.finish() as usize;
 
@@ -725,7 +733,11 @@ fn new_node<K, V>(
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
-        let _ = libc::memset(data_ref as *const _ as *mut c_void, 0x0, size * mem::size_of::<Bucket<K, V>>());
+        let _ = libc::memset(
+            data_ref as *const _ as *mut c_void,
+            0x0,
+            size * mem::size_of::<Bucket<K, V>>(),
+        );
     }
     persist_obj(&data_ref, true);
 
@@ -1187,7 +1199,11 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
 
                     // TODO(slot): after
                     let insert = client.insert_inner();
-                    if insert.run(slot, (slot_new, slot, |_| true), false, guard, pool).is_ok() { // TODO(must): normal run을 가정함
+                    if insert
+                        .run(slot, (slot_new, slot, |_| true), false, guard, pool)
+                        .is_ok()
+                    {
+                        // TODO(must): normal run을 가정함
                         return Ok(FindResult {
                             size,
                             bucket_index: key_hash,
