@@ -455,6 +455,7 @@ struct Bucket<K, V> {
 
 impl<K, V> UpdateDeleteInfo<(), Node<Slot<K, V>>> for Bucket<K, V> {
     fn prepare_delete<'g>(
+        del_type: u16,
         cur: PShared<'_, Node<Slot<K, V>>>,
         expected: PShared<'_, Node<Slot<K, V>>>,
         obj: &(),

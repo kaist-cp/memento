@@ -233,6 +233,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
 
 impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
     fn prepare_delete<'g>(
+        del_type: u16,
         old_head: PShared<'_, Node<MaybeUninit<T>>>,
         _: PShared<'_, Node<MaybeUninit<T>>>,
         queue: &Queue<T>,

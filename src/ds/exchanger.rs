@@ -279,6 +279,7 @@ impl<T: 'static + Clone> TryExchange<T> {
 
 impl<T: Clone> UpdateDeleteInfo<Exchanger<T>, Node<T>> for TryExchange<T> {
     fn prepare_delete<'g>(
+        del_type: u16,
         cur: PShared<'_, Node<T>>,
         mine: PShared<'_, Node<T>>,
         _: &Exchanger<T>,

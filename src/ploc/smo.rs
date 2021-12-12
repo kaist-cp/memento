@@ -147,6 +147,7 @@ pub struct NeedRetry;
 pub trait UpdateDeleteInfo<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
     fn prepare_delete<'g>(
+        del_type: u16,
         cur: PShared<'_, N>,
         aux: PShared<'_, N>,
         obj: &O,
@@ -213,7 +214,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O,
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
-    // TODO: 버그잡고 lookup과 분리
+    // TODO(opt): lookup과 분리
     pub fn load<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
         let mut p = self.inner.load(Ordering::SeqCst, guard);
         loop {
@@ -321,7 +322,7 @@ where
         // Normal run
         let target = point.load(guard, pool);
         let next = ok_or!(
-            G::prepare_delete(target, forbidden, obj, guard, pool),
+            G::prepare_delete(del_type, target, forbidden, obj, guard, pool),
             return Err(())
         );
         let next = some_or!(next, {
