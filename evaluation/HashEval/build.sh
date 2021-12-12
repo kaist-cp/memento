@@ -3,6 +3,7 @@
 # sudo modprobe msr
 sudo apt install libpmemobj-dev -y
 sudo apt install libvmem-dev -y
+sudo apt install libgflags-dev -y
 
 # Compile all
 make clean
