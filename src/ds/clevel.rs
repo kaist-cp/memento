@@ -522,7 +522,37 @@ struct Slot<K, V> {
 #[derive(Debug)]
 #[repr(align(64))]
 struct Bucket<K, V> {
-    slots: [PAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
+    slots: [SMOAtomic<(), Node<Slot<K, V>>, Self>; SLOTS_IN_BUCKET],
+}
+
+impl<K, V> UpdateDeleteInfo<(), Node<Slot<K, V>>> for Bucket<K, V> {
+    fn prepare_delete<'g>(
+        cur: PShared<'_, Node<Slot<K, V>>>,
+        forbidden: PShared<'_, Node<Slot<K, V>>>,
+        obj: &(),
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> Result<Option<PShared<'g, Node<Slot<K, V>>>>, NeedRetry> {
+        todo!()
+    }
+
+    fn prepare_update<'g>(
+        cur: PShared<'_, Node<Slot<K, V>>>,
+        expected: PShared<'_, Node<Slot<K, V>>>,
+        obj: &(),
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> bool {
+        todo!()
+    }
+
+    fn node_when_deleted<'g>(
+        deleted: PShared<'_, Node<Slot<K, V>>>,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> PShared<'g, Node<Slot<K, V>>> {
+        PShared::null()
+    }
 }
 
 #[derive(Debug)]
@@ -586,8 +616,8 @@ struct FindResult<'g, K, V> {
     /// level's size
     size: usize,
     bucket_index: usize,
-    slot: &'g PAtomic<Slot<K, V>>,
-    slot_ptr: PShared<'g, Slot<K, V>>,
+    slot: &'g SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>,
+    slot_ptr: PShared<'g, Node<Slot<K, V>>>,
 }
 
 impl<'g, K, V> Default for FindResult<'g, K, V> {
@@ -652,10 +682,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(guard, pool);
                     // TODO: check 2-byte tag: slot_ptr's high 2 bytes should be the 2-byte LSB of key. otherwise, continue.
 
-                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(pool) }, continue);
+                    let slot_ref = &some_or!(unsafe { slot_ptr.as_ref(pool) }, continue).data;
                     if *key != slot_ref.key {
                         continue;
                     }
@@ -671,7 +701,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                     return Ok(Some(FindResult {
                         size,
                         bucket_index: key_hash,
-                        slot,
+                        slot: slot,
                         slot_ptr,
                     }));
                 }
@@ -708,10 +738,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(guard, pool);
                     // TODO: check 2-byte tag
 
-                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(pool) }, continue);
+                    let slot_ref = &some_or!(unsafe { slot_ptr.as_ref(pool) }, continue).data;
                     if *key != slot_ref.key {
                         continue;
                     }
@@ -811,7 +841,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
             for bucket in data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Relaxed, guard);
+                    let slot_ptr = slot.load(guard, pool);
                     if !slot_ptr.is_null() {
                         unsafe {
                             guard.defer_pdestroy(slot_ptr);
@@ -977,7 +1007,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                 for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
-                            let mut slot_ptr = slot.load(Ordering::Acquire, guard);
+                            let mut slot_ptr = slot.load(guard, pool);
                             loop {
                                 if slot_ptr.is_null() {
                                     break None;
@@ -987,7 +1017,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                 // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
                                 // TODO: should we do it...?
                                 if slot_ptr.tag() == 1 {
-                                    slot_ptr = slot.load(Ordering::Acquire, guard);
+                                    slot_ptr = slot.load(guard, pool);
                                     continue;
                                 }
 
@@ -1012,7 +1042,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
 
                     let mut moved = false;
                     loop {
-                        let key_hashes = hashes(&unsafe { slot_ptr.deref(pool) }.key)
+                        let key_hashes = hashes(&unsafe { slot_ptr.deref(pool) }.data.key)
                             .into_iter()
                             .map(|key_hash| key_hash as usize % first_level_size)
                             .sorted()
@@ -1026,12 +1056,10 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                         .get_unchecked(i)
                                 };
 
-                                if let Some(slot) =
-                                    unsafe { slot.load(Ordering::Acquire, guard).as_ref(pool) }
-                                {
+                                if let Some(slot) = unsafe { slot.load(guard, pool).as_ref(pool) } {
                                     // TODO: 2-byte tag checking
 
-                                    if slot.key == unsafe { slot_ptr.deref(pool) }.key {
+                                    if slot.data.key == unsafe { slot_ptr.deref(pool) }.data.key {
                                         moved = true;
                                         break;
                                     }
@@ -1213,7 +1241,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         &'g self,
         tid: usize,
         context: PShared<'g, Context<K, V>>,
-        slot_new: PShared<'g, Slot<K, V>>,
+        slot_new: PShared<'g, Node<Slot<K, V>>>,
         key_hashes: [u32; 2],
         guard: &'g Guard,
         pool: &'static PoolHandle,
@@ -1241,7 +1269,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 for key_hash in key_hashes.clone() {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
 
-                    if !slot.load(Ordering::Acquire, guard).is_null() {
+                    if !slot.load(guard, pool).is_null() {
                         continue;
                     }
 
@@ -1359,7 +1387,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
     ) -> Option<&'g V> {
         let key_hashes = hashes(key);
         let (_, find_result) = inner.find_fast(key, key_hashes, guard, pool);
-        Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
+        Some(&unsafe { find_result?.slot_ptr.deref(pool) }.data.value)
     }
 
     fn move_if_resized<'g, C: AddLevel<K, V>>(
@@ -1454,7 +1482,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new(Slot { key, value }, pool).into_shared(guard);
+        let slot = POwned::new(Node::from(Slot { key, value }), pool).into_shared(guard);
         // question: why `context_new` is created?
         let (context_new, insert_result) = Self::insert_inner(
             client,
@@ -1488,7 +1516,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         inner: &'g ClevelInner<K, V>,
         tid: usize,
         mut context: PShared<'g, Context<K, V>>,
-        slot: PShared<'g, Slot<K, V>>,
+        slot: PShared<'g, Node<Slot<K, V>>>,
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
         rec: bool,
@@ -1530,10 +1558,10 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
     {
         let key_hashes = hashes(&key);
         let mut slot_new = POwned::new(
-            Slot {
+            Node::from(Slot {
                 key: key.clone(),
                 value,
-            },
+            }),
             pool,
         );
 
