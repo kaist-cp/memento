@@ -153,6 +153,8 @@ trait AddNew<K, V> {
     fn insert_inner(
         &mut self,
     ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
+
+    fn resize_tag(&mut self) -> &mut Delete<(), Node<Slot<K, V>>, Bucket<K, V>>;
 }
 
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
@@ -160,7 +162,6 @@ trait AddNew<K, V> {
 pub struct ResizeLoop<K, V> {
     resize_move: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
     resize_tag: Delete<(), Node<Slot<K, V>>, Bucket<K, V>>,
-    _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ResizeLoop<K, V> {
@@ -168,7 +169,6 @@ impl<K, V> Default for ResizeLoop<K, V> {
         Self {
             resize_move: Default::default(),
             resize_tag: Default::default(),
-            _marker: Default::default(),
         }
     }
 }
@@ -229,14 +229,14 @@ impl<K, V> Traversable<Node<Slot<K, V>>> for SMOAtomic<(), Node<Slot<K, V>>, Buc
 #[derive(Debug)]
 pub struct ClInsert<K, V> {
     insert_inner: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
-    _marker: PhantomData<(K, V)>,
+    resize_tag: Delete<(), Node<Slot<K, V>>, Bucket<K, V>>,
 }
 
 impl<K, V> Default for ClInsert<K, V> {
     fn default() -> Self {
         Self {
             insert_inner: Default::default(),
-            _marker: Default::default(),
+            resize_tag: Default::default(),
         }
     }
 }
@@ -280,19 +280,21 @@ impl<K, V> AddNew<K, V> for ClInsert<K, V> {
     ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
+
+    fn resize_tag(&mut self) -> &mut Delete<(), Node<Slot<K, V>>, Bucket<K, V>> {
+        &mut self.resize_tag
+    }
 }
 
 #[derive(Debug)]
 pub struct ClDelete<K, V> {
     delete: Delete<(), Node<Slot<K, V>>, Bucket<K, V>>,
-    _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ClDelete<K, V> {
     fn default() -> Self {
         Self {
             delete: Default::default(),
-            _marker: Default::default(),
         }
     }
 }
@@ -334,14 +336,14 @@ where
 #[derive(Debug)]
 pub struct ClUpdate<K, V> {
     insert_inner: Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>,
-    _marker: PhantomData<(K, V)>,
+    resize_tag: Delete<(), Node<Slot<K, V>>, Bucket<K, V>>,
 }
 
 impl<K, V> Default for ClUpdate<K, V> {
     fn default() -> Self {
         Self {
             insert_inner: Default::default(),
-            _marker: Default::default(),
+            resize_tag: Default::default(),
         }
     }
 }
@@ -384,6 +386,10 @@ impl<K, V> AddNew<K, V> for ClUpdate<K, V> {
         &mut self,
     ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
+    }
+
+    fn resize_tag(&mut self) -> &mut Delete<(), Node<Slot<K, V>>, Bucket<K, V>> {
+        &mut self.resize_tag
     }
 }
 
@@ -1550,8 +1556,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             let context_ref = unsafe { context.deref(pool) };
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
-            let (context_new, added) =
-                inner.add_level(context, first_level_ref, guard, pool);
+            let (context_new, added) = inner.add_level(context, first_level_ref, guard, pool);
             if added {
                 let _ = resize_send.send(()); // TODO: channel
             }
