@@ -45,7 +45,7 @@ where
     O: 'static + Traversable<N>,
     N: 'static + Node + Collectable,
 {
-    type Object<'o> = &'o PAtomic<N>;
+    type Object<'o> = &'o PAtomic<N>; // TODO(must): SMOAtomic?
     type Input<'o> = (
         PShared<'o, N>,
         &'o O,

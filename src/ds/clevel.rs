@@ -141,15 +141,22 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 //     }
 // }
 
+// TODO: for inser, update, resize
+trait AddLevel<K, V> {
+    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
+}
+
 // TODO: 리커버리 런이면 무조건 한 번 돌리고, 아니면 기다리고 있음.
 #[derive(Debug)]
 pub struct ResizeLoop<K, V> {
+    add_level: Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ResizeLoop<K, V> {
     fn default() -> Self {
         Self {
+            add_level: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -179,7 +186,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
         println!("[resize loop] start loop");
         while let Ok(()) = resize_recv.recv() {
             println!("[resize_loop] do resize!");
-            inner.resize(&mut g, pool);
+            inner.resize(self, &mut g, pool);
             g.repin_after(|| {}); // TODO: drop?
         }
         Ok(())
@@ -196,14 +203,22 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     }
 }
 
+impl<K, V> AddLevel<K, V> for ResizeLoop<K, V> {
+    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+        &mut self.add_level
+    }
+}
+
 #[derive(Debug)]
 pub struct ClInsert<K, V> {
+    add_level: Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ClInsert<K, V> {
     fn default() -> Self {
         Self {
+            add_level: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -234,11 +249,17 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::insert(inner, tid, k, v, resize_send, guard, pool)
+        Clevel::insert(self, inner, tid, k, v, resize_send, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         // TODO
+    }
+}
+
+impl<K, V> AddLevel<K, V> for ClInsert<K, V> {
+    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+        &mut self.add_level
     }
 }
 
@@ -291,12 +312,14 @@ where
 
 #[derive(Debug)]
 pub struct ClUpdate<K, V> {
+    add_level: Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> Default for ClUpdate<K, V> {
     fn default() -> Self {
         Self {
+            add_level: Default::default(),
             _marker: Default::default(),
         }
     }
@@ -327,7 +350,7 @@ where
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         // TODO: persistent op
-        Clevel::update(inner, tid, k, v, guard, resize_send, pool)
+        Clevel::update(self, inner, tid, k, v, guard, resize_send, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -335,10 +358,11 @@ where
     }
 }
 
-// TODO: for inser, update, resize
-// trait AddLevel {
-//     fn add_level_mmt<K, V>(&self) -> &Insert<ClevelInner<K, V>, Node<Bucket<K, V>>>;
-// }
+impl<K, V> AddLevel<K, V> for ClUpdate<K, V> {
+    fn add_level_mmt(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+        &mut self.add_level
+    }
+}
 
 // -- 아래부터는 conccurent 버전. 이걸 persistent 버전으로 바꿔야함
 const TINY_VEC_CAPACITY: usize = 8;
@@ -688,9 +712,9 @@ impl<K, V> Drop for ClevelInner<K, V> {
 }
 
 impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
-    fn add_level<'g>(
+    fn add_level<'g, A: AddLevel<K, V>>(
         &'g self,
-        // &mut client:
+        client: &mut A,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
         guard: &'g Guard,
@@ -787,7 +811,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         (context, true)
     }
 
-    pub fn resize(&self, guard: &Guard, pool: &'static PoolHandle) {
+    pub fn resize(&self, client: &mut ResizeLoop<K, V>, guard: &Guard, pool: &'static PoolHandle) {
         println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
@@ -921,7 +945,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
-                            self.add_level(context, first_level_ref, guard, pool);
+                            self.add_level(client, context, first_level_ref, guard, pool);
                         context = context_new;
                         context_ref = unsafe { context.deref(pool) };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
@@ -1193,7 +1217,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
     }
 
-    fn move_if_resized<'g>(
+    fn move_if_resized<'g, C: AddLevel<K, V>>(
+        client: &mut C,
         inner: &'g ClevelInner<K, V>,
         tid: usize,
         mut context: PShared<'g, Context<K, V>>,
@@ -1243,6 +1268,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             //     insert_result.bucket_index
             // );
             let (context_insert, insert_result_insert) = Self::insert_inner(
+                client,
                 inner,
                 tid,
                 context_new,
@@ -1261,6 +1287,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     }
 
     pub fn insert(
+        client: &mut ClInsert<K, V>,
         inner: &ClevelInner<K, V>,
         tid: usize,
         key: K,
@@ -1283,6 +1310,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         let slot = POwned::new(Slot { key, value }, pool).into_shared(guard);
         // question: why `context_new` is created?
         let (context_new, insert_result) = Self::insert_inner(
+            client,
             inner,
             tid,
             context,
@@ -1293,6 +1321,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             pool,
         );
         Self::move_if_resized(
+            client,
             inner,
             tid,
             context_new,
@@ -1305,7 +1334,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         Ok(())
     }
 
-    fn insert_inner<'g>(
+    fn insert_inner<'g, C: AddLevel<K, V>>(
+        client: &mut C,
         inner: &'g ClevelInner<K, V>,
         tid: usize,
         mut context: PShared<'g, Context<K, V>>,
@@ -1325,7 +1355,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             let context_ref = unsafe { context.deref(pool) };
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
-            let (context_new, added) = inner.add_level(context, first_level_ref, guard, pool);
+            let (context_new, added) =
+                inner.add_level(client, context, first_level_ref, guard, pool);
             if added {
                 let _ = resize_send.send(()); // TODO: channel
             }
@@ -1334,6 +1365,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     }
 
     pub fn update<'g>(
+        client: &mut ClUpdate<K, V>,
         inner: &'g ClevelInner<K, V>,
         tid: usize,
         key: K,
@@ -1375,6 +1407,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                 guard.defer_pdestroy(find_result.slot_ptr);
             }
             Self::move_if_resized(
+                client,
                 inner,
                 tid,
                 context,
