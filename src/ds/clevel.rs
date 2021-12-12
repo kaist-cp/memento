@@ -779,7 +779,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
     }
 }
 
-impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
+impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
     fn add_level<'g, A: InsertInner<K, V>>(
         &'g self,
         client: &mut A,
@@ -986,14 +986,25 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     break;
                                 }
 
-                                if slot
-                                    .compare_exchange(
-                                        PShared::null(),
-                                        slot_ptr,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
-                                        guard,
-                                    )
+                                // TODO(check slot): before
+                                // if slot
+                                //     .compare_exchange(
+                                //         PShared::null(),
+                                //         slot_ptr,
+                                //         Ordering::AcqRel,
+                                //         Ordering::Relaxed,
+                                //         guard,
+                                //     )
+                                //     .is_ok()
+                                // {
+                                //     moved = true;
+                                //     break;
+                                // }
+
+                                // TODO(check slot): after
+                                let move_insert = client.insert_inner();
+                                if move_insert
+                                    .run(slot, (slot_ptr, slot, |_| true), false, guard, pool) // TODO(must): normal run을 가정함
                                     .is_ok()
                                 {
                                     moved = true;
@@ -1196,7 +1207,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                         continue;
                     }
 
-                    // TODO(check): before
+                    // TODO(check slot): before
                     // if let Ok(slot_ptr) = slot.compare_exchange(
                     //     PShared::null(),
                     //     slot_new,
@@ -1212,7 +1223,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                     //     });
                     // }
 
-                    // TODO(check): after
+                    // TODO(check slot): after
                     let insert = client.insert_inner();
                     if insert
                         .run(slot, (slot_new, slot, |_| true), false, guard, pool)
@@ -1562,9 +1573,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                 return;
             });
 
-            // TODO(slot)
-
-            // TODO(check): before
+            // TODO(check slot): before
             // if find_result
             //     .slot
             //     .compare_exchange(
@@ -1579,11 +1588,11 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             //     continue;
             // }
 
-            // TODO(check): after
+            // TODO(check slot): after
             let res =
                 client
                     .delete
-                    .run(find_result.slot, (PShared::null(), &()), false, guard, pool); // TODO(must): forbidden 필요 없는데 사용, normal run을 가정함
+                    .run(find_result.slot, (find_result.slot_ptr, &()), false, guard, pool); // TODO(must): normal run을 가정함
 
             if res.is_err() {
                 continue;
