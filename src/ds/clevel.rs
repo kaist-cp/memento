@@ -874,7 +874,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                     return (context, false);
                 }
 
-                // TODO: maybe unreachable...
                 let context_new_ref = unsafe { context_new.deref(pool) };
                 context_new_ref.last_level.store(
                     context_ref.last_level.load(Ordering::Acquire, guard),
