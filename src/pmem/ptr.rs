@@ -3,7 +3,7 @@ use super::pool::PoolHandle;
 use std::marker::PhantomData;
 
 /// 상대주소의 NULL 식별자
-const NULL_OFFSET: usize = usize::MAX;
+const NULL_OFFSET: usize = 0;
 
 /// 풀에 속한 오브젝트를 가리킬 포인터
 /// - 풀의 시작주소로부터의 offset을 가지고 있음

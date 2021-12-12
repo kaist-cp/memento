@@ -211,13 +211,13 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
             inner.resize(&mut g, pool);
             g.repin_after(|| {}); // TODO: drop?
         }
+        Ok(())
 
         // let mut g = guard.clone(); // TODO: clone API 없어도 그냥 새로 pin하면 되지 않나?
 
         // TODO: persistent op
         // inner.kv_resize.borrow_mut().resize_loop(&mut g, pool);
         // Ok(())
-        todo!()
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -225,22 +225,22 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     }
 }
 
-#[derive(Debug)]
-pub struct ClevelResize<K, V> {
-    inner: Arc<ClevelInner<K, V>>,
-    resize_recv: mpsc::Receiver<()>, // TODO: channel
-}
+// #[derive(Debug)]
+// pub struct ClevelResize<K, V> {
+//     inner: Arc<ClevelInner<K, V>>,
+//     resize_recv: mpsc::Receiver<()>, // TODO: channel
+// }
 
-impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
-    pub fn resize_loop(&mut self, guard: &mut Guard, pool: &'static PoolHandle) {
-        println!("[resize loop] start loop");
-        while let Ok(()) = self.resize_recv.recv() {
-            println!("[resize_loop] do resize!");
-            self.inner.resize(guard, pool);
-            guard.repin_after(|| {});
-        }
-    }
-}
+// impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
+//     pub fn resize_loop(&mut self, guard: &mut Guard, pool: &'static PoolHandle) {
+//         println!("[resize loop] start loop");
+//         while let Ok(()) = self.resize_recv.recv() {
+//             println!("[resize_loop] do resize!");
+//             self.inner.resize(guard, pool);
+//             guard.repin_after(|| {});
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 struct ClInsert<K, V> {
@@ -696,7 +696,7 @@ fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> 
     let bucket_size = mem::size_of::<Bucket<K, V>>();
     for i in 0..size {
         let addr = &data_ref[i] as *const _ as *mut c_void;
-        let _ = unsafe { libc::memset(addr, 0xff, bucket_size) };
+        let _ = unsafe { libc::memset(addr, 0x0, bucket_size) };
     }
 
     POwned::new(
@@ -1175,34 +1175,34 @@ pub enum InsertError {
 }
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
-    pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
-        let guard = unsafe { unprotected() };
+    // pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
+    //     let guard = unsafe { unprotected() };
 
-        let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
-        let last_level = new_node(MIN_SIZE, pool);
-        let last_level_ref = unsafe { last_level.deref(pool) };
-        last_level_ref.next.store(first_level, Ordering::Relaxed);
-        let inner = Arc::new(ClevelInner {
-            context: PAtomic::new(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: last_level.into(),
-                    resize_size: 0,
-                },
-                pool,
-            ),
-            add_level_lock: RawMutexImpl::INIT,
-        });
+    //     let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
+    //     let last_level = new_node(MIN_SIZE, pool);
+    //     let last_level_ref = unsafe { last_level.deref(pool) };
+    //     last_level_ref.next.store(first_level, Ordering::Relaxed);
+    //     let inner = Arc::new(ClevelInner {
+    //         context: PAtomic::new(
+    //             Context {
+    //                 first_level: first_level.into(),
+    //                 last_level: last_level.into(),
+    //                 resize_size: 0,
+    //             },
+    //             pool,
+    //         ),
+    //         add_level_lock: RawMutexImpl::INIT,
+    //     });
 
-        let (resize_send, resize_recv) = mpsc::channel();
-        (
-            Self {
-                inner: inner.clone(),
-                resize_send,
-            },
-            ClevelResize { inner, resize_recv },
-        )
-    }
+    //     let (resize_send, resize_recv) = mpsc::channel();
+    //     (
+    //         Self {
+    //             inner: inner.clone(),
+    //             resize_send,
+    //         },
+    //         ClevelResize { inner, resize_recv },
+    //     )
+    // }
 
     pub fn get_capacity<'g>(&'g self, guard: &'g Guard, pool: &'static PoolHandle) -> usize {
         let context = self.inner.context.load(Ordering::Acquire, guard);
@@ -1534,7 +1534,7 @@ mod tests {
                     let _ = resize.run(object, &recv, rec, &g, pool);
                 });
 
-                const RANGE: usize = 1;
+                const RANGE: usize = 1usize << 8;
 
                 for i in 0..RANGE {
                     let _ = insert.run(object, (0, i, i, &send), rec, guard, pool);
@@ -1549,6 +1549,9 @@ mod tests {
                     let _ = delete.run(object, &i, rec, guard, pool);
                     assert_eq!(Clevel::search(object, &i, guard, pool), None);
                 }
+
+                drop(send);
+                println!("done");
             })
             .unwrap();
             Ok(())
