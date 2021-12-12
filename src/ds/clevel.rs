@@ -147,10 +147,7 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 // }
 
 // TODO: for inser, update, resize
-trait AddLevel<K, V> {
-    // TODO: update smo로
-    // fn context_switch(&mut self) -> &mut Insert<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
-    // fn context_update_mmt(&mut self) -> &mut Update<(), Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>;
+trait InsertInner<K, V> {
     fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
 }
 
@@ -211,7 +208,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
     }
 }
 
-impl<K, V> AddLevel<K, V> for ResizeLoop<K, V> {
+impl<K, V> InsertInner<K, V> for ResizeLoop<K, V> {
     fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
@@ -277,7 +274,7 @@ where
     }
 }
 
-impl<K, V> AddLevel<K, V> for ClInsert<K, V> {
+impl<K, V> InsertInner<K, V> for ClInsert<K, V> {
     fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
@@ -378,7 +375,7 @@ where
     }
 }
 
-impl<K, V> AddLevel<K, V> for ClUpdate<K, V> {
+impl<K, V> InsertInner<K, V> for ClUpdate<K, V> {
     fn insert_inner(&mut self) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
         &mut self.insert_inner
     }
@@ -763,7 +760,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
 }
 
 impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
-    fn add_level<'g, A: AddLevel<K, V>>(
+    fn add_level<'g, A: InsertInner<K, V>>(
         &'g self,
         client: &mut A,
         mut context: PShared<'g, Context<K, V>>,
@@ -1132,7 +1129,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         }
     }
 
-    fn insert_inner<'g, C: AddLevel<K, V>>(
+    fn insert_inner<'g, C: InsertInner<K, V>>(
         &'g self,
         tid: usize,
         client: &mut C,
@@ -1170,7 +1167,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                         continue;
                     }
 
-                    // TODO(slot): before
+                    // TODO(check): before
                     // if let Ok(slot_ptr) = slot.compare_exchange(
                     //     PShared::null(),
                     //     slot_new,
@@ -1186,7 +1183,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                     //     });
                     // }
 
-                    // TODO(slot): after
+                    // TODO(check): after
                     let insert = client.insert_inner();
                     if insert.run(slot, (slot_new, slot, |_| true), false, guard, pool).is_ok() { // TODO(must): normal run을 가정함
                         return Ok(FindResult {
@@ -1299,7 +1296,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.data.value)
     }
 
-    fn move_if_resized<'g, C: AddLevel<K, V>>(
+    fn move_if_resized<'g, C: InsertInner<K, V>>(
         client: &mut C,
         inner: &'g ClevelInner<K, V>,
         tid: usize,
@@ -1420,7 +1417,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         Ok(())
     }
 
-    fn insert_inner<'g, C: AddLevel<K, V>>(
+    fn insert_inner<'g, C: InsertInner<K, V>>(
         client: &mut C,
         inner: &'g ClevelInner<K, V>,
         tid: usize,
@@ -1514,6 +1511,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
     }
 
     pub fn delete<'g>(
+        client: &mut ClDelete<K, V>,
         inner: &'g ClevelInner<K, V>,
         key: &K,
         guard: &Guard,
@@ -1527,6 +1525,10 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                 println!("[delete] suspicious...");
                 return;
             });
+
+            // TODO(slot)
+
+
             if find_result
                 .slot
                 .compare_exchange(
