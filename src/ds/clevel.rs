@@ -149,7 +149,7 @@ impl<K, V> Collectable for ClevelInner<K, V> {
 // }
 
 // TODO: rename
-trait InsertInner<K, V> {
+trait AddNew<K, V> {
     fn insert_inner(
         &mut self,
     ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>>;
@@ -274,7 +274,7 @@ where
     }
 }
 
-impl<K, V> InsertInner<K, V> for ClInsert<K, V> {
+impl<K, V> AddNew<K, V> for ClInsert<K, V> {
     fn insert_inner(
         &mut self,
     ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
@@ -379,7 +379,7 @@ where
     }
 }
 
-impl<K, V> InsertInner<K, V> for ClUpdate<K, V> {
+impl<K, V> AddNew<K, V> for ClUpdate<K, V> {
     fn insert_inner(
         &mut self,
     ) -> &mut Insert<SMOAtomic<(), Node<Slot<K, V>>, Bucket<K, V>>, Node<Slot<K, V>>> {
@@ -1230,7 +1230,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         }
     }
 
-    fn insert_inner<'g, C: InsertInner<K, V>>(
+    fn insert_inner<'g, C: AddNew<K, V>>(
         &'g self,
         tid: usize,
         client: &mut C,
@@ -1401,7 +1401,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.data.value)
     }
 
-    fn move_if_resized<'g, C: InsertInner<K, V>>(
+    fn move_if_resized<'g, C: AddNew<K, V>>(
         client: &mut C,
         inner: &'g ClevelInner<K, V>,
         tid: usize,
@@ -1526,7 +1526,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
         Ok(())
     }
 
-    fn insert_inner<'g, C: InsertInner<K, V>>(
+    fn insert_inner<'g, C: AddNew<K, V>>(
         client: &mut C,
         inner: &'g ClevelInner<K, V>,
         tid: usize,
