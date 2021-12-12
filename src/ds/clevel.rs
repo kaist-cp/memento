@@ -1543,17 +1543,28 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
 
             // TODO(slot)
 
-            if find_result
-                .slot
-                .compare_exchange(
-                    find_result.slot_ptr,
-                    PShared::null(),
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                    guard,
-                )
-                .is_err()
-            {
+            // TODO(check): before
+            // if find_result
+            //     .slot
+            //     .compare_exchange(
+            //         find_result.slot_ptr,
+            //         PShared::null(),
+            //         Ordering::AcqRel,
+            //         Ordering::Relaxed,
+            //         guard,
+            //     )
+            //     .is_err()
+            // {
+            //     continue;
+            // }
+
+            // TODO(check): after
+            let res =
+                client
+                    .delete
+                    .run(find_result.slot, (PShared::null(), &()), false, guard, pool); // TODO(must): forbidden 필요 없는데 사용, normal run을 가정함
+
+            if res.is_err() {
                 continue;
             }
 
