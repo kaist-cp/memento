@@ -41,6 +41,7 @@ use crate::pmem::GarbageCollection;
 use crate::pmem::PoolHandle;
 use crate::Memento;
 use crate::PDefault;
+use crate::pmem::sfence;
 
 impl<K, V> PDefault for ClevelInner<K, V>
 where
@@ -693,6 +694,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                     find_result
                         .slot
                         .store(PShared::null().with_tag(1), Ordering::Release);
+                    persist_obj(find_result.slot, false);
                 } else {
                     // If the moved item is not found again, retry.
                     return Err(());
@@ -701,7 +703,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 owned_found.push(find_result);
             }
         }
-        // TODO: store tag는 async persist 하고 여기서 fence
+        sfence();
 
         // TODO: delete reset -> run
         // last is the find result to return.
