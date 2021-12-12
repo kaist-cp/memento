@@ -118,6 +118,12 @@ fn with_high_tag(htag: u16, data: usize) -> usize {
     (high_bits & ((htag as usize).rotate_right(16))) | (!high_bits & data)
 }
 
+#[inline]
+fn get_high_tag(data: usize) -> u16 {
+    let high_bits = !(usize::MAX >> 16);
+    (data & high_bits).rotate_left(16) as u16
+}
+
 struct DeleteOrNode;
 
 impl DeleteOrNode {
@@ -128,7 +134,7 @@ impl DeleteOrNode {
     #[inline]
     fn get_node<'g, N>(checked: usize) -> Result<PShared<'g, N>, u16> {
         if checked & Self::DELETE_CLIENT == Self::DELETE_CLIENT {
-            return Err(0); // TODO(must): high_tag
+            return Err(get_high_tag(checked));
         }
 
         unsafe { Ok(PShared::<_>::from_usize(checked)) }

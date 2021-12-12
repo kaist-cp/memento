@@ -442,7 +442,7 @@ mod test {
     use rusty_fork::rusty_fork_test;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 10_000;
+    const COUNT: usize = 100_000;
 
     struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],
