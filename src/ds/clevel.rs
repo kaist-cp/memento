@@ -36,12 +36,12 @@ use crate::ploc::Update;
 use crate::ploc::UpdateDeleteInfo;
 use crate::pmem::global_pool;
 use crate::pmem::persist_obj;
+use crate::pmem::sfence;
 use crate::pmem::Collectable;
 use crate::pmem::GarbageCollection;
 use crate::pmem::PoolHandle;
 use crate::Memento;
 use crate::PDefault;
-use crate::pmem::sfence;
 
 impl<K, V> PDefault for ClevelInner<K, V>
 where
@@ -570,7 +570,7 @@ impl<K: PartialEq + Hash, V> Context<K, V> {
     }
 }
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
+impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Context<K, V> {
     /// `Ok` means we found something (may not be unique); and `Err` means contention.
     fn find_fast<'g>(
         &'g self,
@@ -705,24 +705,50 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         }
         sfence();
 
-        // TODO: delete reset -> run
         // last is the find result to return.
         // remove everything else.
+        let mut vdel = Delete::default();
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
-            // TODO(slot)
-            match find_result.slot.compare_exchange(
-                find_result.slot_ptr,
-                PShared::null(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
+
+            // TODO(checkslot): before
+            // match find_result.slot.compare_exchange(
+            //     find_result.slot_ptr,
+            //     PShared::null(),
+            //     Ordering::AcqRel,
+            //     Ordering::Acquire,
+            //     guard,
+            // ) {
+            //     Ok(_) => unsafe {
+            //         guard.defer_pdestroy(find_result.slot_ptr);
+            //     },
+            //     Err(e) => {
+            //         if e.current == find_result.slot_ptr.with_tag(1) {
+            //             // If the item is moved, retry.
+            //             return Err(());
+            //         }
+            //     }
+            // }
+
+            // TODO(check slot): after
+            vdel.reset(guard, pool); // delete smo is atomically resettable
+            sfence();
+
+            let res = vdel.run(
+                find_result.slot,
+                (find_result.slot_ptr, &()),
+                false, // TODO(must): normal run을 가정함
                 guard,
-            ) {
+                pool,
+            );
+
+            match res {
                 Ok(_) => unsafe {
                     guard.defer_pdestroy(find_result.slot_ptr);
                 },
-                Err(e) => {
-                    if e.current == find_result.slot_ptr.with_tag(1) {
+                Err(_) => {
+                    let cur = find_result.slot.load(guard, pool);
+                    if cur == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
                     }
@@ -1593,10 +1619,13 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
             // }
 
             // TODO(check slot): after
-            let res =
-                client
-                    .delete
-                    .run(find_result.slot, (find_result.slot_ptr, &()), false, guard, pool); // TODO(must): normal run을 가정함
+            let res = client.delete.run(
+                find_result.slot,
+                (find_result.slot_ptr, &()),
+                false,
+                guard,
+                pool,
+            ); // TODO(must): normal run을 가정함
 
             if res.is_err() {
                 continue;
