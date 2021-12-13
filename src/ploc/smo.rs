@@ -240,7 +240,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
                 return p;
             }
 
-            persist_obj(owner, true);
+            persist_obj(owner, true); // TODO(opt): async reset
             p = ok_or!(self.help(p, o, None, guard, pool), e, return e);
         }
     }
