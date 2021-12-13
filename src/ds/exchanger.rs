@@ -120,7 +120,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
 
         // println!("init slot {} {:?}", tid, node);
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
-        let init_slot = xchg.slot.load(guard, pool);
+        let init_slot = xchg.slot.load_helping(guard, pool);
         let init_slot = self
             .init_slot
             .run((), (PAtomic::from(init_slot), |_| {}), rec, guard, pool)
@@ -221,7 +221,7 @@ impl<T: 'static + Clone> TryExchange<T> {
             std::thread::sleep(Duration::from_nanos(100));
         }
 
-        let wait_slot = xchg.slot.load(guard, pool);
+        let wait_slot = xchg.slot.load_helping(guard, pool);
 
         // println!("wait mine slot {} {:?} {:?}", tid, mine, wait_slot);
 
@@ -385,7 +385,7 @@ impl<T: Clone> PDefault for Exchanger<T> {
 
 impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let slot = self.slot.load(guard, pool);
+        let slot = self.slot.load_helping(guard, pool);
         slot == target
     }
 }

@@ -223,7 +223,7 @@ impl<K, V> Traversable<Node<Slot<K, V>>> for SMOAtomic<(), Node<Slot<K, V>>, Buc
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
-        let cur = self.load(guard, pool);
+        let cur = self.load_helping(guard, pool);
         cur.as_ptr() == target.as_ptr()
     }
 }
@@ -617,7 +617,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Contex
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(guard, pool);
+                    let slot_ptr = slot.load(Ordering::SeqCst, guard);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -678,7 +678,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Contex
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(guard, pool);
+                    let slot_ptr = slot.load(Ordering::SeqCst, guard);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -772,7 +772,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Contex
                     guard.defer_pdestroy(find_result.slot_ptr);
                 },
                 Err(_) => {
-                    let cur = find_result.slot.load(guard, pool);
+                    let cur = find_result.slot.load_helping(guard, pool);
                     if cur == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
@@ -818,7 +818,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
             for bucket in data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(guard, pool);
+                    let slot_ptr = slot.load_helping(guard, pool);
                     if !slot_ptr.is_null() {
                         unsafe {
                             guard.defer_pdestroy(slot_ptr);
@@ -973,7 +973,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                 for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
-                            let mut slot_ptr = slot.load(guard, pool);
+                            let mut slot_ptr = slot.load_helping(guard, pool);
                             loop {
                                 if slot_ptr.is_null() {
                                     break None;
@@ -983,7 +983,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                 // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
                                 // TODO: should we do it...?
                                 if slot_ptr.tag() == 1 {
-                                    slot_ptr = slot.load(guard, pool);
+                                    slot_ptr = slot.load_helping(guard, pool);
                                     continue;
                                 }
 
@@ -1012,7 +1012,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                     pool,
                                 );
                                 if res.is_err() {
-                                    slot_ptr = slot.load(guard, pool);
+                                    slot_ptr = slot.load_helping(guard, pool);
                                     continue;
                                 }
 
@@ -1042,7 +1042,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                         .get_unchecked(i)
                                 };
 
-                                let slot_first_level = slot.load(guard, pool);
+                                let slot_first_level = slot.load_helping(guard, pool);
                                 if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
                                     // 2-byte tag checking
                                     if slot_first_level.high_tag() != key_tag as usize {
@@ -1276,7 +1276,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                 for key_hash in key_hashes.clone() {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
 
-                    if !slot.load(guard, pool).is_null() {
+                    if !slot.load_helping(guard, pool).is_null() {
                         continue;
                     }
 

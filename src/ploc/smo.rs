@@ -228,8 +228,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Deref for SMOAtomic<O,
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
-    // TODO(opt): lookup과 분리
-    pub fn load<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
+    pub fn load_helping<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
         let mut p = self.inner.load(Ordering::SeqCst, guard);
         loop {
             let p_ref = some_or!(unsafe { p.as_ref(pool) }, return p);
@@ -347,7 +346,7 @@ where
         }
 
         // Normal run
-        let target = point.load(guard, pool);
+        let target = point.load_helping(guard, pool);
         let next = ok_or!(
             G::prepare_delete(del_type, target, forbidden, obj, guard, pool),
             return Err(())
@@ -514,7 +513,7 @@ where
         // Normal run
 
         // 포인트의 현재 타겟 불러옴
-        let target = point.load(guard, pool);
+        let target = point.load_helping(guard, pool);
         if target.is_null() || !G::prepare_update(target, expected, obj, guard, pool) {
             return Err(());
         }
@@ -547,7 +546,8 @@ where
                 target
             })
             .map_err(|cur| {
-                let p = point.load(guard, pool);
+                // TODO(opt): 헬핑하지 말고 리턴
+                let p = point.load_helping(guard, pool);
 
                 if p != target {
                     return;

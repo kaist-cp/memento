@@ -417,7 +417,7 @@ impl<T: Clone> Traversable<Node<MaybeUninit<T>>> for Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
-        let mut curr = self.head.load(guard, pool);
+        let mut curr = self.head.load_helping(guard, pool);
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
