@@ -25,6 +25,7 @@ use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
 use crate::node::Node;
+use crate::pepoch::atomic::Pointer;
 use crate::pepoch::PShared;
 use crate::pepoch::{PAtomic, PDestroyable, POwned};
 use crate::ploc::Delete;
@@ -34,6 +35,7 @@ use crate::ploc::SMOAtomic;
 use crate::ploc::Traversable;
 use crate::ploc::Update;
 use crate::ploc::UpdateDeleteInfo;
+use crate::ploc::clear_owner;
 use crate::pmem::global_pool;
 use crate::pmem::persist_obj;
 use crate::pmem::sfence;
@@ -194,9 +196,9 @@ impl<K: 'static + PartialEq + Hash, V: 'static> Memento for ResizeLoop<K, V> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let mut g = guard.clone();
-        println!("[resize loop] start loop");
+        // println!("[resize loop] start loop");
         while let Ok(()) = resize_recv.recv() {
-            println!("[resize_loop] do resize!");
+            // println!("[resize_loop] do resize!");
             inner.resize(self, &mut g, pool);
             g.repin_after(|| {}); // TODO: drop?
         }
@@ -500,8 +502,7 @@ impl<K, V> UpdateDeleteInfo<(), Node<Slot<K, V>>> for Bucket<K, V> {
         match del_type {
             0 => Some(PShared::null()),
             1 => {
-                if deleted.tag() == 1 {
-                    // println!("hey");
+                if deleted.tag() & 1 != 0 {
                     return None;
                 }
                 Some(deleted.with_tag(1))
@@ -788,7 +789,7 @@ fn new_node<K, V>(
     size: usize,
     pool: &PoolHandle,
 ) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-    println!("[new_node] size: {size}");
+    // println!("[new_node] size: {size}");
 
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
@@ -922,7 +923,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
             }
 
             context = res.unwrap();
-            println!("[add_level] next_level_size: {next_level_size}");
+            // println!("[add_level] next_level_size: {next_level_size}");
             break;
         }
 
@@ -931,7 +932,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
     }
 
     pub fn resize(&self, client: &mut ResizeLoop<K, V>, guard: &Guard, pool: &'static PoolHandle) {
-        println!("[resize]");
+        // println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let mut context_ref = unsafe { context.deref(pool) };
@@ -947,10 +948,10 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
             let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
-            println!(
-                "[resize] resize_size: {}, last_level_size: {}",
-                context_ref.resize_size, last_level_size
-            );
+            // println!(
+            //     "[resize] resize_size: {}, last_level_size: {}",
+            //     context_ref.resize_size, last_level_size
+            // );
             if context_ref.resize_size < last_level_size {
                 break;
             }
@@ -998,6 +999,10 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                 //     continue;
                                 // }
 
+                                if slot_ptr.into_usize() == 15999037676234211568 {
+                                    println!("bid: {bid}, sid: {sid}");
+                                }
+
                                 // TODO(check slot): after
                                 let res = client.resize_tag.run(
                                     slot,
@@ -1006,7 +1011,6 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                     guard,
                                     pool,
                                 );
-
                                 if res.is_err() {
                                     slot_ptr = slot.load(guard, pool);
                                     continue;
@@ -1069,6 +1073,8 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                                 // }
 
                                 // TODO(check slot): after
+                                unsafe { clear_owner(slot_ptr.deref(pool)) };
+
                                 if client
                                     .resize_move
                                     .run(slot, (slot_ptr, slot, |_| true), false, guard, pool) // TODO(must): normal run을 가정함
@@ -1088,10 +1094,10 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                             break;
                         }
 
-                        println!(
-                            "[resize] resizing again for ({}, {}, {})...",
-                            last_level_size, bid, sid
-                        );
+                        // println!(
+                        //     "[resize] resizing again for ({}, {}, {})...",
+                        //     last_level_size, bid, sid
+                        // );
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
@@ -1152,7 +1158,7 @@ impl<K: 'static + PartialEq + Hash, V: 'static> ClevelInner<K, V> {
                 break;
             }
 
-            println!("[resize] done!");
+            // println!("[resize] done!");
         }
     }
 }
@@ -1466,12 +1472,17 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
                 break;
             }
 
+            if insert_result.slot_ptr.with_tag(1).into_usize() == 15999037676234211569 {
+                println!("here");
+            }
+
             // println!(
             //     "[insert] tid = {tid} inserted {} to resized array ({}, {}). move.",
             //     unsafe { insert_result.slot_ptr.deref() }.key,
             //     insert_result.size,
             //     insert_result.bucket_index
             // );
+            unsafe { clear_owner(insert_result.slot_ptr.deref(pool)) };
             let (context_insert, insert_result_insert) = Self::insert_inner(
                 client,
                 inner,
@@ -1767,13 +1778,13 @@ mod tests {
                     let _ = insert.run(object, (0, i, i, &send), rec, guard, pool);
                     assert_eq!(Clevel::search(object, &i, guard, pool), Some(&i));
 
-                    let _ = update.run(object, (0, i, i + RANGE, &send), rec, guard, pool);
-                    assert_eq!(Clevel::search(object, &i, guard, pool), Some(&(i + RANGE)));
+                    // let _ = update.run(object, (0, i, i + RANGE, &send), rec, guard, pool);
+                    // assert_eq!(Clevel::search(object, &i, guard, pool), Some(&(i + RANGE)));
                 }
 
                 for i in 0..RANGE {
-                    assert_eq!(Clevel::search(object, &i, guard, pool), Some(&(i + RANGE)));
-                    let _ = delete.run(object, &i, rec, guard, pool);
+                    assert_eq!(Clevel::search(object, &i, guard, pool), Some(&i));
+                    let _ = delete.run(object, &i, false, guard, pool);
                     assert_eq!(Clevel::search(object, &i, guard, pool), None);
                 }
 
