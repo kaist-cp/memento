@@ -678,7 +678,7 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Contex
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::SeqCst, guard);
+                    let slot_ptr = slot.load_helping(guard, pool);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
