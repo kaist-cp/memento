@@ -324,7 +324,7 @@ where
     G: 'static + UpdateDeleteInfo<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (u16, PShared<'o, N>, &'o O);
+    type Input<'o> = (u16, PShared<'o, N>, &'o O, usize);
     type Output<'o>
     where
         O: 'o,
@@ -336,7 +336,7 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (del_type, forbidden, obj): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (del_type, forbidden, obj, tid): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
