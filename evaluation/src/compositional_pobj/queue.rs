@@ -10,18 +10,18 @@ use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
 impl<T: 'static + Clone> TestQueue for Queue<T> {
-    type EnqInput = (&'static mut Enqueue<T>, T); // Memento, input
-    type DeqInput = &'static mut Dequeue<T>; // Memento
+    type EnqInput = (&'static mut Enqueue<T>, T, usize); // Memento, input, tid
+    type DeqInput = (&'static mut Dequeue<T>, usize); // Memento, tid
 
-    fn enqueue(&self, (enq, input): Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
-        let _ = enq.run(self, input, false, guard, pool);
+    fn enqueue(&self, (enq, input, tid): Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
+        let _ = enq.run(self, input, tid, false, guard, pool);
 
         // TODO: custom logic 추상화
         enq.reset(guard, pool);
     }
 
-    fn dequeue(&self, deq: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
-        let _ = deq.run(self, (), false, guard, pool);
+    fn dequeue(&self, (deq, tid): Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
+        let _ = deq.run(self, (), tid, false, guard, pool);
         deq.reset(guard, pool);
     }
 }
@@ -46,7 +46,7 @@ impl PDefault for TestMementoQueue {
         // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..QUEUE_INIT_SIZE {
-            let _ = push_init.run(&queue, i, false, &guard, pool);
+            let _ = push_init.run(&queue, i, 0, false, &guard, pool);
             push_init.reset(&guard, pool);
         }
         Self { queue }
@@ -78,14 +78,15 @@ impl TestNOps for MementoQueueEnqDeqPair {}
 
 impl Memento for MementoQueueEnqDeqPair {
     type Object<'o> = &'o TestMementoQueue;
-    type Input<'o> = usize; // tid
+    type Input<'o> = (); // tid
     type Output<'o> = ();
     type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input<'o>,
+        _: Self::Input<'o>,
+        tid: usize,
         _: bool, // TODO: template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -100,8 +101,8 @@ impl Memento for MementoQueueEnqDeqPair {
                     unsafe { (&*self.enq as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
                 let deq =
                     unsafe { (&*self.deq as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
-                let enq_input = (enq, tid);
-                let deq_input = deq;
+                let enq_input = (enq, tid, tid); // `tid` 값을 enq. 특별한 이유는 없음
+                let deq_input = (deq, tid);
                 enq_deq_pair(q, enq_input, deq_input, guard, pool);
             },
             tid,
@@ -144,14 +145,15 @@ impl TestNOps for MementoQueueEnqDeqProb {}
 
 impl Memento for MementoQueueEnqDeqProb {
     type Object<'o> = &'o TestMementoQueue;
-    type Input<'o> = usize; // tid
+    type Input<'o> = ();
     type Output<'o> = ();
     type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input<'o>,
+        _: Self::Input<'o>,
+        tid: usize,
         _: bool, // TODO: template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -167,8 +169,8 @@ impl Memento for MementoQueueEnqDeqProb {
                     unsafe { (&*self.enq as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
                 let deq =
                     unsafe { (&*self.deq as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
-                let enq_input = (enq, tid);
-                let deq_input = deq;
+                let enq_input = (enq, tid, tid);
+                let deq_input = (deq, tid);
                 enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
             },
             tid,
