@@ -1,8 +1,7 @@
 //! Persistent opt queue
 
-use crate::node::Node;
-use crate::ploc::smo::{Delete, Insert, SMOAtomic, UpdateDeleteInfo};
-use crate::ploc::{Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
+use crate::ploc::smo::{self, Delete, Insert, SMOAtomic, UpdateDeleteInfo};
+use crate::ploc::{no_owner, Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -16,11 +15,59 @@ use crate::*;
 #[derive(Debug)]
 pub struct TryFail;
 
-/// ComposedQueue의 try push operation
+#[derive(Debug)]
+pub struct Node<T> {
+    data: MaybeUninit<T>,
+    next: PAtomic<Self>,
+    owner: PAtomic<Self>,
+}
+
+impl<T> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: MaybeUninit::new(value),
+            next: PAtomic::null(),
+            owner: PAtomic::from(no_owner()),
+        }
+    }
+}
+
+impl<T> Default for Node<T> {
+    fn default() -> Self {
+        Self {
+            data: MaybeUninit::uninit(),
+            next: PAtomic::null(),
+            owner: PAtomic::from(no_owner()),
+        }
+    }
+}
+
+// TODO(must): T should be collectable
+impl<T> Collectable for Node<T> {
+    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark valid ptr to trace
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next = unsafe { next.deref_mut(pool) };
+            Node::<T>::mark(next, gc);
+        }
+    }
+}
+
+impl<T> smo::Node for Node<T> {
+    #[inline]
+    fn owner(&self) -> &PAtomic<Self> {
+        &self.owner
+    }
+}
+
+/// try push operation for Queue
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: Insert<Queue<T>, Node<MaybeUninit<T>>>,
+    insert: Insert<Queue<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -41,14 +88,14 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     #[inline]
-    fn prepare(_: &mut Node<MaybeUninit<T>>) -> bool {
+    fn prepare(_: &mut Node<T>) -> bool {
         true
     }
 }
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Object<'o> = &'o Queue<T>;
-    type Input<'o> = PShared<'o, Node<MaybeUninit<T>>>;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -56,6 +103,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         &mut self,
         queue: Self::Object<'o>,
         node: Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -67,6 +115,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
             .run(
                 &tail_ref.next,
                 (node, queue, Self::prepare),
+                tid,
                 rec,
                 guard,
                 pool,
@@ -106,7 +155,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
-    node: Checkpoint<PAtomic<Node<MaybeUninit<T>>>>,
+    node: Checkpoint<PAtomic<Node<T>>>,
     try_enq: RetryLoop<TryEnqueue<T>>,
 }
 
@@ -139,11 +188,12 @@ impl<T: Clone> Memento for Enqueue<T> {
         &mut self,
         queue: Self::Object<'o>,
         value: Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = POwned::new(Node::from(MaybeUninit::new(value)), pool);
+        let node = POwned::new(Node::from(value), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = self
@@ -155,6 +205,7 @@ impl<T: Clone> Memento for Enqueue<T> {
                     let d = aborted.load(Ordering::Relaxed, guard);
                     unsafe { guard.defer_pdestroy(d) };
                 }),
+                tid,
                 rec,
                 guard,
                 pool,
@@ -163,7 +214,7 @@ impl<T: Clone> Memento for Enqueue<T> {
             .load(Ordering::Relaxed, guard);
 
         self.try_enq
-            .run(queue, node, rec, guard, pool)
+            .run(queue, node, tid, rec, guard, pool)
             .map_err(|_| unreachable!("Retry never fails."))
     }
 
@@ -178,7 +229,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    delete: Delete<Queue<T>, Node<MaybeUninit<T>>, Self>,
+    delete: Delete<Queue<T>, Node<T>, Self>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -207,12 +258,20 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         &mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.delete
-            .run(&queue.head, (0, PShared::null(), queue), rec, guard, pool)
+            .run(
+                &queue.head,
+                (0, PShared::null(), queue),
+                tid,
+                rec,
+                guard,
+                pool,
+            )
             .map(|ret| {
                 ret.map(|popped| {
                     let next = unsafe { popped.deref(pool) }
@@ -231,20 +290,20 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T> {
+impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<T>> for TryDequeue<T> {
     fn prepare_delete<'g>(
         del_type: u16,
-        old_head: PShared<'_, Node<MaybeUninit<T>>>,
-        _: PShared<'_, Node<MaybeUninit<T>>>,
+        old_head: PShared<'_, Node<T>>,
+        _: PShared<'_, Node<T>>,
         queue: &Queue<T>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>>>>, NeedRetry> {
+    ) -> Result<Option<PShared<'g, Node<T>>>, NeedRetry> {
         let old_head_ref = unsafe { old_head.deref(pool) };
         let next = old_head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
-        if old_head == tail {
+        if old_head.as_ptr() == tail.as_ptr() {
             if next.is_null() {
                 return Ok(None);
             }
@@ -263,24 +322,13 @@ impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<MaybeUninit<T>>> for TryDequeue<T
         Ok(Some(next))
     }
 
-    // TODO(opt): How to refactor?
-    fn prepare_update<'g>(
-        _: PShared<'_, Node<MaybeUninit<T>>>,
-        _: PShared<'_, Node<MaybeUninit<T>>>,
-        _: &Queue<T>,
-        _: &'g Guard,
-        _: &PoolHandle,
-    ) -> bool {
-        unreachable!("not used.")
-    }
-
     #[inline]
     fn node_when_deleted<'g>(
         _: u16,
-        old_head: PShared<'_, Node<MaybeUninit<T>>>,
+        old_head: PShared<'_, Node<T>>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Option<PShared<'g, Node<MaybeUninit<T>>>> {
+    ) -> Option<PShared<'g, Node<T>>> {
         let old_head_ref = unsafe { old_head.deref(pool) }; // SAFE: old_head는 null일 수 없음
         Some(old_head_ref.next.load(Ordering::SeqCst, guard))
     }
@@ -316,12 +364,13 @@ impl<T: Clone> Memento for Dequeue<T> {
         &mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.try_deq
-            .run(queue, (), rec, guard, pool)
+            .run(queue, (), tid, rec, guard, pool)
             .map_err(|_| unreachable!("Retry never fails."))
     }
 
@@ -362,16 +411,17 @@ impl<T: Clone> Memento for DequeueSome<T> {
         &mut self,
         queue: Self::Object<'o>,
         (): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if let Some(v) = self.deq.run(queue, (), rec, guard, pool).unwrap() {
+        if let Some(v) = self.deq.run(queue, (), tid, rec, guard, pool).unwrap() {
             return Ok(v);
         }
 
         loop {
-            if let Some(v) = self.deq.run(queue, (), false, guard, pool).unwrap() {
+            if let Some(v) = self.deq.run(queue, (), tid, false, guard, pool).unwrap() {
                 return Ok(v);
             }
         }
@@ -387,14 +437,14 @@ unsafe impl<T: Clone> Send for DequeueSome<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
-    head: CachePadded<SMOAtomic<Self, Node<MaybeUninit<T>>, TryDequeue<T>>>,
-    tail: CachePadded<PAtomic<Node<MaybeUninit<T>>>>,
+    head: CachePadded<SMOAtomic<Self, Node<T>, TryDequeue<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
 }
 
 impl<T: Clone> PDefault for Queue<T> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
-        let sentinel = POwned::new(Node::from(MaybeUninit::uninit()), pool).into_shared(guard);
+        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
@@ -410,13 +460,8 @@ impl<T: Clone> Collectable for Queue<T> {
     }
 }
 
-impl<T: Clone> Traversable<Node<MaybeUninit<T>>> for Queue<T> {
-    fn search(
-        &self,
-        target: PShared<'_, Node<MaybeUninit<T>>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> bool {
+impl<T: Clone> Traversable<Node<T>> for Queue<T> {
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load_helping(guard, pool);
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
@@ -437,9 +482,10 @@ unsafe impl<T: Clone + Send + Sync> Send for Queue<T> {}
 
 #[cfg(test)]
 mod test {
+    use std::sync::atomic::AtomicUsize;
+
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
-    use rusty_fork::rusty_fork_test;
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
@@ -469,7 +515,7 @@ mod test {
 
     impl Memento for EnqDeq {
         type Object<'o> = &'o Queue<usize>;
-        type Input<'o> = usize; // tid
+        type Input<'o> = ();
         type Output<'o> = ();
         type Error<'o> = !;
 
@@ -477,7 +523,8 @@ mod test {
         fn run<'o>(
             &mut self,
             queue: Self::Object<'o>,
-            tid: Self::Input<'o>,
+            (): Self::Input<'o>,
+            tid: usize,
             rec: bool,
             guard: &'o Guard,
             pool: &'static PoolHandle,
@@ -490,7 +537,7 @@ mod test {
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<usize>::default();
-                    let must_none = tmp_deq.run(queue, (), rec, guard, pool).unwrap();
+                    let must_none = tmp_deq.run(queue, (), tid, rec, guard, pool).unwrap();
                     assert!(must_none.is_none());
                     tmp_deq.reset(guard, pool);
 
@@ -503,14 +550,15 @@ mod test {
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ = self.enqs[i].run(queue, tid, rec, guard, pool);
-                        let ret = self.deqs[i].run(queue, (), rec, guard, pool).unwrap();
+                        let value = tid;
+                        let _ = self.enqs[i].run(queue, value, tid, rec, guard, pool);
+                        let ret = self.deqs[i].run(queue, (), tid, rec, guard, pool).unwrap();
                         assert!(ret.is_some());
                     }
 
                     // deq 결과를 실험결과에 전달
                     for deq in self.deqs.as_mut() {
-                        let ret = deq.run(queue, (), true, guard, pool).unwrap().unwrap();
+                        let ret = deq.run(queue, (), tid, true, guard, pool).unwrap().unwrap();
                         let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
                     }
 
@@ -534,13 +582,12 @@ mod test {
     // - pool을 2번째 열 때부터 gc 동작 확인가능:
     //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
-    rusty_fork_test! {
-        #[test]
-        fn enq_deq() {
-            const FILE_NAME: &str = "composed_opt_enq_deq.pool";
-            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-            run_test::<Queue<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
-        }
+    #[test]
+    fn enq_deq() {
+        const FILE_NAME: &str = "queue_enq_deq.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<Queue<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }

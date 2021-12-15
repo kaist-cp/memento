@@ -180,7 +180,7 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, us
     (
         (data & tid_bits()).rotate_left(ONE_BYTE),
         (data & high_bits()).rotate_left(TWO_BYTES),
-        data & !high_bits() & !low_bits::<T>(),
+        data & !tid_bits() & !high_bits() & !low_bits::<T>(),
         data & low_bits::<T>(),
     )
 }
