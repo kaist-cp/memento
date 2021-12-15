@@ -203,7 +203,7 @@ impl<T: Clone> Memento for Enqueue<T> {
                 (PAtomic::from(node), |aborted| {
                     let guard = unsafe { epoch::unprotected() };
                     let d = aborted.load(Ordering::Relaxed, guard);
-                    unsafe { guard.defer_pdestroy(d) };
+                    let _ = unsafe { d.into_owned() };
                 }),
                 tid,
                 rec,
@@ -466,7 +466,7 @@ impl<T: Clone> Traversable<Node<T>> for Queue<T> {
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
-            if curr == target {
+            if curr.as_ptr() == target.as_ptr() {
                 return true;
             }
 
