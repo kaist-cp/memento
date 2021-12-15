@@ -171,6 +171,7 @@ pub struct NeedRetry;
 pub trait UpdateDeleteInfo<O, N> {
     /// OK(Some or None): next or empty, Err: need retry
     fn prepare_delete<'g>(
+        del_type: u16,
         cur: PShared<'_, N>,
         aux: PShared<'g, N>,
         obj: &O,
@@ -189,6 +190,7 @@ pub trait UpdateDeleteInfo<O, N> {
 
     /// A pointer that should be next after a node is deleted
     fn node_when_deleted<'g>(
+        del_type: u16,
         deleted: PShared<'g, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -333,7 +335,7 @@ where
     G: 'static + UpdateDeleteInfo<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (PShared<'o, N>, &'o O, usize);
+    type Input<'o> = (u16, PShared<'o, N>, &'o O, usize);
     type Output<'o>
     where
         O: 'o,
@@ -345,19 +347,19 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (forbidden, obj, tid): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (del_type, forbidden, obj, tid): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(tid, guard, pool);
+            return self.result(del_type, tid, guard, pool);
         }
 
         // Normal run
         let target = point.load_helping(guard, pool);
         let next = ok_or!(
-            G::prepare_delete(target, forbidden, obj, guard, pool),
+            G::prepare_delete(del_type, target, forbidden, obj, guard, pool),
             return Err(())
         );
         let next = some_or!(next, {
@@ -415,6 +417,7 @@ where
     #[inline]
     fn result<'g>(
         &self,
+        del_type: u16,
         tid: usize,
         guard: &'g Guard,
         pool: &'static PoolHandle,
