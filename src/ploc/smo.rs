@@ -73,6 +73,7 @@ where
         &mut self,
         point: Self::Object<'o>,
         (mut new, obj, prepare): Self::Input<'o>, // TODO(opt): prepare도 그냥 Prepare trait으로 할 수 있을 듯
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -178,15 +179,6 @@ pub trait UpdateDeleteInfo<O, N> {
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<Option<PShared<'g, N>>, NeedRetry>;
-
-    /// 계속 진행 여부를 리턴
-    fn prepare_update<'g>(
-        cur: PShared<'_, N>,
-        expected: PShared<'_, N>,
-        obj: &O,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-    ) -> bool;
 
     /// A pointer that should be next after a node is deleted
     fn node_when_deleted<'g>(
@@ -335,7 +327,7 @@ where
     G: 'static + UpdateDeleteInfo<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (u16, PShared<'o, N>, &'o O, usize);
+    type Input<'o> = (u16, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -347,7 +339,8 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (del_type, forbidden, obj, tid): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (del_type, forbidden, obj): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,

@@ -41,7 +41,7 @@
 // Persistent objects collection
 pub mod ds;
 pub mod node;
-pub mod pipe;
+// pub mod pipe;
 pub mod ploc;
 
 // Persistent memory underline
@@ -165,6 +165,7 @@ pub trait Memento: Default + Collectable {
         &mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
+        tid: usize,
         rec: bool, // TODO(opt): template parameter
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -212,16 +213,17 @@ impl<M: Memento> Memento for AtomicReset<M> {
         &mut self,
         object: Self::Object<'o>,
         input: Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec && self.resetting {
             self.reset(guard, pool);
-            return self.composed.run(object, input, false, guard, pool);
+            return self.composed.run(object, input, tid, false, guard, pool);
         }
 
-        self.composed.run(object, input, rec, guard, pool)
+        self.composed.run(object, input, tid, rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {

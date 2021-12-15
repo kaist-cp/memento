@@ -34,6 +34,7 @@ impl Memento for TryLock {
         &mut self,
         spin_lock: Self::Object<'o>,
         (): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -42,7 +43,7 @@ impl Memento for TryLock {
             let cur = spin_lock.inner.load(Ordering::Relaxed);
 
             if cur == self.id(pool) {
-                self.acq_succ(spin_lock, rec, guard, pool);
+                self.acq_succ(spin_lock, tid, rec, guard, pool);
                 return Ok(());
             }
 
@@ -61,7 +62,7 @@ impl Memento for TryLock {
             )
             .map(|_| {
                 persist_obj(&spin_lock.inner, true);
-                self.acq_succ(spin_lock, rec, guard, pool);
+                self.acq_succ(spin_lock, tid, rec, guard, pool);
             })
             .map_err(|_| ())
     }
@@ -81,11 +82,12 @@ impl Memento for TryLock {
 
 impl TryLock {
     #[inline]
-    fn acq_succ<O>(&mut self, spin_lock: &O, rec: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn acq_succ<O>(&mut self, spin_lock: &O, tid: usize, rec: bool, guard: &Guard, pool: &'static PoolHandle) {
         let lock_ptr = unsafe { spin_lock.as_pptr(pool) }.into_offset();
         let _ = self.target.run(
             (),
             (CheckpointableUsize(lock_ptr), |_| {}),
+            tid,
             rec,
             guard,
             pool,
@@ -122,12 +124,13 @@ impl Memento for Lock {
         &mut self,
         spin_lock: Self::Object<'o>,
         (): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         self.try_lock
-            .run(spin_lock, (), rec, guard, pool)
+            .run(spin_lock, (), tid, rec, guard, pool)
             .map_err(|_| unreachable!("Retry never fails."))
     }
 

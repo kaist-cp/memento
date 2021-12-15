@@ -78,7 +78,7 @@ impl PoolHandle {
     pub fn execute<O, M>(&'static self)
     where
         O: PDefault + Send + Sync,
-        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize> + Send + Sync,
+        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()> + Send + Sync,
     {
         // root obj 얻기
         let root_obj = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
@@ -110,7 +110,7 @@ impl PoolHandle {
                                     let _ = barrier.wait();
                                 }
 
-                                let _ = root_memento.run(root_obj, tid, true, &guard, self);
+                                let _ = root_memento.run(root_obj, (), tid, true, &guard, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
@@ -238,7 +238,7 @@ impl Pool {
     ) -> Result<&'static PoolHandle, Error>
     where
         O: PDefault,
-        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize>,
+        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()>,
     {
         // 파일 이미 있으면 에러 반환
         // - Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성하기 때문에, 그 중 하나인 "_basemd"를 붙여 확인
@@ -317,7 +317,7 @@ impl Pool {
     pub unsafe fn open<O, M>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error>
     where
         O: PDefault,
-        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = usize>,
+        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()>,
     {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
@@ -422,7 +422,7 @@ mod tests {
 
     impl Memento for RootMemento {
         type Object<'o> = &'o DummyRootObj;
-        type Input<'o> = usize; // tid
+        type Input<'o> = ();
         type Output<'o> = ();
         type Error<'o> = !;
 
@@ -430,6 +430,7 @@ mod tests {
             &mut self,
             _: Self::Object<'o>,
             _: Self::Input<'o>,
+            _: usize,
             _: bool,
             _: &'o Guard,
             _: &'static PoolHandle,
