@@ -121,6 +121,10 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
                 pool,
             )
             .map(|_| {
+                if rec {
+                    return;
+                }
+
                 let _ = queue.tail.compare_exchange(
                     tail,
                     node,
