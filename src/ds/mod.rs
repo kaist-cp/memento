@@ -4,7 +4,7 @@
 // pub mod elim_stack;
 // pub mod exchanger;
 // pub mod queue;
-pub mod queue_unopt;
+// pub mod queue_unopt;
 pub mod spin_lock;
 pub mod stack;
-pub mod treiber_stack;
+// pub mod treiber_stack;

@@ -127,18 +127,19 @@ impl CompareAndSetOrdering for (Ordering, Ordering) {
     }
 }
 
-const TWO_BYTES: usize = 16;
+const ONE_BYTE: u32 = 8;
+const TWO_BYTES: u32 = 16;
 
-/// Returns a bitmask containing the unused most significant bits of an aligned pointer to `T`.
+/// 0b1111111100000000000000000000000000000000000000000000000000000000 in 64-bit
 #[inline]
-fn high_bits() -> usize {
-    !(usize::MAX >> TWO_BYTES)
+fn tid_bits() -> usize {
+    !(usize::MAX >> ONE_BYTE)
 }
 
-/// TODO(doc)
+/// 0b0000000011111111000000000000000000000000000000000000000000000000 in 64-bit
 #[inline]
-pub fn max_high_bits() -> usize {
-    high_bits().rotate_left(TWO_BYTES as u32)
+fn high_bits() -> usize {
+    !(usize::MAX >> ONE_BYTE) ^ !(usize::MAX >> TWO_BYTES)
 }
 
 /// Returns a bitmask containing the unused least significant bits of an aligned pointer to `T`.
@@ -163,14 +164,22 @@ fn compose_tag<T: ?Sized + Pointable>(data: usize, ltag: usize) -> usize {
 
 #[inline]
 fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
-    (high_bits() & (htag.rotate_right(TWO_BYTES as u32))) | (!high_bits() & data)
+    (high_bits() & (htag.rotate_right(TWO_BYTES))) | (!high_bits() & data)
+}
+
+#[inline]
+fn compose_tid<T: ?Sized + Pointable>(tid: usize, data: usize) -> usize {
+    (tid_bits() & (tid.rotate_right(ONE_BYTE))) | (!tid_bits() & data)
 }
 
 /// Decomposes a tagged pointer `data` into the pointer and the tag.
+/// (tid, high_tag, ptr, low_tag)
+// TODO(opt): Decompose separately?
 #[inline]
-fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize) {
+fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, usize) {
     (
-        (data & high_bits()).rotate_left(TWO_BYTES as u32),
+        (data & tid_bits()).rotate_left(ONE_BYTE),
+        (data & high_bits()).rotate_left(TWO_BYTES),
         data & !high_bits() & !low_bits::<T>(),
         data & low_bits::<T>(),
     )
@@ -432,7 +441,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     #[cfg_attr(all(feature = "nightly", not(crossbeam_loom)), const_fn::const_fn)]
     pub fn null() -> PAtomic<T> {
-        let (_, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
         Self {
             data: AtomicUsize::new(offset),
             _marker: PhantomData,
@@ -1032,7 +1041,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// PoolHandle을 받아야하므로 fmt::Pointer trait impl 하던 것을 직접 구현
     pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
-        let (_, offset, _) = decompose_tag::<T>(data);
+        let (_, _, offset, _) = decompose_tag::<T>(data);
         fmt::Pointer::fmt(&(unsafe { T::deref(offset, pool) as *const _ }), f)
     }
 }
@@ -1040,11 +1049,12 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
 impl<T: ?Sized + Pointable> fmt::Debug for PAtomic<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
-        let (htag, offset, ltag) = decompose_tag::<T>(data);
+        let (tid, htag, offset, ltag) = decompose_tag::<T>(data);
 
         f.debug_struct("Atomic")
-            .field("offset", &offset)
+            .field("tid", &tid)
             .field("high tag", &htag)
+            .field("offset", &offset)
             .field("low tag", &ltag)
             .finish()
     }
@@ -1342,14 +1352,20 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// assert_eq!(POwned::new(1234, &pool).tag(), 0);
     /// ```
     pub fn tag(&self) -> usize {
-        let (_, _, tag) = decompose_tag::<T>(self.data);
+        let (_, _, _, tag) = decompose_tag::<T>(self.data);
         tag
     }
 
     /// TODO(doc)
     pub fn high_tag(&self) -> usize {
-        let (tag, _, _) = decompose_tag::<T>(self.data);
+        let (_, tag, _, _) = decompose_tag::<T>(self.data);
         tag
+    }
+
+    /// TODO(doc)
+    pub fn tid(&self) -> usize {
+        let (tid, _, _, _) = decompose_tag::<T>(self.data);
+        tid
     }
 
     /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
@@ -1383,6 +1399,12 @@ impl<T: ?Sized + Pointable> POwned<T> {
         unsafe { Self::from_usize(compose_high_tag::<T>(tag, data)) }
     }
 
+    /// TODO(doc)
+    pub fn with_tid(self, tid: usize) -> POwned<T> {
+        let data = self.into_usize();
+        unsafe { Self::from_usize(compose_tid::<T>(tid, data)) }
+    }
+
     // PoolHandle을 받아야하므로 Deref trait impl 하던 것을 직접 구현
     /// 절대주소 참조
     ///
@@ -1390,7 +1412,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     pub unsafe fn deref<'a>(&self, pool: &'a PoolHandle) -> &'a T {
-        let (_, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
 
@@ -1402,7 +1424,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn deref_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
-        let (_, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
 
@@ -1451,7 +1473,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
 
 impl<T: ?Sized + Pointable> Drop for POwned<T> {
     fn drop(&mut self) {
-        let (_, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, offset, _) = decompose_tag::<T>(self.data);
         unsafe {
             // TODO: application 로직에서는 global pool 접근 막을 수 없을지 고민
             // - e.g. Pool::free를 호출하면, 그쪽에서 private한 global pool 사용
@@ -1462,9 +1484,11 @@ impl<T: ?Sized + Pointable> Drop for POwned<T> {
 
 impl<T: ?Sized + Pointable> fmt::Debug for POwned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (_, offset, tag) = decompose_tag::<T>(self.data);
+        let (tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Owned")
+            .field("tid", &tid)
+            .field("high tag", &high_tag)
             .field("offset", &offset)
             .field("tag", &tag)
             .finish()
@@ -1569,7 +1593,7 @@ impl<T> PShared<'_, T> {
     // TODO: Define as as AsPptr? (using `impl AsPptr for PShared<....`)
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn as_ptr(&self) -> PPtr<T> {
-        let (_, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, offset, _) = decompose_tag::<T>(self.data);
         PPtr::from(offset)
     }
 }
@@ -1586,7 +1610,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// assert!(p.is_null());
     /// ```
     pub fn null() -> PShared<'g, T> {
-        let (_, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
         PShared {
             data: offset,
             _marker: PhantomData,
@@ -1615,8 +1639,8 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn is_null(&self) -> bool {
-        let (_, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
-        let (_, my_offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, my_offset, _) = decompose_tag::<T>(self.data);
         my_offset == null_offset
     }
 
@@ -1660,7 +1684,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[allow(clippy::should_implement_trait)]
     pub unsafe fn deref(&self, pool: &'g PoolHandle) -> &'g T {
-        let (_, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
 
@@ -1709,7 +1733,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     #[allow(clippy::should_implement_trait)]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn deref_mut(&mut self, pool: &'g PoolHandle) -> &'g mut T {
-        let (_, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
 
@@ -1752,8 +1776,8 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub unsafe fn as_ref(&self, pool: &'g PoolHandle) -> Option<&'g T> {
-        let (_, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
-        let (_, my_offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, my_offset, _) = decompose_tag::<T>(self.data);
         if my_offset == null_offset {
             None
         } else {
@@ -1817,14 +1841,20 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn tag(&self) -> usize {
-        let (_, _, tag) = decompose_tag::<T>(self.data);
+        let (_, _, _, tag) = decompose_tag::<T>(self.data);
         tag
     }
 
     /// TODO(doc)
     pub fn high_tag(&self) -> usize {
-        let (tag, _, _) = decompose_tag::<T>(self.data);
+        let (_, tag, _, _) = decompose_tag::<T>(self.data);
         tag
+    }
+
+    /// TODO(doc)
+    pub fn tid(&self) -> usize {
+        let (tid, _, _, _) = decompose_tag::<T>(self.data);
+        tid
     }
 
     /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
@@ -1860,6 +1890,11 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// unused high bits of the pointer to `T`.
     pub fn with_high_tag(&self, tag: usize) -> PShared<'g, T> {
         unsafe { Self::from_usize(compose_high_tag::<T>(tag, self.data)) }
+    }
+
+    /// TODO(doc)
+    pub fn with_tid(&self, tid: usize) -> PShared<'g, T> {
+        unsafe { Self::from_usize(compose_tid::<T>(tid, self.data)) }
     }
 
     // PoolHandle을 받아야하므로 fmt trait impl 하던 것을 직접 구현
@@ -1920,9 +1955,11 @@ impl<T: ?Sized + Pointable> Ord for PShared<'_, T> {
 
 impl<T: ?Sized + Pointable> fmt::Debug for PShared<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (_, offset, tag) = decompose_tag::<T>(self.data);
+        let (tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Shared")
+            .field("tid", &tid)
+            .field("high tag", &high_tag)
             .field("offset", &offset)
             .field("tag", &tag)
             .finish()

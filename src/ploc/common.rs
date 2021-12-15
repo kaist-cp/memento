@@ -10,20 +10,8 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    Memento,
+    Memento, pepoch::PAtomic,
 };
-
-/// TODO(doc)
-pub trait Node: Sized {
-    /// TODO(doc)
-    fn ack(&self);
-
-    /// TODO(doc)
-    fn acked(&self) -> bool;
-
-    /// TODO(doc)
-    fn owner(&self) -> &AtomicUsize;
-}
 
 /// TODO(doc)
 pub trait NodeUnOpt: Sized {

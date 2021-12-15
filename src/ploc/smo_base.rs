@@ -20,6 +20,6 @@ pub const EMPTY: usize = 2;
 
 /// No owner를 표시하기 위함
 #[inline]
-pub fn no_owner() -> usize {
-    0
+pub fn no_owner<'g, T>() -> PShared<'g, T> {
+    PShared::null()
 }

@@ -3,13 +3,13 @@
 pub mod common;
 pub mod smo;
 pub mod smo_base;
-pub mod smo_unopt;
+// pub mod smo_unopt;
 
 pub use common::*;
 use crossbeam_epoch::Guard;
 pub use smo::*;
 pub use smo_base::*;
-pub use smo_unopt::*;
+// pub use smo_unopt::*;
 
 use crate::{pepoch::PShared, pmem::PoolHandle};
 
