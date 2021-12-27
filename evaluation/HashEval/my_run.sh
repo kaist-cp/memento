@@ -2,9 +2,7 @@
 
 rm -rf /mnt/pmem0/*
 
-BIN="bin"
-target="clevel_rust"
-
+target="clevel_rust"    # 측정 대상 (possible arg: TODO)
 HASH_SIZE=16777216      # Initial capacity of hash table
 OP=200000000            # Load, Run phase 각가에서 실행시킬 op 수
 SKIP_LOAD=true          # Load phase를 skip할지 여부
@@ -16,8 +14,8 @@ MODE="THROUGHPUT"       # Evaluation mode (possbile arg: THROUGHPUT, LATENCY, LO
 DISTRIBUTION="UNIFORM"  # Key distribution (possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN)
 THREAD=48
 
-# NUMA node 0 pinning
-numactl --cpunodebind=0 --membind=0 ./$BIN/PiBench ./$BIN/$target.so \
+# Pinning NUMA node 0
+numactl --cpunodebind=0 --membind=0 ./bin/PiBench ./bin/$target.so \
     -S $HASH_SIZE \
     -p $OP \
     --skip_load=$SKIP_LOAD \

@@ -15,7 +15,7 @@ function dmsg() {
 }
 
 function bench() {
-    target=$1   # possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel
+    target=$1   # possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel, clevel_rust (TODO: clevel_rust -> clevel_memento)
     workload=$2 # possible arg: insert, pos_search, ...
     mode=$3     # possible arg: THROUGHPUT, LOAD_FACTOR, RESIZE, LATENCY (대소문자 중요!!)
     dist=$4     # possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN
@@ -121,12 +121,12 @@ function bench_all() {
         fi
 
         bench clevel_rust $workload $mode $dist $THREAD
-        # bench clevel $workload $mode $dist $THREAD
-        # bench CCEH $workload $mode $dist $THREAD
-        # bench Level $workload $mode $dist $THREAD
-        # bench Dash $workload $mode $dist $THREAD
-        # bench PCLHT $workload $mode $dist $THREAD
-        # # bench SOFT $workload $mode $dist $THREAD # (TODO: 필요하면 추가, 추가시 init capacity 확인 필요)
+        bench clevel $workload $mode $dist $THREAD
+        bench CCEH $workload $mode $dist $THREAD
+        bench Level $workload $mode $dist $THREAD
+        bench Dash $workload $mode $dist $THREAD
+        bench PCLHT $workload $mode $dist $THREAD
+        # bench SOFT $workload $mode $dist $THREAD # (TODO: 필요하면 추가, 추가시 init capacity 확인 필요)
 
         # LATENCY 측정은 32 스레드로만 한 번 하고 끝냄
         if [ "$mode" == "LATENCY" ]; then
