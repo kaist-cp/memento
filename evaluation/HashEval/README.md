@@ -12,8 +12,10 @@
 ### Build
 
 ```
-make -j
+build.sh
 ```
+
+TODO: Dash build 확인
 
 ### Run
 
