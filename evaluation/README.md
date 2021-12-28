@@ -39,9 +39,10 @@ TODO: 현재 PMDK만 no_persist 구현 안됨. PMDK도 no_persist 같은 옵션 
 ```
 ./target/release/bench -f <poolpath> -a <target> -k <bench kind> -t <threads> -d <test-dur> -o <output>
 ```
-- `<target>`:
-    - queue: `memento_queue`, `memento_pipe_queue`, `durable_queue`, `log_queue`, `dss_queue`
-    - pipe: `memento_pipe`, `pmdk_pipe`, `crndm_pipe`
+- NUMA node 0에 pinning하려면 커맨드 앞에 `numactl --cpunodebind=0 --membind=0` 를 붙여야함
+- `<target>`
+    - (queue) `memento_queue`, `memento_pipe_queue`, `durable_queue`, `log_queue`, `dss_queue`
+    - (pipe) `memento_pipe`, `pmdk_pipe`, `crndm_pipe`
 - `<bench kind>`
     - `<target>`이 queue일 때: `pair`, `prob50` (`prob30`, `prob10`과 같이 enq 확률 조정 가능)
     - `<target>`이 pipe일 때: `pipe`
@@ -59,11 +60,12 @@ example:
 ```bash
 run.sh <pmempath>
 ```
-모든 (`<target>`, `<bench kind>`, `<threads=1~32>`) 쌍에 대하여, single bench를 5초씩 10번 반복하여 평균 처리율 계산
+모든 (`<target>`, `<bench kind>`, `<threads=1~32>`) 쌍에 대한 처리율 측정 (NUMA node 0에 pinning)
 - 결과:
     - raw: `./out/{obj}.csv` (obj: queue, pipe)
     - graph: `./out/{obj}-{bench kind}.png`
-- 풀 파일: 매 single bench 마다 `{pmempath}/{target}.pool`을 새로 생성하여 사용
+- 각 쌍의 처리율: single bench로 처리율 측정을 10번 반복한 후 평균 처리율 계산 
+- 풀 파일: 매 singe bench마다 `{pmempath}/{target}.pool`을 새로 생성하여 사용
 
 ## Hash
 

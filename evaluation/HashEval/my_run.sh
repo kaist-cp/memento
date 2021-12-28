@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# TODO: 이 파일은 프로젝트에 필요없음. 간단한 테스트 용도
+
 rm -rf /mnt/pmem0/*
 
 target="clevel_rust"    # 측정 대상 (possible arg: TODO)
