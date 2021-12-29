@@ -35,6 +35,6 @@
 pub mod compositional_pobj;
 // pub mod crndm;
 pub mod dss;
-// pub mod friedman;
+pub mod friedman;
 
 pub mod common;
