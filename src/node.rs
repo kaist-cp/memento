@@ -6,7 +6,7 @@ use crate::{
     pepoch::{self as epoch, PAtomic},
     ploc::{
         common::{self},
-        no_owner,
+        no_owner, smo,
     },
     pmem::{
         ll::persist_obj,
@@ -32,7 +32,7 @@ pub struct Node<T> {
     pub(crate) owner_unopt: AtomicUsize,
 
     /// 누가 delete/update 했는지 식별
-    pub(crate) owner: AtomicUsize,
+    pub(crate) owner: PAtomic<Self>,
 }
 
 impl<T> From<T> for Node<T> {
@@ -41,8 +41,8 @@ impl<T> From<T> for Node<T> {
             data: value,
             next: PAtomic::null(),
             acked_unopt: AtomicBool::new(false),
-            owner_unopt: AtomicUsize::new(no_owner()),
-            owner: AtomicUsize::new(no_owner()),
+            owner_unopt: AtomicUsize::new(0), // TODO: deprecated
+            owner: PAtomic::from(no_owner()),
         }
     }
 }
@@ -60,19 +60,9 @@ impl<T> Collectable for Node<T> {
     }
 }
 
-impl<T> common::Node for Node<T> {
+impl<T> smo::Node for Node<T> {
     #[inline]
-    fn ack(&self) {
-        panic!("Node cannot be acked.");
-    }
-
-    #[inline]
-    fn acked(&self) -> bool {
-        self.owner().load(Ordering::SeqCst) != no_owner()
-    }
-
-    #[inline]
-    fn owner(&self) -> &AtomicUsize {
+    fn owner(&self) -> &PAtomic<Self> {
         &self.owner
     }
 }

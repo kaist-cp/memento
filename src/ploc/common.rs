@@ -10,20 +10,8 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    Memento,
+    Memento, pepoch::PAtomic,
 };
-
-/// TODO(doc)
-pub trait Node: Sized {
-    /// TODO(doc)
-    fn ack(&self);
-
-    /// TODO(doc)
-    fn acked(&self) -> bool;
-
-    /// TODO(doc)
-    fn owner(&self) -> &AtomicUsize;
-}
 
 /// TODO(doc)
 pub trait NodeUnOpt: Sized {
@@ -93,6 +81,7 @@ where
         &mut self,
         (): Self::Object<'o>,
         (chk, if_exists): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         _: &'o Guard,
         _: &'static PoolHandle,
@@ -193,13 +182,14 @@ where
         &mut self,
         obj: Self::Object<'o>,
         input: Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if let Ok(ret) = self
             .try_mmt
-            .run(obj.clone(), input.clone(), rec, guard, pool)
+            .run(obj.clone(), input.clone(), tid, rec, guard, pool)
         {
             return Ok(ret);
         }
@@ -207,7 +197,7 @@ where
         loop {
             if let Ok(ret) = self
                 .try_mmt
-                .run(obj.clone(), input.clone(), false, guard, pool)
+                .run(obj.clone(), input.clone(), tid, false, guard, pool)
             {
                 return Ok(ret);
             }

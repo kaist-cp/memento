@@ -13,7 +13,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// 반드시 push에 성공함.
     type Push: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = (T, usize),
+        Input<'o> = T,
         Output<'o> = (),
         Error<'o> = !,
     >;
@@ -23,7 +23,7 @@ pub trait Stack<T: 'static + Clone>: 'static + Default + Collectable {
     /// pop의 결과가 `None`(empty)일 경우, 재시도 시 stack의 상황과 관계없이 언제나 `None`이 됨.
     type Pop: for<'o> Memento<
         Object<'o> = &'o Self,
-        Input<'o> = usize,
+        Input<'o> = (),
         Output<'o> = Option<T>,
         Error<'o> = !,
     >;
@@ -81,7 +81,7 @@ pub(crate) mod tests {
         S::Pop: Send,
     {
         type Object<'o> = &'o S;
-        type Input<'o> = usize; // tid(mid)
+        type Input<'o> = ();
         type Output<'o> = ();
         type Error<'o> = !;
 
@@ -93,7 +93,8 @@ pub(crate) mod tests {
         fn run<'o>(
             &mut self,
             stack: Self::Object<'o>,
-            tid: Self::Input<'o>,
+            (): Self::Input<'o>,
+            tid: usize,
             rec: bool,
             guard: &'o Guard,
             pool: &'static PoolHandle,
@@ -106,7 +107,7 @@ pub(crate) mod tests {
 
                     // Check empty
                     let mut tmp_pop = S::Pop::default();
-                    let must_none = tmp_pop.run(stack, 1, rec, guard, pool).unwrap();
+                    let must_none = tmp_pop.run(stack, (), 1, rec, guard, pool).unwrap();
                     assert!(must_none.is_none());
                     tmp_pop.reset(guard, pool);
 
@@ -122,8 +123,8 @@ pub(crate) mod tests {
 
                     // push; pop;
                     for i in 0..COUNT {
-                        let _ = self.pushes[i].run(stack, (tid, tid), rec, guard, pool);
-                        let ret = self.pops[i].run(stack, tid, rec, guard, pool).unwrap();
+                        let _ = self.pushes[i].run(stack, tid, tid, rec, guard, pool);
+                        let ret = self.pops[i].run(stack, (), tid, rec, guard, pool).unwrap();
 
                         v.push(ret);
                         assert!(ret.is_some());
@@ -141,7 +142,7 @@ pub(crate) mod tests {
 
                     // pop 결과를 실험결과에 전달
                     for (i, pop) in self.pops.iter_mut().enumerate() {
-                        let ret = pop.run(stack, tid, true, guard, pool).unwrap();
+                        let ret = pop.run(stack, (), tid, true, guard, pool).unwrap();
                         if ret.is_none() {
                             println!("tid: {:?}, expected: {:?}", tid, v[i])
                         }
