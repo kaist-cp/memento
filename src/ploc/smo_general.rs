@@ -7,7 +7,7 @@ use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{ll::persist_obj, rdtscp, Collectable, GarbageCollection, PoolHandle},
+    pmem::{lfence, ll::persist_obj, rdtsc, rdtscp, Collectable, GarbageCollection, PoolHandle},
     Memento,
 };
 
@@ -32,7 +32,8 @@ use super::NodeUnOpt;
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct Cas<N> { // TODO: N: Node 정의
+pub struct Cas<N> {
+    // TODO: N: Node 정의
     checkpoint: AtomicU64,
     _marker: PhantomData<N>,
 }
@@ -100,7 +101,8 @@ where
                     return;
                 }
 
-                let t = rdtscp();
+                let t = rdtsc();
+                lfence();
                 let cur = target.load(Ordering::SeqCst, guard); // TODO: 이거 없이 바로 checkpoint 확인해도 되지 않나?
 
                 if e.current != cur {

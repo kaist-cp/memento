@@ -9,7 +9,7 @@ const CACHE_LINE: usize = 64;
 use std::arch::x86::{_mm_mfence, _mm_sfence, clflush};
 
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_mm_clflush, _mm_mfence, _mm_sfence, __rdtscp};
+use std::arch::x86_64::{__rdtscp, _mm_clflush, _mm_lfence, _mm_mfence, _mm_sfence, _rdtsc};
 
 /// Synchronize caches and memories and acts like a write barrier
 #[inline(always)]
@@ -104,6 +104,20 @@ pub fn mfence() {
     unsafe {
         _mm_mfence();
     }
+}
+
+/// Load fence
+#[inline]
+pub fn lfence() {
+    unsafe {
+        _mm_lfence();
+    }
+}
+
+/// Rdtsc
+#[inline]
+pub fn rdtsc() -> u64 {
+    unsafe { _rdtsc() }
 }
 
 /// Rdtscp
