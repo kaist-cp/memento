@@ -1,7 +1,8 @@
 #!/bin/bash
 
+sudo modprobe msr # https://github.com/sfu-dis/pibench#intel-pcm 
+
 # Install dependency
-sudo modprobe msr # TODO: vldb repo에서 필요하다는데 왜 필요하지? 
 sudo apt install libpmemobj-dev -y
 sudo apt install libvmem-dev -y
 sudo apt install libgflags-dev -y
