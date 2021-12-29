@@ -3,6 +3,7 @@
 pub mod common;
 pub mod smo;
 pub mod smo_base;
+pub mod smo_general;
 // pub mod smo_unopt;
 
 pub use common::*;
