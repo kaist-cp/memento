@@ -10,6 +10,7 @@ pub use common::*;
 use crossbeam_epoch::Guard;
 pub use smo::*;
 pub use smo_base::*;
+pub use smo_general::*;
 // pub use smo_unopt::*;
 
 use crate::{pepoch::PShared, pmem::PoolHandle};

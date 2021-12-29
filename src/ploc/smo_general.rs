@@ -32,9 +32,9 @@ use super::NodeUnOpt;
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct Cas<N> {
+pub struct Cas<N> { // TODO: N: Node 정의
     checkpoint: AtomicU64,
-    _marker: PhantomData<*const N>,
+    _marker: PhantomData<N>,
 }
 
 impl<N> Default for Cas<N> {
