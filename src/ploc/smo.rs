@@ -5,7 +5,7 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 use crossbeam_epoch::Guard;
 use etrace::*;
 
-use super::{no_owner, InsertErr, Traversable};
+use super::{no_owner, InsertErr, Traversable, EMPTY};
 
 use crate::{
     pepoch::{PAtomic, PShared},
@@ -241,6 +241,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> SMOAtomic<O, N, G> {
             if o == no_owner() {
                 return p;
             }
+            // TODO: reflexive면 무한루프 발생. prev node를 들고 있고 현재 owner가 prev랑 같다면 그냥 리턴하기. Err로 리턴해서 업데이트 불가능한 상황임을 알려야 할 듯
 
             persist_obj(owner, true); // TODO(opt): async reset
             p = ok_or!(self.help(p, o, None, guard, pool), e, return e);
@@ -327,7 +328,7 @@ where
     G: 'static + UpdateDeleteInfo<O, N>,
 {
     type Object<'o> = &'o SMOAtomic<O, N, G>;
-    type Input<'o> = (u16, PShared<'o, N>, &'o O);
+    type Input<'o> = (u16, PShared<'o, N>, PShared<'o, N>, &'o O);
     type Output<'o>
     where
         O: 'o,
@@ -339,7 +340,7 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (del_type, forbidden, obj): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
+        (del_type, expected, new, obj): Self::Input<'o>, // TODO(must): forbidden은 general하게 사용될까? 사용하는 좋은 방법은? prepare에 넘기지 말고 그냥 여기서 eq check로 사용해버리기?
         tid: usize,
         rec: bool,
         guard: &'o Guard,
@@ -351,17 +352,7 @@ where
 
         // Normal run
         let target = point.load_helping(guard, pool);
-        let next = ok_or!(
-            G::prepare_delete(del_type, target, forbidden, obj, guard, pool),
-            return Err(())
-        );
-        let next = some_or!(next, {
-            self.target_loc
-                .store(PShared::null().with_tag(Self::EMPTY), Ordering::Relaxed);
-            persist_obj(&self.target_loc, true);
-            return Ok(None);
-        });
-        let next = next.with_tid(tid);
+        let next = new.with_tid(tid);
 
         // 우선 내가 target을 가리키고
         self.target_loc.store(target, Ordering::Relaxed);
@@ -381,13 +372,14 @@ where
             .map_err(|_| ())?;
 
         // Now I own the location. flush the owner.
-        persist_obj(owner, false);
+        persist_obj(owner, false); // we're doing CAS soon.
 
         // 주인을 정했으니 이제 point를 바꿔줌
         let _ = point.compare_exchange(target, next, Ordering::SeqCst, Ordering::SeqCst, guard);
 
         // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
-        // post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
+        // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
+        // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
         guard.defer_persist(point);
 
         Ok(Some(target))
@@ -404,9 +396,6 @@ where
     N: Node + Collectable,
     G: UpdateDeleteInfo<O, N>,
 {
-    /// `pop()` 결과 중 Empty를 표시하기 위한 태그
-    const EMPTY: usize = 2;
-
     #[inline]
     fn result<'g>(
         &self,
@@ -417,7 +406,7 @@ where
     ) -> Result<Option<PShared<'g, N>>, ()> {
         let target = self.target_loc.load(Ordering::Relaxed, guard);
         let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
-            return if target.tag() & Self::EMPTY != 0 {
+            return if target.tag() & EMPTY != 0 {
                 // empty라고 명시됨
                 Ok(None)
             } else {
@@ -426,13 +415,20 @@ where
             };
         });
 
-        // 내가 찜한 target의 owner가 나이면 성공, 아니면 실패
+        // 내가 찜한 target의 owner가 나면 성공, 아니면 실패
         let owner = target_ref.owner().load(Ordering::SeqCst, guard);
         if owner.tid() == tid {
             Ok(Some(target))
         } else {
             Err(())
         }
+    }
+
+    /// Set empty to prevent operation next time.
+    pub fn set_empty(&self) {
+        self.target_loc
+            .store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
+        persist_obj(&self.target_loc, true);
     }
 }
 
