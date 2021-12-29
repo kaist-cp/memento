@@ -146,7 +146,7 @@ pub struct Opt {
     #[structopt(short, long)]
     pub output: Option<String>,
 
-    /// TODO
+    /// repin_after 실행주기 (e.g. 1000이면 op 1000번마다 1번 repin_after)
     #[structopt(short, long, default_value = "10000")]
     pub relax: usize,
 }
@@ -165,11 +165,9 @@ pub mod queue {
         // compositional_pobj::{
         //     MementoPipeQueueEnqDeqPair, MementoPipeQueueEnqDeqProb, TestPipeQueue,
         // },
-        // dss::{DSSQueueEnqDeqPair, DSSQueueEnqDeqProb, TestDSSQueue},
-        // friedman::{
-        //     DurableQueueEnqDeqPair, DurableQueueEnqDeqProb, LogQueueEnqDeqPair, LogQueueEnqDeqProb,
-        //     TestDurableQueue, TestLogQueue,
-        // },
+        dss::{DSSQueueEnqDeqPair, DSSQueueEnqDeqProb, TestDSSQueue},
+        friedman::{DurableQueueEnqDeqPair, DurableQueueEnqDeqProb, TestDurableQueue},
+        friedman::{LogQueueEnqDeqPair, LogQueueEnqDeqProb, TestLogQueue},
     };
 
     use super::{pick, Opt, TestKind, TestTarget};
@@ -254,37 +252,36 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
-            // TestTarget::FriedmanDurableQueue(kind) => match kind {
-            //     TestKind::QueuePair => {
-            //         get_nops::<TestDurableQueue, DurableQueueEnqDeqPair>(&opt.filepath, opt.threads)
-            //     }
-            //     TestKind::QueueProb(prob) => {
-            //         unsafe { PROB = prob };
-            //         get_nops::<TestDurableQueue, DurableQueueEnqDeqProb>(&opt.filepath, opt.threads)
-            //     }
-            //     _ => unreachable!("Queue를 위한 테스트만 해야함"),
-            // },
-            // TestTarget::FriedmanLogQueue(kind) => match kind {
-            //     TestKind::QueuePair => {
-            //         get_nops::<TestLogQueue, LogQueueEnqDeqPair>(&opt.filepath, opt.threads)
-            //     }
-            //     TestKind::QueueProb(prob) => {
-            //         unsafe { PROB = prob };
-            //         get_nops::<TestLogQueue, LogQueueEnqDeqProb>(&opt.filepath, opt.threads)
-            //     }
-            //     _ => unreachable!("Queue를 위한 테스트만 해야함"),
-            // },
-            // TestTarget::DSSQueue(kind) => match kind {
-            //     TestKind::QueuePair => {
-            //         get_nops::<TestDSSQueue, DSSQueueEnqDeqPair>(&opt.filepath, opt.threads)
-            //     }
-            //     TestKind::QueueProb(prob) => {
-            //         unsafe { PROB = prob };
-            //         get_nops::<TestDSSQueue, DSSQueueEnqDeqProb>(&opt.filepath, opt.threads)
-            //     }
-            //     _ => unreachable!("Queue를 위한 테스트만 해야함"),
-            // },
-            // _ => unreachable!("queue만"),
+            TestTarget::FriedmanDurableQueue(kind) => match kind {
+                TestKind::QueuePair => {
+                    get_nops::<TestDurableQueue, DurableQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                }
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    get_nops::<TestDurableQueue, DurableQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
+            TestTarget::FriedmanLogQueue(kind) => match kind {
+                TestKind::QueuePair => {
+                    get_nops::<TestLogQueue, LogQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                }
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    get_nops::<TestLogQueue, LogQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
+            TestTarget::DSSQueue(kind) => match kind {
+                TestKind::QueuePair => {
+                    get_nops::<TestDSSQueue, DSSQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                }
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    get_nops::<TestDSSQueue, DSSQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
             _ => {
                 unreachable!("queue만")
             }

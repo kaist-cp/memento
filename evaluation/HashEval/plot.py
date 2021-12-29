@@ -1,16 +1,15 @@
 import re
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import os.path
-
-N_LATENCY = 7
 
 objs = {
     "hash": {
         "targets": {
             "CCEH": {'label': "CCEH", 'marker': 'x', 'color': 'skyblue', 'style': '-'},
             'Level': {'label': "LEVEL", 'marker': 'o', 'color': 'orange', 'style': '-'},
-            # 'Dash': {'label': "Dash", 'marker': '^', 'color': 'green', 'style': '-'},
+            'Dash': {'label': "Dash", 'marker': '^', 'color': 'green', 'style': '-'},
             'PCLHT': {'label': "PCLHT", 'marker': 'v', 'color': 'gold', 'style': '-'},
             # 'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
             "clevel": {'label': "CLEVEL", 'marker': 's', 'color': 'gray', 'style': '-'},
@@ -67,7 +66,7 @@ def read_throughputs(filepath):
                 throughputs[tn] = float(m[0])
     return threads, throughputs
 
-
+N_LATENCY = len(objs['hash']['bench_kinds']['latency']['x'])
 def read_latency(filepath):
     latency = []
     with open(filepath, "r") as f:
@@ -93,65 +92,114 @@ def draw_ax(bench, ax, datas):
     ax.grid()
     plt.setp(ax, xlabel=data['xlabel'])
 
-
-def draw_axes(bench, ylabel, datas_per_workloads):
-    fig, axes = plt.subplots(1, len(datas_per_workloads), figsize=(20, 3))
-    for i, datas in enumerate(datas_per_workloads):
-        draw_ax(bench, axes[i], datas)
+def draw_axes(bench, ylabel, axes_datas):
+    fig, axes = plt.subplots(1, len(axes_datas), figsize=(20, 3))
+    for i, ax_datas in enumerate(axes_datas):
+        draw_ax(bench, axes[i], ax_datas)
     axLine, axLabel = axes[0].get_legend_handles_labels()
     fig.legend(axLine, axLabel,
-               loc='upper center', ncol=len(datas_per_workloads), borderaxespad=0.1)
+               loc='upper center', ncol=len(axes_datas[0]), borderaxespad=0.1)
     plt.setp(axes[0], ylabel=ylabel)
 
+# draw line graph for <bench-dist>
+#
+# each <bench-dist> may have multiple workloads.
+# therefore, we collect data for all workloads belonging to that <bench-dist> and plot them together.
+def draw(bench, dist, targets):
 
-# (bench, workload, distribution) 하나당 그래프 하나 생성 e.g. throughput-uniform-insert, throughput-uniform-pos_search, ..
+    plt.clf()
+    bench_info = objs['hash']['bench_kinds'][bench]
+    bd_datas = []
+
+    # workload: insert, pos_search, ...
+    for wl, wl_info in bench_info['workloads'].items():
+        wl_datas = []
+
+        # target: CCEH, Level, ... 
+        for t, t_plot in targets.items():
+
+            filepath = "./out/{}/{}/{}/{}.out".format(
+                bench.upper(), dist.upper(), wl, t)
+
+            if not os.path.isfile(filepath):
+                continue
+
+            threads = []
+            data = []
+            if bench == "throughput":
+                threads, data = read_throughputs(filepath)
+            elif bench == "latency":
+                threads = [32]
+                data = read_latency(filepath)
+                data = (np.log(data) / np.log(10**3))  # 10*3 단위로 plot
+            else:
+                print("invalid bench: {}", bench)
+                exit()
+            x = bench_info['x']
+
+            wl_datas.append({'x': x, 'y': data[:len(x)], 'stddev': [
+                0, 0, 0, 0, 0, 0], 'label': t_plot['label'], 'marker': t_plot['marker'], 'color': t_plot['color'], 'style': t_plot['style'], 'xlabel': wl_info['label']})
+
+        # collect data for all workloads belonging to that <bench-dist>.
+        bd_datas.append(wl_datas)
+
+    draw_axes(bench, bench_info['y_label'], bd_datas)
+
+# 1. multi-threads thourghput, latency (line graph)
 for obj, obj_info in objs.items():
-    print(obj)
     targets = obj_info['targets']
     bench_kinds = obj_info['bench_kinds']
 
-    # thourghput, latency
     for bench, bench_info in bench_kinds.items():
 
-        # uniform, self-similar
         for dist in bench_info['distributions']:
             plt.clf()
             plot_id = "{}_{}".format(bench, dist)
-            datas_per_workloads = []
 
-            # insert, pos_search, ...
-            for wl, wl_info in bench_info['workloads'].items():
-                plot_lines = []
-                for t, t_plot in targets.items():
-
-                    filepath = "./out/{}/{}/{}/{}.out".format(
-                        bench.upper(), dist.upper(), wl, t)
-
-                    if not os.path.isfile(filepath):
-                        continue
-
-                    threads = []
-                    data = []
-                    if bench == "throughput":
-                        threads, data = read_throughputs(filepath)
-                    elif bench == "latency":
-                        threads = [32]
-                        data = read_latency(filepath)
-                        data = (np.log(data) / np.log(10**3))  # 10*3 단위로 plot
-                    else:
-                        print("invalid bench: {}", bench)
-                        exit()
-                    x = bench_info['x']
-
-                    plot_lines.append({'x': x, 'y': data[:len(x)], 'stddev': [
-                        0, 0, 0, 0, 0, 0], 'label': t_plot['label'], 'marker': t_plot['marker'], 'color': t_plot['color'], 'style': t_plot['style'], 'xlabel': wl_info['label']})
-
-                datas_per_workloads.append(plot_lines)
-
-            # draw plt, not save
-            draw_axes(bench, bench_info['y_label'], datas_per_workloads)
+            # draw graph, not save
+            draw(bench, dist, targets)
 
             # save
             figpath = "./out/{}.png".format(plot_id)
-            print(figpath)
             plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
+            print(figpath)
+
+# 2. single-thread throughput (bar graph)
+for obj, obj_info in objs.items():
+    targets = obj_info['targets']
+    dfs=[]
+
+    for dist in "uniform", "selfsimilar":
+        plt.clf()
+        plot_id = "throughput (single_thread)"
+        bd_datas = []
+
+        for wl in "insert", "pos_search", "neg_search", "delete":
+            wl_datas = {"workload": wl}
+
+            for t, t_plot in targets.items():
+                filepath = "./out/THROUGHPUT/{}/{}/{}.out".format(
+                    dist.upper(), wl, t)
+
+                if not os.path.isfile(filepath):
+                    continue
+
+                _, data = read_throughputs(filepath)
+                wl_datas[t]=data[0]
+            bd_datas.append(wl_datas)
+        
+        dfs.append(pd.DataFrame.from_dict(bd_datas))
+    
+    # draw graph, not save
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3))
+    for ix, df in enumerate(dfs):
+        p = df.plot(ax=axes[ix], x="workload", xlabel="(a) Uniform", kind="bar", rot=0, legend=False)
+        p.grid(True, axis='y', linestyle='--')
+    axLine, axLabel = axes[0].get_legend_handles_labels()
+    fig.legend(axLine, axLabel, loc='upper center', ncol=dfs[1].shape[1]-1, borderaxespad=0.1)
+    plt.setp(axes[0], ylabel="Throughput (M op/s)")
+
+    # save
+    figpath = "./out/{}.png".format(plot_id)
+    plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
+    print(figpath)
