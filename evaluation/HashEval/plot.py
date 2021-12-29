@@ -67,7 +67,6 @@ def read_throughputs(filepath):
                 throughputs[tn] = float(m[0])
     return threads, throughputs
 
-
 def read_latency(filepath):
     latency = []
     with open(filepath, "r") as f:
@@ -93,35 +92,35 @@ def draw_ax(bench, ax, datas):
     ax.grid()
     plt.setp(ax, xlabel=data['xlabel'])
 
-
-def draw_axes(bench, ylabel, datas_per_workloads):
-    fig, axes = plt.subplots(1, len(datas_per_workloads), figsize=(20, 3))
-    for i, datas in enumerate(datas_per_workloads):
-        draw_ax(bench, axes[i], datas)
+def draw_axes(bench, ylabel, axes_datas):
+    fig, axes = plt.subplots(1, len(axes_datas), figsize=(20, 3))
+    for i, ax_datas in enumerate(axes_datas):
+        draw_ax(bench, axes[i], ax_datas)
     axLine, axLabel = axes[0].get_legend_handles_labels()
     fig.legend(axLine, axLabel,
-               loc='upper center', ncol=len(datas_per_workloads), borderaxespad=0.1)
+               loc='upper center', ncol=len(axes_datas[0]), borderaxespad=0.1)
     plt.setp(axes[0], ylabel=ylabel)
 
-
-# (bench, workload, distribution) 하나당 그래프 하나 생성 e.g. throughput-uniform-insert, throughput-uniform-pos_search, ..
+# (bench, distribution, workload) 하나당 그래프 하나 생성 e.g. throughput-uniform-insert, throughput-uniform-pos_search, ..
 for obj, obj_info in objs.items():
     print(obj)
     targets = obj_info['targets']
     bench_kinds = obj_info['bench_kinds']
 
-    # thourghput, latency
+    # bench: thourghput-single, thourghput, latency
     for bench, bench_info in bench_kinds.items():
 
-        # uniform, self-similar
+        # distribution: uniform, self-similar
         for dist in bench_info['distributions']:
             plt.clf()
             plot_id = "{}_{}".format(bench, dist)
-            datas_per_workloads = []
+            bd_datas = []
 
-            # insert, pos_search, ...
+            # workload: insert, pos_search, ...
             for wl, wl_info in bench_info['workloads'].items():
-                plot_lines = []
+                wl_datas = []
+
+                # target: CCEH, Level, ... 
                 for t, t_plot in targets.items():
 
                     filepath = "./out/{}/{}/{}/{}.out".format(
@@ -143,13 +142,15 @@ for obj, obj_info in objs.items():
                         exit()
                     x = bench_info['x']
 
-                    plot_lines.append({'x': x, 'y': data[:len(x)], 'stddev': [
+                    wl_datas.append({'x': x, 'y': data[:len(x)], 'stddev': [
                         0, 0, 0, 0, 0, 0], 'label': t_plot['label'], 'marker': t_plot['marker'], 'color': t_plot['color'], 'style': t_plot['style'], 'xlabel': wl_info['label']})
 
-                datas_per_workloads.append(plot_lines)
+                # each <bench-dist> may have multiple workloads.
+                # therefore, we collect data for all workloads belonging to that <bench-dist>.
+                bd_datas.append(wl_datas)
 
             # draw plt, not save
-            draw_axes(bench, bench_info['y_label'], datas_per_workloads)
+            draw_axes(bench, bench_info['y_label'], bd_datas)
 
             # save
             figpath = "./out/{}.png".format(plot_id)

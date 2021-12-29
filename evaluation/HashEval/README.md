@@ -15,8 +15,6 @@
 build.sh
 ```
 
-TODO: Dash build 확인
-
 ### Run
 
 ##### To run a single benchamrk,
@@ -60,9 +58,7 @@ example: `clevel_rust`에 32 스레드로 1000번 insert 했을 때의 처리율
     -N 0 \
     -M THROUGHPUT --distribution UNIFORM \
     -t 32 \
-``` 
-
-TODO: clevel, clevel-rust 제외한 나머지는 더미 폴더 필요한 거 어떻게 적지? (run.sh 참고)
+```
 
 ##### To run the entire benchamrk,
 
