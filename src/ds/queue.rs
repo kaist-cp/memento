@@ -1,6 +1,6 @@
 //! Persistent opt queue
 
-use crate::ploc::smo::{self, Delete, Insert, SMOAtomic, UpdateDeleteInfo};
+use crate::ploc::smo::{self, Update, Insert, SMOAtomic};
 use crate::ploc::{no_owner, Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -44,14 +44,14 @@ impl<T> Default for Node<T> {
 
 // TODO(must): T should be collectable
 impl<T> Collectable for Node<T> {
-    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
         // Mark valid ptr to trace
         let mut next = node.next.load(Ordering::SeqCst, guard);
         if !next.is_null() {
             let next = unsafe { next.deref_mut(pool) };
-            Node::<T>::mark(next, gc);
+            Node::<T>::mark(next, tid, gc);
         }
     }
 }
@@ -81,8 +81,8 @@ impl<T: Clone> Default for TryEnqueue<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryEnqueue<T> {}
 
 impl<T: Clone> Collectable for TryEnqueue<T> {
-    fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Insert::filter(&mut try_push.insert, gc, pool);
+    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Insert::filter(&mut try_push.insert, tid, gc, pool);
     }
 }
 
@@ -173,9 +173,9 @@ impl<T: Clone> Default for Enqueue<T> {
 }
 
 impl<T: Clone> Collectable for Enqueue<T> {
-    fn filter(enq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Checkpoint::filter(&mut enq.node, gc, pool);
-        RetryLoop::filter(&mut enq.try_enq, gc, pool);
+    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Checkpoint::filter(&mut enq.node, tid, gc, pool);
+        RetryLoop::filter(&mut enq.try_enq, tid, gc, pool);
     }
 }
 
@@ -233,7 +233,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    delete: Delete<Queue<T>, Node<T>, Self>,
+    delete: Update<Node<T>>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
@@ -247,8 +247,8 @@ impl<T: Clone> Default for TryDequeue<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
-    fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Delete::filter(&mut try_deq.delete, gc, pool);
+    fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Update::filter(&mut try_deq.delete, tid, gc, pool);
     }
 }
 
@@ -267,74 +267,55 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.delete
-            .run(
-                &queue.head,
-                (0, PShared::null(), queue),
-                tid,
-                rec,
-                guard,
-                pool,
-            )
-            .map(|ret| {
-                ret.map(|popped| {
-                    let next = unsafe { popped.deref(pool) }
-                        .next
-                        .load(Ordering::SeqCst, guard); // TODO(opt): next를 다시 load해서 성능 저하
-                    let next_ref = unsafe { next.deref(pool) };
-                    unsafe { guard.defer_pdestroy(popped) };
-                    unsafe { (*next_ref.data.as_ptr()).clone() }
-                })
-            })
-            .map_err(|_| TryFail)
-    }
+        let head = loop {
+            let head = queue.head.load_helping(guard, pool);
+            let head_ref = unsafe { head.deref(pool) };
+            let next = head_ref.next.load(Ordering::SeqCst, guard);
+            let tail = queue.tail.load(Ordering::SeqCst, guard);
 
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete.reset(guard, pool);
-    }
-}
+            if head.as_ptr() != tail.as_ptr() {
+                break head;
+            }
 
-impl<T: Clone> UpdateDeleteInfo<Queue<T>, Node<T>> for TryDequeue<T> {
-    fn prepare_delete<'g>(
-        del_type: u16,
-        old_head: PShared<'_, Node<T>>,
-        _: PShared<'_, Node<T>>,
-        queue: &Queue<T>,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<T>>>, NeedRetry> {
-        let old_head_ref = unsafe { old_head.deref(pool) };
-        let next = old_head_ref.next.load(Ordering::SeqCst, guard);
-        let tail = queue.tail.load(Ordering::SeqCst, guard);
-
-        if old_head.as_ptr() == tail.as_ptr() {
             if next.is_null() {
-                return Ok(None);
+                todo!("rec에서 다시 empty를 리턴하게 하려면?")
+                // return self.delete.set_empty();
             }
 
             let tail_ref = unsafe { tail.deref(pool) };
-            persist_obj(&tail_ref.next, true);
+            persist_obj(&tail_ref.next, false); // we're doing CAS soon.
 
             let _ =
                 queue
                     .tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        };
 
-            return Err(NeedRetry);
-        }
-
-        Ok(Some(next))
+        todo!("cas")
+        // self.delete
+        //     .run(
+        //         &queue.head,
+        //         (0, h, , queue),
+        //         tid,
+        //         rec,
+        //         guard,
+        //         pool,
+        //     )
+        //     .map(|ret| {
+        //         ret.map(|popped| {
+        //             let next = unsafe { popped.deref(pool) }
+        //                 .next
+        //                 .load(Ordering::SeqCst, guard); // TODO(opt): next를 다시 load해서 성능 저하
+        //             let next_ref = unsafe { next.deref(pool) };
+        //             unsafe { guard.defer_pdestroy(popped) };
+        //             unsafe { (*next_ref.data.as_ptr()).clone() }
+        //         })
+        //     })
+        //     .map_err(|_| TryFail)
     }
 
-    #[inline]
-    fn node_when_deleted<'g>(
-        _: u16,
-        old_head: PShared<'_, Node<T>>,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-    ) -> Option<PShared<'g, Node<T>>> {
-        let old_head_ref = unsafe { old_head.deref(pool) }; // SAFE: old_head는 null일 수 없음
-        Some(old_head_ref.next.load(Ordering::SeqCst, guard))
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.delete.reset(guard, pool);
     }
 }
 
@@ -353,8 +334,8 @@ impl<T: Clone> Default for Dequeue<T> {
 }
 
 impl<T: Clone> Collectable for Dequeue<T> {
-    fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        RetryLoop::filter(&mut deq.try_deq, gc, pool);
+    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        RetryLoop::filter(&mut deq.try_deq, tid, gc, pool);
     }
 }
 
@@ -400,8 +381,8 @@ impl<T: Clone> Default for DequeueSome<T> {
 }
 
 impl<T: Clone> Collectable for DequeueSome<T> {
-    fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Dequeue::filter(&mut deq.deq, gc, pool);
+    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Dequeue::filter(&mut deq.deq, tid, gc, pool);
     }
 }
 
@@ -441,7 +422,7 @@ unsafe impl<T: Clone> Send for DequeueSome<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
-    head: CachePadded<SMOAtomic<Self, Node<T>, TryDequeue<T>>>,
+    head: CachePadded<SMOAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
 }
 
@@ -459,8 +440,8 @@ impl<T: Clone> PDefault for Queue<T> {
 }
 
 impl<T: Clone> Collectable for Queue<T> {
-    fn filter(queue: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        SMOAtomic::filter(&mut queue.head, gc, pool);
+    fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        SMOAtomic::filter(&mut queue.head, tid, gc, pool);
     }
 }
 
@@ -509,10 +490,10 @@ mod test {
     }
 
     impl Collectable for EnqDeq {
-        fn filter(m: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
             for i in 0..COUNT {
-                Enqueue::filter(&mut m.enqs[i], gc, pool);
-                Dequeue::filter(&mut m.deqs[i], gc, pool);
+                Enqueue::filter(&mut m.enqs[i], tid, gc, pool);
+                Dequeue::filter(&mut m.deqs[i], tid, gc, pool);
             }
         }
     }
