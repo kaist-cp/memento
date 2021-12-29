@@ -167,7 +167,7 @@ pub mod queue {
         // },
         dss::{DSSQueueEnqDeqPair, DSSQueueEnqDeqProb, TestDSSQueue},
         friedman::{DurableQueueEnqDeqPair, DurableQueueEnqDeqProb, TestDurableQueue},
-        // friedman::{LogQueueEnqDeqPair, LogQueueEnqDeqProb, TestLogQueue},
+        friedman::{LogQueueEnqDeqPair, LogQueueEnqDeqProb, TestLogQueue},
     };
 
     use super::{pick, Opt, TestKind, TestTarget};
@@ -262,16 +262,16 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
-            // TestTarget::FriedmanLogQueue(kind) => match kind {
-            //     TestKind::QueuePair => {
-            //         get_nops::<TestLogQueue, LogQueueEnqDeqPair>(&opt.filepath, opt.threads)
-            //     }
-            //     TestKind::QueueProb(prob) => {
-            //         unsafe { PROB = prob };
-            //         get_nops::<TestLogQueue, LogQueueEnqDeqProb>(&opt.filepath, opt.threads)
-            //     }
-            //     _ => unreachable!("Queue를 위한 테스트만 해야함"),
-            // },
+            TestTarget::FriedmanLogQueue(kind) => match kind {
+                TestKind::QueuePair => {
+                    get_nops::<TestLogQueue, LogQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                }
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    get_nops::<TestLogQueue, LogQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
             TestTarget::DSSQueue(kind) => match kind {
                 TestKind::QueuePair => {
                     get_nops::<TestDSSQueue, DSSQueueEnqDeqPair>(&opt.filepath, opt.threads)

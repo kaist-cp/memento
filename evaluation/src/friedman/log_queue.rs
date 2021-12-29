@@ -342,14 +342,15 @@ impl TestNOps for LogQueueEnqDeqPair {}
 
 impl Memento for LogQueueEnqDeqPair {
     type Object<'o> = &'o TestLogQueue;
-    type Input<'o> = usize; // tid
+    type Input<'o> = ();
     type Output<'o> = ();
     type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input<'o>,
+        _: Self::Input<'o>,
+        tid: usize,
         _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
@@ -397,14 +398,15 @@ impl TestNOps for LogQueueEnqDeqProb {}
 
 impl Memento for LogQueueEnqDeqProb {
     type Object<'o> = &'o TestLogQueue;
-    type Input<'o> = usize; // tid
+    type Input<'o> = ();
     type Output<'o> = ();
     type Error<'o> = ();
 
     fn run<'o>(
         &'o mut self,
         queue: Self::Object<'o>,
-        tid: Self::Input<'o>,
+        _: Self::Input<'o>,
+        tid: usize,
         _: bool,
         guard: &Guard,
         pool: &'static PoolHandle,
