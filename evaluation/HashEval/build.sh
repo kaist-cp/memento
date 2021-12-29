@@ -10,7 +10,7 @@ sudo apt install libgflags-dev -y
 make clean
 make -j
 
-# # TODO: For Dash, recompile with `DA_FLAGS=-DCOUNTING`
+# # Recompile Dash with `DA_FLAGS=-DCOUNTING` to evaluate the load factor 
 # make clean -C hash/Dash
 # make DA_FLAGS=-DCOUNTING -C hash/Dash -j
 # make -j

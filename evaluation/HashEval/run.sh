@@ -1,11 +1,11 @@
 #!/bin/bash
 
-rm -rf /mnt/pmem0/*
-
+export LD_LIBRARY_PATH=./hash/Dash/pmdk/src/nondebug:$LD_LIBRARY_PATH # to evaluate Dash
 BIN="bin"
 OUT="out"
 OUT_DEBUG=./$OUT/debug.out
 
+rm -rf /mnt/pmem0/*
 mkdir -p out
 
 function dmsg() {
