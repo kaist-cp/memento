@@ -9,7 +9,7 @@ const CACHE_LINE: usize = 64;
 use std::arch::x86::{_mm_mfence, _mm_sfence, clflush};
 
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_mm_clflush, _mm_mfence, _mm_sfence};
+use std::arch::x86_64::{_mm_clflush, _mm_mfence, _mm_sfence, __rdtscp};
 
 /// Synchronize caches and memories and acts like a write barrier
 #[inline(always)]

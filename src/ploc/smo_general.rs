@@ -1,14 +1,17 @@
-use std::{marker::PhantomData, sync::atomic::Ordering};
+use std::{
+    marker::PhantomData,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{Collectable, GarbageCollection, PoolHandle},
+    pmem::{ll::persist_obj, rdtscp, Collectable, GarbageCollection, PoolHandle},
     Memento,
 };
 
-use super::{NodeUnOpt, Traversable};
+use super::NodeUnOpt;
 
 // link-and-checkpoint (general CAS 지원)
 // assumption: 각 thread는 CAS checkpoint를 위한 64-bit PM location이 있습니다. 이를 checkpoint: [u64; 256] 이라고 합시다.
@@ -30,7 +33,7 @@ use super::{NodeUnOpt, Traversable};
 /// TODO(doc)
 #[derive(Debug)]
 pub struct Cas<N> {
-    checkpoint: usize,
+    checkpoint: AtomicU64,
     _marker: PhantomData<*const N>,
 }
 
@@ -51,31 +54,76 @@ where
     N: 'static + NodeUnOpt + Collectable,
 {
     type Object<'o> = &'o PAtomic<N>;
-    type Input<'o> = (PShared<'o, N>, PShared<'o, N>);
-    type Output<'o>
-    where
-        N: 'o,
-    = ();
+    type Input<'o> = (PShared<'o, N>, PShared<'o, N>, &'o [AtomicU64; 256]); // atomicu64 array는 나중에 글로벌 배열로 빼야 함 maybe into poolhandle
+    type Output<'o> = ();
     type Error<'o> = ();
 
     fn run<'o>(
         &mut self,
         target: Self::Object<'o>,
-        (old, new): Self::Input<'o>,
+        (old, new, checkpoint): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result();
+            return self.result(new, checkpoint);
         }
 
-        let res = target.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
-        if res.is_ok() {
-            target
-        }
+        let tmp_new = new.with_tid(tid);
+        target
+            .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
+            .map(|_| {
+                // 성공하면 target을 persist
+                persist_obj(target, true);
 
-        todo!()
+                // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
+                let _ = target.compare_exchange(
+                    tmp_new,
+                    new.with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+                persist_obj(target, true);
+
+                // 성공했다고 체크포인팅
+                self.checkpoint.store(rdtscp(), Ordering::SeqCst);
+                persist_obj(&self.checkpoint, true);
+            })
+            .map_err(|e| {
+                let succ_tid = e.current.tid();
+
+                if succ_tid == 0 {
+                    return;
+                }
+
+                let t = rdtscp();
+                let cur = target.load(Ordering::SeqCst, guard);
+
+                if e.current != cur {
+                    return;
+                }
+
+                let c = checkpoint[succ_tid].load(Ordering::SeqCst);
+                if t <= c {
+                    return;
+                }
+
+                if checkpoint[succ_tid]
+                    .compare_exchange(c, t, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    let _ = target.compare_exchange(
+                        e.current,
+                        e.current.with_tid(0),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                }
+            })
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -84,7 +132,7 @@ where
 }
 
 impl<N> Cas<N> {
-    fn result(&self) {
-        todo!();
+    fn result(&self, new: PShared<'_, N>, checkpoint: &[AtomicU64; 256]) -> Result<(), ()> {
+        todo!()
     }
 }
