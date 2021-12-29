@@ -105,3 +105,12 @@ pub fn mfence() {
         _mm_mfence();
     }
 }
+
+/// Rdtscp
+#[inline]
+pub fn rdtscp() -> u64 {
+    unsafe {
+        let mut rdtscp_result = 0;
+        __rdtscp(&mut rdtscp_result)
+    }
+}
