@@ -168,8 +168,9 @@ for obj, obj_info in objs.items():
 for obj, obj_info in objs.items():
     targets = obj_info['targets']
     dfs=[]
+    dfs_xlabel=[]
 
-    for dist in "uniform", "selfsimilar":
+    for ix, dist in enumerate(["uniform", "selfsimilar"]):
         plt.clf()
         plot_id = "throughput (single_thread)"
         bd_datas = []
@@ -189,11 +190,12 @@ for obj, obj_info in objs.items():
             bd_datas.append(wl_datas)
         
         dfs.append(pd.DataFrame.from_dict(bd_datas))
+        dfs_xlabel.append('('+chr(ix+ord('a'))+') '+dist)
     
     # draw graph, not save
     fig, axes = plt.subplots(1, 2, figsize=(10, 3))
     for ix, df in enumerate(dfs):
-        p = df.plot(ax=axes[ix], x="workload", xlabel="(a) Uniform", kind="bar", rot=0, legend=False)
+        p = df.plot(ax=axes[ix], x="workload", xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False)
         p.grid(True, axis='y', linestyle='--')
     axLine, axLabel = axes[0].get_legend_handles_labels()
     fig.legend(axLine, axLabel, loc='upper center', ncol=dfs[1].shape[1]-1, borderaxespad=0.1)
