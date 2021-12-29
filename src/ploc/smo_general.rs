@@ -39,14 +39,15 @@ pub struct Cas<N> {
 
 impl<N> Default for Cas<N> {
     fn default() -> Self {
-        todo!()
+        Self {
+            checkpoint: AtomicU64::new(Self::NOT_CHECKED),
+            _marker: Default::default(),
+        }
     }
 }
 
 impl<N> Collectable for Cas<N> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        todo!()
-    }
+    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<N> Memento for Cas<N>
@@ -100,7 +101,7 @@ where
                 }
 
                 let t = rdtscp();
-                let cur = target.load(Ordering::SeqCst, guard);
+                let cur = target.load(Ordering::SeqCst, guard); // TODO: 이거 없이 바로 checkpoint 확인해도 되지 않나?
 
                 if e.current != cur {
                     return;
@@ -108,6 +109,7 @@ where
 
                 let c = checkpoint[succ_tid].load(Ordering::SeqCst);
                 if t <= c {
+                    // 이미 누가 한 거임
                     return;
                 }
 
@@ -132,6 +134,8 @@ where
 }
 
 impl<N> Cas<N> {
+    const NOT_CHECKED: u64 = 0;
+
     fn result(&self, new: PShared<'_, N>, checkpoint: &[AtomicU64; 256]) -> Result<(), ()> {
         todo!()
     }
