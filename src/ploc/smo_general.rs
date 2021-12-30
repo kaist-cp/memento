@@ -103,7 +103,7 @@ where
 
                 let t = rdtsc();
                 lfence();
-                let cur = target.load(Ordering::SeqCst, guard); // TODO: 이거 없이 바로 checkpoint 확인해도 되지 않나?
+                let cur = target.load(Ordering::SeqCst, guard);
 
                 if e.current != cur {
                     return;

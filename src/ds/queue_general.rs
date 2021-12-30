@@ -395,7 +395,6 @@ unsafe impl<T: Clone + Send + Sync> Send for QueueGeneral<T> {}
 mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
-    use rusty_fork::rusty_fork_test;
 
     const NR_THREAD: usize = 1;
     const COUNT: usize = 1;
@@ -449,7 +448,6 @@ mod test {
                     let mut tmp_deq = Dequeue::<usize>::default();
                     let must_none = tmp_deq.run(queue, (), tid, false, guard, pool).unwrap();
                     assert!(must_none.is_none());
-                    tmp_deq.reset(guard, pool);
 
                     // Check results
                     assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
@@ -461,16 +459,13 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let _ = self.enqs[i].run(queue, tid, tid, false, guard, pool);
-                        assert!(self.deqs[i]
-                            .run(queue, (), tid, rec, guard, pool)
-                            .unwrap()
-                            .is_some());
-                    }
+                        let res = self.deqs[i]
+                            .run(queue, (), tid, false, guard, pool)
+                            .unwrap();
+                        assert!(res.is_some());
 
-                    // deq 결과를 실험결과에 전달
-                    for deq in self.deqs.as_mut() {
-                        let ret = deq.run(queue, (), tid, true, guard, pool).unwrap().unwrap();
-                        let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
+                        // deq 결과를 실험결과에 전달
+                        let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
                     }
 
                     // "나 끝났다"
