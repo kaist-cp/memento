@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2019 University of Rochester. All rights reserved.
  * Licenced under the MIT licence. See LICENSE file in the project root for
- * details. 
+ * details.
  */
 
 #include "ralloc.hpp"
@@ -25,7 +25,7 @@ namespace ralloc{
     /* persistent metadata and their layout */
     BaseMeta* base_md;
     Regions* _rgs;
-    std::function<void(const CrossPtr<char, SB_IDX>&, GarbageCollection&)> roots_filter_func[MAX_ROOTS];
+    std::function<void(const CrossPtr<char, SB_IDX>&, size_t, GarbageCollection&)> roots_filter_func[MAX_ROOTS];
     extern SizeClass sizeclass;
 };
 using namespace ralloc;
@@ -69,7 +69,7 @@ struct RallocHolder{
     }
     ~RallocHolder(){
         // #ifndef MEM_CONSUME_TEST
-        // flush_region would affect the memory consumption result (rss) and 
+        // flush_region would affect the memory consumption result (rss) and
         // thus is disabled for benchmark testing. To enable, simply comment out
         // -DMEM_CONSUME_TEST flag in Makefile.
         _rgs->flush_region(DESC_IDX);
@@ -81,7 +81,7 @@ struct RallocHolder{
     }
 };
 
-/* 
+/*
  * mmap the existing heap file corresponding to id. aka restart,
  * 		and if multiple heaps exist, print out and let user select;
  * if such a heap doesn't exist, create one. aka start.
@@ -170,7 +170,7 @@ int RP_region_range(int idx, void** start_addr, void** end_addr){
     return 0;
 }
 
-void RP_set_root_filter(void (*filter_func)(char*, GarbageCollection&), uint64_t i) {
+void RP_set_root_filter(void (*filter_func)(char*, size_t, GarbageCollection&), uint64_t i) {
     assert(i<MAX_ROOTS);
     ralloc::roots_filter_func[i] = filter_func;
 }

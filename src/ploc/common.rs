@@ -63,8 +63,8 @@ impl<T: Checkpointable + Default + Clone + Collectable> Default for Checkpoint<T
 }
 
 impl<T: Checkpointable + Default + Clone + Collectable> Collectable for Checkpoint<T> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        T::filter(&mut s.saved, gc, pool);
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        T::filter(&mut s.saved, tid, gc, pool);
     }
 }
 
@@ -132,7 +132,7 @@ impl Default for CheckpointableUsize {
 }
 
 impl Collectable for CheckpointableUsize {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl Checkpointable for CheckpointableUsize {
@@ -164,8 +164,8 @@ impl<M: Memento> Default for RetryLoop<M> {
 }
 
 impl<M: Memento> Collectable for RetryLoop<M> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        M::filter(&mut s.try_mmt, gc, pool);
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        M::filter(&mut s.try_mmt, tid, gc, pool);
     }
 }
 

@@ -48,7 +48,7 @@ impl<O, N: Node + Collectable> Default for Insert<O, N> {
 }
 
 impl<O, N: Node + Collectable> Collectable for Insert<O, N> {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<O, N> Memento for Insert<O, N>
@@ -197,8 +197,8 @@ pub struct SMOAtomic<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> {
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Collectable for SMOAtomic<O, N, G> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut s.inner, gc, pool);
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        PAtomic::filter(&mut s.inner, tid, gc, pool);
     }
 }
 
@@ -317,7 +317,7 @@ impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Default for Delete<O, 
 }
 
 impl<O, N: Node + Collectable, G: UpdateDeleteInfo<O, N>> Collectable for Delete<O, N, G> {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<O, N, G> Memento for Delete<O, N, G>

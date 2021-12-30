@@ -36,14 +36,8 @@ impl<T: Clone> Default for TryEnqueue<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryEnqueue<T> {}
 
 impl<T: Clone> Collectable for TryEnqueue<T> {
-    fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Cas::filter(&mut try_push.insert, gc, pool);
-    }
-}
-
-impl<T: Clone> TryEnqueue<T> {
-    fn prepare(_: &mut Node<MaybeUninit<T>>, tail_next: PShared<'_, Node<MaybeUninit<T>>>) -> bool {
-        tail_next.is_null()
+    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Cas::filter(&mut try_push.insert, tid, gc, pool);
     }
 }
 
@@ -119,9 +113,9 @@ impl<T: Clone> Default for Enqueue<T> {
 }
 
 impl<T: Clone> Collectable for Enqueue<T> {
-    fn filter(enq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Checkpoint::filter(&mut enq.node, gc, pool);
-        RetryLoop::filter(&mut enq.try_enq, gc, pool);
+    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Checkpoint::filter(&mut enq.node, tid, gc, pool);
+        RetryLoop::filter(&mut enq.try_enq, tid, gc, pool);
     }
 }
 
@@ -193,8 +187,8 @@ impl<T: Clone> Default for TryDequeue<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
-    fn filter(try_deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Cas::filter(&mut try_deq.delete, gc, pool);
+    fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Cas::filter(&mut try_deq.delete, tid, gc, pool);
     }
 }
 
@@ -302,8 +296,8 @@ impl<T: Clone> Default for Dequeue<T> {
 }
 
 impl<T: Clone> Collectable for Dequeue<T> {
-    fn filter(deq: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        RetryLoop::filter(&mut deq.try_deq, gc, pool);
+    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        RetryLoop::filter(&mut deq.try_deq, tid, gc, pool);
     }
 }
 
@@ -360,8 +354,8 @@ impl<T: Clone> PDefault for QueueGeneral<T> {
 }
 
 impl<T: Clone> Collectable for QueueGeneral<T> {
-    fn filter(queue: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut queue.head, gc, pool);
+    fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        PAtomic::filter(&mut queue.head, tid, gc, pool);
     }
 }
 
@@ -414,10 +408,10 @@ mod test {
     }
 
     impl Collectable for EnqDeq {
-        fn filter(m: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
             for i in 0..COUNT {
-                Enqueue::filter(&mut m.enqs[i], gc, pool);
-                Dequeue::filter(&mut m.deqs[i], gc, pool);
+                Enqueue::filter(&mut m.enqs[i], tid, gc, pool);
+                Dequeue::filter(&mut m.deqs[i], tid, gc, pool);
             }
         }
     }

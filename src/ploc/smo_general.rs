@@ -48,7 +48,9 @@ impl<N> Default for Cas<N> {
 }
 
 impl<N> Collectable for Cas<N> {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &PoolHandle) {
+        // TODO: vcheckpoint
+    }
 }
 
 impl<N> Memento for Cas<N>

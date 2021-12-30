@@ -192,8 +192,8 @@ pub struct AtomicReset<M: Memento> {
 }
 
 impl<M: Memento> Collectable for AtomicReset<M> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        M::filter(&mut s.composed, gc, pool);
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        M::filter(&mut s.composed, tid, gc, pool);
     }
 }
 
