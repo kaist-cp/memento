@@ -250,37 +250,6 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 }
 
-impl<T: Clone> TryDequeue<T> {
-    fn get_next<'g>(
-        old_head: PShared<'_, Node<MaybeUninit<T>>>,
-        queue: &QueueGeneral<T>,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<MaybeUninit<T>>>>, ()> {
-        let old_head_ref = unsafe { old_head.deref(pool) };
-        let next = old_head_ref.next.load(Ordering::SeqCst, guard);
-        let tail = queue.tail.load(Ordering::SeqCst, guard);
-
-        if old_head == tail {
-            if next.is_null() {
-                return Ok(None);
-            }
-
-            let tail_ref = unsafe { tail.deref(pool) };
-            persist_obj(&tail_ref.next, true);
-
-            let _ =
-                queue
-                    .tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-            return Err(());
-        }
-
-        Ok(Some(next))
-    }
-}
-
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
@@ -390,8 +359,8 @@ mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
-    const NR_THREAD: usize = 1;
-    const COUNT: usize = 1;
+    const NR_THREAD: usize = 2;
+    const COUNT: usize = 1000;
 
     struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],
@@ -440,7 +409,7 @@ mod test {
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<usize>::default();
-                    let must_none = tmp_deq.run(queue, (), tid, false, guard, pool).unwrap();
+                    let must_none = tmp_deq.run(queue, (), tid, rec, guard, pool).unwrap();
                     assert!(must_none.is_none());
 
                     // Check results
@@ -452,9 +421,9 @@ mod test {
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ = self.enqs[i].run(queue, tid, tid, false, guard, pool);
+                        let _ = self.enqs[i].run(queue, tid, tid, rec, guard, pool);
                         let res = self.deqs[i]
-                            .run(queue, (), tid, false, guard, pool)
+                            .run(queue, (), tid, rec, guard, pool)
                             .unwrap();
                         assert!(res.is_some());
 

@@ -15,6 +15,8 @@ set -e
 # all
 # while true; do
     rm -rf test
-    RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress queue:: -- --nocapture
-    RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress queue:: -- --nocapture
+    RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress queue_gen -- --nocapture
+    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress queue_gen -- --nocapture
+    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress queue_gen -- --nocapture
+    # RUST_BACKTRACE=full RUST_MIN_STACK=10073741824 cargo test --release --features no_persist --features stress queue:: -- --nocapture
 # done
