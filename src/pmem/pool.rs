@@ -3,9 +3,11 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use std::alloc::Layout;
+use std::cell::UnsafeCell;
 use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::path::Path;
+use std::sync::atomic::AtomicU64;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -55,7 +57,7 @@ pub struct PoolHandle {
     len: usize,
 
     /// tid별 스스로 cas 성공한 시간
-    cas_vcheckpoint: [u64; 256],
+    pub cas_vcheckpoint: [AtomicU64; 256],
 }
 
 impl PoolHandle {
@@ -258,7 +260,7 @@ impl Pool {
         global::init(PoolHandle {
             start: unsafe { RP_mmapped_addr() },
             len: size,
-            cas_vcheckpoint: array_init::array_init(|_| 0),
+            cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
         });
         let pool = global_pool().unwrap();
 
@@ -333,7 +335,7 @@ impl Pool {
         global::init(PoolHandle {
             start: RP_mmapped_addr(),
             len: size,
-            cas_vcheckpoint: array_init::array_init(|_| 0),
+            cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
         });
 
         // GC 수행
