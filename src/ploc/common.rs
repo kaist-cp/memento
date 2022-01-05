@@ -3,6 +3,7 @@
 use std::{marker::PhantomData, sync::atomic::AtomicUsize};
 
 use crossbeam_epoch::Guard;
+use crossbeam_utils::Backoff;
 
 use crate::{
     pmem::{
@@ -194,7 +195,9 @@ where
             return Ok(ret);
         }
 
+        let backoff = Backoff::default();
         loop {
+            backoff.snooze();
             if let Ok(ret) = self
                 .try_mmt
                 .run(obj.clone(), input.clone(), tid, false, guard, pool)
