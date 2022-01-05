@@ -148,7 +148,7 @@ where
             })
     }
 
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
         // TODO
     }
 }
