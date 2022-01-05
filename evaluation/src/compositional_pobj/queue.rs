@@ -33,7 +33,7 @@ pub struct TestMementoQueue {
 }
 
 impl Collectable for TestMementoQueue {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -69,7 +69,7 @@ impl Default for MementoQueueEnqDeqPair {
 }
 
 impl Collectable for MementoQueueEnqDeqPair {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -136,7 +136,7 @@ impl Default for MementoQueueEnqDeqProb {
 }
 
 impl Collectable for MementoQueueEnqDeqProb {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }

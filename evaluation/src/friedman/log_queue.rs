@@ -70,7 +70,7 @@ struct LogQueue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for LogQueue<T> {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -307,7 +307,7 @@ pub struct TestLogQueue {
 }
 
 impl Collectable for TestLogQueue {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -333,7 +333,7 @@ pub struct LogQueueEnqDeqPair {
 }
 
 impl Collectable for LogQueueEnqDeqPair {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -389,7 +389,7 @@ pub struct LogQueueEnqDeqProb {
 }
 
 impl Collectable for LogQueueEnqDeqProb {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
