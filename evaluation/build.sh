@@ -16,7 +16,7 @@ sudo apt install libpmemobj-cpp-dev -y
 
 ### plot
 sudo apt install build-essential python3-pip
-pip3 install --user pandas matplotlib
+pip3 install --user pandas matplotlib gitpython
 
 # Build Rust implementation
 if [ "$feature" == "no_persist" ]; then
