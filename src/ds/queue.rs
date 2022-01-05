@@ -1,6 +1,6 @@
 //! Persistent opt queue
 
-use crate::ploc::smo::{self, Update, Insert, SMOAtomic};
+use crate::ploc::smo::{self, Insert, SMOAtomic, Update};
 use crate::ploc::{no_owner, Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -233,13 +233,17 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    delete: Update<Node<T>>,
+    update: Update<Node<T>>,
+    // head: Checkpoint<PAtomic<Node<T>>>,
+    // head_next: Checkpoint<PAtomic<Node<T>>>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
-            delete: Default::default(),
+            update: Default::default(),
+            // head: Default::default(),
+            // head_next: Default::default(),
         }
     }
 }
@@ -248,7 +252,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Update::filter(&mut try_deq.delete, tid, gc, pool);
+        Update::filter(&mut try_deq.update, tid, gc, pool);
     }
 }
 
@@ -267,19 +271,15 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let head = loop {
-            let head = queue.head.load_helping(guard, pool);
-            let head_ref = unsafe { head.deref(pool) };
-            let next = head_ref.next.load(Ordering::SeqCst, guard);
-            let tail = queue.tail.load(Ordering::SeqCst, guard);
+        let head = queue.head.load_helping(guard, pool);
+        let head_ref = unsafe { head.deref(pool) };
+        let next = head_ref.next.load(Ordering::SeqCst, guard);
+        let tail = queue.tail.load(Ordering::SeqCst, guard);
 
-            if head.as_ptr() != tail.as_ptr() {
-                break head;
-            }
-
+        if head.as_ptr() == tail.as_ptr() {
             if next.is_null() {
-                todo!("rec에서 다시 empty를 리턴하게 하려면?")
-                // return self.delete.set_empty();
+                // TODO(must): head, next chk 해서 rec run에서도 empty 리턴 가능하게
+                return Ok(None);
             }
 
             let tail_ref = unsafe { tail.deref(pool) };
@@ -289,33 +289,24 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
                 queue
                     .tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        };
 
-        todo!("cas")
-        // self.delete
-        //     .run(
-        //         &queue.head,
-        //         (0, h, , queue),
-        //         tid,
-        //         rec,
-        //         guard,
-        //         pool,
-        //     )
-        //     .map(|ret| {
-        //         ret.map(|popped| {
-        //             let next = unsafe { popped.deref(pool) }
-        //                 .next
-        //                 .load(Ordering::SeqCst, guard); // TODO(opt): next를 다시 load해서 성능 저하
-        //             let next_ref = unsafe { next.deref(pool) };
-        //             unsafe { guard.defer_pdestroy(popped) };
-        //             unsafe { (*next_ref.data.as_ptr()).clone() }
-        //         })
-        //     })
-        //     .map_err(|_| TryFail)
+            return Err(TryFail);
+        }
+
+        self.update
+            .run(&queue.head, (head, next), tid, rec, guard, pool)
+            .map(|ret| {
+                ret.map(|popped| unsafe {
+                    let next_ref = next.deref(pool);
+                    guard.defer_pdestroy(popped);
+                    (*next_ref.data.as_ptr()).clone()
+                })
+            })
+            .map_err(|_| TryFail)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete.reset(guard, pool);
+        self.update.reset(guard, pool);
     }
 }
 
@@ -524,7 +515,6 @@ mod test {
                     let mut tmp_deq = Dequeue::<usize>::default();
                     let must_none = tmp_deq.run(queue, (), tid, rec, guard, pool).unwrap();
                     assert!(must_none.is_none());
-                    tmp_deq.reset(guard, pool);
 
                     // Check results
                     assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
@@ -537,14 +527,11 @@ mod test {
                     for i in 0..COUNT {
                         let value = tid;
                         let _ = self.enqs[i].run(queue, value, tid, rec, guard, pool);
-                        let ret = self.deqs[i].run(queue, (), tid, rec, guard, pool).unwrap();
-                        assert!(ret.is_some());
-                    }
+                        let res = self.deqs[i].run(queue, (), tid, rec, guard, pool).unwrap();
+                        assert!(res.is_some());
 
-                    // deq 결과를 실험결과에 전달
-                    for deq in self.deqs.as_mut() {
-                        let ret = deq.run(queue, (), tid, true, guard, pool).unwrap().unwrap();
-                        let _ = RESULTS[ret].fetch_add(1, Ordering::SeqCst);
+                        // deq 결과를 실험결과에 전달
+                        let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
                     }
 
                     // "나 끝났다"

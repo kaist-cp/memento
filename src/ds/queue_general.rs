@@ -216,7 +216,8 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         let next = head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
-        if head.as_ptr() == tail.as_ptr() { // TODO(must): checkpoint 해서
+        if head.as_ptr() == tail.as_ptr() {
+            // TODO(must): checkpoint 해서
             if next.is_null() {
                 return Ok(None); // TODO(must): empty 결괏값을 어딘가에 담을 수 있어야 함
             }
@@ -426,9 +427,7 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let _ = self.enqs[i].run(queue, tid, tid, rec, guard, pool);
-                        let res = self.deqs[i]
-                            .run(queue, (), tid, rec, guard, pool)
-                            .unwrap();
+                        let res = self.deqs[i].run(queue, (), tid, rec, guard, pool).unwrap();
                         assert!(res.is_some());
 
                         // deq 결과를 실험결과에 전달

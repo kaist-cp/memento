@@ -286,7 +286,7 @@ where
         // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
         guard.defer_persist(point);
 
-        Ok(Some(old))
+        Ok(Some(old)) // TODO(must): 더 이상 None 리턴은 없을 듯.. empty를 처리하지 않으므로
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
