@@ -9,7 +9,9 @@ use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{lfence, ll::persist_obj, rdtsc, rdtscp, Collectable, GarbageCollection, PoolHandle},
+    pmem::{
+        lfence, ll::persist_obj, rdtsc, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle,
+    },
     Memento,
 };
 
@@ -87,9 +89,19 @@ where
             );
         }
 
+        if !Self::help(target, old, pcheckpoint, guard) {
+            return Err(());
+        }
+
         let tmp_new = new.with_tid(tid);
         target
-            .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
+            .compare_exchange(
+                old.with_tid(0),
+                tmp_new,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            )
             .map(|_| {
                 // 성공하면 target을 persist
                 persist_obj(target, true);
@@ -98,53 +110,19 @@ where
                 self.checkpoint = rdtscp();
                 persist_obj(&self.checkpoint, true);
 
-                // // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
-                // let _ = target
-                //     .compare_exchange(
-                //         tmp_new,
-                //         new.with_tid(0),
-                //         Ordering::SeqCst,
-                //         Ordering::SeqCst,
-                //         guard,
-                //     )
-                //     .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
-                // persist_obj(target, true);
-            })
-            .map_err(|e| {
-                let succ_tid = e.current.tid();
-
-                if succ_tid == 0 {
-                    return;
-                }
-
-                let now = rdtsc();
-                lfence();
-                let cur = target.load(Ordering::SeqCst, guard);
-
-                if e.current != cur {
-                    return;
-                }
-
-                let chk = pcheckpoint[succ_tid].load(Ordering::SeqCst);
-                if now <= chk {
-                    // 이미 누가 한 거임
-                    return;
-                }
-
-                persist_obj(target, false);
-                if pcheckpoint[succ_tid]
-                    .compare_exchange(chk, now, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok()
-                {
-                    persist_obj(&pcheckpoint[succ_tid], false);
-                    let _ = target.compare_exchange(
-                        e.current,
-                        e.current.with_tid(0),
+                // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
+                let _ = target
+                    .compare_exchange(
+                        tmp_new,
+                        new.with_tid(0),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                         guard,
-                    );
-                }
+                    )
+                    .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
+            })
+            .map_err(|e| {
+                let _ = Self::help(target, e.current, pcheckpoint, guard);
             })
     }
 
@@ -192,5 +170,59 @@ impl<N> Cas<N> {
         // }
 
         Err(())
+    }
+
+    /// return bool: 계속 진행 가능 여부 (`old`로 CAS를 해도 되는지 여부)
+    #[inline]
+    fn help<'g>(
+        target: &PAtomic<N>,
+        old: PShared<'_, N>,
+        pcheckpoint: &[AtomicU64; 256],
+        guard: &'g Guard,
+    ) -> bool {
+        let succ_tid = old.tid();
+
+        if succ_tid == 0 {
+            return true;
+        }
+
+        let now = rdtsc();
+        lfence();
+        let cur = target.load(Ordering::SeqCst, guard);
+
+        if old != cur {
+            return false;
+        }
+
+        let chk = pcheckpoint[succ_tid].load(Ordering::SeqCst);
+        if now <= chk {
+            // 이미 누가 한 거임
+            return false;
+        }
+
+        persist_obj(target, false);
+        if pcheckpoint[succ_tid]
+            .compare_exchange(chk, now, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            persist_obj(&pcheckpoint[succ_tid], false);
+            let res = target.compare_exchange(
+                old,
+                old.with_tid(0),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            );
+
+            if let Err(e) = res {
+                if e.current == old.with_tid(0) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+
+        false
     }
 }
