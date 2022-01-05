@@ -75,6 +75,7 @@ pub fn get_total_nops() -> usize {
 pub enum TestTarget {
     MementoQueue(TestKind),
     MementoQueueUnOpt(TestKind),
+    MementoQueueGeneral(TestKind),
     MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
@@ -158,7 +159,10 @@ pub mod queue {
 
     use crate::{
         common::{get_nops, PROB},
-        compositional_pobj::{MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, TestMementoQueue},
+        // compositional_pobj::{MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, TestMementoQueue},
+        compositional_pobj::{
+            MementoQueueGeneralEnqDeqPair, MementoQueueGeneralEnqDeqProb, TestMementoQueueGeneral,
+        },
         // compositional_pobj::{
         //     MementoQueueUnOptEnqDeqPair, MementoQueueUnOptEnqDeqProb, TestMementoQueueUnOpt,
         // },
@@ -210,11 +214,13 @@ pub mod queue {
         match target {
             TestTarget::MementoQueue(kind) => match kind {
                 TestKind::QueuePair => {
-                    get_nops::<TestMementoQueue, MementoQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                    todo!()
+                    // get_nops::<TestMementoQueue, MementoQueueEnqDeqPair>(&opt.filepath, opt.threads)
                 }
                 TestKind::QueueProb(prob) => {
-                    unsafe { PROB = prob };
-                    get_nops::<TestMementoQueue, MementoQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                    todo!()
+                    // unsafe { PROB = prob };
+                    // get_nops::<TestMementoQueue, MementoQueueEnqDeqProb>(&opt.filepath, opt.threads)
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
@@ -233,7 +239,21 @@ pub mod queue {
             //         }
             //         _ => unreachable!("Queue를 위한 테스트만 해야함"),
             //     }
-            // }
+            // },
+            TestTarget::MementoQueueGeneral(kind) => match kind {
+                TestKind::QueuePair => get_nops::<
+                    TestMementoQueueGeneral,
+                    MementoQueueGeneralEnqDeqPair,
+                >(&opt.filepath, opt.threads),
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    get_nops::<TestMementoQueueGeneral, MementoQueueGeneralEnqDeqProb>(
+                        &opt.filepath,
+                        opt.threads,
+                    )
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
             TestTarget::MementoPipeQueue(kind) => match kind {
                 TestKind::QueuePair => {
                     todo!()
