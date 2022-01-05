@@ -4,8 +4,10 @@
 
 rm -rf /mnt/pmem0/*
 
-TARGET="memento_queue"
+TARGET="memento_queue_general"
+THREAD=12
+
 mkdir -p out
 
-numactl --cpunodebind=0 --membind=0 ./target/release/bench -f /mnt/pmem0/q -a $TARGET -k pair -t 12 -d 5 -o out/my_run.csv
-numactl --cpunodebind=0 --membind=0 ./target/release/bench -f /mnt/pmem0/q -a $TARGET -k pair -t 12 -d 5 -o out/my_run.csv
+numactl --cpunodebind=0 --membind=0 ./target/release/bench -f /mnt/pmem0/$TARGET -a $TARGET -k pair -t $THREAD -d 5 -o out/my_run.csv
+numactl --cpunodebind=0 --membind=0 ./target/release/bench -f /mnt/pmem0/$TARGET -a $TARGET -k pair -t $THREAD -d 5 -o out/my_run.csv
