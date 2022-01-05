@@ -159,7 +159,7 @@ pub mod queue {
 
     use crate::{
         common::{get_nops, PROB},
-        // compositional_pobj::{MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, TestMementoQueue},
+        compositional_pobj::{MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, TestMementoQueue},
         compositional_pobj::{
             MementoQueueGeneralEnqDeqPair, MementoQueueGeneralEnqDeqProb, TestMementoQueueGeneral,
         },
@@ -214,13 +214,11 @@ pub mod queue {
         match target {
             TestTarget::MementoQueue(kind) => match kind {
                 TestKind::QueuePair => {
-                    todo!()
-                    // get_nops::<TestMementoQueue, MementoQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                    get_nops::<TestMementoQueue, MementoQueueEnqDeqPair>(&opt.filepath, opt.threads)
                 }
                 TestKind::QueueProb(prob) => {
-                    todo!()
-                    // unsafe { PROB = prob };
-                    // get_nops::<TestMementoQueue, MementoQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                    unsafe { PROB = prob };
+                    get_nops::<TestMementoQueue, MementoQueueEnqDeqProb>(&opt.filepath, opt.threads)
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
