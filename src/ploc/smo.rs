@@ -239,7 +239,7 @@ where
     type Output<'o>
     where
         N: 'o,
-    = Option<PShared<'o, N>>;
+    = PShared<'o, N>;
     type Error<'o> = ();
 
     fn run<'o>(
@@ -286,7 +286,7 @@ where
         // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
         guard.defer_persist(point);
 
-        Ok(Some(old)) // TODO(must): 더 이상 None 리턴은 없을 듯.. empty를 처리하지 않으므로
+        Ok(old)
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
@@ -305,32 +305,20 @@ where
         tid: usize,
         guard: &'g Guard,
         pool: &'static PoolHandle,
-    ) -> Result<Option<PShared<'g, N>>, ()> {
+    ) -> Result<PShared<'g, N>, ()> {
         let target = self.target_loc.load(Ordering::Relaxed, guard);
-        let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
-            return if target.tag() & EMPTY != 0 {
-                // empty라고 명시됨
-                Ok(None)
-            } else {
-                // 내가 찜한게 없으면 실패
-                Err(())
-            };
-        });
+        let target_ref = some_or!(
+            unsafe { target.as_ref(pool) },
+            return Err(()) // 내가 찜한게 없으면 실패
+        );
 
         // 내가 찜한 target의 owner가 나면 성공, 아니면 실패
         let owner = target_ref.owner().load(Ordering::SeqCst, guard);
         if owner.tid() == tid {
-            Ok(Some(target))
+            Ok(target)
         } else {
             Err(())
         }
-    }
-
-    /// Set empty to prevent operation next time.
-    pub fn set_empty(&self) {
-        self.target_loc
-            .store(PShared::null().with_tag(EMPTY), Ordering::Relaxed);
-        persist_obj(&self.target_loc, true);
     }
 }
 

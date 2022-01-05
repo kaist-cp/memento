@@ -295,12 +295,10 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
 
         self.update
             .run(&queue.head, (head, next), tid, rec, guard, pool)
-            .map(|ret| {
-                ret.map(|popped| unsafe {
-                    let next_ref = next.deref(pool);
-                    guard.defer_pdestroy(popped);
-                    (*next_ref.data.as_ptr()).clone()
-                })
+            .map(|popped| unsafe {
+                let next_ref = next.deref(pool);
+                guard.defer_pdestroy(popped);
+                Some((*next_ref.data.as_ptr()).clone())
             })
             .map_err(|_| TryFail)
     }
