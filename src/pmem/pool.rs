@@ -3,9 +3,11 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use std::alloc::Layout;
+use std::cell::UnsafeCell;
 use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::path::Path;
+use std::sync::atomic::AtomicU64;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -54,8 +56,8 @@ pub struct PoolHandle {
     /// 풀의 길이
     len: usize,
 
-    /// recovery 진행중 여부
-    recovering: bool,
+    /// tid별 스스로 cas 성공한 시간
+    pub cas_vcheckpoint: [AtomicU64; 256],
 }
 
 impl PoolHandle {
@@ -197,12 +199,6 @@ impl PoolHandle {
     pub fn valid(&self, raw: usize) -> bool {
         raw >= self.start() && raw < self.end()
     }
-
-    /// 현재 recovery 중인지 여부 확인
-    #[inline]
-    pub fn is_recovering(&self) -> bool {
-        self.recovering
-    }
 }
 
 impl Drop for PoolHandle {
@@ -264,7 +260,7 @@ impl Pool {
         global::init(PoolHandle {
             start: unsafe { RP_mmapped_addr() },
             len: size,
-            recovering: true,
+            cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
         });
         let pool = global_pool().unwrap();
 
@@ -339,16 +335,17 @@ impl Pool {
         global::init(PoolHandle {
             start: RP_mmapped_addr(),
             len: size,
-            recovering: true,
+            cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
         });
 
         // GC 수행
         {
             unsafe extern "C" fn root_filter<T: Collectable>(
                 ptr: *mut ::std::os::raw::c_char,
+                tid: usize,
                 gc: &mut GarbageCollection,
             ) {
-                RP_mark(gc, ptr, Some(T::filter_inner));
+                RP_mark(gc, ptr, tid.wrapping_sub(IX_MEMENTO_START as usize), Some(T::filter_inner));
             }
 
             // root obj의 filter func 등록
@@ -356,9 +353,9 @@ impl Pool {
 
             // root memento(들)의 filter func 등록
             let nr_memento = *(RP_get_root_c(IX_NR_MEMENTO) as *mut usize);
-            for i in 0..nr_memento {
+            for tid in 0..nr_memento {
                 // root memento들은 Ralloc의 2번째 root부터 위치
-                RP_set_root_filter(Some(root_filter::<M>), IX_MEMENTO_START + i as u64);
+                RP_set_root_filter(Some(root_filter::<M>), IX_MEMENTO_START + tid as u64);
             }
 
             // GC 호출
@@ -415,7 +412,7 @@ mod tests {
     }
 
     impl Collectable for RootMemento {
-        fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             // no-op
         }
     }

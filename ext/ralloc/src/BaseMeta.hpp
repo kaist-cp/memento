@@ -1,13 +1,13 @@
 /*
  * Copyright (C) 2019 University of Rochester. All rights reserved.
  * Licenced under the MIT licence. See LICENSE file in the project root for
- * details. 
+ * details.
  */
 
 /*
  * Copyright (C) 2018 Ricardo Leite
  * Licenced under the MIT licence. This file shares some portion from
- * LRMalloc(https://github.com/ricleite/lrmalloc) and its copyright 
+ * LRMalloc(https://github.com/ricleite/lrmalloc) and its copyright
  * is retained. See LICENSE for details about MIT License.
  */
 
@@ -34,12 +34,12 @@
  * This is the file where meta data structures of
  * ralloc are defined.
  *
- * The using logic is: 
- *  1.  Use RegionManager to allocate a persistent 
+ * The using logic is:
+ *  1.  Use RegionManager to allocate a persistent
  *      region with size of BaseMeta
- *  2.  Cast the pointer to the persistent region 
+ *  2.  Cast the pointer to the persistent region
  *      to BaseMeta*
- *  3.  Initialize BaseMeta* by calling constructor 
+ *  3.  Initialize BaseMeta* by calling constructor
  *      in place.
  *
  * Some useful functions to know:
@@ -56,7 +56,7 @@
  *          Return persistent root i, or nullptr if there isn't.
  *          Type T is recorded as the type of root i and will be used in GC.
  *
- * Most of functions related to malloc and free share some portion of 
+ * Most of functions related to malloc and free share some portion of
  * code with the open source project https://github.com/ricleite/lrmalloc
  * Some modifications were applied for bug fixing or functionality adjustment.
  *
@@ -78,14 +78,14 @@ namespace ralloc{
     extern void public_flush_cache();
 };
 
-/* 
+/*
  * class CrossPtr<T, idx>
- *  
- * Description: 
+ *
+ * Description:
  *  Pointers to the block in region idx.
- *  Relative address stored in CrossPtr is the offset from the start of that 
+ *  Relative address stored in CrossPtr is the offset from the start of that
  *  region to the block.
- * 
+ *
  * Usage:
  *  T: the type of the pointer
  *  idx: the destination region index (RegionIndex defined in pm_config.hpp)
@@ -104,7 +104,7 @@ public:
         } else{
             return reinterpret_cast<F*>(ralloc::_rgs->translate(idx, off));
         }
-    } 
+    }
     T& operator* ();
     T* operator-> ();
     inline CrossPtr& operator= (const CrossPtr<T,idx> &p){
@@ -140,16 +140,16 @@ inline bool operator!=(const CrossPtr<T,idx>& lhs, const std::nullptr_t& rhs){
     return !lhs.is_null();
 }
 
-/* 
+/*
  * class ptr_cnt<T>
- * 
+ *
  * Description:
  * This is a wrapper for plain pointer, rather than pptr.
  * Given that we don't use this in atomic (i.e., no atomic<ptr_cnt<T>>), we
  * don't bother fit both pointer and counter into 64 bits.
- * 
- * This class is to store the intermediate value of operations on 
- * AtomicCrossPtrCnt<T>, including atomic load, store, 
+ *
+ * This class is to store the intermediate value of operations on
+ * AtomicCrossPtrCnt<T>, including atomic load, store,
  * and CAS.
  */
 template <class T>
@@ -171,12 +171,12 @@ public:
 	}
 };
 
-/* 
+/*
  * class AtomicCrossPtrCnt<T, idx>
- *  
- * Description: 
+ *
+ * Description:
  *  Atomic version of CrossPtr, where higher 34 bits is a counter to avoid ABA.
- * 
+ *
  * Usage:
  *  T: the type of the pointer
  *  idx: the destination region index (RegionIndex defined in pm_config.hpp)
@@ -187,7 +187,7 @@ public:
     std::atomic<char*> off; // higher 34 bits: counter, lower 30 bits: offset
     AtomicCrossPtrCnt(T* real_ptr = nullptr, uint64_t counter = 0) noexcept;
     ptr_cnt<T> load(std::memory_order order = std::memory_order_seq_cst) const noexcept;
-    void store(ptr_cnt<T> desired, 
+    void store(ptr_cnt<T> desired,
         std::memory_order order = std::memory_order_seq_cst ) noexcept;
     bool compare_exchange_weak(ptr_cnt<T>& expected, ptr_cnt<T> desired,
         std::memory_order order = std::memory_order_seq_cst ) noexcept;
@@ -195,9 +195,9 @@ public:
         std::memory_order order = std::memory_order_seq_cst ) noexcept;
 };
 
-/* 
+/*
  * enum SuperblockState
- * 
+ *
  * Description:
  *  Superblock states used in Anchor::state.
  */
@@ -221,9 +221,9 @@ struct ProcHeap;
  *** core data structures start here ***
  ***************************************/
 
-/* 
+/*
  * struct Anchor
- * 
+ *
  * Description:
  *  64-bit anchor in each descriptor, descripting status of a superblock.
  */
@@ -235,10 +235,10 @@ struct Anchor{
 };
 static_assert(sizeof(Anchor) == sizeof(uint64_t), "Invalid anchor size");
 
-/* 
+/*
  * struct Descriptor
- * 
- * Description: 
+ *
+ * Description:
  *  Cache-line aligned descriptor of a superblock.
  *  Descriptors are arranged in desc region and *never* freed
  */
@@ -268,9 +268,9 @@ struct Descriptor {
 }__attribute__((aligned(CACHELINE_SIZE)));
 static_assert(sizeof(Descriptor) == CACHELINE_SIZE, "Invalid Descriptor size");
 
-/* 
+/*
  * struct ProcHeap
- * 
+ *
  * Descrition:
  *  Legacy struct to store the reference to partial list of a sizeclass.
  *  Can be merged into sizeclass but I'm too lazy to do so. :D
@@ -289,9 +289,9 @@ public:
         partial_list(){};
 }__attribute__((aligned(CACHELINE_SIZE)));
 
-/* 
+/*
  * class GarbageCollection
- * 
+ *
  * Descrition:
  *  A function class to do garbage collection during a dirty restart.
  *  Will be instantiated when BaseMeta::restart() is called and the segment is
@@ -300,8 +300,8 @@ public:
 class GarbageCollection{
 public:
     std::set<char*> marked_blk;
-    std::stack<char*> to_filter_node;
-    std::stack<std::function<void(char*,GarbageCollection& gc)>> to_filter_func;
+    std::stack<std::pair<char*, size_t>> to_filter_node;
+    std::stack<std::function<void(char*, size_t, GarbageCollection& gc)>> to_filter_func;
 
     GarbageCollection():marked_blk(){};
 
@@ -309,49 +309,49 @@ public:
 
     // return true if ptr is a valid and unmarked pointer, otherwise false
     template<class T>
-    inline void mark_func(T* ptr){
+    inline void mark_func(T* ptr, size_t tid){
         void* addr = reinterpret_cast<void*>(ptr);
         // Step 1: check if it's a valid pptr
-        if(UNLIKELY(!ralloc::_rgs->in_range(SB_IDX, addr))) 
+        if(UNLIKELY(!ralloc::_rgs->in_range(SB_IDX, addr)))
             return; // return if not in range
         auto res = marked_blk.find(reinterpret_cast<char*>(addr));
         if(res == marked_blk.end()){
             // Step 2: mark potential pptr
             marked_blk.insert(reinterpret_cast<char*>(addr));
             // Step 3: push ptr to stack
-            to_filter_node.push(reinterpret_cast<char*>(addr));
-            to_filter_func.push([](char* ptr,GarbageCollection& gc){
-                    gc.filter_func(reinterpret_cast<T*>(ptr));
+            to_filter_node.push(std::pair<char*, size_t>(reinterpret_cast<char*>(addr), 0));
+            to_filter_func.push([](char* ptr, size_t tid, GarbageCollection& gc){
+                    gc.filter_func(reinterpret_cast<T*>(ptr), tid);
                 });
         }
         return;
     }
 
     template<class T>
-    inline void filter_func(T* ptr);
+    inline void filter_func(T* ptr, size_t tid);
 
     // C version of `mark_func()`
     //
     // `ptr`을 마킹하고 다음 마킹할 것은 이 `filter_func`으로 추가해라
     //
-    // Example: 
+    // Example:
     //  - `ptr`이 가리키는 타입이 Queue라면, `filter_func`에는 Queue::filter_func이 들어와야함
-    //  - Queue::filter_func은 이렇게 구현돼어있어야함: Queue::filter_func(...) { mark_func_c(head); }   
-    void mark_func_c(char* ptr, void (*filter_func)(char*, GarbageCollection&));
+    //  - Queue::filter_func은 이렇게 구현돼어있어야함: Queue::filter_func(...) { mark_func_c(head); }
+    void mark_func_c(char* ptr, size_t, void (*filter_func)(char*, size_t, GarbageCollection&));
 };
 
 namespace ralloc{
     // (transient) filter functions for each root
-    extern std::function<void(const CrossPtr<char, SB_IDX>&, GarbageCollection&)> roots_filter_func[MAX_ROOTS];
+    extern std::function<void(const CrossPtr<char, SB_IDX>&, size_t, GarbageCollection&)> roots_filter_func[MAX_ROOTS];
 }
 
 /*
  * class BaseMeta
- * 
+ *
  * Description:
  *  The core data structure in this file.
  *  Contains essential metadata for Ralloc, including:
- *      avail_sb: superblock free list 
+ *      avail_sb: superblock free list
  *      dirty_attr, dirty_mtx: dirty flag
  *      heaps: sizeclasses and their partial lists
  *      roots: pointers to persistent roots
@@ -370,7 +370,7 @@ public:
     friend class GarbageCollection;
     BaseMeta() noexcept;
     ~BaseMeta(){
-        /* usually BaseMeta shouldn't be destructed, 
+        /* usually BaseMeta shouldn't be destructed,
          * and will be reused in the next time
          */
         std::cout<<"Warning: BaseMeta is being destructed!\n";
@@ -392,7 +392,7 @@ public:
         //this is sequential
         assert(i<MAX_ROOTS);
         void* res = nullptr;
-        if(roots[i]!=nullptr) 
+        if(roots[i]!=nullptr)
             res = static_cast<void*>(roots[i]);
         roots[i] = ptr;
 
@@ -405,9 +405,9 @@ public:
         //this is sequential
         // assert(i<MAX_ROOTS && roots[i]!=nullptr); // we allow roots[i] to be null
         assert(i<MAX_ROOTS);
-        ralloc::roots_filter_func[i] = [](const CrossPtr<char, SB_IDX>& cptr, GarbageCollection& gc){
+        ralloc::roots_filter_func[i] = [](const CrossPtr<char, SB_IDX>& cptr, size_t, GarbageCollection& gc){
             // this new statement is intentionally designed to use transient allocator since it's offline
-            gc.mark_func(static_cast<T*>(cptr));
+            gc.mark_func(static_cast<T*>(cptr), 0);
         };
         return static_cast<T*>(roots[i]);
     }
@@ -495,14 +495,14 @@ private:
 // default (conservative) filter function which traverse all possible pointers
 // in the block
 template<class T>
-inline void GarbageCollection::filter_func(T* ptr){
+inline void GarbageCollection::filter_func(T* ptr, size_t tid){
     char* curr = reinterpret_cast<char*>(ptr);
     Descriptor* desc = ralloc::base_md->desc_lookup((char*)ptr);
     size_t sz = desc->block_size;
     for(size_t i=0;i<sz;i++){
         char* curr_content = static_cast<char*>(*(reinterpret_cast<pptr<char>*>(curr)));
         if(curr_content!=nullptr)
-            mark_func(curr_content);
+            mark_func(curr_content, tid);
         curr++;
     }
 }

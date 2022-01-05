@@ -34,7 +34,7 @@ pub mod tests {
     pub struct DummyRootObj;
 
     impl Collectable for DummyRootObj {
-        fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             // no-op
         }
     }
@@ -51,7 +51,7 @@ pub mod tests {
     pub struct DummyRootMemento;
 
     impl Collectable for DummyRootMemento {
-        fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             // no-op
         }
     }

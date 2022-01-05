@@ -48,14 +48,14 @@ impl<T> From<T> for Node<T> {
 }
 
 impl<T> Collectable for Node<T> {
-    fn filter(node: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { epoch::unprotected() };
 
         // Mark valid ptr to trace
         let mut next = node.next.load(Ordering::SeqCst, guard);
         if !next.is_null() {
             let next = unsafe { next.deref_mut(pool) };
-            Node::<T>::mark(next, gc);
+            Node::<T>::mark(next, tid, gc);
         }
     }
 }

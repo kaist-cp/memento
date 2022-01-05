@@ -1,20 +1,20 @@
 /*
  * Copyright (C) 2019 University of Rochester. All rights reserved.
  * Licenced under the MIT licence. See LICENSE file in the project root for
- * details. 
+ * details.
  */
 
 /*
  * Copyright (C) 2018 Ricardo Leite
  * Licenced under the MIT licence. This file shares some portion from
- * LRMalloc(https://github.com/ricleite/lrmalloc) and its copyright 
+ * LRMalloc(https://github.com/ricleite/lrmalloc) and its copyright
  * is retained. See LICENSE for details about MIT License.
  */
 
 #include <sys/mman.h>
 
 #include <string>
-#include <chrono> 
+#include <chrono>
 #include <iostream>
 
 #include "BaseMeta.hpp"
@@ -172,7 +172,7 @@ bool BaseMeta::is_dirty(){
         pthread_mutex_init(&dirty_mtx, &dirty_attr);
         return true;
     default:
-        printf("something unexpected happens when check dirty_mtx\n"); 
+        printf("something unexpected happens when check dirty_mtx\n");
         exit(1);
     }// switch(s)
 }
@@ -182,7 +182,7 @@ void BaseMeta::set_clean(){
 }
 
 BaseMeta::BaseMeta() noexcept
-: 
+:
     avail_sb(),
     heaps()
     // thread_num(thd_num) {
@@ -255,7 +255,7 @@ inline void* BaseMeta::expand_get_large_sb(size_t sz){
         assert(res != -1 && "space runs out!");
     }
     DBG_PRINT("expand sb space for large sb allocation\n");
-    
+
     Descriptor* desc = desc_lookup(ret);
     new (desc) Descriptor();
     return ret;
@@ -269,7 +269,7 @@ inline SizeClassData* BaseMeta::get_sizeclass(ProcHeap* h){
     return get_sizeclass_by_idx(h->sc_idx);
 }
 
-inline SizeClassData* BaseMeta::get_sizeclass_by_idx(size_t idx) { 
+inline SizeClassData* BaseMeta::get_sizeclass_by_idx(size_t idx) {
     return sizeclass.get_sizeclass_by_idx(idx);
 }
 
@@ -280,7 +280,7 @@ uint32_t BaseMeta::compute_idx(char* superblock, char* block, size_t sc_idx) {
 
     assert(block >= superblock);
     assert(block < superblock + sc->sb_size);
-    // optimize integer division by allowing the compiler to create 
+    // optimize integer division by allowing the compiler to create
     //  a jump table using size class index
     // compiler can then optimize integer div due to known divisor
     uint32_t diff = uint32_t(block - superblock);
@@ -428,7 +428,7 @@ void BaseMeta::heap_push_partial(Descriptor* desc) {
     do {
         newhead.set(desc, oldhead.get_counter() + 1);
         assert(oldhead.get_ptr() != newhead.get_ptr());
-        newhead.get_ptr()->next_partial.store(oldhead.get_ptr()); 
+        newhead.get_ptr()->next_partial.store(oldhead.get_ptr());
     } while (!heap->partial_list.compare_exchange_weak(oldhead, newhead));
 }
 
@@ -635,9 +635,9 @@ inline void BaseMeta::small_sb_retire(void* sb, size_t size){
     } while (!avail_sb.compare_exchange_weak(oldhead,newhead));
 }
 
-/* 
- * IMPORTANT: 	Large_sb_alloc is designed for very rare 
- *				large sb (>=16K) allocations. 
+/*
+ * IMPORTANT: 	Large_sb_alloc is designed for very rare
+ *				large sb (>=16K) allocations.
  *
  *				Every time sb region will be expanded by $size$
  */
@@ -732,14 +732,14 @@ void ralloc::public_flush_cache(){
 
 /*
  * function GarbageCollection::operator()
- * 
+ *
  * Description:
  *  Sequential stop-the-world garbage collection routine for Ralloc when dirty
  *  segment exists.
  */
 void GarbageCollection::operator() () {
     printf("Start garbage collection...\n");
-    auto start = high_resolution_clock::now(); 
+    auto start = high_resolution_clock::now();
     // Step 0: initialize all transient data
     printf("Initializing all transient data...");
     base_md->avail_sb.off.store(nullptr); // initialize avail_sb
@@ -755,7 +755,7 @@ void GarbageCollection::operator() () {
     // First mark all root nodes
     for(int i = 0; i < MAX_ROOTS; i++) {
         if(base_md->roots[i]!=nullptr) {
-            ralloc::roots_filter_func[i](base_md->roots[i], *this);
+            ralloc::roots_filter_func[i](base_md->roots[i], i, *this);
         }
     }
     while(!to_filter_node.empty()) {
@@ -764,7 +764,7 @@ void GarbageCollection::operator() () {
         auto node = to_filter_node.top();
         to_filter_node.pop();
         to_filter_func.pop();
-        func(node,*this);
+        func(node.first, node.second, *this);
     }
     printf("Done!\nReachable blocks = %lu\n", marked_blk.size());
 
@@ -798,11 +798,11 @@ void GarbageCollection::operator() () {
                     // to be pointed at in the middle
                     assert(curr_desc->maxcount == 1);
                     anchor.state = SB_FULL; // set it as full
-                } 
+                }
                 else {
                     // small sb that's in use
                     anchor.state = SB_PARTIAL;
-                    for(char* free_block = last_possible_free_block; 
+                    for(char* free_block = last_possible_free_block;
                         free_block < (*curr_marked_blk); free_block+=curr_desc->block_size){
                         // put last_possible_free_block...(curr_marked_blk-1) to free blk list
                         (*reinterpret_cast<pptr<char>*>(free_block)) = free_blocks_head;
@@ -839,14 +839,14 @@ void GarbageCollection::operator() () {
                 curr_desc = base_md->desc_lookup(curr_sb);
             } else {
                 // small sb that's in use
-                for(char* free_block = last_possible_free_block; 
+                for(char* free_block = last_possible_free_block;
                     free_block < curr_sb+curr_desc->maxcount*curr_desc->block_size; free_block+=curr_desc->block_size){
                     // put last_possible_free_block...(curr_sb+SBSIZE-1) to free blk list
                     (*reinterpret_cast<pptr<char>*>(free_block)) = free_blocks_head;
                     free_blocks_head = free_block;
                     anchor.count++;
                 }
-                if(anchor.count == 0) { 
+                if(anchor.count == 0) {
                     // this sb is fully used
                     anchor.avail = curr_desc->maxcount;
                     anchor.state = SB_FULL;
@@ -877,7 +877,7 @@ void GarbageCollection::operator() () {
     ptr_cnt<Descriptor> tmp_avail_sb(avail_sb, 0);
     base_md->avail_sb.store(tmp_avail_sb);
     printf("Reconstructed! \n");
-    auto stop = high_resolution_clock::now(); 
+    auto stop = high_resolution_clock::now();
     assert(curr_marked_blk == marked_blk.end());
     auto duration = duration_cast<milliseconds>(stop - start);
     cout << "Time elapsed = " << duration.count() <<" ms on GC."<<endl;
@@ -896,17 +896,17 @@ void GarbageCollection::operator() () {
     printf("Garbage collection Completed!\n");
 }
 
-void GarbageCollection::mark_func_c(char* ptr, void (*filter_func)(char*, GarbageCollection&)) {
+void GarbageCollection::mark_func_c(char* ptr, size_t tid, void (*filter_func)(char*, size_t, GarbageCollection&)) {
     void* addr = reinterpret_cast<void*>(ptr);
     // Step 1: check if it's a valid pptr
-    if(UNLIKELY(!ralloc::_rgs->in_range(SB_IDX, addr))) 
+    if(UNLIKELY(!ralloc::_rgs->in_range(SB_IDX, addr)))
         return; // return if not in range
     auto res = marked_blk.find(reinterpret_cast<char*>(addr));
     if(res == marked_blk.end()){
         // Step 2: mark potential pptr
         marked_blk.insert(reinterpret_cast<char*>(addr));
         // Step 3: push ptr to stack
-        to_filter_node.push(reinterpret_cast<char*>(addr));
+        to_filter_node.push(std::pair<char*, size_t>(reinterpret_cast<char*>(addr), tid));
         to_filter_func.push(filter_func);
     }
     return;

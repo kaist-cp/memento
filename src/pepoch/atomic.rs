@@ -1159,13 +1159,13 @@ impl<T> Checkpointable for PAtomic<T> {
 }
 
 impl<T: Collectable> Collectable for PAtomic<T> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let guard = unsafe { unprotected() };
 
         let mut ptr = s.load(Ordering::Relaxed, guard);
         if !ptr.is_null() && ptr != invalid_ptr() {
             let t_ref = unsafe { ptr.deref_mut(pool) };
-            T::mark(t_ref, gc);
+            T::mark(t_ref, tid, gc);
         }
     }
 }
@@ -1504,9 +1504,9 @@ impl<T: Clone> POwned<T> {
 }
 
 impl<T: Collectable> Collectable for POwned<T> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         let item = unsafe { (*s).deref_mut(pool) };
-        T::mark(item, gc);
+        T::mark(item, tid, gc);
     }
 }
 
