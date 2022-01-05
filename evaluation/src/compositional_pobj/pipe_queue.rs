@@ -28,7 +28,7 @@ struct EnqueuePipeQ {
 }
 
 impl Collectable for EnqueuePipeQ {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -85,7 +85,7 @@ struct DequeuePipeQ {
 }
 
 impl Collectable for DequeuePipeQ {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -145,7 +145,7 @@ pub struct TestPipeQueue {
 }
 
 impl Collectable for TestPipeQueue {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -186,7 +186,7 @@ impl Default for MementoPipeQueueEnqDeqPair {
 }
 
 impl Collectable for MementoPipeQueueEnqDeqPair {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -254,7 +254,7 @@ impl Default for MementoPipeQueueEnqDeqProb {
 }
 
 impl Collectable for MementoPipeQueueEnqDeqProb {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }

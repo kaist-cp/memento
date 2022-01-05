@@ -44,7 +44,7 @@ struct DurableQueue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for DurableQueue<T> {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -223,7 +223,7 @@ pub struct TestDurableQueue {
 }
 
 impl Collectable for TestDurableQueue {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -246,7 +246,7 @@ impl PDefault for TestDurableQueue {
 pub struct DurableQueueEnqDeqPair;
 
 impl Collectable for DurableQueueEnqDeqPair {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -295,7 +295,7 @@ impl Memento for DurableQueueEnqDeqPair {
 pub struct DurableQueueEnqDeqProb;
 
 impl Collectable for DurableQueueEnqDeqProb {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
