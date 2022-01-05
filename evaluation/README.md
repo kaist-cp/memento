@@ -49,10 +49,10 @@ TODO: 현재 PMDK만 no_persist 구현 안됨. PMDK도 no_persist 같은 옵션 
 
 example:
 ```bash
-./target/release/bench -f /mnt/pmem0/memento_queue.pool -a memento_queue -k pair -t 16 -d 5 -o ./out/queue.csv
+./target/release/bench -f /mnt/pmem0/memento_queue.pool -a memento_queue -k pair -t 16 -d 5 -o ./out/memento_queue.csv
 ```
 `16`개 스레드로 `memento queue`에 `{enq; deq;}`를 `5초` 동안 반복 실행했을 때의 처리율(M op/s) 측정
-- 결과: `./out/queue.csv`
+- 결과: `./out/memento_queue.csv`
 - 풀 파일: `/mnt/pmem0/memento_queue.pool`을 새로 생성하여 사용
 
 ##### To run the entire benchmark,
@@ -62,9 +62,9 @@ run.sh <pmempath>
 ```
 모든 (`<target>`, `<bench kind>`, `<threads=1~32>`) 쌍에 대한 처리율 측정 (NUMA node 0에 pinning)
 - 결과:
-    - raw: `./out/{obj}.csv` (obj: queue, pipe)
-    - graph: `./out/{obj}-{bench kind}.png`
-- 각 쌍의 처리율: single bench로 처리율 측정을 10번 반복한 후 평균 처리율 계산 
+    - raw: `./out/{target}.csv`
+    - graph: `./out/{obj}-{bench kind}.png` (obj: queue, pipe)
+- 각 쌍의 처리율: single bench로 처리율 측정을 10번 반복한 후 평균 처리율 계산
 - 풀 파일: 매 singe bench마다 `{pmempath}/{target}.pool`을 새로 생성하여 사용
 
 ## Hash

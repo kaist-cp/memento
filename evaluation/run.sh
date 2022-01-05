@@ -3,19 +3,37 @@
 function show_cfg() {
     echo "<Configurations>"
     echo "PMEM path: $(realpath ${PMEM_PATH})"
-    echo "Test cnt per bench: ${TEST_CNT}"
-    echo "Duration per test: ${TEST_DUR}(s)"
+    echo "Max threads: ${MAX_THREADS}"
+    echo "Test count: ${TEST_CNT}"
+    echo "Test duration: ${TEST_DUR}s"
+
+    let total_dur=$TEST_CNT*$TEST_DUR*$MAX_THREADS/60
+    echo "테스트 총 소요시간: obj 수 * 약 ${total_dur}m (thread * count * duration)"
     echo ""
 }
 
 function bench() {
     target=$1
     kind=$2
-    out=$3
-    poolname=${target}.pool
-    poolpath=$PMEM_PATH/$poolname
-    echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}) >"
+    thread=$3
 
+    version=$(git log -1 --format="%h")
+    outpath=$out_path/${target}_${version}.csv
+    poolpath=$PMEM_PATH/${target}.pool
+
+    rm -f $poolpath*
+    if [ "pmdk_pipe" == "${target}" ]; then
+        # pinning NUMA node 0
+        numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $outpath
+    else
+        numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $thread -d $TEST_DUR -o $outpath
+    fi
+}
+
+function benches() {
+    target=$1
+    kind=$2
+    echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}) >"
     # 스레드 `t`개를 사용할 때의 처리율 계산
     for t in $( seq 1 $MAX_THREADS )
     do
@@ -23,13 +41,7 @@ function bench() {
         for ((var=1; var<=$TEST_CNT; var++));
         do
             echo "test $var/$TEST_CNT...";
-            rm -f $poolpath*
-            if [ "pmdk_pipe" == "${target}" ]; then
-                # pinning NUMA node 0
-                numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $out
-            else
-                numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $t -d $TEST_DUR -o $out
-            fi
+            bench $target $kind $t
         done
     done
     echo "done."
@@ -58,24 +70,22 @@ rm -rf ${PMEM_PATH}/*.pool* # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
-bench memento_queue prob50 $out_path/queue.csv
-bench memento_queue_unopt prob50 $out_path/queue.csv
-# bench memento_pipe_queue prob50 $out_path/queue.csv
-bench durable_queue prob50 $out_path/queue.csv
-bench log_queue prob50 $out_path/queue.csv
-bench dss_queue prob50 $out_path/queue.csv
-
-bench memento_queue pair $out_path/queue.csv
-bench memento_queue_unopt pair $out_path/queue.csv
-# bench memento_pipe_queue pair $out_path/queue.csv
-bench durable_queue pair $out_path/queue.csv
-bench log_queue pair $out_path/queue.csv
-bench dss_queue pair $out_path/queue.csv
+for kind in pair prob50; do
+    benches memento_queue $kind
+    # benches memento_queue_unopt $kind
+    benches memento_queue_general $kind
+    # benches memento_pipe_queue $kind
+    benches durable_queue $kind
+    benches log_queue $kind
+    benches dss_queue $kind
+done
 
 # 3. Benchmarking pipe performance
-# bench memento_pipe pipe $out_path/pipe.csv
-# bench crndm_pipe pipe $out_path/pipe.csv
-# bench pmdk_pipe pipe $out_path/pipe.csv
+# for kind in pipe; do
+#     benches memento_pipe $kind
+#     benches crndm_pipe $kind
+#     benches pmdk_pipe $kind
+# done
 
 # 4. Plot and finish
 python3 plot.py
