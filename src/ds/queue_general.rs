@@ -58,7 +58,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
         let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
-        let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO: load도 checkpoint helping 해야 함
+        let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): load도 checkpoint helping 해야 함
 
         if !next.is_null() {
             // tail is stale
@@ -80,6 +80,10 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
                 pool,
             )
             .map(|_| {
+                if rec {
+                    return;
+                }
+
                 let _ = queue.tail.compare_exchange(
                     tail,
                     node,
@@ -207,12 +211,12 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let head = queue.head.load(Ordering::SeqCst, guard); // TODO(must): load도 checkpoint helping
+        let head = queue.head.load(Ordering::SeqCst, guard); // TODO(opt): load도 checkpoint helping
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
-        if head.as_ptr() == tail.as_ptr() {
+        if head.as_ptr() == tail.as_ptr() { // TODO(must): checkpoint 해서
             if next.is_null() {
                 return Ok(None); // TODO(must): empty 결괏값을 어딘가에 담을 수 있어야 함
             }

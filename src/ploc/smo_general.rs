@@ -117,7 +117,7 @@ where
                     return;
                 }
 
-                let t = rdtsc();
+                let now = rdtsc();
                 lfence();
                 let cur = target.load(Ordering::SeqCst, guard);
 
@@ -125,8 +125,8 @@ where
                     return;
                 }
 
-                let c = pcheckpoint[succ_tid].load(Ordering::SeqCst);
-                if t <= c {
+                let chk = pcheckpoint[succ_tid].load(Ordering::SeqCst);
+                if now <= chk {
                     // 이미 누가 한 거임
                     return;
                 }
@@ -134,7 +134,7 @@ where
                 persist_obj(target, true);
 
                 if pcheckpoint[succ_tid]
-                    .compare_exchange(c, t, Ordering::SeqCst, Ordering::SeqCst)
+                    .compare_exchange(chk, now, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
                 {
                     let _ = target.compare_exchange(
@@ -183,13 +183,13 @@ impl<N> Cas<N> {
         }
 
         // TODO: 이 밑은 홀짝 로직 넣고 고쳐야 함
-        let vchk = vcheckpoint.load(Ordering::Relaxed);
-        let pchk = pcheckpoint.load(Ordering::SeqCst);
-        if vchk < pchk {
-            self.checkpoint = rdtscp();
-            persist_obj(&self.checkpoint, true);
-            return Ok(());
-        }
+        // let vchk = vcheckpoint.load(Ordering::Relaxed);
+        // let pchk = pcheckpoint.load(Ordering::SeqCst);
+        // if vchk < pchk {
+        //     self.checkpoint = rdtscp();
+        //     persist_obj(&self.checkpoint, true);
+        //     return Ok(());
+        // }
 
         Err(())
     }
