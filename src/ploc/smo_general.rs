@@ -10,7 +10,7 @@ use crossbeam_epoch::Guard;
 use crate::{
     pepoch::{PAtomic, PShared},
     pmem::{
-        lfence, ll::persist_obj, rdtsc, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle,
+        lfence, ll::persist_obj, rdtsc, rdtscp, Collectable, GarbageCollection, PoolHandle,
     },
     Memento,
 };
@@ -98,19 +98,19 @@ where
 
                 // 성공했다고 체크포인팅
                 self.checkpoint = rdtscp();
-                persist_obj(&self.checkpoint, false);
+                persist_obj(&self.checkpoint, true);
 
-                // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
-                let _ = target
-                    .compare_exchange(
-                        tmp_new,
-                        new.with_tid(0),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    )
-                    .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
-                persist_obj(target, true);
+                // // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
+                // let _ = target
+                //     .compare_exchange(
+                //         tmp_new,
+                //         new.with_tid(0),
+                //         Ordering::SeqCst,
+                //         Ordering::SeqCst,
+                //         guard,
+                //     )
+                //     .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
+                // persist_obj(target, true);
             })
             .map_err(|e| {
                 let succ_tid = e.current.tid();
@@ -133,12 +133,12 @@ where
                     return;
                 }
 
-                persist_obj(target, true);
-
+                persist_obj(target, false);
                 if pcheckpoint[succ_tid]
                     .compare_exchange(chk, now, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
                 {
+                    persist_obj(&pcheckpoint[succ_tid], false);
                     let _ = target.compare_exchange(
                         e.current,
                         e.current.with_tid(0),
