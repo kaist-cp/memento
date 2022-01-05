@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
 use crate::ploc::smo::{self, Insert, SMOAtomic, Update};
-use crate::ploc::{no_owner, Checkpoint, InsertErr, NeedRetry, RetryLoop, Traversable};
+use crate::ploc::{no_owner, Checkpoint, InsertErr, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -15,6 +15,7 @@ use crate::*;
 #[derive(Debug)]
 pub struct TryFail;
 
+/// TODO(doc)
 #[derive(Debug)]
 pub struct Node<T> {
     data: MaybeUninit<T>,
@@ -456,8 +457,6 @@ unsafe impl<T: Clone + Send + Sync> Send for Queue<T> {}
 
 #[cfg(test)]
 mod test {
-    use std::sync::atomic::AtomicUsize;
-
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 

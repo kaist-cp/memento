@@ -2,7 +2,7 @@
 
 use crate::node::Node;
 use crate::ploc::smo_general::Cas;
-use crate::ploc::{Checkpoint, InsertErr, RetryLoop, Traversable};
+use crate::ploc::{Checkpoint, RetryLoop, Traversable};
 use array_init::array_init;
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -242,7 +242,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
                 guard,
                 pool,
             )
-            .map(|ret| unsafe {
+            .map(|()| unsafe {
                 let next_ref = next.deref(pool);
                 guard.defer_pdestroy(head);
                 Some((*next_ref.data.as_ptr()).clone())
@@ -375,8 +375,8 @@ mod test {
     impl Default for EnqDeq {
         fn default() -> Self {
             Self {
-                enqs: array_init::array_init(|_| Enqueue::<usize>::default()),
-                deqs: array_init::array_init(|_| Dequeue::<usize>::default()),
+                enqs: array_init(|_| Enqueue::<usize>::default()),
+                deqs: array_init(|_| Dequeue::<usize>::default()),
             }
         }
     }

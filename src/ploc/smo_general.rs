@@ -1,3 +1,5 @@
+//! General SMO
+
 use std::{
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
@@ -148,7 +150,7 @@ where
             })
     }
 
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+    fn reset(&mut self, _guard: &Guard, _pool: &'static PoolHandle) {
         todo!()
     }
 }
@@ -162,8 +164,8 @@ impl<N> Cas<N> {
         target: &PAtomic<N>,
         new: PShared<'_, N>,
         tid: usize,
-        vcheckpoint: &AtomicU64,
-        pcheckpoint: &AtomicU64,
+        _vcheckpoint: &AtomicU64,
+        _pcheckpoint: &AtomicU64,
         guard: &Guard,
     ) -> Result<(), ()> {
         let cur = target.load(Ordering::SeqCst, guard);

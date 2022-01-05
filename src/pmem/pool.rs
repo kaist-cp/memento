@@ -3,7 +3,6 @@
 //! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
 
 use std::alloc::Layout;
-use std::cell::UnsafeCell;
 use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::path::Path;

@@ -10,7 +10,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    Memento, pepoch::PAtomic,
+    Memento,
 };
 
 /// TODO(doc)
@@ -81,7 +81,7 @@ where
         &mut self,
         (): Self::Object<'o>,
         (chk, if_exists): Self::Input<'o>,
-        tid: usize,
+        _: usize,
         rec: bool,
         _: &'o Guard,
         _: &'static PoolHandle,

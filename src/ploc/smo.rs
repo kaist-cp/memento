@@ -5,7 +5,7 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 use crossbeam_epoch::Guard;
 use etrace::*;
 
-use super::{no_owner, InsertErr, Traversable, EMPTY};
+use super::{no_owner, InsertErr, Traversable};
 
 use crate::{
     pepoch::{PAtomic, PShared},
@@ -65,6 +65,7 @@ impl<N: Node + Collectable> Deref for SMOAtomic<N> {
 }
 
 impl<N: Node + Collectable> SMOAtomic<N> {
+    /// TODO(doc)
     pub fn load_helping<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
         let mut p = self.inner.load(Ordering::SeqCst, guard);
         loop {
@@ -150,7 +151,7 @@ where
         &mut self,
         point: Self::Object<'o>,
         (mut new, obj, prepare): Self::Input<'o>, // TODO(opt): prepare도 그냥 Prepare trait으로 할 수 있을 듯
-        tid: usize,
+        _: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,

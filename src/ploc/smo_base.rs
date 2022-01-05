@@ -1,6 +1,6 @@
 //! SMO Base
 
-use crate::pepoch::{atomic::Pointer, PShared};
+use crate::pepoch::PShared;
 
 /// TODO(doc)
 #[derive(Debug)]
