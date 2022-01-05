@@ -190,8 +190,9 @@ impl<N> Cas<N> {
         let now = rdtsc();
         lfence();
 
-        let backoff = Backoff::default();
-        backoff.snooze(); // TODO(opt): backfoff를 이렇게 쓰면 안 될 듯
+        // let backoff = Backoff::default();
+        // backoff.snooze(); // TODO(opt): backfoff를 이렇게 쓰면 안 될 듯
+        std::thread::sleep(std::time::Duration::from_nanos(10));
 
         let cur = target.load(Ordering::SeqCst, guard);
 
