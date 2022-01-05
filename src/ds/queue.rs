@@ -1,6 +1,6 @@
 //! Persistent opt queue
 
-use crate::ploc::smo::{self, Insert, SMOAtomic, Delete};
+use crate::ploc::smo::{self, Delete, Insert, SMOAtomic};
 use crate::ploc::{no_owner, Checkpoint, InsertErr, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -235,16 +235,16 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     delete: Delete<Node<T>>,
-    // head: Checkpoint<PAtomic<Node<T>>>,
-    // head_next: Checkpoint<PAtomic<Node<T>>>,
+    head: Checkpoint<PAtomic<Node<T>>>,
+    head_next: Checkpoint<PAtomic<Node<T>>>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
             delete: Default::default(),
-            // head: Default::default(),
-            // head_next: Default::default(),
+            head: Default::default(),
+            head_next: Default::default(),
         }
     }
 }
@@ -273,13 +273,22 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let head = queue.head.load_helping(guard, pool);
+        let head = self
+            .head
+            .run((), (PAtomic::from(head), |_| {}), tid, rec, guard, pool)
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
+        let next = self
+            .head_next
+            .run((), (PAtomic::from(next), |_| {}), tid, rec, guard, pool)
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
         if head.as_ptr() == tail.as_ptr() {
             if next.is_null() {
-                // TODO(must): head, next chk 해서 rec run에서도 empty 리턴 가능하게
                 return Ok(None);
             }
 
