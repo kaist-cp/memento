@@ -96,7 +96,7 @@ where
         let tmp_new = new.with_tid(tid);
         target
             .compare_exchange(
-                old.with_tid(0),
+                old,
                 tmp_new,
                 Ordering::SeqCst,
                 Ordering::SeqCst,
@@ -121,8 +121,8 @@ where
                     )
                     .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
             })
-            .map_err(|e| {
-                let _ = Self::help(target, e.current, pcheckpoint, guard);
+            .map_err(|_| {
+                // let _ = Self::help(target, e.current, pcheckpoint, guard);
             })
     }
 
@@ -206,21 +206,23 @@ impl<N> Cas<N> {
             .is_ok()
         {
             persist_obj(&pcheckpoint[succ_tid], false);
-            let res = target.compare_exchange(
-                old,
-                old.with_tid(0),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            );
+            // let res = target.compare_exchange(
+            //     old,
+            //     old.with_tid(0),
+            //     Ordering::SeqCst,
+            //     Ordering::SeqCst,
+            //     guard,
+            // );
 
-            if let Err(e) = res {
-                if e.current == old.with_tid(0) {
-                    return true;
-                }
-            } else {
-                return true;
-            }
+            // if let Err(e) = res {
+            //     if e.current == old.with_tid(0) {
+            //         return true;
+            //     }
+            // } else {
+            //     return true;
+            // }
+
+            return true;
         }
 
         false
