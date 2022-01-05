@@ -62,8 +62,11 @@ for obj in objs:
             # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용
             data_id = git.Repo(search_parent_directories=True).head.object.hexsha[:7]
 
+        data_path = "./out/{}_{}.csv".format(t, data_id)
+        print("read {} for target {}".format(data_path, t))
+
         # 읽을 csv에는 1~32 스레드 데이터가 다 있어야함
-        data = data.append(pd.read_csv("./out/{}_{}.csv".format(t, data_id)))
+        data = data.append(pd.read_csv(data_path))
 
     # get stddev
     stddev = data.groupby(['target', 'bench kind', 'threads'])['throughput'].std(ddof=0).div(pow(10, 6)).reset_index(name='stddev')
