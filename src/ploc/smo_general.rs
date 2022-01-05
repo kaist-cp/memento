@@ -9,9 +9,7 @@ use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{
-        lfence, ll::persist_obj, rdtsc, rdtscp, Collectable, GarbageCollection, PoolHandle,
-    },
+    pmem::{lfence, ll::persist_obj, rdtsc, rdtscp, Collectable, GarbageCollection, PoolHandle},
     Memento,
 };
 
@@ -150,8 +148,8 @@ where
             })
     }
 
-    fn reset(&mut self, _guard: &Guard, _pool: &'static PoolHandle) {
-        todo!()
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        // TODO
     }
 }
 
