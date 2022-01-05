@@ -6,6 +6,7 @@ use std::{
 };
 
 use crossbeam_epoch::Guard;
+use crossbeam_utils::Backoff;
 
 use crate::{
     pepoch::{PAtomic, PShared},
@@ -188,6 +189,10 @@ impl<N> Cas<N> {
 
         let now = rdtsc();
         lfence();
+
+        let backoff = Backoff::default();
+        backoff.snooze(); // TODO(opt): backfoff를 이렇게 쓰면 안 될 듯
+
         let cur = target.load(Ordering::SeqCst, guard);
 
         if old != cur {
