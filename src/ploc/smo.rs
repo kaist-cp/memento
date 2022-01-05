@@ -210,15 +210,15 @@ pub struct NeedRetry;
 /// It's reserved for it.
 /// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
 #[derive(Debug)]
-pub struct Update<N: Node + Collectable> {
+pub struct Delete<N: Node + Collectable> {
     target_loc: PAtomic<N>,
     _marker: PhantomData<*const N>,
 }
 
-unsafe impl<N: Node + Collectable + Send + Sync> Send for Update<N> {}
-unsafe impl<N: Node + Collectable + Send + Sync> Sync for Update<N> {}
+unsafe impl<N: Node + Collectable + Send + Sync> Send for Delete<N> {}
+unsafe impl<N: Node + Collectable + Send + Sync> Sync for Delete<N> {}
 
-impl<N: Node + Collectable> Default for Update<N> {
+impl<N: Node + Collectable> Default for Delete<N> {
     fn default() -> Self {
         Self {
             target_loc: Default::default(),
@@ -227,11 +227,11 @@ impl<N: Node + Collectable> Default for Update<N> {
     }
 }
 
-impl<N: Node + Collectable> Collectable for Update<N> {
+impl<N: Node + Collectable> Collectable for Delete<N> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<N> Memento for Update<N>
+impl<N> Memento for Delete<N>
 where
     N: 'static + Node + Collectable,
 {
@@ -296,7 +296,7 @@ where
     }
 }
 
-impl<N> Update<N>
+impl<N> Delete<N>
 where
     N: Node + Collectable,
 {

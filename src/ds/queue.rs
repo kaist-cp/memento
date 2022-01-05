@@ -1,6 +1,6 @@
 //! Persistent opt queue
 
-use crate::ploc::smo::{self, Insert, SMOAtomic, Update};
+use crate::ploc::smo::{self, Insert, SMOAtomic, Delete};
 use crate::ploc::{no_owner, Checkpoint, InsertErr, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -234,7 +234,7 @@ unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    update: Update<Node<T>>,
+    delete: Delete<Node<T>>,
     // head: Checkpoint<PAtomic<Node<T>>>,
     // head_next: Checkpoint<PAtomic<Node<T>>>,
 }
@@ -242,7 +242,7 @@ pub struct TryDequeue<T: Clone> {
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
-            update: Default::default(),
+            delete: Default::default(),
             // head: Default::default(),
             // head_next: Default::default(),
         }
@@ -253,7 +253,7 @@ unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Update::filter(&mut try_deq.update, tid, gc, pool);
+        Delete::filter(&mut try_deq.delete, tid, gc, pool);
     }
 }
 
@@ -294,7 +294,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
             return Err(TryFail);
         }
 
-        self.update
+        self.delete
             .run(&queue.head, (head, next), tid, rec, guard, pool)
             .map(|popped| unsafe {
                 let next_ref = next.deref(pool);
@@ -305,7 +305,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.update.reset(guard, pool);
+        self.delete.reset(guard, pool);
     }
 }
 
