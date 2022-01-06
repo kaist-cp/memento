@@ -5,6 +5,7 @@ use crate::ploc::smo::{self, Delete, Insert, SMOAtomic};
 use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertErr, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
+use etrace::some_or;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
@@ -285,22 +286,25 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let head = queue.head.load_helping(guard, pool);
         let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard);
+        let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
         let chk = self
             .head_next
-            .run((), ((PAtomic::from(head), PAtomic::from(next)), |_| {}), tid, rec, guard, pool)
+            .run(
+                (),
+                ((PAtomic::from(head), PAtomic::from(next)), |_| {}),
+                tid,
+                rec,
+                guard,
+                pool,
+            )
             .unwrap();
         let head = chk.0.load(Ordering::Relaxed, guard);
         let next = chk.1.load(Ordering::Relaxed, guard);
+        let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
 
         if head.as_ptr() == tail.as_ptr() {
-            if next.is_null() {
-                // TODO(must): if문 밖으로 나와야 함
-                return Ok(None);
-            }
-
             let tail_ref = unsafe { tail.deref(pool) };
             persist_obj(&tail_ref.next, false); // we're doing CAS soon.
 
@@ -315,7 +319,6 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         self.delete
             .run(&queue.head, (head, next), tid, rec, guard, pool)
             .map(|popped| unsafe {
-                let next_ref = next.deref(pool);
                 guard.defer_pdestroy(popped);
                 Some((*next_ref.data.as_ptr()).clone())
             })
