@@ -5,8 +5,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use chrono::{Utc, Duration};
 use crossbeam_epoch::Guard;
-use crossbeam_utils::Backoff;
 
 use crate::{
     pepoch::{PAtomic, PShared},
@@ -60,10 +60,6 @@ impl<N> Collectable for Cas<N> {
         }
     }
 }
-
-thread_local!(
-    static BACKOFF: Backoff = Backoff::default()
-);
 
 impl<N> Memento for Cas<N>
 where
@@ -119,8 +115,6 @@ where
                         guard,
                     )
                     .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
-
-                BACKOFF.with(|b| b.reset());
             })
             .map_err(|_| {
                 // let _ = Self::help(target, e.current, pcheckpoint, guard);
@@ -190,7 +184,17 @@ impl<N> Cas<N> {
         let now = rdtsc();
         lfence();
 
-        BACKOFF.with(|b| b.snooze());
+        let start = Utc::now();
+        loop {
+            let cur = target.load(Ordering::SeqCst, guard);
+            if old != cur {
+                return false;
+            }
+            let now = Utc::now();
+            if now.signed_duration_since(start) > Duration::nanoseconds(4000) {
+                break;
+            }
+        }
 
         let cur = target.load(Ordering::SeqCst, guard);
 
@@ -209,7 +213,7 @@ impl<N> Cas<N> {
             .compare_exchange(chk, now, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            persist_obj(&pcheckpoint[succ_tid], false);
+            persist_obj(&pcheckpoint[succ_tid], true);
             // let res = target.compare_exchange(
             //     old,
             //     old.with_tid(0),

@@ -35,6 +35,7 @@ parking_lot = "0.11.2"
 derivative = "2.2.0"
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
 libc = "0.2.109"
+chrono = "0.4.19"
 
 [dev-dependencies]
 log = "0.4.14"
