@@ -1,11 +1,12 @@
 //! Persistent queue
 
-use crate::node::Node;
+use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo_general::Cas;
-use crate::ploc::{Checkpoint, RetryLoop, Traversable};
+use crate::ploc::{Checkpoint, Checkpointable, RetryLoop, Traversable};
 use array_init::array_init;
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
+use etrace::some_or;
 use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicU64;
 
@@ -18,11 +19,50 @@ use crate::*;
 #[derive(Debug)]
 pub struct TryFail;
 
+/// TODO(doc)
+#[derive(Debug)]
+pub struct Node<T> {
+    data: MaybeUninit<T>,
+    next: PAtomic<Self>,
+}
+
+impl<T> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: MaybeUninit::new(value),
+            next: PAtomic::null(),
+        }
+    }
+}
+
+impl<T> Default for Node<T> {
+    fn default() -> Self {
+        Self {
+            data: MaybeUninit::uninit(),
+            next: PAtomic::null(),
+        }
+    }
+}
+
+// TODO(must): T should be collectable
+impl<T> Collectable for Node<T> {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark valid ptr to trace
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next = unsafe { next.deref_mut(pool) };
+            Node::<T>::mark(next, tid, gc);
+        }
+    }
+}
+
 /// ComposedQueue의 try push operation
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
     /// push를 위해 할당된 node
-    insert: Cas<Node<MaybeUninit<T>>>,
+    insert: Cas<Node<T>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
@@ -43,7 +83,7 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     type Object<'o> = &'o QueueGeneral<T>;
-    type Input<'o> = PShared<'o, Node<MaybeUninit<T>>>;
+    type Input<'o> = PShared<'o, Node<T>>;
     type Output<'o> = ();
     type Error<'o> = TryFail;
 
@@ -103,7 +143,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: 'static + Clone> {
-    node: Checkpoint<PAtomic<Node<MaybeUninit<T>>>>,
+    node: Checkpoint<PAtomic<Node<T>>>,
     try_enq: RetryLoop<TryEnqueue<T>>,
 }
 
@@ -141,7 +181,7 @@ impl<T: Clone> Memento for Enqueue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = POwned::new(Node::from(MaybeUninit::new(value)), pool);
+        let node = POwned::new(Node::from(value), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = self
@@ -174,16 +214,30 @@ impl<T: Clone> Memento for Enqueue<T> {
 
 unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 
+impl<T> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
+    fn invalidate(&mut self) {
+        self.1.store(invalid_ptr(), Ordering::Relaxed);
+    }
+
+    fn is_invalid(&self) -> bool {
+        let guard = unsafe { epoch::unprotected() };
+        let cur = self.1.load(Ordering::Relaxed, guard);
+        cur == invalid_ptr()
+    }
+}
+
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    delete: Cas<Node<MaybeUninit<T>>>,
+    delete: Cas<Node<T>>,
+    head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
             delete: Default::default(),
+            head_next: Default::default(),
         }
     }
 }
@@ -216,12 +270,22 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         let next = head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
-        if head.as_ptr() == tail.as_ptr() {
-            // TODO(must): checkpoint 해서
-            if next.is_null() {
-                return Ok(None); // TODO(must): empty 결괏값을 어딘가에 담을 수 있어야 함
-            }
+        let chk = self
+            .head_next
+            .run(
+                (),
+                ((PAtomic::from(head), PAtomic::from(next)), |_| {}),
+                tid,
+                rec,
+                guard,
+                pool,
+            )
+            .unwrap();
+        let head = chk.0.load(Ordering::Relaxed, guard);
+        let next = chk.1.load(Ordering::Relaxed, guard);
+        let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
 
+        if head.as_ptr() == tail.as_ptr() {
             let tail_ref = unsafe { tail.deref(pool) };
             persist_obj(&tail_ref.next, false); // cas soon
 
@@ -243,7 +307,6 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
                 pool,
             )
             .map(|()| unsafe {
-                let next_ref = next.deref(pool);
                 guard.defer_pdestroy(head);
                 Some((*next_ref.data.as_ptr()).clone())
             })
@@ -308,15 +371,15 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct QueueGeneral<T: Clone> {
-    head: CachePadded<PAtomic<Node<MaybeUninit<T>>>>,
-    tail: CachePadded<PAtomic<Node<MaybeUninit<T>>>>,
+    head: CachePadded<PAtomic<Node<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
     checkpoint: [AtomicU64; 256], // TODO(must): 글로벌로 빼야 함
 }
 
 impl<T: Clone> PDefault for QueueGeneral<T> {
     fn pdefault(pool: &'static PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
-        let sentinel = POwned::new(Node::from(MaybeUninit::uninit()), pool).into_shared(guard);
+        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
@@ -333,14 +396,9 @@ impl<T: Clone> Collectable for QueueGeneral<T> {
     }
 }
 
-impl<T: Clone> Traversable<Node<MaybeUninit<T>>> for QueueGeneral<T> {
+impl<T: Clone> Traversable<Node<T>> for QueueGeneral<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(
-        &self,
-        target: PShared<'_, Node<MaybeUninit<T>>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> bool {
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?

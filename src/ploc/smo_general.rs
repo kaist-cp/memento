@@ -16,8 +16,6 @@ use crate::{
     Memento,
 };
 
-use super::NodeUnOpt;
-
 // link-and-checkpoint (general CAS 지원)
 // assumption: 각 thread는 CAS checkpoint를 위한 64-bit PM location이 있습니다. 이를 checkpoint: [u64; 256] 이라고 합시다.
 
@@ -63,7 +61,7 @@ impl<N> Collectable for Cas<N> {
 
 impl<N> Memento for Cas<N>
 where
-    N: 'static + NodeUnOpt + Collectable,
+    N: 'static + Collectable,
 {
     type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (PShared<'o, N>, PShared<'o, N>, &'o [AtomicU64; 256]); // atomicu64 array는 나중에 글로벌 배열로 빼야 함 maybe into poolhandle
