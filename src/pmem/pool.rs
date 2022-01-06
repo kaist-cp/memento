@@ -104,7 +104,7 @@ impl PoolHandle {
                             let hanlder = scope.spawn(move |_| {
                                 let root_memento = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let guard = epoch::old_guard(tid);
+                                let guard = unsafe { epoch::old_guard(tid) };
 
                                 if !started.load(Ordering::Relaxed) {
                                     started.store(true, Ordering::Relaxed);
