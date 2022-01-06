@@ -61,6 +61,10 @@ impl<N> Collectable for Cas<N> {
     }
 }
 
+thread_local!(
+    static BACKOFF: Backoff = Backoff::default()
+);
+
 impl<N> Memento for Cas<N>
 where
     N: 'static + NodeUnOpt + Collectable,
@@ -96,13 +100,7 @@ where
 
         let tmp_new = new.with_tid(tid);
         target
-            .compare_exchange(
-                old,
-                tmp_new,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            )
+            .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| {
                 // 성공하면 target을 persist
                 persist_obj(target, true);
@@ -121,6 +119,8 @@ where
                         guard,
                     )
                     .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
+
+                BACKOFF.with(|b| b.reset());
             })
             .map_err(|_| {
                 // let _ = Self::help(target, e.current, pcheckpoint, guard);
@@ -190,9 +190,7 @@ impl<N> Cas<N> {
         let now = rdtsc();
         lfence();
 
-        // let backoff = Backoff::default();
-        // backoff.snooze(); // TODO(opt): backfoff를 이렇게 쓰면 안 될 듯
-        std::thread::sleep(std::time::Duration::from_nanos(10));
+        BACKOFF.with(|b| b.snooze());
 
         let cur = target.load(Ordering::SeqCst, guard);
 
