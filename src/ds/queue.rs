@@ -1,7 +1,8 @@
 //! Persistent opt queue
 
+use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo::{self, Delete, Insert, SMOAtomic};
-use crate::ploc::{no_owner, Checkpoint, InsertErr, RetryLoop, Traversable};
+use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertErr, RetryLoop, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
@@ -231,19 +232,29 @@ impl<T: Clone> Memento for Enqueue<T> {
 
 unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
 
+impl<T> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
+    fn invalidate(&mut self) {
+        self.1.store(invalid_ptr(), Ordering::Relaxed);
+    }
+
+    fn is_invalid(&self) -> bool {
+        let guard = unsafe { epoch::unprotected() };
+        let cur = self.1.load(Ordering::Relaxed, guard);
+        cur == invalid_ptr()
+    }
+}
+
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
     delete: Delete<Node<T>>,
-    head: Checkpoint<PAtomic<Node<T>>>,
-    head_next: Checkpoint<PAtomic<Node<T>>>,
+    head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
             delete: Default::default(),
-            head: Default::default(),
             head_next: Default::default(),
         }
     }
@@ -273,22 +284,20 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let head = queue.head.load_helping(guard, pool);
-        let head = self
-            .head
-            .run((), (PAtomic::from(head), |_| {}), tid, rec, guard, pool)
-            .unwrap()
-            .load(Ordering::Relaxed, guard);
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
-        let next = self
-            .head_next
-            .run((), (PAtomic::from(next), |_| {}), tid, rec, guard, pool)
-            .unwrap()
-            .load(Ordering::Relaxed, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
+        let chk = self
+            .head_next
+            .run((), ((PAtomic::from(head), PAtomic::from(next)), |_| {}), tid, rec, guard, pool)
+            .unwrap();
+        let head = chk.0.load(Ordering::Relaxed, guard);
+        let next = chk.1.load(Ordering::Relaxed, guard);
+
         if head.as_ptr() == tail.as_ptr() {
-            if next.is_null() { // TODO(must): if문 밖으로 나와야 함
+            if next.is_null() {
+                // TODO(must): if문 밖으로 나와야 함
                 return Ok(None);
             }
 

@@ -1140,8 +1140,9 @@ impl<T> From<PPtr<T>> for PAtomic<T> {
     }
 }
 
+/// TODO(doc)
 #[inline]
-fn invalid_ptr<'g, T>() -> PShared<'g, T> {
+pub fn invalid_ptr<'g, T>() -> PShared<'g, T> {
     const INVALID_PTR: usize = usize::MAX - u32::MAX as usize;
     unsafe { PShared::<T>::from_usize(INVALID_PTR) }
 }
