@@ -288,7 +288,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
 
         if head.as_ptr() == tail.as_ptr() {
-            if next.is_null() {
+            if next.is_null() { // TODO(must): if문 밖으로 나와야 함
                 return Ok(None);
             }
 
