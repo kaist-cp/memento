@@ -1,7 +1,9 @@
-use std::ops::DerefMut;
+use std::{ops::DerefMut, sync::atomic::Ordering};
 
 use super::P;
+use crate::common::{TestNOps, TOTAL_NOPS};
 use corundum::{default::*, ptr::Ptr};
+use crossbeam_utils::thread;
 
 #[derive(Debug, Default)]
 struct Node {
@@ -126,6 +128,40 @@ impl CrndmQueue {
             println!();
         })
         .unwrap();
+    }
+}
+
+#[derive(Root, Debug)]
+pub struct TestCrndmQueue {
+    queue: CrndmQueue,
+}
+impl TestNOps for TestCrndmQueue {}
+
+impl TestCrndmQueue {
+    pub fn get_nops_pair(&self, nr_thread: usize, duration: f64) -> usize {
+        let q = &self.queue;
+
+        // nr_thread 개 만들어서ㄱ 각각 op 실행
+        #[allow(box_pointers)]
+        thread::scope(|scope| {
+            for tid in 0..nr_thread {
+                let _ = scope.spawn(move |_| {
+                    let ops = self.test_nops(
+                        &|tid, _| {
+                            q.enqueue(tid);
+                            let _ = q.dequeue();
+                        },
+                        tid,
+                        duration,
+                        unsafe { crossbeam_epoch::unprotected() },
+                    );
+                    let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+                });
+            }
+        })
+        .unwrap();
+
+        TOTAL_NOPS.load(Ordering::SeqCst)
     }
 }
 

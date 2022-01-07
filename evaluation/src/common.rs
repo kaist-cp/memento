@@ -80,6 +80,7 @@ pub enum TestTarget {
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
     DSSQueue(TestKind),
+    CrndmQueue(TestKind), // TODO: CrndmQueue -> CorundumQueue
     MementoPipe(TestKind),
     CrndmPipe(TestKind),
 }
@@ -154,6 +155,8 @@ pub struct Opt {
 
 /// Abstraction of queue
 pub mod queue {
+    use corundum::default::*;
+    use corundum::open_flags::{O_64GB, O_CF};
     use crossbeam_epoch::Guard;
     use memento::pmem::PoolHandle;
 
@@ -163,6 +166,7 @@ pub mod queue {
         compositional_pobj::{
             MementoQueueGeneralEnqDeqPair, MementoQueueGeneralEnqDeqProb, TestMementoQueueGeneral,
         },
+        crndm::{TestCrndmQueue, P},
         // compositional_pobj::{
         //     MementoQueueUnOptEnqDeqPair, MementoQueueUnOptEnqDeqProb, TestMementoQueueUnOpt,
         // },
@@ -297,6 +301,17 @@ pub mod queue {
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
                     get_nops::<TestDSSQueue, DSSQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
+            TestTarget::CrndmQueue(kind) => match kind {
+                TestKind::QueuePair => {
+                    let root = P::open::<TestCrndmQueue>(&opt.filepath, O_64GB | O_CF).unwrap();
+                    root.get_nops_pair(opt.threads, opt.duration)
+                }
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    todo!()
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
