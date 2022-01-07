@@ -17,6 +17,7 @@ objs = {
             'log_queue': {'data_id': '', 'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
             'pmdk_queue': {'data_id': '', 'label': "PMDK queue", 'marker': 's', 'color': 'skyblue', 'style': '--'},
+            'crndm_queue': {'data_id': '', 'label': "DSS queue", 'marker': '^', 'color': 'green', 'style': '--'},
         },
     },
 

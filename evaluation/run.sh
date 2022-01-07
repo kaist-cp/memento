@@ -79,6 +79,7 @@ for kind in pair prob50; do
     benches log_queue $kind
     benches dss_queue $kind
     benches pmdk_queue $kind
+    benches crndm_queue $kind
 done
 
 # 3. Benchmarking pipe performance
