@@ -139,7 +139,7 @@ fn tid_bits() -> usize {
 /// 0b0000000011111111000000000000000000000000000000000000000000000000 in 64-bit
 #[inline]
 fn high_bits() -> usize {
-    !(usize::MAX >> ONE_BYTE) ^ !(usize::MAX >> TWO_BYTES)
+    (usize::MAX >> ONE_BYTE) ^ (usize::MAX >> TWO_BYTES)
 }
 
 /// Returns a bitmask containing the unused least significant bits of an aligned pointer to `T`.
