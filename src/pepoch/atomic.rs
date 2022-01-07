@@ -27,13 +27,11 @@ use core::slice;
 use core::sync::atomic::Ordering;
 
 use super::Guard;
-use crate::ploc::Checkpointable;
-use crate::pmem::global_pool;
-use crate::pmem::ll::persist_obj;
-use crate::pmem::pool::PoolHandle;
-use crate::pmem::ptr::PPtr;
-use crate::pmem::Collectable;
-use crate::pmem::GarbageCollection;
+use crate::impl_left_bits;
+use crate::ploc::{cas_bits, compose_cas_bit, Checkpointable, NR_CAS_BITS, POS_CAS_BITS};
+use crate::pmem::{
+    global_pool, ll::persist_obj, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection,
+};
 use crossbeam_epoch::unprotected;
 use crossbeam_utils::atomic::AtomicConsume;
 use std::alloc;
@@ -127,19 +125,6 @@ impl CompareAndSetOrdering for (Ordering, Ordering) {
     }
 }
 
-macro_rules! impl_left_bits {
-    ($func:ident, $pos:expr, $nr:expr) => {
-        fn $func() -> usize {
-            ((usize::MAX >> $pos) ^ (usize::MAX >> $nr))
-        }
-    };
-}
-
-// cas bits: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
-const POS_CAS_BITS: u32 = 0;
-const NR_CAS_BITS: u32 = 1;
-impl_left_bits!(cas_bits, POS_CAS_BITS, NR_CAS_BITS);
-
 // tid bits: 0b011111111100000000000000000000000000000000000000000000000000000000 in 64-bit
 const POS_TID_BITS: u32 = POS_CAS_BITS + NR_CAS_BITS;
 const NR_TID_BITS: u32 = 9;
@@ -168,11 +153,6 @@ fn ensure_aligned<T: ?Sized + Pointable>(offset: usize) {
 #[inline]
 fn compose_tag<T: ?Sized + Pointable>(data: usize, ltag: usize) -> usize {
     (data & !low_bits::<T>()) | (ltag & low_bits::<T>())
-}
-
-#[inline]
-fn compose_cas_bit<T: ?Sized + Pointable>(cas_bit: usize, data: usize) -> usize {
-    (cas_bits() & (cas_bit.rotate_right(POS_CAS_BITS + NR_CAS_BITS))) | (!cas_bits() & data)
 }
 
 #[inline]
@@ -1417,7 +1397,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// TODO(doc)
     pub fn with_cas_bit(self, cas_bit: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_cas_bit::<T>(cas_bit, data)) }
+        unsafe { Self::from_usize(compose_cas_bit(cas_bit, data)) }
     }
 
     /// TODO(doc)
@@ -1923,7 +1903,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
 
     /// TODO(doc)
     pub fn with_cas_bit(&self, cas_bit: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_cas_bit::<T>(cas_bit, self.data)) }
+        unsafe { Self::from_usize(compose_cas_bit(cas_bit, self.data)) }
     }
 
     /// TODO(doc)

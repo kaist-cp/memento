@@ -27,6 +27,26 @@ pub trait NodeUnOpt: Sized {
 }
 
 /// TODO(doc)
+#[macro_export]
+macro_rules! impl_left_bits {
+    ($func:ident, $pos:expr, $nr:expr) => {
+        pub(crate) fn $func() -> usize {
+            ((usize::MAX >> $pos) ^ (usize::MAX >> $nr))
+        }
+    };
+}
+
+// cas bits: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
+pub(crate) const POS_CAS_BITS: u32 = 0;
+pub(crate) const NR_CAS_BITS: u32 = 1;
+impl_left_bits!(cas_bits, POS_CAS_BITS, NR_CAS_BITS);
+
+#[inline]
+pub(crate) fn compose_cas_bit(cas_bit: usize, data: usize) -> usize {
+    (cas_bits() & (cas_bit.rotate_right(POS_CAS_BITS + NR_CAS_BITS))) | (!cas_bits() & data)
+}
+
+/// TODO(doc)
 pub trait Checkpointable {
     /// TODO(doc)
     fn invalidate(&mut self);
