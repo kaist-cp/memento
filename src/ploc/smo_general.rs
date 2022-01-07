@@ -1,11 +1,12 @@
 //! General SMO
 
 use std::{
+    cell::UnsafeCell,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use chrono::{Utc, Duration};
+use chrono::{Duration, Utc};
 use crossbeam_epoch::Guard;
 
 use crate::{
@@ -15,6 +16,8 @@ use crate::{
     },
     Memento,
 };
+
+use super::compose_cas_bit;
 
 // link-and-checkpoint (general CAS 지원)
 // assumption: 각 thread는 CAS checkpoint를 위한 64-bit PM location이 있습니다. 이를 checkpoint: [u64; 256] 이라고 합시다.
@@ -32,6 +35,10 @@ use crate::{
 // 따라서 다른 thread는 checkpoint에 그냥 store를 해도 됩니다.
 
 // 사용처: 아무데나
+
+thread_local! {
+    static CAS_BIT: UnsafeCell<usize> = UnsafeCell::new(0);
+}
 
 /// TODO(doc)
 #[derive(Debug)]
@@ -92,7 +99,9 @@ where
             return Err(());
         }
 
-        let tmp_new = new.with_tid(tid);
+        let cas_bit = CAS_BIT.with(|c| unsafe { c.get().as_mut().unwrap() });
+        let tmp_new = new.with_cas_bit(*cas_bit).with_tid(tid);
+
         target
             .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| {
@@ -100,8 +109,11 @@ where
                 persist_obj(target, true);
 
                 // 성공했다고 체크포인팅
-                self.checkpoint = rdtscp();
+                let t = rdtscp();
+                self.checkpoint = compose_cas_bit(*cas_bit, t as usize) as u64;
                 persist_obj(&self.checkpoint, true);
+
+                *cas_bit = 1 - *cas_bit; // 다음 CAS를 위해 CAS bit은 뒤집어야 함 (단, CAS에 성공할 때에만)
 
                 // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
                 let _ = target
@@ -114,9 +126,7 @@ where
                     )
                     .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
             })
-            .map_err(|_| {
-                // let _ = Self::help(target, e.current, pcheckpoint, guard);
-            })
+            .map_err(|_| ())
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
@@ -207,6 +217,8 @@ impl<N> Cas<N> {
         }
 
         persist_obj(target, false);
+
+        let now = compose_cas_bit(old.cas_bit(), now as usize) as u64;
         if pcheckpoint[succ_tid]
             .compare_exchange(chk, now, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
