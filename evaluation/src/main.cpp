@@ -8,11 +8,13 @@
 #include "common.hpp"
 
 #include "pmdk/pipe.hpp"
+#include "pmdk/queue.hpp"
 
 using namespace std;
 
 enum TestTarget
 {
+  PMDK_Queue,
   PMDK_Pipe
 };
 
@@ -21,6 +23,10 @@ TestTarget parse_target(string target, string kind)
   if (target == "pmdk_pipe" && kind == "pipe")
   {
     return TestTarget::PMDK_Pipe;
+  }
+  else if (target == "pmdk_queue" && kind == "pair")
+  {
+    return TestTarget::PMDK_Queue;
   }
   std::cerr << "Invalid target or bench kind: (target: " << target << ", kind: " << kind << ")" << std::endl;
   exit(0);
@@ -54,6 +60,7 @@ Config setup(int argc, char *argv[])
        << "bench kind,"
        << "threads,"
        << "duration,"
+       << "relaxed,"
        << "throughput" << endl;
   }
 
@@ -74,19 +81,25 @@ double bench(Config cfg)
   {
   case PMDK_Pipe:
     nops = get_pipe_nops(cfg.filepath, cfg.threads, cfg.duration);
+    break;
+  case PMDK_Queue:
+    nops = get_queue_pair_nops(cfg.filepath, cfg.threads, cfg.duration);
+    // TODO: prbo50 test?
+    break;
 
     // TODO: other c++ implementations..
   }
 
   // 처리율 (op/s) 계산하여 반환
-  cout << nops << " operations were executed." << endl;
-  return nops / cfg.duration;
+  float avg_ops = nops / cfg.duration;
+  cout << "avg ops: " << avg_ops << endl;
+  return avg_ops;
 }
 
 int main(int argc, char *argv[])
 {
   Config cfg = setup(argc, argv);
-  float avg_mops = bench(cfg);
+  float avg_ops = bench(cfg);
 
   // Write result
   *cfg.output
@@ -94,5 +107,6 @@ int main(int argc, char *argv[])
       << cfg.kind << ","
       << cfg.threads << ","
       << cfg.duration << ","
-      << avg_mops << endl;
+      << "none," // relaxed (TODO: relaxed는 그냥 csv에 안찍는게 좋겠다)
+      << avg_ops << endl;
 }

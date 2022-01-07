@@ -22,7 +22,7 @@ function bench() {
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
-    if [ "pmdk_pipe" == "${target}" ]; then
+    if [ "${target}" == "pmdk_pipe" ] || [ "${target}" == "pmdk_queue" ]; then
         # pinning NUMA node 0
         numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $outpath
     else
@@ -78,6 +78,8 @@ for kind in pair prob50; do
     benches durable_queue $kind
     benches log_queue $kind
     benches dss_queue $kind
+    benches pmdk_queue $kind
+    benches crndm_queue $kind
 done
 
 # 3. Benchmarking pipe performance

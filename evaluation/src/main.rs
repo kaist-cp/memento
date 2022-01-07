@@ -1,7 +1,5 @@
 #![feature(generic_associated_types)]
 
-// use corundum::alloc::*;
-// use corundum::default::BuddyAlloc;
 use csv::Writer;
 use evaluation::common::queue::bench_queue;
 use evaluation::common::{Opt, TestKind, TestTarget, DURATION, RELAXED};
@@ -26,6 +24,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         _ => unreachable!(),
     };
     match target {
+        // Queue
         "memento_queue" => TestTarget::MementoQueue(kind),
         "memento_queue_unopt" => TestTarget::MementoQueueUnOpt(kind),
         "memento_queue_general" => TestTarget::MementoQueueGeneral(kind),
@@ -33,6 +32,9 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
+        "crndm_queue" => TestTarget::CrndmQueue(kind),
+
+        // Pipe
         "memento_pipe" => TestTarget::MementoPipe(kind),
         "crndm_pipe" => TestTarget::CrndmPipe(kind),
         _ => unreachable!("invalid target"),
@@ -96,14 +98,15 @@ fn bench(opt: &Opt) -> f64 {
         | TestTarget::MementoPipeQueue(_)
         | TestTarget::FriedmanDurableQueue(_)
         | TestTarget::FriedmanLogQueue(_)
-        | TestTarget::DSSQueue(_) => bench_queue(opt, target),
+        | TestTarget::DSSQueue(_)
+        | TestTarget::CrndmQueue(_) => bench_queue(opt, target),
         TestTarget::MementoPipe(_) => {
             // get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
             todo!()
         }
         TestTarget::CrndmPipe(_) => {
             // let root = BuddyAlloc::open::<CrndmPipe>(&opt.filepath, O_16GB | O_CF).unwrap();
-            //   root.get_nops(kind, opt.threads, opt.duration)
+            // root.get_nops(kind, opt.threads, opt.duration)
             todo!()
         }
     };

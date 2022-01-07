@@ -1,8 +1,9 @@
-use std::ops::DerefMut;
+use std::{ops::DerefMut, sync::atomic::Ordering};
 
 use super::P;
-use corundum::boxed::Pbox;
-use corundum::default::*;
+use crate::common::{TestNOps, QUEUE_INIT_SIZE, TOTAL_NOPS};
+use corundum::{default::*, ptr::Ptr};
+use crossbeam_utils::thread;
 
 #[derive(Debug, Default)]
 struct Node {
@@ -87,7 +88,7 @@ impl CrndmQueue {
             if head_ref.is_none() {
                 *tail_ref = None;
             }
-            drop(unsafe { Pbox::<Node, P>::from_raw(head.deref_mut() as *mut Node) });
+            drop(unsafe { Pbox::<Node>::from_raw(head.deref_mut() as *mut Node) });
             Some(val)
         })
         .unwrap()
@@ -130,10 +131,51 @@ impl CrndmQueue {
     }
 }
 
+#[derive(Root, Debug)]
+pub struct TestCrndmQueue {
+    queue: CrndmQueue,
+}
+impl TestNOps for TestCrndmQueue {}
+
+impl TestCrndmQueue {
+    pub fn get_nops_pair(&self, nr_thread: usize, duration: f64) -> usize {
+        let q = &self.queue;
+
+        // initailize
+        for i in 0..QUEUE_INIT_SIZE {
+            q.enqueue(i);
+        }
+
+        // nr_thread 개 만들어서ㄱ 각각 op 실행
+        #[allow(box_pointers)]
+        thread::scope(|scope| {
+            for tid in 0..nr_thread {
+                let _ = scope.spawn(move |_| {
+                    let ops = self.test_nops(
+                        &|tid, _| {
+                            q.enqueue(tid);
+                            let _ = q.dequeue();
+                        },
+                        tid,
+                        duration,
+                        unsafe { crossbeam_epoch::unprotected() },
+                    );
+                    let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+                });
+            }
+        })
+        .unwrap();
+
+        TOTAL_NOPS.load(Ordering::SeqCst)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::CrndmQueue;
+    use super::P;
     use corundum::default::*;
+    use corundum::open_flags::{O_1GB, O_CF};
     use crossbeam_utils::thread;
     use memento::test_utils::tests::get_test_abs_path;
 
@@ -143,7 +185,7 @@ mod test {
     #[test]
     fn enq_deq() {
         let filepath = get_test_abs_path(FILE_NAME);
-        let queue = BuddyAlloc::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
+        let queue = P::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
 
         for i in 0..COUNT {
             queue.enqueue(i);
@@ -157,7 +199,7 @@ mod test {
     #[test]
     fn enq_deq_concur() {
         let filepath = get_test_abs_path(FILE_NAME);
-        let queue = BuddyAlloc::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
+        let queue = P::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
         let q = &*queue;
 
         #[allow(box_pointers)]
