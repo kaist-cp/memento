@@ -17,7 +17,7 @@ objs = {
             'log_queue': {'data_id': '', 'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
             'pmdk_queue': {'data_id': '', 'label': "PMDK queue", 'marker': 's', 'color': 'skyblue', 'style': '--'},
-            'crndm_queue': {'data_id': '', 'label': "DSS queue", 'marker': '^', 'color': 'green', 'style': '--'},
+            'crndm_queue': {'data_id': '', 'label': "Corundum queue", 'marker': '^', 'color': 'green', 'style': '--'},
         },
     },
 
@@ -38,8 +38,8 @@ def draw(title, xlabel, ylabel, datas, output, x_interval=1):
     markers_on = (datas[0]['x'] == 1) | (datas[0]['x'] % x_interval == 0)
 
     for data in datas:
-        plt.errorbar(data['x'], data['y'], data['stddev'], color=data['color'], linestyle='None', marker='^', markevery=markers_on)
-        plt.plot(data['x'], data['y'], label=data['label'], color=data['color'], linestyle=data['style'], marker=data['marker'], markevery=markers_on)
+        plt.errorbar(data['x'], data['y'], data['stddev'], label=data['label'], color=data['color'],
+                     linestyle=data['style'], marker=data['marker'], markevery=markers_on)
     plt.title(title)
     ax = plt.subplot()
     ax.xaxis.set_major_locator(plt.MultipleLocator(x_interval)) # 눈금선 간격
