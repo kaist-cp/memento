@@ -68,7 +68,7 @@ dependencies = [
 [[package]]
 name = "crossbeam-epoch"
 version = "0.9.5"
-source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=memento#b06aaae3e1fefecf0df60bb311117abcf796d86d"
+source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=memento#ab8bfa7a82bade9bc5b5ec01359523b9ea156113"
 dependencies = [
  "cfg-if 1.0.0",
  "crossbeam-utils",
@@ -80,7 +80,7 @@ dependencies = [
 [[package]]
 name = "crossbeam-utils"
 version = "0.8.5"
-source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=memento#b06aaae3e1fefecf0df60bb311117abcf796d86d"
+source = "git+https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/?branch=memento#ab8bfa7a82bade9bc5b5ec01359523b9ea156113"
 dependencies = [
  "cfg-if 1.0.0",
  "lazy_static",
