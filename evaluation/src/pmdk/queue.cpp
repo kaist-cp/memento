@@ -67,7 +67,7 @@ int get_queue_pair_nops(string filepath, int nr_threads, float duration)
     persistent_ptr<queue> q = pop.root();
 
     // Initailize
-    for (int i = 0; i < PIPE_INIT_SIZE; i++)
+    for (int i = 0; i < QUEUE_INIT_SIZE; i++)
     {
         q->push(pop, i);
     }

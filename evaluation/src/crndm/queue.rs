@@ -1,7 +1,7 @@
 use std::{ops::DerefMut, sync::atomic::Ordering};
 
 use super::P;
-use crate::common::{TestNOps, TOTAL_NOPS};
+use crate::common::{TestNOps, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use corundum::{default::*, ptr::Ptr};
 use crossbeam_utils::thread;
 
@@ -140,6 +140,11 @@ impl TestNOps for TestCrndmQueue {}
 impl TestCrndmQueue {
     pub fn get_nops_pair(&self, nr_thread: usize, duration: f64) -> usize {
         let q = &self.queue;
+
+        // initailize
+        for i in 0..QUEUE_INIT_SIZE {
+            q.enqueue(i);
+        }
 
         // nr_thread 개 만들어서ㄱ 각각 op 실행
         #[allow(box_pointers)]
