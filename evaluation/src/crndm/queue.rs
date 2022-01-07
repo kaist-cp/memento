@@ -1,8 +1,7 @@
 use std::ops::DerefMut;
 
 use super::P;
-use corundum::boxed::Pbox;
-use corundum::default::*;
+use corundum::{default::*, ptr::Ptr};
 
 #[derive(Debug, Default)]
 struct Node {
@@ -87,7 +86,7 @@ impl CrndmQueue {
             if head_ref.is_none() {
                 *tail_ref = None;
             }
-            drop(unsafe { Pbox::<Node, P>::from_raw(head.deref_mut() as *mut Node) });
+            drop(unsafe { Pbox::<Node>::from_raw(head.deref_mut() as *mut Node) });
             Some(val)
         })
         .unwrap()
@@ -133,7 +132,9 @@ impl CrndmQueue {
 #[cfg(test)]
 mod test {
     use super::CrndmQueue;
+    use super::P;
     use corundum::default::*;
+    use corundum::open_flags::{O_1GB, O_CF};
     use crossbeam_utils::thread;
     use memento::test_utils::tests::get_test_abs_path;
 
@@ -143,7 +144,7 @@ mod test {
     #[test]
     fn enq_deq() {
         let filepath = get_test_abs_path(FILE_NAME);
-        let queue = BuddyAlloc::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
+        let queue = P::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
 
         for i in 0..COUNT {
             queue.enqueue(i);
@@ -157,7 +158,7 @@ mod test {
     #[test]
     fn enq_deq_concur() {
         let filepath = get_test_abs_path(FILE_NAME);
-        let queue = BuddyAlloc::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
+        let queue = P::open::<CrndmQueue>(&filepath, O_1GB | O_CF).unwrap();
         let q = &*queue;
 
         #[allow(box_pointers)]

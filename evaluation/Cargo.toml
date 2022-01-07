@@ -18,9 +18,8 @@ array-init = "2.0.0"
 regex = "1.5.4"
 structopt = "0.3"
 csv = "1.1.6"
-# corundum = "0.4.0"
+# corundum = "0.4.0" # 2021 edition에선 컴파일 안됨
+corundum = { git = "https://github.com/NVSL/Corundum.git", rev = "17c9aa6" }  # 17c9aa6: 2022/01/07일자 main branch의 최신 commit
 
 [features]
-# no_persist = ["memento/no_persist", "corundum/no_persist"]
-no_persist = ["memento/no_persist"]
-
+no_persist = ["memento/no_persist", "corundum/no_persist"]
