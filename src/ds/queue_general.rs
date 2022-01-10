@@ -98,7 +98,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let tail = queue.tail.load(Ordering::SeqCst, guard);
         let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
-        let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): load도 checkpoint helping 해야 함
+        let next = tail_ref.next.load(Ordering::SeqCst, guard);
 
         if !next.is_null() {
             // tail is stale
@@ -265,7 +265,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let head = queue.head.load(Ordering::SeqCst, guard); // TODO(opt): load도 checkpoint helping
+        let head = queue.head.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard);
         let tail = queue.tail.load(Ordering::SeqCst, guard);

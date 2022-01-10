@@ -18,23 +18,6 @@ use crate::{
 
 use super::{compose_cas_bit, decompose_cas_bit};
 
-// link-and-checkpoint (general CAS 지원)
-// assumption: 각 thread는 CAS checkpoint를 위한 64-bit PM location이 있습니다. 이를 checkpoint: [u64; 256] 이라고 합시다.
-
-// step 1 (link): CAS from old node to new node pointer (w/ thread id, app tags, ptr address) 및 persist
-// step 2 (checkpoint): client에 성공/실패 여부 기록 및 persist
-// step 3 (persist): CAS로 link에서 thread id 제거 및 persist
-
-// concurrent thread reading the link: link에 thread id가 남아있으면
-// 그 thread id를 포함한 u64 value를 checkpoint[tid]에 store & persist하고나서 CAS로 link에서 thread id 제거 및 perist
-
-// recovery run: client에 성공/실패가 기록되어있으면 바로 return;
-// location이 new value면 step 2에서 resume; new value가 checkpoint[tid]와 같으면 성공으로 기록하고 return; 아니면 step 1에서 resume.
-// 이게 가능한 이유는 내가 아직 thread id를 지우지 않은 CAS는 존재한다면 유일하기 때문입니다.
-// 따라서 다른 thread는 checkpoint에 그냥 store를 해도 됩니다.
-
-// 사용처: 아무데나
-
 /// TODO(doc)
 #[derive(Debug)]
 pub struct Cas<N> {
@@ -147,7 +130,7 @@ impl<N> Cas<N> {
     ) -> Result<(), ()> {
         let cur = target.load(Ordering::SeqCst, guard);
         if self.checkpoint != Self::NOT_CHECKED {
-            if cur == new.with_tid(tid) {
+            if cur.with_cas_bit(0) == new.with_cas_bit(0).with_tid(tid) {
                 let _ = target.compare_exchange(
                     cur,
                     new.with_tid(0),
@@ -213,12 +196,6 @@ impl<N> Cas<N> {
             }
         }
 
-        let cur = target.load(Ordering::SeqCst, guard);
-
-        if old != cur {
-            return false;
-        }
-
         let pchk = pcheckpoint[succ_tid].load(Ordering::SeqCst);
         let pchk_time = decompose_cas_bit(pchk as usize).1;
         if now <= pchk_time as u64 {
@@ -234,22 +211,6 @@ impl<N> Cas<N> {
             .is_ok()
         {
             persist_obj(&pcheckpoint[succ_tid], true);
-            // let res = target.compare_exchange(
-            //     old,
-            //     old.with_tid(0),
-            //     Ordering::SeqCst,
-            //     Ordering::SeqCst,
-            //     guard,
-            // );
-
-            // if let Err(e) = res {
-            //     if e.current == old.with_tid(0) {
-            //         return true;
-            //     }
-            // } else {
-            //     return true;
-            // }
-
             return true;
         }
 
