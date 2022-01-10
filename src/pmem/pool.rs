@@ -21,9 +21,11 @@ use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
 
+use super::rdtscp;
+
 const NR_MAX_THREADS: usize = 512;
 
-type CASCheckpointArr = [AtomicU64; NR_MAX_THREADS];
+type CASCheckpointArr = [AtomicU64; NR_MAX_THREADS]; // TODO(opt): CachePadded?
 
 // metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
 enum RootIdx {
@@ -67,6 +69,10 @@ pub struct PoolHandle {
 
     /// tid별 helping 받은 시간
     pub cas_pcheckpoint: &'static CASCheckpointArr,
+
+    pub prev_max_checkpoint: u64,
+
+    pub init_checkpoint: u64,
 }
 
 impl PoolHandle {
@@ -105,6 +111,7 @@ impl PoolHandle {
         thread::scope(|scope| {
             // tid번째 스레드가 tid번째 memento를 성공할때까지 반복
             let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
+
             for tid in 0..nr_memento {
                 // tid번째 root memento 얻기
                 let m_addr =
@@ -285,6 +292,8 @@ impl Pool {
                 len: size,
                 cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
                 cas_pcheckpoint: chk_ref,
+                prev_max_checkpoint: 0,
+                init_checkpoint: rdtscp(),
             });
 
             let pool = global_pool().unwrap();
@@ -365,6 +374,8 @@ impl Pool {
             len: size,
             cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
             cas_pcheckpoint: chk_ref,
+            prev_max_checkpoint: 0,
+            init_checkpoint: 0,
         });
 
         // GC 수행
@@ -405,8 +416,22 @@ impl Pool {
             let _is_gc_executed = RP_recover();
         }
 
+        let pool = global_pool().unwrap();
+
+        // CAS checkpoint offset 계산
+        let max = pool.cas_vcheckpoint.iter().fold(0, |m, chk| {
+            let t = chk.load(Ordering::Relaxed);
+            std::cmp::max(m, t)
+        });
+        let max = pool.cas_pcheckpoint.iter().fold(max, |m, chk| {
+            let t = chk.load(Ordering::Relaxed);
+            std::cmp::max(m, t)
+        });
+        pool.prev_max_checkpoint = max;
+        pool.init_checkpoint = rdtscp();
+
         // 글로벌 풀의 핸들러 반환
-        Ok(global_pool().unwrap())
+        Ok(pool)
     }
 
     /// TODO(doc)

@@ -146,8 +146,13 @@ impl<N> Cas<N> {
     }
 
     #[inline]
+    fn calc_checkpoint(t: u64, pool: &PoolHandle) -> u64 {
+        t - pool.init_checkpoint + pool.prev_max_checkpoint
+    }
+
+    #[inline]
     fn checkpoint_succ(&mut self, cas_bit: usize, tid: usize, pool: &PoolHandle) {
-        let t = rdtscp();
+        let t = Self::calc_checkpoint(rdtscp(), pool);
         let new_chk = compose_cas_bit(cas_bit, t as usize) as u64;
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, true);
@@ -168,7 +173,7 @@ impl<N> Cas<N> {
             return true;
         }
 
-        let now = rdtsc();
+        let now = Self::calc_checkpoint(rdtsc(), pool);
         lfence();
 
         let start = Utc::now();

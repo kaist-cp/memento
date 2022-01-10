@@ -19,6 +19,6 @@ pub fn clear() {
 }
 
 /// 글로벌 풀 읽기
-pub fn global_pool() -> Option<&'static PoolHandle> {
-    unsafe { GLOBAL_POOL.as_ref() }
+pub fn global_pool() -> Option<&'static mut PoolHandle> {
+    unsafe { GLOBAL_POOL.as_mut() }
 }
