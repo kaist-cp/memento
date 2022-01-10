@@ -63,7 +63,10 @@ pub struct PoolHandle {
     len: usize,
 
     /// tid별 스스로 cas 성공한 시간
-    pub cas_vcheckpoint: [AtomicU64; 256],
+    pub cas_vcheckpoint: CASCheckpointArr,
+
+    /// tid별 helping 받은 시간
+    pub cas_pcheckpoint: &'static CASCheckpointArr,
 }
 
 impl PoolHandle {
@@ -267,28 +270,31 @@ impl Pool {
         let is_reopen = unsafe { RP_init(filepath.as_ptr(), size as u64) };
         assert_eq!(is_reopen, 0);
 
-        // 글로벌 pool 세팅
-        global::init(PoolHandle {
-            start: unsafe { RP_mmapped_addr() },
-            len: size,
-            cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
-        });
-        let pool = global_pool().unwrap();
-
-        // metadta, root obj, root memento 세팅
         unsafe {
-            // root obj 세팅
-            let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
-            o_ptr.write(O::pdefault(pool));
-            persist_obj(o_ptr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
-
             // general cas checkpoint 세팅
             let cas_chk_arr =
                 RP_malloc(mem::size_of::<CASCheckpointArr>() as u64) as *mut CASCheckpointArr;
             cas_chk_arr.write(array_init::array_init(|_| AtomicU64::new(0)));
             persist_obj(cas_chk_arr.as_mut().unwrap(), true);
             let _prev = RP_set_root(cas_chk_arr as *mut c_void, RootIdx::CASCheckpoint as u64);
+            let chk_ref = cas_chk_arr.as_ref().unwrap();
+
+            // 글로벌 pool 세팅
+            global::init(PoolHandle {
+                start: RP_mmapped_addr(),
+                len: size,
+                cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
+                cas_pcheckpoint: chk_ref,
+            });
+
+            let pool = global_pool().unwrap();
+
+            // metadta, root obj, root memento 세팅
+            // root obj 세팅
+            let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
+            o_ptr.write(O::pdefault(pool));
+            persist_obj(o_ptr.as_mut().unwrap(), true);
+            let _prev = RP_set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
 
             // root memento의 개수 세팅
             let nr_memento_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
@@ -303,9 +309,9 @@ impl Pool {
                 persist_obj(root_ptr.as_mut().unwrap(), true);
                 let _prev = RP_set_root(root_ptr as *mut c_void, RootIdx::MementoStart as u64 + i);
             }
-        }
 
-        Ok(pool)
+            Ok(pool)
+        }
     }
 
     /// 풀 열기
@@ -350,10 +356,17 @@ impl Pool {
         assert_eq!(is_reopen, 1);
 
         // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
+        let chk_ref = unsafe {
+            (RP_get_root_c(RootIdx::CASCheckpoint as u64) as *const CASCheckpointArr)
+                .as_ref()
+                .unwrap()
+        };
+
         global::init(PoolHandle {
             start: RP_mmapped_addr(),
             len: size,
             cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
+            cas_pcheckpoint: chk_ref,
         });
 
         // GC 수행
