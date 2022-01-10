@@ -13,6 +13,7 @@ use std::sync::{
 };
 use std::{fs, mem};
 
+use crate::ploc::{CASCheckpointArr, CasInfo};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
@@ -20,12 +21,6 @@ use crate::pmem::{global, ralloc::*};
 use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
-
-use super::rdtscp;
-
-const NR_MAX_THREADS: usize = 512;
-
-type CASCheckpointArr = [AtomicU64; NR_MAX_THREADS]; // TODO(opt): CachePadded?
 
 // metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
 enum RootIdx {
@@ -65,14 +60,7 @@ pub struct PoolHandle {
     len: usize,
 
     /// tid별 스스로 cas 성공한 시간
-    pub cas_vcheckpoint: CASCheckpointArr,
-
-    /// tid별 helping 받은 시간
-    pub cas_pcheckpoint: &'static CASCheckpointArr,
-
-    pub prev_max_checkpoint: u64,
-
-    pub init_checkpoint: u64,
+    pub(crate) cas_info: CasInfo,
 }
 
 impl PoolHandle {
@@ -290,10 +278,7 @@ impl Pool {
             global::init(PoolHandle {
                 start: RP_mmapped_addr(),
                 len: size,
-                cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
-                cas_pcheckpoint: chk_ref,
-                prev_max_checkpoint: 0,
-                init_checkpoint: rdtscp(),
+                cas_info: CasInfo::from(chk_ref),
             });
 
             let pool = global_pool().unwrap();
@@ -372,10 +357,7 @@ impl Pool {
         global::init(PoolHandle {
             start: RP_mmapped_addr(),
             len: size,
-            cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
-            cas_pcheckpoint: chk_ref,
-            prev_max_checkpoint: 0,
-            init_checkpoint: 0,
+            cas_info: CasInfo::from(chk_ref),
         });
 
         // GC 수행
@@ -419,16 +401,7 @@ impl Pool {
         let pool = global_pool().unwrap();
 
         // CAS checkpoint offset 계산
-        let max = pool.cas_vcheckpoint.iter().fold(0, |m, chk| {
-            let t = chk.load(Ordering::Relaxed);
-            std::cmp::max(m, t)
-        });
-        let max = pool.cas_pcheckpoint.iter().fold(max, |m, chk| {
-            let t = chk.load(Ordering::Relaxed);
-            std::cmp::max(m, t)
-        });
-        pool.prev_max_checkpoint = max;
-        pool.init_checkpoint = rdtscp();
+        pool.cas_info.set_runtime_info();
 
         // 글로벌 풀의 핸들러 반환
         Ok(pool)
