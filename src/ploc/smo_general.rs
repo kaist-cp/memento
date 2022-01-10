@@ -1,7 +1,6 @@
 //! General SMO
 
 use std::{
-    cell::UnsafeCell,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -17,7 +16,7 @@ use crate::{
     Memento,
 };
 
-use super::compose_cas_bit;
+use super::{cas_bit, compose_cas_bit};
 
 // link-and-checkpoint (general CAS 지원)
 // assumption: 각 thread는 CAS checkpoint를 위한 64-bit PM location이 있습니다. 이를 checkpoint: [u64; 256] 이라고 합시다.
@@ -35,10 +34,6 @@ use super::compose_cas_bit;
 // 따라서 다른 thread는 checkpoint에 그냥 store를 해도 됩니다.
 
 // 사용처: 아무데나
-
-thread_local! {
-    static CAS_BIT: UnsafeCell<usize> = UnsafeCell::new(0);
-}
 
 /// TODO(doc)
 #[derive(Debug)]
@@ -99,8 +94,9 @@ where
             return Err(());
         }
 
-        let cas_bit = CAS_BIT.with(|c| unsafe { c.get().as_mut().unwrap() });
-        let tmp_new = new.with_cas_bit(*cas_bit).with_tid(tid);
+        let prev_chk = pool.cas_vcheckpoint[tid].load(Ordering::Relaxed);
+        let cas_bit = 1 - cas_bit(prev_chk as usize);
+        let tmp_new = new.with_cas_bit(cas_bit).with_tid(tid);
 
         target
             .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
@@ -110,10 +106,10 @@ where
 
                 // 성공했다고 체크포인팅
                 let t = rdtscp();
-                self.checkpoint = compose_cas_bit(*cas_bit, t as usize) as u64;
+                let new_chk = compose_cas_bit(cas_bit, t as usize) as u64;
+                self.checkpoint = new_chk;
                 persist_obj(&self.checkpoint, true);
-
-                *cas_bit = 1 - *cas_bit; // 다음 CAS를 위해 CAS bit은 뒤집어야 함 (단, CAS에 성공할 때에만)
+                pool.cas_vcheckpoint[tid].store(new_chk, Ordering::Relaxed);
 
                 // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
                 let _ = target
