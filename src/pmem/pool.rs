@@ -21,12 +21,16 @@ use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
 
+const NR_MAX_THREADS: usize = 512;
+
+type CASCheckpointArr = [AtomicU64; NR_MAX_THREADS];
+
 // metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
 enum RootIdx {
-    RootObj, // root obj
-    // CASCheckpoint, // cas general checkpoint
-    NrMemento, // memento의 개수
-    MementoStart, // root memento(s) 시작 위치
+    RootObj,       // root obj
+    CASCheckpoint, // cas general checkpoint
+    NrMemento,     // memento의 개수
+    MementoStart,  // root memento(s) 시작 위치
 }
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
@@ -85,7 +89,11 @@ impl PoolHandle {
         for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()> + Send + Sync,
     {
         // root obj 얻기
-        let root_obj = unsafe { (RP_get_root_c(RootIdx::RootObj as u64) as *const O).as_ref().unwrap() };
+        let root_obj = unsafe {
+            (RP_get_root_c(RootIdx::RootObj as u64) as *const O)
+                .as_ref()
+                .unwrap()
+        };
 
         // root memento(들)의 개수 얻기
         let nr_memento = unsafe { *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize) };
@@ -96,7 +104,8 @@ impl PoolHandle {
             let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
             for tid in 0..nr_memento {
                 // tid번째 root memento 얻기
-                let m_addr = unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
+                let m_addr =
+                    unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
                 let barrier = barrier.clone();
 
                 let _ = scope.spawn(move |_| {
@@ -268,19 +277,26 @@ impl Pool {
 
         // metadta, root obj, root memento 세팅
         unsafe {
-            // root obj 세팅 (Ralloc의 0번째 root에 위치시킴)
+            // root obj 세팅
             let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
             o_ptr.write(O::pdefault(pool));
             persist_obj(o_ptr.as_mut().unwrap(), true);
             let _prev = RP_set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
 
-            // root memento의 개수 세팅 (Ralloc의 1번째 root에 위치시킴)
+            // general cas checkpoint 세팅
+            let cas_chk_arr =
+                RP_malloc(mem::size_of::<CASCheckpointArr>() as u64) as *mut CASCheckpointArr;
+            cas_chk_arr.write(array_init::array_init(|_| AtomicU64::new(0)));
+            persist_obj(cas_chk_arr.as_mut().unwrap(), true);
+            let _prev = RP_set_root(cas_chk_arr as *mut c_void, RootIdx::CASCheckpoint as u64);
+
+            // root memento의 개수 세팅
             let nr_memento_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
             nr_memento_ptr.write(nr_memento);
             persist_obj(nr_memento_ptr.as_mut().unwrap(), true);
             let _prev = RP_set_root(nr_memento_ptr as *mut c_void, RootIdx::NrMemento as u64);
 
-            // root memento(들) 세팅 (Ralloc의 2번째 root부터 위치시킴)
+            // root memento(들) 세팅
             for i in 0..nr_memento as u64 {
                 let root_ptr = RP_malloc(mem::size_of::<M>() as u64) as *mut M;
                 root_ptr.write(M::default());
@@ -347,7 +363,12 @@ impl Pool {
                 tid: usize,
                 gc: &mut GarbageCollection,
             ) {
-                RP_mark(gc, ptr, tid.wrapping_sub(RootIdx::MementoStart as usize), Some(T::filter_inner));
+                RP_mark(
+                    gc,
+                    ptr,
+                    tid.wrapping_sub(RootIdx::MementoStart as usize),
+                    Some(T::filter_inner),
+                );
             }
 
             // root obj의 filter func 등록
@@ -357,7 +378,10 @@ impl Pool {
             let nr_memento = *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize);
             for tid in 0..nr_memento {
                 // root memento들은 Ralloc의 2번째 root부터 위치
-                RP_set_root_filter(Some(root_filter::<M>), RootIdx::MementoStart as u64 + tid as u64);
+                RP_set_root_filter(
+                    Some(root_filter::<M>),
+                    RootIdx::MementoStart as u64 + tid as u64,
+                );
             }
 
             // GC 호출
