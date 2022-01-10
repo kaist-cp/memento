@@ -16,7 +16,7 @@ use crate::{
     Memento,
 };
 
-use super::{cas_bit, compose_cas_bit};
+use super::{compose_cas_bit, decompose_cas_bit};
 
 // link-and-checkpoint (general CAS 지원)
 // assumption: 각 thread는 CAS checkpoint를 위한 64-bit PM location이 있습니다. 이를 checkpoint: [u64; 256] 이라고 합시다.
@@ -55,7 +55,11 @@ impl<N> Default for Cas<N> {
 impl<N> Collectable for Cas<N> {
     fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &PoolHandle) {
         // CAS client 중 max checkpoint를 가진 걸로 vcheckpoint에 기록해줌
-        if cas.checkpoint > pool.cas_vcheckpoint[tid].load(Ordering::Relaxed) {
+        let vchk = pool.cas_vcheckpoint[tid].load(Ordering::Relaxed);
+        let (_, cur_chk) = decompose_cas_bit(cas.checkpoint as usize);
+        let (_, max_chk) = decompose_cas_bit(vchk as usize);
+
+        if cur_chk > max_chk {
             pool.cas_vcheckpoint[tid].store(cas.checkpoint, Ordering::Relaxed);
         }
     }
@@ -87,6 +91,7 @@ where
                 &pool.cas_vcheckpoint[tid],
                 &pcheckpoint[tid],
                 guard,
+                pool,
             );
         }
 
@@ -95,7 +100,7 @@ where
         }
 
         let prev_chk = pool.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let cas_bit = 1 - cas_bit(prev_chk as usize);
+        let cas_bit = 1 - decompose_cas_bit(prev_chk as usize).0;
         let tmp_new = new.with_cas_bit(cas_bit).with_tid(tid);
 
         target
@@ -105,11 +110,7 @@ where
                 persist_obj(target, true);
 
                 // 성공했다고 체크포인팅
-                let t = rdtscp();
-                let new_chk = compose_cas_bit(cas_bit, t as usize) as u64;
-                self.checkpoint = new_chk;
-                persist_obj(&self.checkpoint, true);
-                pool.cas_vcheckpoint[tid].store(new_chk, Ordering::Relaxed);
+                self.checkpoint_succ(cas_bit, tid, pool);
 
                 // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
                 let _ = target
@@ -139,9 +140,10 @@ impl<N> Cas<N> {
         target: &PAtomic<N>,
         new: PShared<'_, N>,
         tid: usize,
-        _vcheckpoint: &AtomicU64,
-        _pcheckpoint: &AtomicU64,
+        vcheckpoint: &AtomicU64,
+        pcheckpoint: &AtomicU64,
         guard: &Guard,
+        pool: &PoolHandle,
     ) -> Result<(), ()> {
         let cur = target.load(Ordering::SeqCst, guard);
         if self.checkpoint != Self::NOT_CHECKED {
@@ -153,22 +155,33 @@ impl<N> Cas<N> {
                     Ordering::SeqCst,
                     guard,
                 );
-                persist_obj(target, true);
             }
 
             return Ok(());
         }
 
-        // TODO: 이 밑은 홀짝 로직 넣고 고쳐야 함
-        // let vchk = vcheckpoint.load(Ordering::Relaxed);
-        // let pchk = pcheckpoint.load(Ordering::SeqCst);
-        // if vchk < pchk {
-        //     self.checkpoint = rdtscp();
-        //     persist_obj(&self.checkpoint, true);
-        //     return Ok(());
-        // }
+        // CAS 성공하고 죽었는지 체크
+        let vchk = vcheckpoint.load(Ordering::Relaxed);
+        let (vbit, vchk) = decompose_cas_bit(vchk as usize);
+        let pchk = pcheckpoint.load(Ordering::SeqCst);
+        let (pbit, pchk) = decompose_cas_bit(pchk as usize);
+
+        // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
+        if vchk < pchk && vbit != pbit {
+            self.checkpoint_succ(pbit, tid, pool);
+            return Ok(());
+        }
 
         Err(())
+    }
+
+    #[inline]
+    fn checkpoint_succ(&mut self, cas_bit: usize, tid: usize, pool: &PoolHandle) {
+        let t = rdtscp();
+        let new_chk = compose_cas_bit(cas_bit, t as usize) as u64;
+        self.checkpoint = new_chk;
+        persist_obj(&self.checkpoint, true);
+        pool.cas_vcheckpoint[tid].store(new_chk, Ordering::Relaxed);
     }
 
     /// return bool: 계속 진행 가능 여부 (`old`로 CAS를 해도 되는지 여부)
@@ -206,8 +219,9 @@ impl<N> Cas<N> {
             return false;
         }
 
-        let chk = pcheckpoint[succ_tid].load(Ordering::SeqCst);
-        if now <= chk {
+        let pchk = pcheckpoint[succ_tid].load(Ordering::SeqCst);
+        let pchk_time = decompose_cas_bit(pchk as usize).1;
+        if now <= pchk_time as u64 {
             // 이미 누가 한 거임
             return false;
         }
@@ -216,7 +230,7 @@ impl<N> Cas<N> {
 
         let now = compose_cas_bit(old.cas_bit(), now as usize) as u64;
         if pcheckpoint[succ_tid]
-            .compare_exchange(chk, now, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(pchk, now, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
             persist_obj(&pcheckpoint[succ_tid], true);

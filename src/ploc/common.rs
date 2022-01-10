@@ -47,8 +47,11 @@ pub(crate) fn compose_cas_bit(cas_bit: usize, data: usize) -> usize {
 }
 
 #[inline]
-pub(crate) fn cas_bit(data: usize) -> usize {
-    (data & cas_bits()).rotate_left(POS_CAS_BITS + NR_CAS_BITS)
+pub(crate) fn decompose_cas_bit(data: usize) -> (usize, usize) {
+    (
+        (data & cas_bits()).rotate_left(POS_CAS_BITS + NR_CAS_BITS),
+        !cas_bits() & data,
+    )
 }
 
 /// TODO(doc)
