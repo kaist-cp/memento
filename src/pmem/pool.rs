@@ -22,9 +22,12 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::thread;
 
 // metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
-const IX_OBJ: u64 = 0; // root obj는 Ralloc의 0번째 root에 위치
-const IX_NR_MEMENTO: u64 = 1; // memento의 개수는 Ralloc의 1번째 root에 위치
-const IX_MEMENTO_START: u64 = 2; // root memento(s)는 Ralloc의 2번째 root부터 위치
+enum RootIdx {
+    RootObj, // root obj
+    // CASCheckpoint, // cas general checkpoint
+    NrMemento, // memento의 개수
+    MementoStart, // root memento(s) 시작 위치
+}
 
 /// 열린 풀을 관리하기 위한 풀 핸들러
 ///
@@ -82,10 +85,10 @@ impl PoolHandle {
         for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()> + Send + Sync,
     {
         // root obj 얻기
-        let root_obj = unsafe { (RP_get_root_c(IX_OBJ) as *const O).as_ref().unwrap() };
+        let root_obj = unsafe { (RP_get_root_c(RootIdx::RootObj as u64) as *const O).as_ref().unwrap() };
 
         // root memento(들)의 개수 얻기
-        let nr_memento = unsafe { *(RP_get_root_c(IX_NR_MEMENTO) as *mut usize) };
+        let nr_memento = unsafe { *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize) };
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
@@ -93,7 +96,7 @@ impl PoolHandle {
             let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
             for tid in 0..nr_memento {
                 // tid번째 root memento 얻기
-                let m_addr = unsafe { RP_get_root_c(IX_MEMENTO_START + tid as u64) as usize };
+                let m_addr = unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
                 let barrier = barrier.clone();
 
                 let _ = scope.spawn(move |_| {
@@ -269,20 +272,20 @@ impl Pool {
             let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
             o_ptr.write(O::pdefault(pool));
             persist_obj(o_ptr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(o_ptr as *mut c_void, IX_OBJ);
+            let _prev = RP_set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
 
             // root memento의 개수 세팅 (Ralloc의 1번째 root에 위치시킴)
             let nr_memento_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
             nr_memento_ptr.write(nr_memento);
             persist_obj(nr_memento_ptr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(nr_memento_ptr as *mut c_void, IX_NR_MEMENTO);
+            let _prev = RP_set_root(nr_memento_ptr as *mut c_void, RootIdx::NrMemento as u64);
 
             // root memento(들) 세팅 (Ralloc의 2번째 root부터 위치시킴)
-            for i in 0..nr_memento {
+            for i in 0..nr_memento as u64 {
                 let root_ptr = RP_malloc(mem::size_of::<M>() as u64) as *mut M;
                 root_ptr.write(M::default());
                 persist_obj(root_ptr.as_mut().unwrap(), true);
-                let _prev = RP_set_root(root_ptr as *mut c_void, IX_MEMENTO_START + i as u64);
+                let _prev = RP_set_root(root_ptr as *mut c_void, RootIdx::MementoStart as u64 + i);
             }
         }
 
@@ -344,17 +347,17 @@ impl Pool {
                 tid: usize,
                 gc: &mut GarbageCollection,
             ) {
-                RP_mark(gc, ptr, tid.wrapping_sub(IX_MEMENTO_START as usize), Some(T::filter_inner));
+                RP_mark(gc, ptr, tid.wrapping_sub(RootIdx::MementoStart as usize), Some(T::filter_inner));
             }
 
             // root obj의 filter func 등록
-            RP_set_root_filter(Some(root_filter::<O>), IX_OBJ);
+            RP_set_root_filter(Some(root_filter::<O>), RootIdx::RootObj as u64);
 
             // root memento(들)의 filter func 등록
-            let nr_memento = *(RP_get_root_c(IX_NR_MEMENTO) as *mut usize);
+            let nr_memento = *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize);
             for tid in 0..nr_memento {
                 // root memento들은 Ralloc의 2번째 root부터 위치
-                RP_set_root_filter(Some(root_filter::<M>), IX_MEMENTO_START + tid as u64);
+                RP_set_root_filter(Some(root_filter::<M>), RootIdx::MementoStart as u64 + tid as u64);
             }
 
             // GC 호출
