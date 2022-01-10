@@ -3,12 +3,10 @@
 use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo_general::Cas;
 use crate::ploc::{Checkpoint, Checkpointable, RetryLoop, Traversable};
-use array_init::array_init;
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::some_or;
 use std::mem::MaybeUninit;
-use std::sync::atomic::AtomicU64;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
@@ -113,7 +111,7 @@ impl<T: 'static + Clone> Memento for TryEnqueue<T> {
         self.insert
             .run(
                 &tail_ref.next,
-                (PShared::null(), node, &queue.checkpoint),
+                (PShared::null(), node),
                 tid,
                 rec,
                 guard,
@@ -298,14 +296,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         }
 
         self.delete
-            .run(
-                &queue.head,
-                (head, next, &queue.checkpoint),
-                tid,
-                rec,
-                guard,
-                pool,
-            )
+            .run(&queue.head, (head, next), tid, rec, guard, pool)
             .map(|()| unsafe {
                 guard.defer_pdestroy(head);
                 Some((*next_ref.data.as_ptr()).clone())
@@ -373,7 +364,6 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 pub struct QueueGeneral<T: Clone> {
     head: CachePadded<PAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
-    checkpoint: [AtomicU64; 256], // TODO(must): 글로벌로 빼야 함
 }
 
 impl<T: Clone> PDefault for QueueGeneral<T> {
@@ -385,7 +375,6 @@ impl<T: Clone> PDefault for QueueGeneral<T> {
         Self {
             head: CachePadded::new(PAtomic::from(sentinel)),
             tail: CachePadded::new(PAtomic::from(sentinel)),
-            checkpoint: array_init(|_| AtomicU64::new(0)),
         }
     }
 }
@@ -433,8 +422,8 @@ mod test {
     impl Default for EnqDeq {
         fn default() -> Self {
             Self {
-                enqs: array_init(|_| Enqueue::<usize>::default()),
-                deqs: array_init(|_| Dequeue::<usize>::default()),
+                enqs: array_init::array_init(|_| Enqueue::<usize>::default()),
+                deqs: array_init::array_init(|_| Dequeue::<usize>::default()),
             }
         }
     }

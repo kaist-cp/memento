@@ -356,11 +356,9 @@ impl Pool {
         assert_eq!(is_reopen, 1);
 
         // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
-        let chk_ref = unsafe {
-            (RP_get_root_c(RootIdx::CASCheckpoint as u64) as *const CASCheckpointArr)
-                .as_ref()
-                .unwrap()
-        };
+        let chk_ref = (RP_get_root_c(RootIdx::CASCheckpoint as u64) as *const CASCheckpointArr)
+            .as_ref()
+            .unwrap();
 
         global::init(PoolHandle {
             start: RP_mmapped_addr(),

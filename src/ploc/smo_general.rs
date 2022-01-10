@@ -1,9 +1,6 @@
 //! General SMO
 
-use std::{
-    marker::PhantomData,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use chrono::{Duration, Utc};
 use crossbeam_epoch::Guard;
@@ -53,32 +50,24 @@ where
     N: 'static + Collectable,
 {
     type Object<'o> = &'o PAtomic<N>;
-    type Input<'o> = (PShared<'o, N>, PShared<'o, N>, &'o [AtomicU64; 256]); // atomicu64 array는 나중에 글로벌 배열로 빼야 함 maybe into poolhandle
+    type Input<'o> = (PShared<'o, N>, PShared<'o, N>);
     type Output<'o> = ();
     type Error<'o> = ();
 
     fn run<'o>(
         &mut self,
         target: Self::Object<'o>,
-        (old, new, pcheckpoint): Self::Input<'o>,
+        (old, new): Self::Input<'o>,
         tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(
-                target,
-                new,
-                tid,
-                &pool.cas_vcheckpoint[tid],
-                &pcheckpoint[tid],
-                guard,
-                pool,
-            );
+            return self.result(target, new, tid, guard, pool);
         }
 
-        if !Self::help(target, old, pcheckpoint, guard) {
+        if !Self::help(target, old, guard, pool) {
             return Err(());
         }
 
@@ -123,8 +112,6 @@ impl<N> Cas<N> {
         target: &PAtomic<N>,
         new: PShared<'_, N>,
         tid: usize,
-        vcheckpoint: &AtomicU64,
-        pcheckpoint: &AtomicU64,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
@@ -144,9 +131,9 @@ impl<N> Cas<N> {
         }
 
         // CAS 성공하고 죽었는지 체크
-        let vchk = vcheckpoint.load(Ordering::Relaxed);
+        let vchk = pool.cas_vcheckpoint[tid].load(Ordering::Relaxed);
         let (vbit, vchk) = decompose_cas_bit(vchk as usize);
-        let pchk = pcheckpoint.load(Ordering::SeqCst);
+        let pchk = pool.cas_pcheckpoint[tid].load(Ordering::SeqCst);
         let (pbit, pchk) = decompose_cas_bit(pchk as usize);
 
         // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
@@ -172,8 +159,8 @@ impl<N> Cas<N> {
     fn help<'g>(
         target: &PAtomic<N>,
         old: PShared<'_, N>,
-        pcheckpoint: &[AtomicU64; 256],
         guard: &'g Guard,
+        pool: &PoolHandle,
     ) -> bool {
         let succ_tid = old.tid();
 
@@ -196,7 +183,7 @@ impl<N> Cas<N> {
             }
         }
 
-        let pchk = pcheckpoint[succ_tid].load(Ordering::SeqCst);
+        let pchk = pool.cas_pcheckpoint[succ_tid].load(Ordering::SeqCst);
         let pchk_time = decompose_cas_bit(pchk as usize).1;
         if now <= pchk_time as u64 {
             // 이미 누가 한 거임
@@ -206,11 +193,11 @@ impl<N> Cas<N> {
         persist_obj(target, false);
 
         let now = compose_cas_bit(old.cas_bit(), now as usize) as u64;
-        if pcheckpoint[succ_tid]
+        if pool.cas_pcheckpoint[succ_tid]
             .compare_exchange(pchk, now, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            persist_obj(&pcheckpoint[succ_tid], true);
+            persist_obj(&pool.cas_pcheckpoint[succ_tid], true);
             return true;
         }
 
