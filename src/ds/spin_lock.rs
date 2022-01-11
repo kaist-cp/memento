@@ -82,7 +82,14 @@ impl Memento for TryLock {
 
 impl TryLock {
     #[inline]
-    fn acq_succ<O>(&mut self, spin_lock: &O, tid: usize, rec: bool, guard: &Guard, pool: &'static PoolHandle) {
+    fn acq_succ<O>(
+        &mut self,
+        spin_lock: &O,
+        tid: usize,
+        rec: bool,
+        guard: &Guard,
+        pool: &'static PoolHandle,
+    ) {
         let lock_ptr = unsafe { spin_lock.as_pptr(pool) }.into_offset();
         let _ = self.target.run(
             (),

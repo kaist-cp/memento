@@ -15,9 +15,6 @@ pub enum InsertErr<'g, T> {
     RecFail,
 }
 
-/// Empty를 표시하기 위한 태그
-pub const EMPTY: usize = 2;
-
 /// No owner를 표시하기 위함
 #[inline]
 pub fn no_owner<'g, T>() -> PShared<'g, T> {

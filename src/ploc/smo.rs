@@ -93,14 +93,16 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         guard: &'g Guard,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         // self를 승자가 원하는 node로 바꿔줌
-        let ret =
-            match self
-                .inner
-                .compare_exchange(old, next.with_tid(0), Ordering::SeqCst, Ordering::SeqCst, guard)
-            {
-                Ok(n) => n,
-                Err(e) => e.current,
-            };
+        let ret = match self.inner.compare_exchange(
+            old,
+            next.with_tid(0),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            guard,
+        ) {
+            Ok(n) => n,
+            Err(e) => e.current,
+        };
         Ok(ret)
     }
 }

@@ -109,7 +109,7 @@ type ExchangeCond<T> = fn(&T) -> bool;
 impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
     type Input<'o> = (T, ExchangeCond<T>);
-    type Output<'o> = T; // TODO(opt): input과의 대구를 고려해서 node reference가 나을지?
+    type Output<'o> = T;
     type Error<'o> = TryFail;
 
     fn run<'o>(
