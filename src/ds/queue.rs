@@ -6,6 +6,7 @@ use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertErr, RetryLoop, Tr
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::some_or;
+use smo::DeleteMode;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
@@ -317,7 +318,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         }
 
         self.delete
-            .run(&queue.head, (head, next), tid, rec, guard, pool)
+            .run(&queue.head, (head, next, DeleteMode::Drop), tid, rec, guard, pool)
             .map(|popped| unsafe {
                 guard.defer_pdestroy(popped);
                 Some((*next_ref.data.as_ptr()).clone())

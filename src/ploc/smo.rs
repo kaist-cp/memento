@@ -204,6 +204,16 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
 }
 
 /// TODO(doc)
+#[derive(Debug, Clone)]
+pub enum DeleteMode {
+    /// TODO(doc)
+    Drop,
+
+    /// TODO(doc)
+    Recycle,
+}
+
+/// TODO(doc)
 /// Do not use LSB while using `Update`.
 /// It's reserved for it.
 /// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
@@ -234,7 +244,7 @@ where
     N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o SMOAtomic<N>;
-    type Input<'o> = (PShared<'o, N>, PShared<'o, N>);
+    type Input<'o> = (PShared<'o, N>, PShared<'o, N>, DeleteMode);
     type Output<'o>
     where
         N: 'o,
@@ -244,7 +254,7 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (old, new): Self::Input<'o>,
+        (old, new, mode): Self::Input<'o>,
         tid: usize,
         rec: bool,
         guard: &'o Guard,

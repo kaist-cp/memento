@@ -13,7 +13,7 @@ use crate::{
         common::Checkpoint,
         no_owner,
         smo::{Delete, Insert, Node as SMONode, SMOAtomic},
-        RetryLoop, Traversable,
+        RetryLoop, Traversable, DeleteMode,
     },
     pmem::{
         ll::persist_obj,
@@ -192,7 +192,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
         let updated = self
             .update
-            .run(&xchg.slot, (init_slot, mine), tid, rec, guard, pool)
+            .run(&xchg.slot, (init_slot, mine, DeleteMode::Drop), tid, rec, guard, pool)
             .map_err(|_| {
                 // 실패하면 contention으로 인한 fail 리턴
                 unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
@@ -262,7 +262,7 @@ impl<T: 'static + Clone> TryExchange<T> {
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = ok_or!(
             self.delete
-                .run(&xchg.slot, (mine, PShared::null()), tid, rec, guard, pool),
+                .run(&xchg.slot, (mine, PShared::null(), DeleteMode::Drop), tid, rec, guard, pool),
             return Ok(Self::succ_after_wait(mine, guard, pool))
         );
 
