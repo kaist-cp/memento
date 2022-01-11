@@ -72,14 +72,14 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             let p_ref = some_or!(unsafe { p.as_ref(pool) }, return p);
 
             let owner = p_ref.owner();
-            let o = owner.load(Ordering::SeqCst, guard);
-            if o == no_owner() {
+            let next = owner.load(Ordering::SeqCst, guard);
+            if next == no_owner() {
                 return p;
             }
             // TODO: reflexive면 무한루프 발생. prev node를 들고 있고 현재 owner가 prev랑 같다면 그냥 리턴하기. Err로 리턴해서 업데이트 불가능한 상황임을 알려야 할 듯
 
             persist_obj(owner, true); // TODO(opt): async reset
-            p = ok_or!(self.help(p, o, guard), e, return e);
+            p = ok_or!(self.help(p, next, guard), e, return e);
         }
     }
 
@@ -96,7 +96,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         let ret =
             match self
                 .inner
-                .compare_exchange(old, next, Ordering::SeqCst, Ordering::SeqCst, guard)
+                .compare_exchange(old, next.with_tid(0), Ordering::SeqCst, Ordering::SeqCst, guard)
             {
                 Ok(n) => n,
                 Err(e) => e.current,
@@ -252,9 +252,6 @@ where
             return self.result(tid, guard, pool);
         }
 
-        // Normal run
-        let new = new.with_tid(tid);
-
         // 우선 내가 target을 가리키고
         self.target_loc.store(old, Ordering::Relaxed);
         persist_obj(&self.target_loc, false); // we're doing CAS soon.
@@ -265,7 +262,7 @@ where
         let _ = owner
             .compare_exchange(
                 PShared::null(),
-                new,
+                new.with_tid(tid),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,

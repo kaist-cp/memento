@@ -304,7 +304,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         let next = chk.1.load(Ordering::Relaxed, guard);
         let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
 
-        if head.as_ptr() == tail.as_ptr() {
+        if head == tail {
             let tail_ref = unsafe { tail.deref(pool) };
             persist_obj(&tail_ref.next, false); // we're doing CAS soon.
 
@@ -463,7 +463,7 @@ impl<T: Clone> Traversable<Node<T>> for Queue<T> {
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
-            if curr.as_ptr() == target.as_ptr() {
+            if curr == target {
                 return true;
             }
 
