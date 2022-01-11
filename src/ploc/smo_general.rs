@@ -95,7 +95,7 @@ impl<N> Collectable for Cas<N> {
 
 impl<N> Memento for Cas<N>
 where
-    N: 'static + Collectable,
+    N: 'static,
 {
     type Object<'o> = &'o PAtomic<N>;
     type Input<'o> = (PShared<'o, N>, PShared<'o, N>);
@@ -147,7 +147,8 @@ where
     }
 
     fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-        // TODO
+        self.checkpoint = Self::NOT_CHECKED;
+        persist_obj(&self.checkpoint, false);
     }
 }
 
