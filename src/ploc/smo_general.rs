@@ -7,6 +7,7 @@ use std::{
 
 use chrono::{Duration, Utc};
 use crossbeam_epoch::Guard;
+use crossbeam_utils::CachePadded;
 
 use crate::{
     pepoch::{PAtomic, PShared},
@@ -20,7 +21,7 @@ use super::{compose_cas_bit, decompose_cas_bit};
 
 const NR_MAX_THREADS: usize = 512;
 
-pub(crate) type CASCheckpointArr = [AtomicU64; NR_MAX_THREADS]; // TODO(opt): CachePadded?
+pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS];
 
 #[derive(Debug)]
 pub(crate) struct CasInfo {
@@ -40,7 +41,7 @@ pub(crate) struct CasInfo {
 impl From<&'static CASCheckpointArr> for CasInfo {
     fn from(chk_ref: &'static CASCheckpointArr) -> Self {
         Self {
-            cas_vcheckpoint: array_init::array_init(|_| AtomicU64::new(0)),
+            cas_vcheckpoint: array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
             cas_pcheckpoint: chk_ref,
             prev_max_checkpoint: 0,
             timestamp_init: rdtscp(),

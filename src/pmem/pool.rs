@@ -20,7 +20,7 @@ use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
 use crate::*;
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::thread;
+use crossbeam_utils::{thread, CachePadded};
 
 // metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
 enum RootIdx {
@@ -269,7 +269,7 @@ impl Pool {
             // general cas checkpoint 세팅
             let cas_chk_arr =
                 RP_malloc(mem::size_of::<CASCheckpointArr>() as u64) as *mut CASCheckpointArr;
-            cas_chk_arr.write(array_init::array_init(|_| AtomicU64::new(0)));
+            cas_chk_arr.write(array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))));
             persist_obj(cas_chk_arr.as_mut().unwrap(), true);
             let _prev = RP_set_root(cas_chk_arr as *mut c_void, RootIdx::CASCheckpoint as u64);
             let chk_ref = cas_chk_arr.as_ref().unwrap();
