@@ -6,7 +6,7 @@
 pub mod queue;
 // pub mod queue_unopt;
 pub mod queue_general;
-// pub mod spin_lock;
+pub mod spin_lock;
 pub mod stack;
 // pub mod treiber_stack;
 pub mod treiber_stack_general;

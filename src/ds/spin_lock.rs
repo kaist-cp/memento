@@ -21,7 +21,7 @@ pub struct TryLock {
 unsafe impl Send for TryLock {}
 
 impl Collectable for TryLock {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl Memento for TryLock {
@@ -109,8 +109,8 @@ pub struct Lock {
 unsafe impl Send for Lock {}
 
 impl Collectable for Lock {
-    fn filter(lock: &mut Self, gc: &mut GarbageCollection, _: &PoolHandle) {
-        RetryLoop::mark(&mut lock.try_lock, gc);
+    fn filter(lock: &mut Self, tid: usize, gc: &mut GarbageCollection, _: &PoolHandle) {
+        RetryLoop::mark(&mut lock.try_lock, tid, gc);
     }
 }
 
@@ -154,7 +154,7 @@ impl Default for SpinLock {
 }
 
 impl Collectable for SpinLock {
-    fn filter(_: &mut Self, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl SpinLock {
