@@ -306,6 +306,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
         self.delete.reset(guard, pool);
+        self.head_next.reset(guard, pool);
     }
 }
 
