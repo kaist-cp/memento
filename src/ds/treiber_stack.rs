@@ -2,22 +2,50 @@
 
 use core::sync::atomic::Ordering;
 
-use etrace::*;
+use etrace::some_or;
 
 use super::stack::*;
-use crate::node::Node;
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::smo_unopt::{DeleteUnOpt, InsertUnOpt};
-use crate::ploc::{Checkpoint, RetryLoop, Traversable};
+use crate::ploc::{Cas, Checkpoint, RetryLoop};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
+
+/// TODO(doc)
+#[derive(Debug)]
+pub struct Node<T> {
+    data: T,
+    next: PAtomic<Self>,
+}
+
+impl<T> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: value,
+            next: PAtomic::null(),
+        }
+    }
+}
+
+// TODO(must): T should be collectable
+impl<T> Collectable for Node<T> {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark valid ptr to trace
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next = unsafe { next.deref_mut(pool) };
+            Node::<T>::mark(next, tid, gc);
+        }
+    }
+}
 
 /// TreiberStack의 try push operation
 #[derive(Debug)]
 pub struct TryPush<T: Clone> {
     /// push를 위해 할당된 node
-    insert: InsertUnOpt<TreiberStack<T>, Node<T>>,
+    insert: Cas<Node<T>>,
 }
 
 impl<T: Clone> Default for TryPush<T> {
@@ -31,17 +59,8 @@ impl<T: Clone> Default for TryPush<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryPush<T> {}
 
 impl<T: Clone> Collectable for TryPush<T> {
-    fn filter(try_push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        InsertUnOpt::filter(&mut try_push.insert, gc, pool);
-    }
-}
-
-impl<T: Clone> TryPush<T> {
-    #[inline]
-    fn prepare(mine: &mut Node<T>, old_top: PShared<'_, Node<T>>) -> bool {
-        mine.next.store(old_top, Ordering::SeqCst);
-        persist_obj(&mine.next, false); // TODO: why? we do CAS right after that.
-        true
+    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Cas::filter(&mut try_push.insert, tid, gc, pool);
     }
 }
 
@@ -55,12 +74,18 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         &mut self,
         stack: Self::Object<'o>,
         node: Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        let top = stack.top.load(Ordering::SeqCst, guard);
+        let node_ref = unsafe { node.deref(pool) };
+        node_ref.next.store(top, Ordering::SeqCst);
+        persist_obj(&node_ref.next, false); // we do CAS right after that
+
         self.insert
-            .run(&stack.top, (node, stack, Self::prepare), rec, guard, pool) // TODO: input can be changed?
+            .run(&stack.top, (top, node), tid, rec, guard, pool)
             .map_err(|_| TryFail)
     }
 
@@ -68,119 +93,6 @@ impl<T: 'static + Clone> Memento for TryPush<T> {
         self.insert.reset(guard, pool);
     }
 }
-
-/// TreiberStack의 try pop operation
-#[derive(Debug)]
-pub struct TryPop<T: Clone> {
-    delete: DeleteUnOpt<TreiberStack<T>, Node<T>>,
-}
-
-impl<T: Clone> Default for TryPop<T> {
-    fn default() -> Self {
-        Self {
-            delete: Default::default(),
-        }
-    }
-}
-
-unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
-
-impl<T: Clone> Collectable for TryPop<T> {
-    fn filter(try_pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        DeleteUnOpt::filter(&mut try_pop.delete, gc, pool);
-    }
-}
-
-impl<T: 'static + Clone> Memento for TryPop<T> {
-    type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = ();
-    type Output<'o> = Option<T>;
-    type Error<'o> = TryFail;
-
-    fn run<'o>(
-        &mut self,
-        stack: Self::Object<'o>,
-        (): Self::Input<'o>,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.delete
-            .run(&stack.top, (stack, Self::prepare), rec, guard, pool)
-            .map(|ret| {
-                ret.map(|popped| unsafe {
-                    // println!("treiber free {:?}", popped);
-                    guard.defer_pdestroy(popped);
-                    popped.deref(pool).data.clone()
-                })
-            })
-            .map_err(|_| TryFail)
-    }
-
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete.reset(guard, pool);
-    }
-}
-
-impl<T: Clone> TryPop<T> {
-    #[inline]
-    fn prepare<'g>(
-        target: PShared<'_, Node<T>>,
-        _: &TreiberStack<T>,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<T>>>, ()> {
-        let target_ref = some_or!(unsafe { target.as_ref(pool) }, return Ok(None));
-        let next = target_ref.next.load(Ordering::SeqCst, guard);
-        Ok(Some(next))
-    }
-}
-
-/// Persistent Treiber stack
-#[derive(Debug)]
-pub struct TreiberStack<T: Clone> {
-    top: PAtomic<Node<T>>,
-}
-
-impl<T: Clone> Default for TreiberStack<T> {
-    fn default() -> Self {
-        Self {
-            top: PAtomic::null(),
-        }
-    }
-}
-
-impl<T: Clone> Collectable for TreiberStack<T> {
-    fn filter(stack: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut stack.top, gc, pool);
-    }
-}
-
-impl<T: Clone> PDefault for TreiberStack<T> {
-    fn pdefault(_: &'static PoolHandle) -> Self {
-        Self::default()
-    }
-}
-
-impl<T: Clone> Traversable<Node<T>> for TreiberStack<T> {
-    /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.top.load(Ordering::SeqCst, guard);
-
-        while !curr.is_null() {
-            if curr == target {
-                return true;
-            }
-
-            let curr_ref = unsafe { curr.deref(pool) };
-            curr = curr_ref.next.load(Ordering::SeqCst, guard);
-        }
-
-        false
-    }
-}
-
-unsafe impl<T: Clone + Send + Sync> Send for TreiberStack<T> {}
 
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
@@ -199,15 +111,15 @@ impl<T: Clone> Default for Push<T> {
 }
 
 impl<T: Clone> Collectable for Push<T> {
-    fn filter(push: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Checkpoint::filter(&mut push.node, gc, pool);
-        RetryLoop::filter(&mut push.try_push, gc, pool);
+    fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Checkpoint::filter(&mut push.node, tid, gc, pool);
+        RetryLoop::filter(&mut push.try_push, tid, gc, pool);
     }
 }
 
 impl<T: Clone> Memento for Push<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = (T, usize);
+    type Input<'o> = T;
     type Output<'o>
     where
         T: 'o,
@@ -217,7 +129,8 @@ impl<T: Clone> Memento for Push<T> {
     fn run<'o>(
         &mut self,
         stack: Self::Object<'o>,
-        (value, _): Self::Input<'o>,
+        value: Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
@@ -236,6 +149,7 @@ impl<T: Clone> Memento for Push<T> {
                             .into_owned()
                     });
                 }),
+                tid,
                 rec,
                 guard,
                 pool,
@@ -243,7 +157,7 @@ impl<T: Clone> Memento for Push<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        self.try_push.run(stack, node, rec, guard, pool)
+        self.try_push.run(stack, node, tid, rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -253,6 +167,70 @@ impl<T: Clone> Memento for Push<T> {
 }
 
 unsafe impl<T: 'static + Clone> Send for Push<T> {}
+
+/// TreiberStack의 try pop operation
+#[derive(Debug)]
+pub struct TryPop<T: Clone> {
+    delete: Cas<Node<T>>,
+    top: Checkpoint<PAtomic<Node<T>>>,
+}
+
+impl<T: Clone> Default for TryPop<T> {
+    fn default() -> Self {
+        Self {
+            delete: Default::default(),
+            top: Default::default(),
+        }
+    }
+}
+
+unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
+
+impl<T: Clone> Collectable for TryPop<T> {
+    fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Cas::filter(&mut try_pop.delete, tid, gc, pool);
+    }
+}
+
+impl<T: 'static + Clone> Memento for TryPop<T> {
+    type Object<'o> = &'o TreiberStack<T>;
+    type Input<'o> = ();
+    type Output<'o> = Option<T>;
+    type Error<'o> = TryFail;
+
+    fn run<'o>(
+        &mut self,
+        stack: Self::Object<'o>,
+        (): Self::Input<'o>,
+        tid: usize,
+        rec: bool,
+        guard: &'o Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+        let top = stack.top.load(Ordering::SeqCst, guard);
+        let top = self
+            .top
+            .run((), (PAtomic::from(top), |_| ()), tid, rec, guard, pool)
+            .unwrap()
+            .load(Ordering::Relaxed, guard);
+
+        let top_ref = some_or!(unsafe { top.as_ref(pool) }, return Ok(None));
+        let next = top_ref.next.load(Ordering::SeqCst, guard);
+
+        self.delete
+            .run(&stack.top, (top, next), tid, rec, guard, pool)
+            .map(|_| unsafe {
+                guard.defer_pdestroy(top);
+                Some(top_ref.data.clone())
+            })
+            .map_err(|_| TryFail)
+    }
+
+    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
+        self.delete.reset(guard, pool);
+        self.top.reset(guard, pool);
+    }
+}
 
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
@@ -269,14 +247,14 @@ impl<T: Clone> Default for Pop<T> {
 }
 
 impl<T: Clone> Collectable for Pop<T> {
-    fn filter(pop: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        RetryLoop::filter(&mut pop.try_pop, gc, pool);
+    fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        RetryLoop::filter(&mut pop.try_pop, tid, gc, pool);
     }
 }
 
 impl<T: Clone> Memento for Pop<T> {
     type Object<'o> = &'o TreiberStack<T>;
-    type Input<'o> = usize;
+    type Input<'o> = ();
     type Output<'o>
     where
         T: 'o,
@@ -286,12 +264,13 @@ impl<T: Clone> Memento for Pop<T> {
     fn run<'o>(
         &mut self,
         stack: Self::Object<'o>,
-        _: Self::Input<'o>,
+        (): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.try_pop.run(stack, (), rec, guard, pool)
+        self.try_pop.run(stack, (), tid, rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -300,6 +279,34 @@ impl<T: Clone> Memento for Pop<T> {
 }
 
 unsafe impl<T: Clone> Send for Pop<T> {}
+
+/// Persistent Treiber stack
+#[derive(Debug)]
+pub struct TreiberStack<T: Clone> {
+    top: PAtomic<Node<T>>,
+}
+
+impl<T: Clone> Default for TreiberStack<T> {
+    fn default() -> Self {
+        Self {
+            top: PAtomic::null(),
+        }
+    }
+}
+
+impl<T: Clone> Collectable for TreiberStack<T> {
+    fn filter(stack: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        PAtomic::filter(&mut stack.top, tid, gc, pool);
+    }
+}
+
+impl<T: Clone> PDefault for TreiberStack<T> {
+    fn pdefault(_: &'static PoolHandle) -> Self {
+        Self::default()
+    }
+}
+
+unsafe impl<T: Clone + Send + Sync> Send for TreiberStack<T> {}
 
 impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
     type Push = Push<T>;
@@ -310,17 +317,15 @@ impl<T: 'static + Clone> Stack<T> for TreiberStack<T> {
 mod tests {
     use super::*;
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
-    use rusty_fork::rusty_fork_test;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
+    const COUNT: usize = 1_000_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     impl TestRootObj for TreiberStack<usize> {}
 
     // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
-    // rusty_fork_test! {
     #[test]
     fn push_pop() {
         const FILE_NAME: &str = "treiber_push_pop.pool";
@@ -330,5 +335,4 @@ mod tests {
             NR_THREAD + 1,
         )
     }
-    // }
 }
