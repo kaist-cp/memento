@@ -45,7 +45,6 @@ pub enum TryFail {
 #[derive(Debug)]
 pub struct Node<T> {
     data: T,
-    next: PAtomic<Self>,
     owner: PAtomic<Self>,
 }
 
@@ -53,7 +52,6 @@ impl<T> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: value,
-            next: PAtomic::null(),
             owner: PAtomic::from(no_owner()),
         }
     }
@@ -61,16 +59,7 @@ impl<T> From<T> for Node<T> {
 
 // TODO(must): T should be collectable
 impl<T> Collectable for Node<T> {
-    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark valid ptr to trace
-        let mut next = node.next.load(Ordering::SeqCst, guard);
-        if !next.is_null() {
-            let next = unsafe { next.deref_mut(pool) };
-            Node::<T>::mark(next, tid, gc);
-        }
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<T> SMONode for Node<T> {
@@ -171,14 +160,9 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
         if init_slot.is_null() {
             let mine = node.with_high_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
-            let inserted = self.insert.run(
-                &xchg.slot,
-                (mine, xchg, Self::prepare_insert),
-                tid,
-                rec,
-                guard,
-                pool,
-            );
+            let inserted =
+                self.insert
+                    .run(&xchg.slot, (mine, xchg, |_| true), tid, rec, guard, pool);
 
             // If insert failed, return error.
             if inserted.is_err() {
@@ -294,11 +278,6 @@ impl<T: 'static + Clone> TryExchange<T> {
         let partner_ref = unsafe { partner.deref(pool) };
         unsafe { guard.defer_pdestroy(mine) };
         partner_ref.data.clone()
-    }
-
-    #[inline]
-    fn prepare_insert(_: &mut Node<T>) -> bool {
-        true
     }
 }
 

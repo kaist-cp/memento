@@ -14,8 +14,11 @@ use crate::*;
 /// TODO(doc)
 #[derive(Debug)]
 pub struct Node<T> {
-    data: T,
-    next: PAtomic<Self>,
+    /// TODO(doc)
+    pub data: T,
+
+    /// TODO(doc)
+    pub next: PAtomic<Self>,
 }
 
 impl<T> From<T> for Node<T> {
