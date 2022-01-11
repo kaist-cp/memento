@@ -40,7 +40,6 @@
 
 // Persistent objects collection
 pub mod ds;
-pub mod node;
 pub mod pipe;
 pub mod ploc;
 

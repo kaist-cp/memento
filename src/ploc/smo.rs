@@ -202,10 +202,6 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
 }
 
 /// TODO(doc)
-#[derive(Debug)]
-pub struct NeedRetry;
-
-/// TODO(doc)
 /// Do not use LSB while using `Update`.
 /// It's reserved for it.
 /// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함

@@ -8,12 +8,12 @@ use crossbeam_epoch::{self as epoch, Guard};
 use etrace::*;
 
 use crate::{
-    node::Node,
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
-        smo::{Delete, Insert, SMOAtomic, Update, UpdateDeleteInfo},
-        NeedRetry, RetryLoop, Traversable,
+        no_owner,
+        smo::{Delete, Insert, Node as SMONode, SMOAtomic},
+        RetryLoop, Traversable,
     },
     pmem::{
         ll::persist_obj,
@@ -41,6 +41,45 @@ pub enum TryFail {
     Busy,
 }
 
+/// TODO(doc)
+#[derive(Debug)]
+pub struct Node<T> {
+    data: T,
+    next: PAtomic<Self>,
+    owner: PAtomic<Self>,
+}
+
+impl<T> From<T> for Node<T> {
+    fn from(value: T) -> Self {
+        Self {
+            data: value,
+            next: PAtomic::null(),
+            owner: PAtomic::from(no_owner()),
+        }
+    }
+}
+
+// TODO(must): T should be collectable
+impl<T> Collectable for Node<T> {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        // Mark valid ptr to trace
+        let mut next = node.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            let next = unsafe { next.deref_mut(pool) };
+            Node::<T>::mark(next, tid, gc);
+        }
+    }
+}
+
+impl<T> SMONode for Node<T> {
+    #[inline]
+    fn owner(&self) -> &PAtomic<Self> {
+        &self.owner
+    }
+}
+
 /// Exchanger의 try exchange
 #[derive(Debug)]
 pub struct TryExchange<T: Clone> {
@@ -49,8 +88,8 @@ pub struct TryExchange<T: Clone> {
     wait_slot: Checkpoint<PAtomic<Node<T>>>,
 
     insert: Insert<Exchanger<T>, Node<T>>,
-    update: Update<Exchanger<T>, Node<T>, Self>,
-    delete: Delete<Exchanger<T>, Node<T>, Self>,
+    update: Delete<Node<T>>,
+    delete: Delete<Node<T>>,
 }
 
 impl<T: Clone> Default for TryExchange<T> {
@@ -67,12 +106,12 @@ impl<T: Clone> Default for TryExchange<T> {
 }
 
 impl<T: Clone> Collectable for TryExchange<T> {
-    fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Checkpoint::filter(&mut s.init_slot, gc, pool);
-        Checkpoint::filter(&mut s.wait_slot, gc, pool);
-        Insert::filter(&mut s.insert, gc, pool);
-        Update::filter(&mut s.update, gc, pool);
-        Delete::filter(&mut s.delete, gc, pool);
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Checkpoint::filter(&mut s.init_slot, tid, gc, pool);
+        Checkpoint::filter(&mut s.wait_slot, tid, gc, pool);
+        Insert::filter(&mut s.insert, tid, gc, pool);
+        Delete::filter(&mut s.update, tid, gc, pool);
+        Delete::filter(&mut s.delete, tid, gc, pool);
     }
 }
 
@@ -80,37 +119,31 @@ type ExchangeCond<T> = fn(&T) -> bool;
 
 impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
     type Object<'o> = &'o Exchanger<T>;
-    type Input<'o> = (T, ExchangeCond<T>, usize); // TODO(must): tid 지워
+    type Input<'o> = (T, ExchangeCond<T>);
     type Output<'o> = T; // TODO(opt): input과의 대구를 고려해서 node reference가 나을지?
     type Error<'o> = TryFail;
 
     fn run<'o>(
         &mut self,
         xchg: Self::Object<'o>,
-        (value, cond, tid): Self::Input<'o>,
+        (value, cond): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        // println!("before alloc node value {} {:?}", tid, value);
         let node = POwned::new(Node::from(value), pool);
-        // println!("xchg alloc node {} {:?}", tid, node);
         persist_obj(unsafe { node.deref(pool) }, true);
 
-        if tid > 99999 {// TODO(must): debug의 흔적 지워
-            // println!("{}", tid);
-        }
-
-        // println!("checkpoint {} {:?}", tid, node);
         let node = self
             .node
             .run(
                 (),
                 (PAtomic::from(node), |aborted| {
                     let guard = unsafe { epoch::unprotected() };
-                    // // println!("no need free node {} {:?}", tid, d);
                     drop(unsafe { aborted.load(Ordering::Relaxed, guard).into_owned() });
                 }),
+                tid,
                 rec,
                 guard,
                 pool,
@@ -118,26 +151,30 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        // println!("init slot {} {:?}", tid, node);
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
         let init_slot = xchg.slot.load_helping(guard, pool);
         let init_slot = self
             .init_slot
-            .run((), (PAtomic::from(init_slot), |_| {}), rec, guard, pool)
+            .run(
+                (),
+                (PAtomic::from(init_slot), |_| {}),
+                tid,
+                rec,
+                guard,
+                pool,
+            )
             .unwrap()
             .load(Ordering::Relaxed, guard);
-
-        // println!("end init slot {} {:?}", tid, node);
 
         // slot이 null 이면 insert해서 기다림
         // - 실패하면 fail 리턴
         if init_slot.is_null() {
             let mine = node.with_high_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
-            // println!("insert {} {:?}", tid, node);
             let inserted = self.insert.run(
                 &xchg.slot,
                 (mine, xchg, Self::prepare_insert),
+                tid,
                 rec,
                 guard,
                 pool,
@@ -145,7 +182,6 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
 
             // If insert failed, return error.
             if inserted.is_err() {
-                // println!("err insert {} {:?}", tid, node);
                 unsafe { guard.defer_pdestroy(node) }; // TODO(must): crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
                 return Err(TryFail::Busy);
             }
@@ -162,7 +198,6 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
 
         // 상대가 기다리는 입장인 경우
         if my_tag != WAITING {
-            // println!("cond check {} {:?}", tid, slot);
             let slot_ref = unsafe { init_slot.deref(pool) }; // SAFE: free되지 않은 node임. 왜냐하면 WAITING 하던 애가 그냥 나갈 때는 반드시 slot을 비우고 나감.
             if !cond(&slot_ref.data) {
                 return Err(TryFail::Busy);
@@ -173,10 +208,9 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
         let updated = self
             .update
-            .run(&xchg.slot, (init_slot, mine, xchg), rec, guard, pool)
+            .run(&xchg.slot, (init_slot, mine), tid, rec, guard, pool)
             .map_err(|_| {
                 // 실패하면 contention으로 인한 fail 리턴
-                // println!("update fail free node {} {:?}", tid, node);
                 unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
                 TryFail::Busy
             })?;
@@ -188,7 +222,6 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
 
         // 내가 안기다리는거로 성공
         let partner = updated;
-        // println!("dash partner {} {:?}", tid, partner);
         let partner_ref = unsafe { partner.deref(pool) };
         unsafe { guard.defer_pdestroy(mine) };
         Ok(partner_ref.data.clone())
@@ -223,50 +256,42 @@ impl<T: 'static + Clone> TryExchange<T> {
 
         let wait_slot = xchg.slot.load_helping(guard, pool);
 
-        // println!("wait mine slot {} {:?} {:?}", tid, mine, wait_slot);
-
         let wait_slot = self
             .wait_slot
-            .run((), (PAtomic::from(wait_slot), |_| {}), rec, guard, pool)
+            .run(
+                (),
+                (PAtomic::from(wait_slot), |_| {}),
+                tid,
+                rec,
+                guard,
+                pool,
+            )
             .unwrap()
             .load(Ordering::Relaxed, guard);
 
-        // println!("end wait mine {} {:?} {:?}", tid, mine, wait_slot);
-
         // wait_slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
         if wait_slot != mine {
-            return Ok(Self::succ_after_wait(mine, guard, pool, tid));
+            return Ok(Self::succ_after_wait(mine, guard, pool));
         }
 
-        // println!("delete mine {} {:?} {:?}", tid, mine, slot);
         // 기다리다 지치면 delete 함
         // delete 실패하면 그 사이에 매칭 성사된 거임
         let deleted = ok_or!(
-            self.delete.run(&xchg.slot, (0, mine, xchg), rec, guard, pool),
-            return Ok(Self::succ_after_wait(mine, guard, pool, tid))
+            self.delete
+                .run(&xchg.slot, (mine, PShared::null()), tid, rec, guard, pool),
+            return Ok(Self::succ_after_wait(mine, guard, pool))
         );
-        let deleted =
-            deleted.expect("Delete is successful only if there is a node s.t. the node is mine.");
 
-        // println!("delete d {} {:?}", tid, d);
         unsafe { guard.defer_pdestroy(deleted) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
         Err(TryFail::Timeout)
     }
 
     #[inline]
-    fn succ_after_wait(
-        mine: PShared<'_, Node<T>>,
-        guard: &Guard,
-        pool: &PoolHandle,
-        tid: usize,
-    ) -> T {
+    fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
-        // println!("wait mine {} {:?}", tid, mine);
         let mine_ref = unsafe { mine.deref(pool) };
-        let partner = Update::<Exchanger<T>, Node<T>, Self>::next_updated_node(mine_ref).unwrap();
-        // println!("wait partner {} {:?}", tid, partner);
+        let partner = mine_ref.owner().load(Ordering::SeqCst, guard);
         let partner_ref = unsafe { partner.deref(pool) };
-        // let partner_ref = unsafe { partner.deref(pool) };
         unsafe { guard.defer_pdestroy(mine) };
         partner_ref.data.clone()
     }
@@ -274,42 +299,6 @@ impl<T: 'static + Clone> TryExchange<T> {
     #[inline]
     fn prepare_insert(_: &mut Node<T>) -> bool {
         true
-    }
-}
-
-impl<T: Clone> UpdateDeleteInfo<Exchanger<T>, Node<T>> for TryExchange<T> {
-    fn prepare_delete<'g>(
-        del_type: u16,
-        cur: PShared<'_, Node<T>>,
-        mine: PShared<'_, Node<T>>,
-        _: &Exchanger<T>,
-        _: &'g Guard,
-        _: &PoolHandle,
-    ) -> Result<Option<PShared<'g, Node<T>>>, NeedRetry> {
-        if cur == mine {
-            return Ok(Some(PShared::<_>::null()));
-        }
-
-        Err(NeedRetry)
-    }
-
-    fn prepare_update<'g>(
-        cur: PShared<'_, Node<T>>,
-        expected: PShared<'_, Node<T>>,
-        _: &Exchanger<T>,
-        _: &'g Guard,
-        _: &PoolHandle,
-    ) -> bool {
-        cur == expected
-    }
-
-    fn node_when_deleted<'g>(
-        _: u16,
-        _: PShared<'_, Node<T>>,
-        _: &'g Guard,
-        _: &PoolHandle,
-    ) -> Option<PShared<'g, Node<T>>> {
-        Some(PShared::<_>::null())
     }
 }
 
@@ -333,9 +322,9 @@ impl<T: Clone + std::fmt::Debug> Default for Exchange<T> {
 unsafe impl<T: Clone + Send + Sync + std::fmt::Debug> Send for Exchange<T> {}
 
 impl<T: Clone + std::fmt::Debug> Collectable for Exchange<T> {
-    fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Checkpoint::filter(&mut xchg.node, gc, pool);
-        RetryLoop::filter(&mut xchg.try_xchg, gc, pool);
+    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Checkpoint::filter(&mut xchg.node, tid, gc, pool);
+        RetryLoop::filter(&mut xchg.try_xchg, tid, gc, pool);
     }
 }
 
@@ -349,11 +338,13 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
         &mut self,
         xchg: Self::Object<'o>,
         (value, cond): Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.try_xchg.run(xchg, (value, cond, 1), rec, guard, pool)
+        self.try_xchg
+            .run(xchg, (value, cond), tid, rec, guard, pool)
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -366,7 +357,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for Exchange<T> {
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
 pub struct Exchanger<T: Clone> {
-    slot: SMOAtomic<Self, Node<T>, TryExchange<T>>,
+    slot: SMOAtomic<Node<T>>,
 }
 
 impl<T: Clone> Default for Exchanger<T> {
@@ -391,15 +382,13 @@ impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
 }
 
 impl<T: Clone> Collectable for Exchanger<T> {
-    fn filter(xchg: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        SMOAtomic::filter(&mut xchg.slot, gc, pool);
+    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        SMOAtomic::filter(&mut xchg.slot, tid, gc, pool);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rusty_fork::rusty_fork_test;
-
     use crate::{
         pmem::ralloc::{Collectable, GarbageCollection},
         test_utils::tests::{run_test, TestRootMemento, TestRootObj},
@@ -414,21 +403,22 @@ mod tests {
     }
 
     impl Collectable for ExchangeOnce {
-        fn filter(xchg_once: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Exchange::filter(&mut xchg_once.exchange, gc, pool);
+        fn filter(xchg_once: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchange::filter(&mut xchg_once.exchange, tid, gc, pool);
         }
     }
 
     impl Memento for ExchangeOnce {
         type Object<'o> = &'o Exchanger<usize>;
-        type Input<'o> = usize; // tid(mid)
+        type Input<'o> = ();
         type Output<'o> = ();
         type Error<'o> = !;
 
         fn run<'o>(
             &mut self,
             xchg: Self::Object<'o>,
-            tid: Self::Input<'o>,
+            (): Self::Input<'o>,
+            tid: usize,
             rec: bool,
             guard: &'o Guard,
             pool: &'static PoolHandle,
@@ -439,7 +429,7 @@ mod tests {
                 // `move` for `tid`
                 let ret = self
                     .exchange
-                    .run(xchg, (tid, |_| true), rec, guard, pool)
+                    .run(xchg, (tid, |_| true), tid, rec, guard, pool)
                     .unwrap();
                 assert_eq!(ret, 1 - tid);
             }
@@ -455,14 +445,12 @@ mod tests {
     impl TestRootObj for Exchanger<usize> {}
     impl TestRootMemento<Exchanger<usize>> for ExchangeOnce {}
 
-    rusty_fork_test! {
-        #[test]
-        fn exchange_once() {
-            const FILE_NAME: &str = "exchange_once.pool";
-            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    #[test]
+    fn exchange_once() {
+        const FILE_NAME: &str = "exchange_once.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-            run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
-        }
+        run_test::<Exchanger<usize>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
     }
 
     /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
@@ -479,15 +467,15 @@ mod tests {
     }
 
     impl Collectable for RotateLeft {
-        fn filter(rleft: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Exchange::filter(&mut rleft.exchange0, gc, pool);
-            Exchange::filter(&mut rleft.exchange2, gc, pool);
+        fn filter(rleft: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchange::filter(&mut rleft.exchange0, tid, gc, pool);
+            Exchange::filter(&mut rleft.exchange2, tid, gc, pool);
         }
     }
 
     impl Memento for RotateLeft {
         type Object<'o> = &'o [Exchanger<usize>; 2];
-        type Input<'o> = usize;
+        type Input<'o> = ();
         type Output<'o> = ();
         type Error<'o> = !;
 
@@ -496,7 +484,8 @@ mod tests {
         fn run<'o>(
             &mut self,
             xchgs: Self::Object<'o>,
-            tid: Self::Input<'o>,
+            (): Self::Input<'o>,
+            tid: usize,
             rec: bool,
             guard: &'o Guard,
             pool: &'static PoolHandle,
@@ -513,7 +502,7 @@ mod tests {
                 0 => {
                     *item = self
                         .exchange0
-                        .run(lxchg, (*item, |_| true), rec, guard, pool)
+                        .run(lxchg, (*item, |_| true), tid, rec, guard, pool)
                         .unwrap();
                     assert_eq!(*item, 1);
                 }
@@ -523,14 +512,14 @@ mod tests {
 
                     *item = self
                         .exchange0
-                        .run(lxchg, (*item, |_| true), rec, guard, pool)
+                        .run(lxchg, (*item, |_| true), tid, rec, guard, pool)
                         .unwrap();
                     assert_eq!(*item, 0);
 
                     // Step2: [1]    [0] -> [2]
                     *item = self
                         .exchange2
-                        .run(rxchg, (*item, |_| true), rec, guard, pool)
+                        .run(rxchg, (*item, |_| true), tid, rec, guard, pool)
                         .unwrap();
                     assert_eq!(*item, 2);
                 }
@@ -538,7 +527,7 @@ mod tests {
                 2 => {
                     *item = self
                         .exchange2
-                        .run(rxchg, (*item, |_| true), rec, guard, pool)
+                        .run(rxchg, (*item, |_| true), tid, rec, guard, pool)
                         .unwrap();
                     assert_eq!(*item, 0);
                 }
@@ -553,9 +542,9 @@ mod tests {
     }
 
     impl Collectable for [Exchanger<usize>; 2] {
-        fn filter(s: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Exchanger::filter(&mut s[0], gc, pool);
-            Exchanger::filter(&mut s[1], gc, pool);
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Exchanger::filter(&mut s[0], tid, gc, pool);
+            Exchanger::filter(&mut s[1], tid, gc, pool);
         }
     }
     impl PDefault for [Exchanger<usize>; 2] {
@@ -566,13 +555,11 @@ mod tests {
     impl TestRootObj for [Exchanger<usize>; 2] {}
     impl TestRootMemento<[Exchanger<usize>; 2]> for RotateLeft {}
 
-    rusty_fork_test! {
-        #[test]
-        fn rotate_left() {
-            const FILE_NAME: &str = "rotate_left.pool";
-            const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    #[test]
+    fn rotate_left() {
+        const FILE_NAME: &str = "rotate_left.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-            run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
-        }
+        run_test::<[Exchanger<usize>; 2], RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
     }
 }

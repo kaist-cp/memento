@@ -1,6 +1,6 @@
 //! Atomic Update Common
 
-use std::{marker::PhantomData, sync::atomic::AtomicUsize};
+use std::marker::PhantomData;
 
 use crossbeam_epoch::Guard;
 use crossbeam_utils::Backoff;
@@ -13,18 +13,6 @@ use crate::{
     },
     Memento,
 };
-
-/// TODO(doc)
-pub trait NodeUnOpt: Sized {
-    /// TODO(doc)
-    fn ack_unopt(&self);
-
-    /// TODO(doc)
-    fn acked_unopt(&self) -> bool;
-
-    /// TODO(doc)
-    fn owner_unopt(&self) -> &AtomicUsize;
-}
 
 /// TODO(doc)
 #[macro_export]
