@@ -44,9 +44,9 @@ where
     for<'o> Op1: 'static + Memento<Output<'o> = Op2::Input<'o>>,
     Op2: Memento,
 {
-    fn filter(pipe: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        Op1::filter(&mut pipe.from, gc, pool);
-        Op2::filter(&mut pipe.to, gc, pool);
+    fn filter(pipe: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        Op1::filter(&mut pipe.from, tid, gc, pool);
+        Op2::filter(&mut pipe.to, tid, gc, pool);
     }
 }
 
@@ -70,15 +70,18 @@ where
         &mut self,
         (from_obj, to_obj): Self::Object<'o>,
         init: Self::Input<'o>,
+        tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         let v = self
             .from
-            .run(from_obj, init, rec, guard, pool)
+            .run(from_obj, init, tid, rec, guard, pool)
             .map_err(|_| ())?;
-        self.to.run(to_obj, v, rec, guard, pool).map_err(|_| ())
+        self.to
+            .run(to_obj, v, tid, rec, guard, pool)
+            .map_err(|_| ())
     }
 
     fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
@@ -94,14 +97,13 @@ mod tests {
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::test_utils::tests::*;
     use crate::PDefault;
-    use rusty_fork::rusty_fork_test;
 
-    const COUNT: usize = 2;
+    const COUNT: usize = 1000;
 
     impl Collectable for [Queue<usize>; 2] {
-        fn filter(q_arr: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            Queue::<usize>::filter(&mut q_arr[0], gc, pool);
-            Queue::<usize>::filter(&mut q_arr[1], gc, pool);
+        fn filter(q_arr: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            Queue::<usize>::filter(&mut q_arr[0], tid, gc, pool);
+            Queue::<usize>::filter(&mut q_arr[1], tid, gc, pool);
         }
     }
 
@@ -130,55 +132,54 @@ mod tests {
     }
 
     impl Collectable for Transfer {
-        fn filter(transfer: &mut Self, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(transfer: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
             // Call filter of inner struct
             for pipe in transfer.pipes.as_mut() {
-                Pipe::<DequeueSome<usize>, Enqueue<usize>>::filter(pipe, gc, pool);
+                Pipe::<DequeueSome<usize>, Enqueue<usize>>::filter(pipe, tid, gc, pool);
             }
             for enq in transfer.suppliers.as_mut() {
-                Enqueue::filter(enq, gc, pool);
+                Enqueue::filter(enq, tid, gc, pool);
             }
             for deqsome in transfer.consumers.as_mut() {
-                DequeueSome::filter(deqsome, gc, pool);
+                DequeueSome::filter(deqsome, tid, gc, pool);
             }
         }
     }
 
     impl Memento for Transfer {
         type Object<'o> = &'o [Queue<usize>; 2];
-        type Input<'o> = usize; // tid
+        type Input<'o> = ();
         type Output<'o> = ();
         type Error<'o> = !;
 
         fn run<'o>(
             &mut self,
             q_arr: Self::Object<'o>,
-            tid: Self::Input<'o>,
+            (): Self::Input<'o>,
+            tid: usize,
             rec: bool,
             guard: &'o Guard,
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             let (q1, q2) = (&q_arr[0], &q_arr[1]);
 
-            // TODO(must): 테스트 통과 못함
-
             match tid {
                 // T0: Supply q1
                 0 => {
                     for (i, enq) in self.suppliers.iter_mut().enumerate() {
-                        let _ = enq.run(q1, i, rec, guard, pool);
+                        let _ = enq.run(q1, i, tid, rec, guard, pool);
                     }
                 }
                 // T1: Transfer q1->q2
                 1 => {
                     for pipe in self.pipes.iter_mut() {
-                        let _ = pipe.run((q1, q2), (), rec, guard, pool);
+                        let _ = pipe.run((q1, q2), (), tid, rec, guard, pool);
                     }
                 }
                 // T2: Consume q2
                 2 => {
                     for (i, deq) in self.consumers.iter_mut().enumerate() {
-                        let v = deq.run(&q2, (), rec, guard, pool).unwrap();
+                        let v = deq.run(&q2, (), tid, rec, guard, pool).unwrap();
                         assert_eq!(v, i);
                     }
                 }
@@ -198,10 +199,8 @@ mod tests {
     const FILE_NAME: &str = "pipe_concur.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-    rusty_fork_test! {
-        #[test]
-        fn pipe_concur() {
-            run_test::<[Queue<usize>; 2], Transfer, _>(FILE_NAME, FILE_SIZE, 3)
-        }
+    #[test]
+    fn pipe_concur() {
+        run_test::<[Queue<usize>; 2], Transfer, _>(FILE_NAME, FILE_SIZE, 3)
     }
 }
