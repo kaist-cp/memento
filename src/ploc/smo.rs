@@ -301,7 +301,7 @@ where
                 unsafe { guard.defer_pdestroy(old) }
             }
             DeleteMode::Recycle => {
-                persist_obj(point, true);
+                persist_obj(point, false);
 
                 self.target_loc
                     .store(old.with_tid(Self::RECYCLE_MID), Ordering::Relaxed);
@@ -363,6 +363,7 @@ where
             }
             DeleteMode::Recycle => {
                 let mut recycle_tag = target.tid();
+                let mut cas = false;
 
                 loop {
                     match recycle_tag {
@@ -380,7 +381,7 @@ where
                                 Ordering::SeqCst,
                                 guard,
                             );
-                            persist_obj(point, true);
+                            cas = true;
 
                             self.target_loc
                                 .store(target.with_tid(Self::RECYCLE_MID), Ordering::Relaxed);
@@ -390,6 +391,18 @@ where
                         }
                         Self::RECYCLE_MID => {
                             // Recycle: owner 지우기 전 단계
+
+                            if !cas {
+                                let _ = point.compare_exchange(
+                                    old,
+                                    new,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                    guard,
+                                );
+                            }
+                            persist_obj(point, true);
+
                             target_ref.owner().store(no_owner(), Ordering::SeqCst);
                             persist_obj(target_ref.owner(), true);
 
