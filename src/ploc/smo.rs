@@ -14,7 +14,6 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    Memento,
 };
 
 /// TODO(doc)

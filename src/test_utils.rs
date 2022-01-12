@@ -10,7 +10,7 @@ pub mod tests {
 
     use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
-    use crate::{Memento, PDefault};
+    use crate::PDefault;
 
     /// 테스트 파일이 위치할 경로 계산
     ///
@@ -45,36 +45,17 @@ pub mod tests {
         }
     }
 
-    impl TestRootObj for DummyRootObj {}
+    impl RootObj<DummyRootMemento> for DummyRootObj {
+        fn run(&self, _: &mut DummyRootMemento, _: usize, _: &Guard, _: &PoolHandle) {
+            // no-op
+        }
+    }
 
     #[derive(Debug, Default)]
     pub struct DummyRootMemento;
 
     impl Collectable for DummyRootMemento {
         fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
-            // no-op
-        }
-    }
-
-    impl Memento for DummyRootMemento {
-        type Object<'o> = &'o DummyRootObj;
-        type Input<'o> = ();
-        type Output<'o> = ();
-        type Error<'o> = !;
-
-        fn run<'o>(
-            &mut self,
-            _: Self::Object<'o>,
-            _: Self::Input<'o>,
-            _: usize,
-            _: bool,
-            _: &'o Guard,
-            _: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-            Ok(())
-        }
-
-        fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
             // no-op
         }
     }
@@ -103,15 +84,6 @@ pub mod tests {
         }
     }
 
-    impl TestRootMemento<DummyRootObj> for DummyRootMemento {}
-
-    /// test를 위한 root obj, root op은 아래 조건을 만족하자
-    pub trait TestRootObj: PDefault + Collectable {}
-    pub trait TestRootMemento<O: TestRootObj>:
-        for<'o> Memento<Object<'o> = &'o O, Input<'o> = ()>
-    {
-    }
-
     use lazy_static::lazy_static;
 
     lazy_static! {
@@ -123,8 +95,8 @@ pub mod tests {
     /// test op 돌리기
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
-        O: TestRootObj + Send + Sync,
-        M: TestRootMemento<O> + Send + Sync,
+        O: RootObj<M> + Send + Sync,
+        M: Collectable + Default + Send + Sync,
         P: AsRef<Path>,
     {
         // 테스트 변수 초기화
