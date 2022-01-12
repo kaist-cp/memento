@@ -18,6 +18,7 @@ use crate::{
 #[macro_export]
 macro_rules! impl_left_bits {
     ($func:ident, $pos:expr, $nr:expr) => {
+        #[inline]
         pub(crate) fn $func() -> usize {
             ((usize::MAX >> $pos) ^ (usize::MAX >> ($pos + $nr)))
         }
