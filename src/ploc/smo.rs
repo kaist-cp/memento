@@ -292,19 +292,24 @@ where
         // 주인을 정했으니 이제 point를 바꿔줌
         let _ = point.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-        // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
-        // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
-        // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
-        guard.defer_persist(point);
-
         match mode {
-            DeleteMode::Drop => unsafe { guard.defer_pdestroy(old) },
+            DeleteMode::Drop => {
+                // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
+                // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
+                // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
+                guard.defer_persist(point);
+                unsafe { guard.defer_pdestroy(old) }
+            }
             DeleteMode::Recycle => {
+                persist_obj(point, true);
+
                 self.target_loc
                     .store(old.with_tid(Self::RECYCLE_MID), Ordering::Relaxed);
                 persist_obj(&self.target_loc, true);
 
-                clear_owner(target_ref);
+                // clear owner
+                owner.store(no_owner(), Ordering::SeqCst);
+                persist_obj(owner, true);
 
                 self.target_loc
                     .store(old.with_tid(Self::RECYCLE_END), Ordering::Relaxed);
@@ -375,7 +380,7 @@ where
                                 Ordering::SeqCst,
                                 guard,
                             );
-                            guard.defer_persist(point);
+                            persist_obj(point, true);
 
                             self.target_loc
                                 .store(target.with_tid(Self::RECYCLE_MID), Ordering::Relaxed);
@@ -385,7 +390,8 @@ where
                         }
                         Self::RECYCLE_MID => {
                             // Recycle: owner 지우기 전 단계
-                            clear_owner(target_ref);
+                            target_ref.owner().store(no_owner(), Ordering::SeqCst);
+                            persist_obj(target_ref.owner(), true);
 
                             self.target_loc
                                 .store(target.with_tid(Self::RECYCLE_END), Ordering::Relaxed);
@@ -400,17 +406,4 @@ where
             }
         }
     }
-}
-
-/// TODO(doc)
-///
-/// # Safety
-///
-/// 내가 Insert/Update로 넣은 node를 내가 Delete 해서 뺐을 때 사용
-/// - 남이 넣었던 건 하면 안 되는 이유: 넣었던 애가 `acked()`를 호출하기 때문에 owner를 건드리면 안 됨
-/// - 내가 Update로 뺐을 때 하면 안 되는 이유: point CAS를 helping 하는 애들이 next node를 owner를 통해 알게 되므로 건드리면 안 됨
-fn clear_owner<N: Node>(deleted_node: &N) {
-    let owner = deleted_node.owner();
-    owner.store(no_owner(), Ordering::SeqCst);
-    persist_obj(owner, true);
 }
