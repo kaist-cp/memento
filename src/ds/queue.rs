@@ -6,9 +6,10 @@ use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertErr, RetryLoop, Tr
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::some_or;
+use smo::DeleteMode;
 use std::mem::MaybeUninit;
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -207,10 +208,12 @@ impl<T: Clone> Memento for Enqueue<T> {
             .node
             .run(
                 (),
-                (PAtomic::from(node), |aborted| {
-                    let guard = unsafe { epoch::unprotected() };
-                    let d = aborted.load(Ordering::Relaxed, guard);
-                    let _ = unsafe { d.into_owned() };
+                (PAtomic::from(node), |aborted| unsafe {
+                    drop(
+                        aborted
+                            .load(Ordering::Relaxed, epoch::unprotected())
+                            .into_owned(),
+                    );
                 }),
                 tid,
                 rec,
@@ -284,7 +287,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let head = queue.head.load_helping(guard, pool);
+        let head = queue.head.load_helping(guard, pool).unwrap();
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -317,11 +320,15 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         }
 
         self.delete
-            .run(&queue.head, (head, next), tid, rec, guard, pool)
-            .map(|popped| unsafe {
-                guard.defer_pdestroy(popped);
-                Some((*next_ref.data.as_ptr()).clone())
-            })
+            .run(
+                &queue.head,
+                (head, next, DeleteMode::Drop),
+                tid,
+                rec,
+                guard,
+                pool,
+            )
+            .map(|_| unsafe { Some((*next_ref.data.as_ptr()).clone()) })
             .map_err(|_| TryFail)
     }
 
@@ -459,7 +466,7 @@ impl<T: Clone> Collectable for Queue<T> {
 
 impl<T: Clone> Traversable<Node<T>> for Queue<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.head.load_helping(guard, pool);
+        let mut curr = self.head.load_helping(guard, pool).unwrap();
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {

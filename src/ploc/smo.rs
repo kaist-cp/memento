@@ -8,7 +8,7 @@ use etrace::*;
 use super::{no_owner, InsertErr, Traversable};
 
 use crate::{
-    pepoch::{PAtomic, PShared},
+    pepoch::{PAtomic, PDestroyable, PShared},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -65,45 +65,42 @@ impl<N: Node + Collectable> Deref for SMOAtomic<N> {
 }
 
 impl<N: Node + Collectable> SMOAtomic<N> {
-    /// TODO(doc)
-    pub fn load_helping<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
-        let mut p = self.inner.load(Ordering::SeqCst, guard);
-        loop {
-            let p_ref = some_or!(unsafe { p.as_ref(pool) }, return p);
+    /// Ok(ptr): helping 다 해준 뒤의 최종 ptr
+    /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
+    pub fn load_helping<'g>(
+        &self,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
+        let mut cur = self.inner.load(Ordering::SeqCst, guard);
 
-            let owner = p_ref.owner();
+        loop {
+            let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
+
+            let owner = cur_ref.owner();
             let next = owner.load(Ordering::SeqCst, guard);
             if next == no_owner() {
-                return p;
+                return Ok(cur);
             }
-            // TODO: reflexive면 무한루프 발생. prev node를 들고 있고 현재 owner가 prev랑 같다면 그냥 리턴하기. Err로 리턴해서 업데이트 불가능한 상황임을 알려야 할 듯
 
-            persist_obj(owner, true); // TODO(opt): async reset
-            p = ok_or!(self.help(p, next, guard), e, return e);
+            if next.as_ptr() == cur.as_ptr() {
+                // 자기 자신이 owner인 상태
+                // 현재로썬 delete는 사용할 수 없음을 알림
+                return Err(cur);
+            }
+
+            persist_obj(owner, false); // cas soon
+            cur = match self.inner.compare_exchange(
+                cur,
+                next.with_tid(0),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            ) {
+                Ok(n) => n,
+                Err(e) => e.current,
+            };
         }
-    }
-
-    /// Ok(ptr): required to be checked if the node is owned by someone
-    /// Err(ptr): No need to help anymore
-    #[inline]
-    fn help<'g>(
-        &self,
-        old: PShared<'g, N>,
-        next: PShared<'g, N>,
-        guard: &'g Guard,
-    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        // self를 승자가 원하는 node로 바꿔줌
-        let ret = match self.inner.compare_exchange(
-            old,
-            next.with_tid(0),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            guard,
-        ) {
-            Ok(n) => n,
-            Err(e) => e.current,
-        };
-        Ok(ret)
     }
 }
 
@@ -204,9 +201,20 @@ impl<O: Traversable<N>, N: Node + Collectable> Insert<O, N> {
 }
 
 /// TODO(doc)
-/// Do not use LSB while using `Update`.
+#[derive(Debug, Clone)]
+pub enum DeleteMode {
+    /// TODO(doc)
+    Drop,
+
+    /// TODO(doc)
+    Recycle,
+}
+
+/// TODO(doc)
+/// Do not use LSB while using `Delete`.
 /// It's reserved for it.
-/// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+/// - 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+/// - Drop mode일 때는 new가 old와 같은 주소면 안 됨
 #[derive(Debug)]
 pub struct Delete<N: Node + Collectable> {
     target_loc: PAtomic<N>,
@@ -234,7 +242,7 @@ where
     N: 'static + Node + Collectable,
 {
     type Object<'o> = &'o SMOAtomic<N>;
-    type Input<'o> = (PShared<'o, N>, PShared<'o, N>);
+    type Input<'o> = (PShared<'o, N>, PShared<'o, N>, DeleteMode);
     type Output<'o>
     where
         N: 'o,
@@ -244,18 +252,26 @@ where
     fn run<'o>(
         &mut self,
         point: Self::Object<'o>,
-        (old, new): Self::Input<'o>,
+        (old, new, mode): Self::Input<'o>,
         tid: usize,
         rec: bool,
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
         if rec {
-            return self.result(tid, guard, pool);
+            return self.result(point, old, new, mode, tid, guard, pool);
         }
 
         // 우선 내가 target을 가리키고
-        self.target_loc.store(old, Ordering::Relaxed);
+        match mode {
+            DeleteMode::Drop => {
+                if old.as_ptr() == new.as_ptr() {
+                    panic!("Delete: `new` must have a different pointer from `old`");
+                }
+                self.target_loc.store(old, Ordering::Relaxed)
+            }
+            DeleteMode::Recycle => self.target_loc.store(old.with_tid(0), Ordering::Relaxed), // TODO(opt): tid 0으로 세팅할 필요 있나? invariant 있음?
+        };
         persist_obj(&self.target_loc, false); // we're doing CAS soon.
 
         // 빼려는 node에 내 이름 새겨넣음
@@ -277,10 +293,30 @@ where
         // 주인을 정했으니 이제 point를 바꿔줌
         let _ = point.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-        // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
-        // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
-        // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
-        guard.defer_persist(point);
+        match mode {
+            DeleteMode::Drop => {
+                // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
+                // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
+                // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
+                guard.defer_persist(point);
+                unsafe { guard.defer_pdestroy(old) } // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
+            }
+            DeleteMode::Recycle => {
+                persist_obj(point, false);
+
+                self.target_loc
+                    .store(old.with_tid(Self::RECYCLE_MID), Ordering::Relaxed);
+                persist_obj(&self.target_loc, true);
+
+                // clear owner
+                owner.store(no_owner(), Ordering::SeqCst);
+                persist_obj(owner, true);
+
+                self.target_loc
+                    .store(old.with_tid(Self::RECYCLE_END), Ordering::Relaxed);
+                persist_obj(&self.target_loc, true);
+            }
+        };
 
         Ok(old)
     }
@@ -295,38 +331,93 @@ impl<N> Delete<N>
 where
     N: Node + Collectable,
 {
+    // Recycle 상태 저장을 target_loc에서 tid 필드에 사용할 것임
+    // 0: 기본, 1: owner cas 성공, 2: owner 지운 후
+    const RECYCLE_START: usize = 0;
+    const RECYCLE_MID: usize = 1;
+    const RECYCLE_END: usize = 2;
+
     #[inline]
     fn result<'g>(
         &self,
+        point: &SMOAtomic<N>,
+        old: PShared<'_, N>,
+        new: PShared<'_, N>,
+        mode: DeleteMode,
         tid: usize,
         guard: &'g Guard,
         pool: &'static PoolHandle,
     ) -> Result<PShared<'g, N>, ()> {
         let target = self.target_loc.load(Ordering::Relaxed, guard);
-        let target_ref = some_or!(
-            unsafe { target.as_ref(pool) },
-            return Err(()) // 내가 찜한게 없으면 실패
-        );
+        let target_ref = some_or!(unsafe { target.as_ref(pool) }, return Err(())); // if null, return failure.
 
-        // 내가 찜한 target의 owner가 나면 성공, 아니면 실패
-        let owner = target_ref.owner().load(Ordering::SeqCst, guard);
-        if owner.tid() == tid {
-            Ok(target)
-        } else {
-            Err(())
+        match mode {
+            DeleteMode::Drop => {
+                // owner가 내가 아니면 실패
+                let owner = target_ref.owner().load(Ordering::SeqCst, guard);
+                if owner.tid() == tid {
+                    unsafe { guard.defer_pdestroy(target) };
+                    Ok(target)
+                } else {
+                    Err(())
+                }
+            }
+            DeleteMode::Recycle => {
+                let mut recycle_tag = target.tid();
+                let mut cas = false;
+
+                loop {
+                    match recycle_tag {
+                        Self::RECYCLE_START => {
+                            let owner = target_ref.owner().load(Ordering::SeqCst, guard);
+                            if owner.tid() != tid {
+                                // owner가 내가 아니면 실패
+                                return Err(());
+                            }
+
+                            let _ = point.compare_exchange(
+                                old,
+                                new,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                                guard,
+                            );
+                            cas = true;
+
+                            self.target_loc
+                                .store(target.with_tid(Self::RECYCLE_MID), Ordering::Relaxed);
+                            persist_obj(&self.target_loc, true);
+
+                            recycle_tag = Self::RECYCLE_MID;
+                        }
+                        Self::RECYCLE_MID => {
+                            // Recycle: owner 지우기 전 단계
+
+                            if !cas {
+                                let _ = point.compare_exchange(
+                                    old,
+                                    new,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                    guard,
+                                );
+                            }
+                            persist_obj(point, true);
+
+                            target_ref.owner().store(no_owner(), Ordering::SeqCst);
+                            persist_obj(target_ref.owner(), true);
+
+                            self.target_loc
+                                .store(target.with_tid(Self::RECYCLE_END), Ordering::Relaxed);
+                            persist_obj(&self.target_loc, true);
+
+                            recycle_tag = Self::RECYCLE_END;
+                        }
+                        Self::RECYCLE_END => return Ok(target),
+                        _ => unreachable!("No more cases"),
+                    }
+                }
+            }
         }
     }
-}
-
-/// TODO(doc)
-///
-/// # Safety
-///
-/// 내가 Insert/Update로 넣은 node를 내가 Delete 해서 뺐을 때 사용
-/// - 남이 넣었던 건 하면 안 되는 이유: 넣었던 애가 `acked()`를 호출하기 때문에 owner를 건드리면 안 됨
-/// - 내가 Update로 뺐을 때 하면 안 되는 이유: point CAS를 helping 하는 애들이 next node를 owner를 통해 알게 되므로 건드리면 안 됨
-pub unsafe fn clear_owner<N: Node>(deleted_node: &N) {
-    let owner = deleted_node.owner();
-    owner.store(no_owner(), Ordering::SeqCst);
-    persist_obj(owner, true);
 }

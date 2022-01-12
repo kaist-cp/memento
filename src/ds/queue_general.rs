@@ -186,10 +186,12 @@ impl<T: Clone> Memento for Enqueue<T> {
             .node
             .run(
                 (),
-                (PAtomic::from(node), |aborted| {
-                    let guard = unsafe { epoch::unprotected() };
-                    let d = aborted.load(Ordering::Relaxed, guard);
-                    unsafe { guard.defer_pdestroy(d) };
+                (PAtomic::from(node), |aborted| unsafe {
+                    drop(
+                        aborted
+                            .load(Ordering::Relaxed, epoch::unprotected())
+                            .into_owned(),
+                    );
                 }),
                 tid,
                 rec,
@@ -412,8 +414,8 @@ mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
-    const NR_THREAD: usize = 2;
-    const COUNT: usize = 1000;
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 100_000;
 
     struct EnqDeq {
         enqs: [Enqueue<usize>; COUNT],
