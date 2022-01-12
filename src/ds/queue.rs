@@ -287,7 +287,7 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         guard: &'o Guard,
         pool: &'static PoolHandle,
     ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let head = queue.head.load_helping(guard, pool);
+        let head = queue.head.load_helping(guard, pool).unwrap();
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
         let tail = queue.tail.load(Ordering::SeqCst, guard);
@@ -466,7 +466,7 @@ impl<T: Clone> Collectable for Queue<T> {
 
 impl<T: Clone> Traversable<Node<T>> for Queue<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.head.load_helping(guard, pool);
+        let mut curr = self.head.load_helping(guard, pool).unwrap();
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {

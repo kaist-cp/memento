@@ -65,47 +65,42 @@ impl<N: Node + Collectable> Deref for SMOAtomic<N> {
 }
 
 impl<N: Node + Collectable> SMOAtomic<N> {
-    /// TODO(doc)
-    pub fn load_helping<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
-        let mut p = self.inner.load(Ordering::SeqCst, guard);
-        loop {
-            let p_ref = some_or!(unsafe { p.as_ref(pool) }, return p);
+    /// Ok(ptr): helping 다 해준 뒤의 최종 ptr
+    /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
+    pub fn load_helping<'g>(
+        &self,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
+        let mut cur = self.inner.load(Ordering::SeqCst, guard);
 
-            let owner = p_ref.owner();
+        loop {
+            let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
+
+            let owner = cur_ref.owner();
             let next = owner.load(Ordering::SeqCst, guard);
             if next == no_owner() {
-                return p;
+                return Ok(cur);
             }
-            // TODO: reflexive면 무한루프 발생. prev node를 들고 있고 현재 owner가 prev랑 같다면 그냥 리턴하기. Err로 리턴해서 업데이트 불가능한 상황임을 알려야 할 듯
-            // clevel에서 tagging으로 더럽혀 놓는 짓할 때 문제가 됨
 
-            persist_obj(owner, true); // TODO(opt): async reset
-            p = ok_or!(self.help(p, next, guard), e, return e);
+            if next.as_ptr() == cur.as_ptr() {
+                // 자기 자신이 owner인 상태
+                // 현재로썬 delete는 사용할 수 없음을 알림
+                return Err(cur);
+            }
+
+            persist_obj(owner, false); // cas soon
+            cur = match self.inner.compare_exchange(
+                cur,
+                next.with_tid(0),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            ) {
+                Ok(n) => n,
+                Err(e) => e.current,
+            };
         }
-    }
-
-    /// Ok(ptr): required to be checked if the node is owned by someone
-    /// Err(ptr): No need to help anymore
-    #[inline]
-    fn help<'g>(
-        &self,
-        old: PShared<'g, N>,
-        next: PShared<'g, N>,
-        guard: &'g Guard,
-    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        // self를 승자가 원하는 node로 바꿔줌
-        let ret = match self.inner.compare_exchange(
-            old,
-            next.with_tid(0),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            guard,
-        ) {
-            Ok(n) => n,
-            Err(e) => e.current,
-        };
-
-        Ok(ret)
     }
 }
 
@@ -269,7 +264,12 @@ where
 
         // 우선 내가 target을 가리키고
         match mode {
-            DeleteMode::Drop => self.target_loc.store(old, Ordering::Relaxed),
+            DeleteMode::Drop => {
+                if old.as_ptr() == new.as_ptr() {
+                    panic!("Delete: `new` must have a different pointer from `old`");
+                }
+                self.target_loc.store(old, Ordering::Relaxed)
+            }
             DeleteMode::Recycle => self.target_loc.store(old.with_tid(0), Ordering::Relaxed), // TODO(opt): tid 0으로 세팅할 필요 있나? invariant 있음?
         };
         persist_obj(&self.target_loc, false); // we're doing CAS soon.

@@ -143,7 +143,7 @@ impl<T: 'static + Clone + std::fmt::Debug> Memento for TryExchange<T> {
             .load(Ordering::Relaxed, guard);
 
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
-        let init_slot = xchg.slot.load_helping(guard, pool);
+        let init_slot = xchg.slot.load_helping(guard, pool).unwrap();
         let init_slot = self
             .init_slot
             .run(
@@ -246,7 +246,7 @@ impl<T: 'static + Clone> TryExchange<T> {
             std::thread::sleep(Duration::from_nanos(100));
         }
 
-        let wait_slot = xchg.slot.load_helping(guard, pool);
+        let wait_slot = xchg.slot.load_helping(guard, pool).unwrap();
 
         let wait_slot = self
             .wait_slot
@@ -370,7 +370,7 @@ impl<T: Clone> PDefault for Exchanger<T> {
 
 impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let slot = self.slot.load_helping(guard, pool);
+        let slot = self.slot.load_helping(guard, pool).unwrap();
         slot == target
     }
 }
