@@ -216,9 +216,10 @@ pub enum DeleteMode {
 }
 
 /// TODO(doc)
-/// Do not use LSB while using `Update`.
+/// Do not use LSB while using `Delete`.
 /// It's reserved for it.
-/// 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+/// - 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
+/// - Drop mode일 때는 new가 old와 같은 주소면 안 됨
 #[derive(Debug)]
 pub struct Delete<N: Node + Collectable> {
     target_loc: PAtomic<N>,
@@ -298,7 +299,7 @@ where
                 // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
                 // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
                 guard.defer_persist(point);
-                unsafe { guard.defer_pdestroy(old) }
+                unsafe { guard.defer_pdestroy(old) } // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
             }
             DeleteMode::Recycle => {
                 persist_obj(point, false);

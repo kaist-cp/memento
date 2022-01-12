@@ -9,7 +9,7 @@ use etrace::some_or;
 use smo::DeleteMode;
 use std::mem::MaybeUninit;
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -208,10 +208,12 @@ impl<T: Clone> Memento for Enqueue<T> {
             .node
             .run(
                 (),
-                (PAtomic::from(node), |aborted| {
-                    let guard = unsafe { epoch::unprotected() };
-                    let d = aborted.load(Ordering::Relaxed, guard);
-                    let _ = unsafe { d.into_owned() };
+                (PAtomic::from(node), |aborted| unsafe {
+                    drop(
+                        aborted
+                            .load(Ordering::Relaxed, epoch::unprotected())
+                            .into_owned(),
+                    );
                 }),
                 tid,
                 rec,
@@ -318,11 +320,15 @@ impl<T: 'static + Clone> Memento for TryDequeue<T> {
         }
 
         self.delete
-            .run(&queue.head, (head, next, DeleteMode::Drop), tid, rec, guard, pool)
-            .map(|popped| unsafe {
-                guard.defer_pdestroy(popped);
-                Some((*next_ref.data.as_ptr()).clone())
-            })
+            .run(
+                &queue.head,
+                (head, next, DeleteMode::Drop),
+                tid,
+                rec,
+                guard,
+                pool,
+            )
+            .map(|_| unsafe { Some((*next_ref.data.as_ptr()).clone()) })
             .map_err(|_| TryFail)
     }
 

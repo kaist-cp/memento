@@ -6,7 +6,7 @@ use crossbeam_epoch::{self as epoch, Guard};
 use rand::{thread_rng, Rng};
 
 use crate::{
-    pepoch::{PAtomic, PDestroyable, POwned, PShared},
+    pepoch::{PAtomic, POwned, PShared},
     ploc::{Checkpoint, RetryLoop},
     pmem::{
         ll::persist_obj,
@@ -286,10 +286,12 @@ impl<T: Clone + std::fmt::Debug> Memento for Push<T> {
             .node
             .run(
                 (),
-                (PAtomic::from(node), |aborted| {
-                    let guard = unsafe { epoch::unprotected() };
-                    let d = aborted.load(Ordering::Relaxed, guard);
-                    unsafe { guard.defer_pdestroy(d) };
+                (PAtomic::from(node), |aborted| unsafe {
+                    drop(
+                        aborted
+                            .load(Ordering::Relaxed, epoch::unprotected())
+                            .into_owned(),
+                    );
                 }),
                 tid,
                 rec,
