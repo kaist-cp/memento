@@ -265,6 +265,7 @@ impl<N> Collectable for Cas<N> {
 
 impl<N> Cas<N> {
     /// TODO(doc)
+    #[inline]
     pub fn reset(&mut self) {
         self.checkpoint = NOT_CHECKED;
         persist_obj(&self.checkpoint, false);

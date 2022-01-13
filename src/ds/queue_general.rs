@@ -74,6 +74,7 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
 
 impl<T: Clone> TryEnqueue<T> {
     /// Reset TryEnqueue memento
+    #[inline]
     pub fn reset(&mut self) {
         self.insert.reset();
     }
@@ -104,6 +105,7 @@ impl<T: Clone> Collectable for Enqueue<T> {
 
 impl<T: Clone> Enqueue<T> {
     /// Reset Enqueue memento
+    #[inline]
     pub fn reset(&mut self) {
         self.node.reset();
         self.try_enq.reset();
@@ -150,6 +152,7 @@ impl<T: Clone> Collectable for TryDequeue<T> {
 
 impl<T: Clone> TryDequeue<T> {
     /// Reset TryDequeue memento
+    #[inline]
     pub fn reset(&mut self) {
         self.delete.reset();
         self.head_next.reset();
@@ -158,7 +161,7 @@ impl<T: Clone> TryDequeue<T> {
 
 /// Queue의 Dequeue
 #[derive(Debug)]
-pub struct Dequeue<T: 'static + Clone> {
+pub struct Dequeue<T: Clone> {
     try_deq: TryDequeue<T>,
 }
 
@@ -178,6 +181,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
 
 impl<T: Clone> Dequeue<T> {
     /// Reset Dequeue memento
+    #[inline]
     pub fn reset(&mut self) {
         self.try_deq.reset();
     }
@@ -231,47 +235,6 @@ impl<T: Clone> Traversable<Node<T>> for QueueGeneral<T> {
 }
 
 impl<T: Clone> QueueGeneral<T> {
-    /// Enqueue
-    pub fn enqueue<const REC: bool>(
-        &self,
-        value: T,
-        enq: &mut Enqueue<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
-        let node = POwned::new(Node::from(value), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = ok_or!(enq.node.checkpoint::<REC>(PAtomic::from(node)), e, unsafe {
-            drop(
-                e.new
-                    .load(Ordering::Relaxed, epoch::unprotected())
-                    .into_owned(),
-            );
-            e.current
-        })
-        .load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
-
-        if self
-            .try_enqueue::<REC>(node, &mut enq.try_enq, tid, guard, pool)
-            .is_ok()
-        {
-            return;
-        }
-
-        let backoff = Backoff::default();
-        loop {
-            backoff.snooze();
-            if self
-                .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
-                .is_ok()
-            {
-                return;
-            }
-        }
-    }
-
     /// Try enqueue
     pub fn try_enqueue<const REC: bool>(
         &self,
@@ -313,23 +276,43 @@ impl<T: Clone> QueueGeneral<T> {
             .map_err(|_| TryFail)
     }
 
-    /// Dequeue
-    pub fn dequeue<const REC: bool>(
+    /// Enqueue
+    pub fn enqueue<const REC: bool>(
         &self,
-        deq: &mut Dequeue<T>,
+        value: T,
+        enq: &mut Enqueue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
-    ) -> Option<T> {
-        if let Ok(ret) = self.try_dequeue::<REC>(&mut deq.try_deq, tid, guard, pool) {
-            return ret;
+    ) {
+        let node = POwned::new(Node::from(value), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
+        let node = ok_or!(enq.node.checkpoint::<REC>(PAtomic::from(node)), e, unsafe {
+            drop(
+                e.new
+                    .load(Ordering::Relaxed, epoch::unprotected())
+                    .into_owned(),
+            );
+            e.current
+        })
+        .load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+
+        if self
+            .try_enqueue::<REC>(node, &mut enq.try_enq, tid, guard, pool)
+            .is_ok()
+        {
+            return;
         }
 
         let backoff = Backoff::default();
         loop {
             backoff.snooze();
-            if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
-                return ret;
+            if self
+                .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
+                .is_ok()
+            {
+                return;
             }
         }
     }
@@ -360,7 +343,7 @@ impl<T: Clone> QueueGeneral<T> {
 
         if head.as_ptr() == tail.as_ptr() {
             let tail_ref = unsafe { tail.deref(pool) };
-            persist_obj(&tail_ref.next, false); // cas soon
+            persist_obj(&tail_ref.next, true);
 
             let _ =
                 self.tail
@@ -376,6 +359,27 @@ impl<T: Clone> QueueGeneral<T> {
                 Some((*next_ref.data.as_ptr()).clone())
             })
             .map_err(|_| TryFail)
+    }
+
+    /// Dequeue
+    pub fn dequeue<const REC: bool>(
+        &self,
+        deq: &mut Dequeue<T>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Option<T> {
+        if let Ok(ret) = self.try_dequeue::<REC>(&mut deq.try_deq, tid, guard, pool) {
+            return ret;
+        }
+
+        let backoff = Backoff::default();
+        loop {
+            backoff.snooze();
+            if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
+                return ret;
+            }
+        }
     }
 }
 

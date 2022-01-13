@@ -63,6 +63,7 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 impl<T: Clone> TryPush<T> {
     /// Reset TryPush memento
+    #[inline]
     pub fn reset(&mut self) {
         self.insert.reset();
     }
@@ -93,6 +94,7 @@ impl<T: Clone> Collectable for Push<T> {
 
 impl<T: Clone> Push<T> {
     /// Reset push memento
+    #[inline]
     pub fn reset(&mut self) {
         self.node.reset();
         self.try_push.reset();
@@ -128,6 +130,7 @@ impl<T: Clone> Collectable for TryPop<T> {
 
 impl<T: Clone> TryPop<T> {
     /// Reset TryPop memento
+    #[inline]
     pub fn reset(&mut self) {
         self.delete.reset();
         self.top.reset();
@@ -156,6 +159,7 @@ impl<T: Clone> Collectable for Pop<T> {
 
 impl<T: Clone> Pop<T> {
     /// Reset Pop memento
+    #[inline]
     pub fn reset(&mut self) {
         self.try_pop.reset();
     }

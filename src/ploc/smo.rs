@@ -5,7 +5,7 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 use crossbeam_epoch::Guard;
 use etrace::*;
 
-use super::{no_owner, InsertErr, Traversable};
+use super::{no_owner, InsertError, Traversable};
 
 use crate::{
     pepoch::{PAtomic, PDestroyable, PShared},
@@ -67,6 +67,7 @@ where
     N: Node + Collectable,
 {
     /// Reset Delete memento
+    #[inline]
     pub fn reset(&mut self) {
         self.target_loc.store(PShared::null(), Ordering::Relaxed);
         persist_obj(&self.target_loc, false);
@@ -164,7 +165,7 @@ impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
         obj: &O,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<(), InsertErr<'g, N>> {
+    ) -> Result<(), InsertError<'g, N>> {
         if REC {
             return Self::insert_result(obj, new, guard, pool);
         }
@@ -173,14 +174,14 @@ impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
         let old = self.inner.load(Ordering::SeqCst, guard);
 
         if !old.is_null() {
-            return Err(InsertErr::NonNull);
+            return Err(InsertError::NonNull);
         }
 
         let ret = self
             .inner
             .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
             .map(|_| ())
-            .map_err(|e| InsertErr::CASFail(e.current));
+            .map_err(|e| InsertError::CASFail(e.current));
 
         persist_obj(&self.inner, true);
         ret
@@ -192,7 +193,7 @@ impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
         new: PShared<'_, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<(), InsertErr<'g, N>> {
+    ) -> Result<(), InsertError<'g, N>> {
         if unsafe { new.deref(pool) }.acked(guard)
             || obj.search(new, guard, pool)
             || unsafe { new.deref(pool) }.acked(guard)
@@ -200,7 +201,7 @@ impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
             return Ok(());
         }
 
-        Err(InsertErr::RecFail) // Fail이 crash 이후 달라질 수 있음. Insert는 weak 함
+        Err(InsertError::RecFail) // Fail이 crash 이후 달라질 수 있음. Insert는 weak 함
     }
 
     /// Delete
