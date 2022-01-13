@@ -4,7 +4,7 @@ use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo_general::Cas;
 use crate::ploc::{Checkpoint, Checkpointable, GeneralSMOAtomic, Traversable};
 use core::sync::atomic::Ordering;
-use crossbeam_utils::CachePadded;
+use crossbeam_utils::{Backoff, CachePadded};
 use etrace::{ok_or, some_or};
 use std::mem::MaybeUninit;
 
@@ -267,10 +267,16 @@ impl<T: Clone> QueueGeneral<T> {
             return;
         }
 
-        while self
-            .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
-            .is_err()
-        {}
+        let backoff = Backoff::default();
+        loop {
+            backoff.snooze();
+            if self
+                .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
+                .is_ok()
+            {
+                return;
+            }
+        }
     }
 
     /// Try enqueue
@@ -326,7 +332,9 @@ impl<T: Clone> QueueGeneral<T> {
             return ret;
         }
 
+        let backoff = Backoff::default();
         loop {
+            backoff.snooze();
             if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
                 return ret;
             }

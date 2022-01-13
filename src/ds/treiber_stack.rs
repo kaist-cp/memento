@@ -2,6 +2,7 @@
 
 use core::sync::atomic::Ordering;
 
+use crossbeam_utils::Backoff;
 use etrace::{ok_or, some_or};
 
 use super::stack::*;
@@ -229,10 +230,16 @@ impl<T: Clone> TreiberStack<T> {
             return;
         }
 
-        while self
-            .try_push::<false>(node, &mut push.try_push, tid, guard, pool)
-            .is_err()
-        {}
+        let backoff = Backoff::default();
+        loop {
+            backoff.snooze();
+            if self
+                .try_push::<false>(node, &mut push.try_push, tid, guard, pool)
+                .is_ok()
+            {
+                return;
+            }
+        }
     }
 
     /// Try push
@@ -266,7 +273,9 @@ impl<T: Clone> TreiberStack<T> {
             return ret;
         }
 
+        let backoff = Backoff::default();
         loop {
+            backoff.snooze();
             if let Ok(ret) = self.try_pop::<false>(&mut pop.try_pop, tid, guard, pool) {
                 return ret;
             }
