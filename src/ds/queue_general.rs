@@ -2,10 +2,10 @@
 
 use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo_general::Cas;
-use crate::ploc::{Checkpoint, Checkpointable, RetryLoop, Traversable};
+use crate::ploc::{Checkpoint, Checkpointable, GeneralSMOAtomic, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
-use etrace::some_or;
+use etrace::{ok_or, some_or};
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
@@ -21,14 +21,14 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct Node<T> {
     data: MaybeUninit<T>,
-    next: PAtomic<Self>,
+    next: GeneralSMOAtomic<Self>,
 }
 
 impl<T> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: MaybeUninit::new(value),
-            next: PAtomic::null(),
+            next: GeneralSMOAtomic::default(),
         }
     }
 }
@@ -37,7 +37,7 @@ impl<T> Default for Node<T> {
     fn default() -> Self {
         Self {
             data: MaybeUninit::uninit(),
-            next: PAtomic::null(),
+            next: GeneralSMOAtomic::default(),
         }
     }
 }
@@ -79,70 +79,18 @@ impl<T: Clone> Collectable for TryEnqueue<T> {
     }
 }
 
-impl<T: 'static + Clone> Memento for TryEnqueue<T> {
-    type Object<'o> = &'o QueueGeneral<T>;
-    type Input<'o> = PShared<'o, Node<T>>;
-    type Output<'o> = ();
-    type Error<'o> = TryFail;
-
-    fn run<'o>(
-        &mut self,
-        queue: Self::Object<'o>,
-        node: Self::Input<'o>,
-        tid: usize,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let tail = queue.tail.load(Ordering::SeqCst, guard);
-        let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
-        let next = tail_ref.next.load(Ordering::SeqCst, guard);
-
-        if !next.is_null() {
-            // tail is stale
-            let _ =
-                queue
-                    .tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-            return Err(TryFail);
-        }
-
-        self.insert
-            .run(
-                &tail_ref.next,
-                (PShared::null(), node),
-                tid,
-                rec,
-                guard,
-                pool,
-            )
-            .map(|_| {
-                if rec {
-                    return;
-                }
-
-                let _ = queue.tail.compare_exchange(
-                    tail,
-                    node,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            })
-            .map_err(|_| TryFail)
-    }
-
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.insert.reset(guard, pool);
+impl<T: Clone> TryEnqueue<T> {
+    /// Reset TryEnqueue memento
+    pub fn reset(&mut self) {
+        self.insert.reset();
     }
 }
 
 /// Queue의 enqueue
 #[derive(Debug)]
-pub struct Enqueue<T: 'static + Clone> {
+pub struct Enqueue<T: Clone> {
     node: Checkpoint<PAtomic<Node<T>>>,
-    try_enq: RetryLoop<TryEnqueue<T>>,
+    try_enq: TryEnqueue<T>,
 }
 
 impl<T: Clone> Default for Enqueue<T> {
@@ -157,62 +105,19 @@ impl<T: Clone> Default for Enqueue<T> {
 impl<T: Clone> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut enq.node, tid, gc, pool);
-        RetryLoop::filter(&mut enq.try_enq, tid, gc, pool);
+        TryEnqueue::filter(&mut enq.try_enq, tid, gc, pool);
     }
 }
 
-impl<T: Clone> Memento for Enqueue<T> {
-    type Object<'o> = &'o QueueGeneral<T>;
-    type Input<'o> = T;
-    type Output<'o>
-    where
-        T: 'o,
-    = ();
-    type Error<'o> = !;
-
-    fn run<'o>(
-        &mut self,
-        queue: Self::Object<'o>,
-        value: Self::Input<'o>,
-        tid: usize,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let node = POwned::new(Node::from(value), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = self
-            .node
-            .run(
-                (),
-                (PAtomic::from(node), |aborted| unsafe {
-                    drop(
-                        aborted
-                            .load(Ordering::Relaxed, epoch::unprotected())
-                            .into_owned(),
-                    );
-                }),
-                tid,
-                rec,
-                guard,
-                pool,
-            )
-            .unwrap()
-            .load(Ordering::Relaxed, guard);
-
-        self.try_enq
-            .run(queue, node, tid, rec, guard, pool)
-            .map_err(|_| unreachable!("Retry never fails."))
-    }
-
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.node.reset(guard, pool);
-        self.try_enq.reset(guard, pool);
+impl<T: Clone> Enqueue<T> {
+    /// Reset Enqueue memento
+    pub fn reset(&mut self) {
+        self.node.reset();
+        self.try_enq.reset();
     }
 }
 
-unsafe impl<T: 'static + Clone> Send for Enqueue<T> {}
+unsafe impl<T: Clone> Send for Enqueue<T> {}
 
 impl<T> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
     fn invalidate(&mut self) {
@@ -250,72 +155,18 @@ impl<T: Clone> Collectable for TryDequeue<T> {
     }
 }
 
-impl<T: 'static + Clone> Memento for TryDequeue<T> {
-    type Object<'o> = &'o QueueGeneral<T>;
-    type Input<'o> = ();
-    type Output<'o> = Option<T>;
-    type Error<'o> = TryFail;
-
-    fn run<'o>(
-        &mut self,
-        queue: Self::Object<'o>,
-        (): Self::Input<'o>,
-        tid: usize,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        let head = queue.head.load(Ordering::SeqCst, guard);
-        let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard);
-        let tail = queue.tail.load(Ordering::SeqCst, guard);
-
-        let chk = self
-            .head_next
-            .run(
-                (),
-                ((PAtomic::from(head), PAtomic::from(next)), |_| {}),
-                tid,
-                rec,
-                guard,
-                pool,
-            )
-            .unwrap();
-        let head = chk.0.load(Ordering::Relaxed, guard);
-        let next = chk.1.load(Ordering::Relaxed, guard);
-        let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
-
-        if head.as_ptr() == tail.as_ptr() {
-            let tail_ref = unsafe { tail.deref(pool) };
-            persist_obj(&tail_ref.next, false); // cas soon
-
-            let _ =
-                queue
-                    .tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-            return Err(TryFail);
-        }
-
-        self.delete
-            .run(&queue.head, (head, next), tid, rec, guard, pool)
-            .map(|()| unsafe {
-                guard.defer_pdestroy(head);
-                Some((*next_ref.data.as_ptr()).clone())
-            })
-            .map_err(|_| TryFail)
-    }
-
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.delete.reset(guard, pool);
-        self.head_next.reset(guard, pool);
+impl<T: Clone> TryDequeue<T> {
+    /// Reset TryDequeue memento
+    pub fn reset(&mut self) {
+        self.delete.reset();
+        self.head_next.reset();
     }
 }
 
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: 'static + Clone> {
-    try_deq: RetryLoop<TryDequeue<T>>,
+    try_deq: TryDequeue<T>,
 }
 
 impl<T: Clone> Default for Dequeue<T> {
@@ -328,35 +179,14 @@ impl<T: Clone> Default for Dequeue<T> {
 
 impl<T: Clone> Collectable for Dequeue<T> {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        RetryLoop::filter(&mut deq.try_deq, tid, gc, pool);
+        TryDequeue::filter(&mut deq.try_deq, tid, gc, pool);
     }
 }
 
-impl<T: Clone> Memento for Dequeue<T> {
-    type Object<'o> = &'o QueueGeneral<T>;
-    type Input<'o> = ();
-    type Output<'o>
-    where
-        T: 'o,
-    = Option<T>;
-    type Error<'o> = !;
-
-    fn run<'o>(
-        &mut self,
-        queue: Self::Object<'o>,
-        (): Self::Input<'o>,
-        tid: usize,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        self.try_deq
-            .run(queue, (), tid, rec, guard, pool)
-            .map_err(|_| unreachable!("Retry never fails."))
-    }
-
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_deq.reset(guard, pool);
+impl<T: Clone> Dequeue<T> {
+    /// Reset Dequeue memento
+    pub fn reset(&mut self) {
+        self.try_deq.reset();
     }
 }
 
@@ -365,18 +195,18 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct QueueGeneral<T: Clone> {
-    head: CachePadded<PAtomic<Node<T>>>,
+    head: CachePadded<GeneralSMOAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
 }
 
 impl<T: Clone> PDefault for QueueGeneral<T> {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
-            head: CachePadded::new(PAtomic::from(sentinel)),
+            head: CachePadded::new(GeneralSMOAtomic::from(sentinel)),
             tail: CachePadded::new(PAtomic::from(sentinel)),
         }
     }
@@ -384,7 +214,7 @@ impl<T: Clone> PDefault for QueueGeneral<T> {
 
 impl<T: Clone> Collectable for QueueGeneral<T> {
     fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        PAtomic::filter(&mut queue.head, tid, gc, pool);
+        GeneralSMOAtomic::filter(&mut queue.head, tid, gc, pool);
     }
 }
 
@@ -404,6 +234,147 @@ impl<T: Clone> Traversable<Node<T>> for QueueGeneral<T> {
         }
 
         false
+    }
+}
+
+impl<T: Clone> QueueGeneral<T> {
+    /// Enqueue
+    pub fn enqueue<const REC: bool>(
+        &self,
+        value: T,
+        enq: &mut Enqueue<T>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
+        let node = POwned::new(Node::from(value), pool);
+        persist_obj(unsafe { node.deref(pool) }, true);
+
+        let node = ok_or!(enq.node.checkpoint::<REC>(PAtomic::from(node)), e, unsafe {
+            drop(
+                e.new
+                    .load(Ordering::Relaxed, epoch::unprotected())
+                    .into_owned(),
+            );
+            e.current
+        })
+        .load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+
+        if self
+            .try_enqueue::<REC>(node, &mut enq.try_enq, tid, guard, pool)
+            .is_ok()
+        {
+            return;
+        }
+
+        while self
+            .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
+            .is_err()
+        {}
+    }
+
+    /// Try enqueue
+    pub fn try_enqueue<const REC: bool>(
+        &self,
+        node: PShared<'_, Node<T>>,
+        try_enq: &mut TryEnqueue<T>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Result<(), TryFail> {
+        let tail = self.tail.load(Ordering::SeqCst, guard);
+        let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
+        let next = tail_ref.next.load(Ordering::SeqCst, guard);
+
+        if !next.is_null() {
+            // tail is stale
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+            return Err(TryFail);
+        }
+
+        tail_ref
+            .next
+            .cas::<REC>(PShared::null(), node, &mut try_enq.insert, tid, guard, pool)
+            .map(|_| {
+                if REC {
+                    return;
+                }
+
+                let _ = self.tail.compare_exchange(
+                    tail,
+                    node,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+            })
+            .map_err(|_| TryFail)
+    }
+
+    /// Dequeue
+    pub fn dequeue<const REC: bool>(
+        &self,
+        deq: &mut Dequeue<T>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Option<T> {
+        if let Ok(ret) = self.try_dequeue::<REC>(&mut deq.try_deq, tid, guard, pool) {
+            return ret;
+        }
+
+        loop {
+            if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
+                return ret;
+            }
+        }
+    }
+
+    /// Try dequeue
+    pub fn try_dequeue<const REC: bool>(
+        &self,
+        try_deq: &mut TryDequeue<T>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Result<Option<T>, TryFail> {
+        let head = self.head.load(Ordering::SeqCst, guard);
+        let head_ref = unsafe { head.deref(pool) };
+        let next = head_ref.next.load(Ordering::SeqCst, guard);
+        let tail = self.tail.load(Ordering::SeqCst, guard);
+
+        let chk = ok_or!(
+            try_deq
+                .head_next
+                .checkpoint::<REC>((PAtomic::from(head), PAtomic::from(next))),
+            e,
+            e.current
+        );
+        let head = chk.0.load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+        let next = chk.1.load(Ordering::Relaxed, guard);
+        let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
+
+        if head.as_ptr() == tail.as_ptr() {
+            let tail_ref = unsafe { tail.deref(pool) };
+            persist_obj(&tail_ref.next, false); // cas soon
+
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+            return Err(TryFail);
+        }
+
+        self.head
+            .cas::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
+            .map(|()| unsafe {
+                guard.defer_pdestroy(head);
+                Some((*next_ref.data.as_ptr()).clone())
+            })
+            .map_err(|_| TryFail)
     }
 }
 
@@ -440,22 +411,8 @@ mod test {
         }
     }
 
-    impl Memento for EnqDeq {
-        type Object<'o> = &'o QueueGeneral<usize>;
-        type Input<'o> = ();
-        type Output<'o> = ();
-        type Error<'o> = !;
-
-        /// idempotent enq_deq
-        fn run<'o>(
-            &mut self,
-            queue: Self::Object<'o>,
-            (): Self::Input<'o>,
-            tid: usize,
-            rec: bool,
-            guard: &'o Guard,
-            pool: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
+    impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<usize>> {
+        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
                 // T0: 다른 스레드들의 실행결과를 확인
                 0 => {
@@ -464,7 +421,7 @@ mod test {
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<usize>::default();
-                    let must_none = tmp_deq.run(queue, (), tid, rec, guard, pool).unwrap();
+                    let must_none = self.obj.dequeue::<true>(&mut tmp_deq, tid, guard, pool);
                     assert!(must_none.is_none());
 
                     // Check results
@@ -476,8 +433,12 @@ mod test {
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ = self.enqs[i].run(queue, tid, tid, rec, guard, pool);
-                        let res = self.deqs[i].run(queue, (), tid, rec, guard, pool).unwrap();
+                        let _ =
+                            self.obj
+                                .enqueue::<true>(tid, &mut enq_deq.enqs[i], tid, guard, pool);
+                        let res = self
+                            .obj
+                            .dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         assert!(res.is_some());
 
                         // deq 결과를 실험결과에 전달
@@ -488,16 +449,8 @@ mod test {
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
-            Ok(())
-        }
-
-        fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-            todo!("reset test")
         }
     }
-
-    impl TestRootObj for QueueGeneral<usize> {}
-    impl TestRootMemento<QueueGeneral<usize>> for EnqDeq {}
 
     // TODO(opt): queue의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
@@ -510,6 +463,6 @@ mod test {
         const FILE_NAME: &str = "general_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<QueueGeneral<usize>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<TestRootObj<QueueGeneral<usize>>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }

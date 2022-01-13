@@ -126,5 +126,5 @@ impl<T> Frozen<T> {
 /// TODO(doc)
 pub trait PDefault: Collectable {
     /// TODO(doc)
-    fn pdefault(pool: &'static PoolHandle) -> Self;
+    fn pdefault(pool: &PoolHandle) -> Self;
 }

@@ -40,7 +40,7 @@ pub mod tests {
     }
 
     impl PDefault for DummyRootObj {
-        fn pdefault(_: &'static PoolHandle) -> Self {
+        fn pdefault(_: &PoolHandle) -> Self {
             Self {}
         }
     }
@@ -81,6 +81,24 @@ pub mod tests {
 
             // 풀 생성 및 핸들 반환
             Pool::create::<DummyRootObj, DummyRootMemento>(&temp_path, filesize, 0)
+        }
+    }
+
+    pub(crate) struct TestRootObj<O: PDefault + Collectable> {
+        pub(crate) obj: O,
+    }
+
+    impl<O: PDefault + Collectable> PDefault for TestRootObj<O> {
+        fn pdefault(pool: &PoolHandle) -> Self {
+            Self {
+                obj: O::pdefault(pool),
+            }
+        }
+    }
+
+    impl<O: PDefault + Collectable> Collectable for TestRootObj<O> {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            O::filter(&mut s.obj, tid, gc, pool)
         }
     }
 
