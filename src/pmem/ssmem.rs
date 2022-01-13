@@ -1,9 +1,5 @@
 //! ssmem allocator
 
-// @seungminjeon: 원래 구현에서 변경사항
-// 1. 모든 API에 들어가는 `isPM: bool`을 -> `pool: Option<PoolHandle>`로 변경
-// TODO: c의 포인터는 전부 *const 말고 *mut로 해버려?
-
 use libc::c_void;
 use std::{
     alloc::Layout,
@@ -13,9 +9,7 @@ use std::{
     ptr::{null, null_mut},
 };
 
-use crate::pmem::prefetchw;
-
-use super::{clflush, PoolHandle};
+use crate::pmem::{clflush, prefetchw, PoolHandle};
 
 /* ****************************************************************************************
  */
@@ -27,8 +21,10 @@ const SSMEM_TRANSPARENT_HUGE_PAGES: usize = 0; /* Use or not Linux transparent h
 const SSMEM_ZERO_MEMORY: usize = 1; /* Initialize allocated memory to 0 or not */
 const SSMEM_GC_FREE_SET_SIZE: usize = 507; /* mem objects to free before doing a GC pass */
 const SSMEM_GC_RLSE_SET_SIZE: usize = 3; /* num of released object before doing a GC pass */
-const SSMEM_DEFAULT_MEM_SIZE: usize = 32 * 1024 * 1024; /* memory-chunk size that each threads \
-                                                        gives to the allocators */
+
+/// memory-chunk size that each threads gives to the allocators
+pub const SSMEM_DEFAULT_MEM_SIZE: usize = 32 * 1024 * 1024;
+
 const SSMEM_MEM_SIZE_DOUBLE: usize = 0; /* if the allocator is out of memory, should it allocate \
                                          a 2x larger chunk than before? (in order to stop asking \
                                         for memory again and again */
@@ -306,13 +302,12 @@ pub fn ssmem_alloc(
     else {
         // 현재 사용중인 memmory chunk에 남은 공간 부족하면, 새로운 memory chunk 등록 후 사용
         if (a_ref.mem_curr + size) >= a_ref.mem_size {
-            todo!("SSMEM_MEM_SIZE_DOUBLE==1일 때만 컴파일하는 로직");
-            //  #if SSMEM_MEM_SIZE_DOUBLE == 1
-            //         a->mem_size <<= 1;
-            //         if (a->mem_size > SSMEM_MEM_SIZE_MAX) {
-            //           a->mem_size = SSMEM_MEM_SIZE_MAX;
-            //         }
-            //   #endif
+            if SSMEM_MEM_SIZE_DOUBLE == 1 {
+                a_ref.mem_size <<= 1;
+                if a_ref.mem_size > SSMEM_MEM_SIZE_MAX {
+                    a_ref.mem_size = SSMEM_MEM_SIZE_MAX;
+                }
+            }
 
             // 요청한 size가 한 memory chunk보다 크다면, 요청 크기를 담을 수 있을 만큼 memory chunk 크기를 늘림
             if size > a_ref.mem_size {
@@ -365,8 +360,10 @@ pub fn ssmem_alloc(
         a_ref.mem_curr += size;
     }
 
-    todo!("SSMEM_TS_INCR_ON에 alloc 포함되어있다면 ssmem_ts_next() 호출하게 컴파일");
-
+    // timestamp 증가 전략이 "alloc할 때"가 포함이면 timestamp 증가
+    if SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_ALLOC || SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_BOTH {
+        ssmem_ts_next();
+    }
     m
 }
 
@@ -391,7 +388,10 @@ pub fn ssmem_free(a: *mut ssmem_allocator, obj: *mut c_void, pool: Option<&'stat
     unsafe { *(fs.set.offset(fs.curr as isize)) = obj as usize };
     fs.curr += 1;
 
-    todo!("SSMEM_TS_INCR_ON에 free 포함되어있다면 ssmem_ts_next() 호출하게 컴파일");
+    // timestamp 증가 전략이 "free할 때"가 포함이면 timestamp 증가
+    if SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_FREE || SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_BOTH {
+        ssmem_ts_next();
+    }
 }
 
 /// release some memory to the OS using allocator a
@@ -451,7 +451,17 @@ fn ssmem_list_node_new(
 
 /// allocator가 쥐고 있는 현재 memory chunk를 zero-initialize
 fn ssmem_zero_memory(a: *mut ssmem_allocator) {
-    todo!("SSMEM_ZERO_MEMORY==1일 때만 컴파일하는 로직");
+    if SSMEM_ZERO_MEMORY == 1 {
+        let a_ref = unsafe { a.as_mut() }.unwrap();
+        unsafe {
+            let _ = libc::memset(a_ref.mem, 0x0, a_ref.mem_size);
+        }
+        let mut i = 0;
+        while i < a_ref.mem_size / CACHE_LINE_SIZE {
+            barrier((a_ref.mem as usize + i) as *mut c_void);
+            i += CACHE_LINE_SIZE;
+        }
+    }
 }
 
 fn ssmem_free_set_new(
