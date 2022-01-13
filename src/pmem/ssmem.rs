@@ -65,10 +65,9 @@ const CACHE_LINE_SIZE: usize = 64;
 /* ****************************************************************************************
  */
 
-/* an ssmem allocator */
-/// TODO: doc
-// TODO: align(cache line)
+/// an ssmem allocator
 #[derive(Debug)]
+#[repr(align(64))]
 pub struct ssmem_allocator {
     /// allocator가 사용중인 메모리 (사용중인 memory chunk의 시작주소를 가리킴)
     mem: *mut c_void,
@@ -114,7 +113,7 @@ pub struct ssmem_allocator {
     // TODO: cache line*2 크기로 패딩?
 }
 
-// TODO: align(cache line)
+#[repr(align(64))]
 struct ssmem_ts {
     version: usize,
     id: usize,
@@ -122,15 +121,15 @@ struct ssmem_ts {
     // TODO: cache line 크기로 패딩?
 }
 
-// TODO: align(cache line)
+#[repr(align(64))]
 struct ssmem_free_set {
     ts_set: *mut usize,
     size: usize,
-    curr: usize, // TODO: 원래 타입은 long int. 이렇게 usize로 해도 ㄱㅊ?
+    curr: usize, // TODO: 원래 타입은 long int. 이렇게 usize로 해도 괜찮나?
     set_next: *mut ssmem_free_set,
 
     /// 이 주소부터 free obj들이 위치함
-    set: *mut usize, // TODO: 원래 타입은 uintptr_t*. 이렇게 *const usize로 해도 ㄱㅊ?
+    set: *mut usize, // TODO: 원래 타입은 uintptr_t*. 이렇게 *const usize로 해도 괜찮나?
 }
 
 // TODO: 필요한가?
@@ -410,19 +409,13 @@ pub fn ssmem_ts_next() {
     });
 }
 
-// TODO: 이 매크로 필요? 유저가 ssmem_ts_next() 추가시 safe할 경우엔 이걸로 쓰라는 것 같음..
-// #define SSMEM_SAFE_TO_RECLAIM() ssmem_ts_next()
-
-/* debug/help functions */
-// TODO: 필요?
-
 /* ****************************************************************************************
  */
 /* platform-specific definitions */
 /* ****************************************************************************************
  */
 
-// TODO
+// TODO: 필요?
 
 /* ****************************************************************************************
  */
@@ -438,7 +431,6 @@ thread_local! {
     static ssmem_allocator_list: RefCell<*const ssmem_list> = RefCell::new(null());
 }
 
-/// TODO: doc
 fn ssmem_list_node_new(
     mem: *mut c_void,
     next: *const ssmem_list,
