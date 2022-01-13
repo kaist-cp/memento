@@ -284,7 +284,7 @@ impl<T: Clone> Queue<T> {
 
         tail_ref
             .next
-            .insert::<Self, REC>(node, self, &mut try_enq.insert, guard, pool)
+            .insert::<_, REC>(node, self, &mut try_enq.insert, guard, pool)
             .map(|_| {
                 if REC {
                     return;
