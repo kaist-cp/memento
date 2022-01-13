@@ -6,7 +6,7 @@ use crate::pepoch::PShared;
 #[derive(Debug)]
 pub enum InsertErr<'g, T> {
     /// Insert를 위한 atomic operation 전에 기각됨
-    PrepareFail,
+    NonNull,
 
     /// CAS에 실패 (Strong fail)
     CASFail(PShared<'g, T>),

@@ -1,13 +1,13 @@
 //! Structure Modification Operations
 
 pub mod common;
-// pub mod smo;
+pub mod smo;
 pub mod smo_base;
 pub mod smo_general;
 
 pub use common::*;
 use crossbeam_epoch::Guard;
-// pub use smo::*;
+pub use smo::*;
 pub use smo_base::*;
 pub use smo_general::*;
 
