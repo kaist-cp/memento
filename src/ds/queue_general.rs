@@ -457,7 +457,6 @@ mod test {
     // - pool을 2번째 열 때부터 gc 동작 확인가능:
     //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴
     //      - 여기서 +2는 Root, Queue를 가리키는 포인터
-    //
     #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "general_enq_deq.pool";

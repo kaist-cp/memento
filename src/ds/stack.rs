@@ -87,7 +87,7 @@ pub(crate) mod tests {
     impl<S, const NR_THREAD: usize, const COUNT: usize> RootObj<PushPop<S, NR_THREAD, COUNT>>
         for TestRootObj<S>
     where
-        S: Stack<usize> + Sync,
+        S: Stack<usize>,
     {
         /// push_pop을 반복하는 Concurrent stack test
         ///
