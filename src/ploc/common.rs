@@ -1,17 +1,9 @@
 //! Atomic Update Common
 
-use std::marker::PhantomData;
-
-use crossbeam_epoch::Guard;
-use crossbeam_utils::Backoff;
-
-use crate::{
-    pmem::{
-        ll::persist_obj,
-        ralloc::{Collectable, GarbageCollection},
-        PoolHandle,
-    },
-    Memento,
+use crate::pmem::{
+    ll::persist_obj,
+    ralloc::{Collectable, GarbageCollection},
+    PoolHandle,
 };
 
 /// TODO(doc)
@@ -56,7 +48,6 @@ pub trait Checkpointable {
 #[derive(Debug)]
 pub struct Checkpoint<T: Checkpointable + Default + Clone + Collectable> {
     saved: T,
-    _marker: PhantomData<*const T>,
 }
 
 unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Send
@@ -73,10 +64,7 @@ impl<T: Checkpointable + Default + Clone + Collectable> Default for Checkpoint<T
         let mut t = T::default();
         t.invalidate();
 
-        Self {
-            saved: t,
-            _marker: Default::default(),
-        }
+        Self { saved: t }
     }
 }
 
@@ -86,38 +74,40 @@ impl<T: Checkpointable + Default + Clone + Collectable> Collectable for Checkpoi
     }
 }
 
-impl<T> Memento for Checkpoint<T>
-where
-    T: 'static + Checkpointable + Default + Clone + Collectable,
-{
-    type Object<'o> = ();
-    type Input<'o> = (T, fn(T));
-    type Output<'o> = T;
-    type Error<'o> = !;
+/// TODO(doc)
+#[derive(Debug)]
+pub struct CheckpointError<T> {
+    /// TODO(doc)
+    pub current: T,
 
-    fn run<'o>(
-        &mut self,
-        (): Self::Object<'o>,
-        (chk, if_exists): Self::Input<'o>,
-        _: usize,
-        rec: bool,
-        _: &'o Guard,
-        _: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if rec {
+    /// TODO(doc)
+    pub new: T,
+}
+
+impl<T> Checkpoint<T>
+where
+    T: Checkpointable + Default + Clone + Collectable,
+{
+    /// TODO(doc)
+    pub fn checkpoint<const REC: bool>(&mut self, new: T) -> Result<T, CheckpointError<T>> {
+        if REC {
             if let Some(saved) = self.peek() {
-                if_exists(chk);
-                return Ok(saved);
+                return Err(CheckpointError {
+                    current: saved.clone(),
+                    new,
+                });
             }
         }
 
         // Normal run
-        self.saved = chk.clone();
+        self.saved = new.clone();
         persist_obj(&self.saved, true);
-        Ok(chk)
+        Ok(new)
     }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
+    /// TODO(doc)
+    #[inline]
+    pub fn reset(&mut self) {
         self.saved.invalidate();
         persist_obj(&self.saved, false);
     }
@@ -160,71 +150,5 @@ impl Checkpointable for CheckpointableUsize {
 
     fn is_invalid(&self) -> bool {
         self.0 == CheckpointableUsize::INVALID
-    }
-}
-
-/// TODO(doc)
-// TODO(@jeehoon.kang): move
-#[derive(Debug)]
-pub struct RetryLoop<M: Memento> {
-    try_mmt: M,
-}
-
-unsafe impl<M: Memento + Send + Sync> Send for RetryLoop<M> {}
-unsafe impl<M: Memento + Send + Sync> Sync for RetryLoop<M> {}
-
-impl<M: Memento> Default for RetryLoop<M> {
-    fn default() -> Self {
-        Self {
-            try_mmt: Default::default(),
-        }
-    }
-}
-
-impl<M: Memento> Collectable for RetryLoop<M> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        M::filter(&mut s.try_mmt, tid, gc, pool);
-    }
-}
-
-impl<M> Memento for RetryLoop<M>
-where
-    M: 'static + Memento,
-{
-    type Object<'o> = M::Object<'o>;
-    type Input<'o> = M::Input<'o>;
-    type Output<'o> = M::Output<'o>;
-    type Error<'o> = !;
-
-    fn run<'o>(
-        &mut self,
-        obj: Self::Object<'o>,
-        input: Self::Input<'o>,
-        tid: usize,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if let Ok(ret) = self
-            .try_mmt
-            .run(obj.clone(), input.clone(), tid, rec, guard, pool)
-        {
-            return Ok(ret);
-        }
-
-        let backoff = Backoff::default();
-        loop {
-            backoff.snooze();
-            if let Ok(ret) = self
-                .try_mmt
-                .run(obj.clone(), input.clone(), tid, false, guard, pool)
-            {
-                return Ok(ret);
-            }
-        }
-    }
-
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.try_mmt.reset(guard, pool);
     }
 }

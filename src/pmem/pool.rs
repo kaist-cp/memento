@@ -82,8 +82,8 @@ impl PoolHandle {
     /// M: root memento(s)
     pub fn execute<O, M>(&'static self)
     where
-        O: PDefault + Send + Sync,
-        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()> + Send + Sync,
+        O: RootObj<M> + Send + Sync,
+        M: Collectable + Default + Send + Sync,
     {
         // root obj 얻기
         let root_obj = unsafe {
@@ -111,8 +111,8 @@ impl PoolHandle {
                         let started = AtomicBool::new(false);
                         loop {
                             // memento 실행
-                            let hanlder = scope.spawn(move |_| {
-                                let root_memento = unsafe { (m_addr as *mut M).as_mut().unwrap() };
+                            let handler = scope.spawn(move |_| {
+                                let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                                 let guard = unsafe { epoch::old_guard(tid) };
 
@@ -121,12 +121,12 @@ impl PoolHandle {
                                     let _ = barrier.wait();
                                 }
 
-                                let _ = root_memento.run(root_obj, (), tid, true, &guard, self);
+                                let _ = root_obj.run(root_mmt, tid, &guard, self);
                             });
 
                             // 성공시 종료, 실패(i.e. crash)시 memento 재실행
                             // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
-                            match hanlder.join() {
+                            match handler.join() {
                                 Ok(_) => break,
                                 Err(_) => {
                                     println!("PANIC: Root memento No.{} re-executed.", tid);
@@ -242,8 +242,8 @@ impl Pool {
         nr_memento: usize, // Root Memento의 개수
     ) -> Result<&'static PoolHandle, Error>
     where
-        O: PDefault,
-        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()>,
+        O: RootObj<M>,
+        M: Collectable + Default,
     {
         // 파일 이미 있으면 에러 반환
         // - Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성하기 때문에, 그 중 하나인 "_basemd"를 붙여 확인
@@ -332,8 +332,8 @@ impl Pool {
     // - <O: Memento, P: AsRef<Path>>로 받아도 잘 안됨. 이러면 generic P에 대한 type inference가 안돼서 사용자가 `O`, `P`를 둘다 명시해줘야함 (e.g. Pool::open::<RootOp, &str>("foo.pool") 처럼 호출해야함)
     pub unsafe fn open<O, M>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error>
     where
-        O: PDefault,
-        for<'o> M: Memento<Object<'o> = &'o O, Input<'o> = ()>,
+        O: RootObj<M>,
+        M: Collectable + Default,
     {
         // 파일 없으면 에러 반환
         // - "_basemd"를 붙여 확인하는 이유: Ralloc의 init은 filepath에 postfix("_based", "_desc", "_sb")를 붙여 파일을 생성
@@ -431,74 +431,56 @@ impl Pool {
     }
 }
 
+/// Root object of pool
+pub trait RootObj<M: Collectable + Default>: PDefault + Collectable {
+    /// Root object's default run function with a root memento
+    fn run(&self, mmt: &mut M, tid: usize, guard: &Guard, pool: &PoolHandle);
+}
+
 #[cfg(test)]
 mod tests {
     use crossbeam_epoch::Guard;
     use env_logger as _;
     use log::{self as _, debug};
-    use rusty_fork::rusty_fork_test;
 
     use crate::pmem::pool::*;
     use crate::test_utils::tests::*;
-    use crate::Memento;
+
+    impl RootObj<CheckInv> for DummyRootObj {
+        fn run(&self, mmt: &mut CheckInv, _: usize, _: &Guard, _: &PoolHandle) {
+            if mmt.flag {
+                debug!("check inv");
+                assert_eq!(mmt.value, 42);
+            } else {
+                debug!("update");
+                mmt.value = 42;
+                mmt.flag = true;
+            }
+        }
+    }
 
     #[derive(Default)]
-    struct RootMemento {
+    struct CheckInv {
         value: usize,
         flag: bool,
     }
 
-    impl Collectable for RootMemento {
+    impl Collectable for CheckInv {
         fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             // no-op
         }
     }
 
-    impl Memento for RootMemento {
-        type Object<'o> = &'o DummyRootObj;
-        type Input<'o> = ();
-        type Output<'o> = ();
-        type Error<'o> = !;
-
-        fn run<'o>(
-            &mut self,
-            _: Self::Object<'o>,
-            _: Self::Input<'o>,
-            _: usize,
-            _: bool,
-            _: &'o Guard,
-            _: &'static PoolHandle,
-        ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-            if self.flag {
-                debug!("check inv");
-                assert_eq!(self.value, 42);
-            } else {
-                debug!("update");
-                self.value = 42;
-                self.flag = true;
-            }
-            Ok(())
-        }
-
-        fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-            // no-op
-        }
-    }
-
-    impl TestRootMemento<DummyRootObj> for RootMemento {}
-
     const FILE_NAME: &str = "check_inv.pool";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     // TODO: root op 실행 로직 고치기 https://cp-git.kaist.ac.kr/persistent-mem/memento/-/issues/95
-    rusty_fork_test! {
-        /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
-        #[test]
-        fn check_inv() {
-            // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
-            env_logger::init();
+    /// 언제 crash나든 invariant 보장함을 보이는 테스트: flag=1 => value=42
+    #[test]
+    fn check_inv() {
+        // 커맨드에 RUST_LOG=debug 포함시 debug! 로그 출력
+        env_logger::init();
 
-            run_test::<DummyRootObj, RootMemento, _>(FILE_NAME, FILE_SIZE, 1);
-        }
+        run_test::<DummyRootObj, CheckInv, _>(FILE_NAME, FILE_SIZE, 1);
     }
 }

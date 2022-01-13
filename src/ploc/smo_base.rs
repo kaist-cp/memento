@@ -4,9 +4,9 @@ use crate::pepoch::PShared;
 
 /// TODO(doc)
 #[derive(Debug)]
-pub enum InsertErr<'g, T> {
+pub enum InsertError<'g, T> {
     /// Insert를 위한 atomic operation 전에 기각됨
-    PrepareFail,
+    NonNull,
 
     /// CAS에 실패 (Strong fail)
     CASFail(PShared<'g, T>),

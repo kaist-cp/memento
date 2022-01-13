@@ -40,7 +40,7 @@
 
 // Persistent objects collection
 pub mod ds;
-pub mod pipe;
+// pub mod pipe;
 pub mod ploc;
 
 // Persistent memory underline
@@ -52,11 +52,7 @@ pub mod pepoch;
 // Utility
 pub mod test_utils;
 
-use crate::pmem::{
-    ll::persist_obj,
-    pool::PoolHandle,
-    ralloc::{Collectable, GarbageCollection},
-};
+use crate::pmem::{pool::PoolHandle, ralloc::Collectable};
 use crossbeam_epoch::Guard;
 use std::{mem::ManuallyDrop, ptr};
 
@@ -127,117 +123,8 @@ impl<T> Frozen<T> {
     }
 }
 
-/// op을 exactly-once 실행하기 위한 trait
-///
-/// # Safety
-///
-/// * 초기화 혹은 `reset()` 후 다음 `reset()` 전까지 `Memento`은 *반드시* 한 object에 대해서만 `run()`을 수행해야 함.
-/// * `Memento`는 자신 혹은 자신이 사용한 `Guard`가 Drop 될 때 *반드시* `reset()` 되어있는 상태여야 함.
-pub trait Memento: Default + Collectable {
-    /// Persistent op의 target object
-    type Object<'o>: Clone;
-
-    /// Persistent op의 input type
-    type Input<'o>: Clone;
-
-    /// Persistent op의 output type
-    type Output<'o>: Clone
-    where
-        Self: 'o;
-
-    /// Persistent op이 적용되지 않았을 때 발생하는 Error type
-    type Error<'o>
-    where
-        Self: 'o;
-
-    /// Persistent op 동작 함수 (idempotent)
-    ///
-    /// - `Ok`를 반환한 적이 있는 op은 같은 input에 대해 언제나 같은 Output을 반환
-    /// - `Err`를 반환한 op은 `reset()` 없이 다시 호출 가능
-    /// - Input을 매번 인자로 받아 불필요한 백업을 하지 않음
-    /// - Pre-crash op이 충분히 진행됐을 경우 Post-crash 재실행시의 input이 op 결과에 영향을 끼치지 않을 수도 있음.
-    ///   즉, post-crash의 functional correctness는 보장하지 않음. (이러한 동작이 safety를 해치지 않음.)
-    ///
-    /// ## Argument
-    /// * `PoolHandle` - 메모리 관련 operation(e.g. `deref`, `alloc`)을 어느 풀에서 할지 알기 위해 필요
-    fn run<'o>(
-        &mut self,
-        object: Self::Object<'o>,
-        input: Self::Input<'o>,
-        tid: usize,
-        rec: bool, // TODO(opt): template parameter
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>>;
-
-    /// 새롭게 op을 실행하도록 재사용하기 위해 리셋 (idempotent)
-    ///
-    /// 어떤 op들의 `reset()`은 1개 이하의 instruction으로 수행될 수도 있고, 어떤 op들은
-    /// 그보다 많은 instruction을 요구할 수도 있다. 후자의 경우 reset 하고 있음을 나타내는 flag를 통해
-    /// reset 도중에 crash가 났을 때에도 이후에 reset 하다가 crash 났음을 알 수 있게 해야만 한다.
-    ///
-    /// `nested`: 상위 op의 `reset()`에서 하위 op을 `reset()`을 호출할 경우 이미 상위 op의 reset 중임을
-    /// 나타내는 flag가 켜져있으므로 하위 op의 reset이 따로 reset flag를 설정할 필요가 없다. 이를 위해 하위
-    /// op의 `reset()` 호출 시 `nested`를 `true`로 해주어 내부에서 별도로 reset flag를 설정할 필요가 없도록
-    /// 알려줄 수 있다.
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle);
-}
-
-/// TODO(doc)
-#[derive(Debug, Default)]
-pub struct AtomicReset<M: Memento> {
-    composed: M,
-    resetting: bool,
-}
-
-impl<M: Memento> Collectable for AtomicReset<M> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        M::filter(&mut s.composed, tid, gc, pool);
-    }
-}
-
-impl<M: Memento> Memento for AtomicReset<M> {
-    type Object<'o> = M::Object<'o>;
-    type Input<'o> = M::Input<'o>;
-    type Output<'o>
-    where
-        M: 'o,
-    = M::Output<'o>;
-    type Error<'o>
-    where
-        M: 'o,
-    = M::Error<'o>;
-
-    fn run<'o>(
-        &mut self,
-        object: Self::Object<'o>,
-        input: Self::Input<'o>,
-        tid: usize,
-        rec: bool,
-        guard: &'o Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'o>> {
-        if rec && self.resetting {
-            self.reset(guard, pool);
-            return self.composed.run(object, input, tid, false, guard, pool);
-        }
-
-        self.composed.run(object, input, tid, rec, guard, pool)
-    }
-
-    fn reset(&mut self, guard: &Guard, pool: &'static PoolHandle) {
-        self.resetting = true;
-        persist_obj(&self.resetting, true);
-
-        self.composed.reset(guard, pool);
-
-        self.resetting = false;
-        persist_obj(&self.resetting, true);
-    }
-}
-
 /// TODO(doc)
 pub trait PDefault: Collectable {
     /// TODO(doc)
-    fn pdefault(pool: &'static PoolHandle) -> Self;
+    fn pdefault(pool: &PoolHandle) -> Self;
 }
