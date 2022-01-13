@@ -6,7 +6,7 @@ use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertError, Traversable
 use core::sync::atomic::Ordering;
 use crossbeam_utils::{Backoff, CachePadded};
 use etrace::{ok_or, some_or};
-use smo::DeleteMode;
+use smo::{DeleteMode, Insert};
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
@@ -20,13 +20,13 @@ pub struct TryFail;
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct Node<T: Clone> {
+pub struct Node<T> {
     data: MaybeUninit<T>,
-    next: SMOAtomic<Queue<T>, Self>,
+    next: SMOAtomic<Self>,
     owner: PAtomic<Self>,
 }
 
-impl<T: Clone> From<T> for Node<T> {
+impl<T> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: MaybeUninit::new(value),
@@ -36,7 +36,7 @@ impl<T: Clone> From<T> for Node<T> {
     }
 }
 
-impl<T: Clone> Default for Node<T> {
+impl<T> Default for Node<T> {
     fn default() -> Self {
         Self {
             data: MaybeUninit::uninit(),
@@ -47,13 +47,13 @@ impl<T: Clone> Default for Node<T> {
 }
 
 // TODO(must): T should be collectable
-impl<T: Clone> Collectable for Node<T> {
+impl<T> Collectable for Node<T> {
     fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         SMOAtomic::filter(&mut node.next, tid, gc, pool);
     }
 }
 
-impl<T: Clone> smo::Node for Node<T> {
+impl<T> smo::Node for Node<T> {
     #[inline]
     fn owner(&self) -> &PAtomic<Self> {
         &self.owner
@@ -62,31 +62,37 @@ impl<T: Clone> smo::Node for Node<T> {
 
 /// try push operation for Queue
 #[derive(Debug)]
-pub struct TryEnqueue;
+pub struct TryEnqueue<T: Clone> {
+    insert: Insert<Queue<T>, Node<T>>,
+}
 
-impl Default for TryEnqueue {
+impl<T: Clone> Default for TryEnqueue<T> {
     fn default() -> Self {
-        Self
+        Self {
+            insert: Default::default(),
+        }
     }
 }
 
-unsafe impl Send for TryEnqueue {}
+unsafe impl<T: Clone> Send for TryEnqueue<T> {}
 
-impl Collectable for TryEnqueue {
+impl<T: Clone> Collectable for TryEnqueue<T> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl TryEnqueue {
+impl<T: Clone> TryEnqueue<T> {
     /// Reset TryEnqueue memento
     #[inline]
-    pub fn reset(&mut self) {}
+    pub fn reset(&mut self) {
+        self.insert.reset();
+    }
 }
 
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: Clone> {
     node: Checkpoint<PAtomic<Node<T>>>,
-    try_enq: TryEnqueue,
+    try_enq: TryEnqueue<T>,
 }
 
 impl<T: Clone> Default for Enqueue<T> {
@@ -223,7 +229,7 @@ unsafe impl<T: Clone> Send for DequeueSome<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct Queue<T: Clone> {
-    head: CachePadded<SMOAtomic<Self, Node<T>>>,
+    head: CachePadded<SMOAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
 }
 
@@ -269,8 +275,7 @@ impl<T: Clone> Queue<T> {
     pub fn try_enqueue<const REC: bool>(
         &self,
         node: PShared<'_, Node<T>>,
-        try_enq: &mut TryEnqueue,
-        tid: usize,
+        try_enq: &mut TryEnqueue<T>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
@@ -279,7 +284,7 @@ impl<T: Clone> Queue<T> {
 
         tail_ref
             .next
-            .insert::<REC>(node, self, guard, pool)
+            .insert::<Self, REC>(node, self, &mut try_enq.insert, guard, pool)
             .map(|_| {
                 if REC {
                     return;
@@ -316,7 +321,6 @@ impl<T: Clone> Queue<T> {
         &self,
         value: T,
         enq: &mut Enqueue<T>,
-        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) {
@@ -334,7 +338,7 @@ impl<T: Clone> Queue<T> {
         .load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
 
         if self
-            .try_enqueue::<REC>(node, &mut enq.try_enq, tid, guard, pool)
+            .try_enqueue::<REC>(node, &mut enq.try_enq, guard, pool)
             .is_ok()
         {
             return;
@@ -344,7 +348,7 @@ impl<T: Clone> Queue<T> {
         loop {
             backoff.snooze();
             if self
-                .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
+                .try_enqueue::<false>(node, &mut enq.try_enq, guard, pool)
                 .is_ok()
             {
                 return;
@@ -497,9 +501,9 @@ mod test {
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ =
-                            self.obj
-                                .enqueue::<true>(tid, &mut enq_deq.enqs[i], tid, guard, pool);
+                        let _ = self
+                            .obj
+                            .enqueue::<true>(tid, &mut enq_deq.enqs[i], guard, pool);
                         let res = self
                             .obj
                             .dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);

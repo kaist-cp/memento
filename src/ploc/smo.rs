@@ -28,6 +28,33 @@ pub trait Node: Sized {
 }
 
 /// TODO(doc)
+#[derive(Debug)]
+pub struct Insert<O: Traversable<N>, N> {
+    _marker: PhantomData<*const (O, N)>,
+}
+
+unsafe impl<O: Traversable<N>, N> Send for Insert<O, N> {}
+unsafe impl<O: Traversable<N>, N> Sync for Insert<O, N> {}
+
+impl<O: Traversable<N>, N> Default for Insert<O, N> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
+
+impl<O: Traversable<N>, N> Collectable for Insert<O, N> {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+}
+
+impl<O: Traversable<N>, N> Insert<O, N> {
+    /// Reset Insert memento
+    #[inline]
+    pub fn reset(&mut self) {}
+}
+
+/// TODO(doc)
 #[derive(Debug, Clone)]
 pub enum DeleteMode {
     /// TODO(doc)
@@ -82,36 +109,33 @@ const RECYCLE_END: usize = 2;
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct SMOAtomic<O: Traversable<N>, N: Node + Collectable> {
+pub struct SMOAtomic<N: Node + Collectable> {
     inner: PAtomic<N>,
-    _marker: PhantomData<*const O>,
 }
 
-impl<O: Traversable<N>, N: Node + Collectable> Collectable for SMOAtomic<O, N> {
+impl<N: Node + Collectable> Collectable for SMOAtomic<N> {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         PAtomic::filter(&mut s.inner, tid, gc, pool);
     }
 }
 
-impl<O: Traversable<N>, N: Node + Collectable> Default for SMOAtomic<O, N> {
+impl<N: Node + Collectable> Default for SMOAtomic<N> {
     fn default() -> Self {
         Self {
             inner: PAtomic::null(),
-            _marker: Default::default(),
         }
     }
 }
 
-impl<O: Traversable<N>, N: Node + Collectable> From<PShared<'_, N>> for SMOAtomic<O, N> {
+impl<N: Node + Collectable> From<PShared<'_, N>> for SMOAtomic<N> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
             inner: PAtomic::from(node),
-            _marker: Default::default(),
         }
     }
 }
 
-impl<O: Traversable<N>, N: Node + Collectable> Deref for SMOAtomic<O, N> {
+impl<N: Node + Collectable> Deref for SMOAtomic<N> {
     type Target = PAtomic<N>;
 
     fn deref(&self) -> &Self::Target {
@@ -119,7 +143,7 @@ impl<O: Traversable<N>, N: Node + Collectable> Deref for SMOAtomic<O, N> {
     }
 }
 
-impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
+impl<N: Node + Collectable> SMOAtomic<N> {
     /// Ok(ptr): helping 다 해준 뒤의 최종 ptr
     /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
     pub fn load_helping<'g>(
@@ -159,15 +183,16 @@ impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
     }
 
     /// Insert
-    pub fn insert<'g, const REC: bool>(
+    pub fn insert<'g, O: Traversable<N>, const REC: bool>(
         &self,
         new: PShared<'_, N>,
         obj: &O,
+        insert: &mut Insert<O, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError<'g, N>> {
         if REC {
-            return Self::insert_result(obj, new, guard, pool);
+            return Self::insert_result(new, obj, insert, guard, pool);
         }
 
         // Normal run
@@ -188,9 +213,10 @@ impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
     }
 
     #[inline]
-    fn insert_result<'g>(
-        obj: &O,
+    fn insert_result<'g, O: Traversable<N>>(
         new: PShared<'_, N>,
+        obj: &O,
+        _: &mut Insert<O, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError<'g, N>> {
@@ -369,5 +395,5 @@ impl<O: Traversable<N>, N: Node + Collectable> SMOAtomic<O, N> {
     }
 }
 
-unsafe impl<O: Traversable<N>, N: Node + Collectable> Send for SMOAtomic<O, N> {}
-unsafe impl<O: Traversable<N>, N: Node + Collectable> Sync for SMOAtomic<O, N> {}
+unsafe impl<N: Node + Collectable> Send for SMOAtomic<N> {}
+unsafe impl<N: Node + Collectable> Sync for SMOAtomic<N> {}
