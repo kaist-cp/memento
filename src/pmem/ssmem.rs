@@ -13,7 +13,7 @@ use std::{
     ptr::{null, null_mut},
 };
 
-use super::PoolHandle;
+use super::{clflush, PoolHandle};
 
 /* ****************************************************************************************
  */
@@ -259,9 +259,8 @@ pub fn ssmem_gc_thread_init(a: *mut ssmem_allocator, id: isize, pool: Option<&'s
 }
 
 /// terminate the system (all allocators) and free all memory
-// TODO: SOFT 실험에 필요한가? 기존 repo는 구현만 했을 뿐 쓰질 않음
 pub fn ssmem_term(pool: Option<&'static PoolHandle>) {
-    todo!()
+    todo!("필요하면 구현. 기존 repo의 SOFT hash 구현에는 안쓰임")
 }
 
 /// terminate the allocator a and free all its memory.
@@ -270,9 +269,8 @@ pub fn ssmem_term(pool: Option<&'static PoolHandle>) {
 ///
 /// This function should NOT be used if the memory allocated by this allocator
 /// might have been freed (and is still in use) by other allocators
-// TODO: SOFT 실험에 필요한가? 기존 repo는 구현만 했을 뿐 쓰질 않음
 pub unsafe fn ssmem_alloc_term(a: &ssmem_allocator, pool: Option<&'static PoolHandle>) {
-    todo!()
+    todo!("필요하면 구현. 기존 repo의 SOFT hash 구현에는 안쓰임")
 }
 
 /// allocate some memory using allocator a
@@ -397,7 +395,7 @@ pub fn ssmem_free(a: *mut ssmem_allocator, obj: *mut c_void, pool: Option<&'stat
 
 /// release some memory to the OS using allocator a
 pub fn ssmem_release(a: &ssmem_allocator, obj: *mut c_void, pool: Option<&'static PoolHandle>) {
-    todo!()
+    todo!("필요하면 구현. SOFT hash 구현에는 안쓰임")
 }
 
 /// increment the thread-local activity counter. Invoking this function suggests
@@ -524,7 +522,7 @@ fn ssmem_mem_reclaim(a: *mut ssmem_allocator, pool: Option<&'static PoolHandle>)
 
     // 이 if문은 아예 안타는 듯: released_num 증가시키는 ssmem_release를 호출하는 곳이 없음
     if a_ref.released_num > 0 {
-        todo!()
+        todo!("필요하면 구현. SOFT hash 구현에서는 ssmem_release를 쓰는 곳이 없으므로 이 if문에 진입할 일이 없음")
     }
 
     let fs_cur = a_ref.free_set_list;
@@ -624,5 +622,6 @@ fn ssmem_ts_compare(s_new: *const usize, s_old: *const usize) -> usize {
 
 #[inline]
 fn barrier<T>(p: *const T) {
-    todo!()
+    debug_assert!(size_of::<T>() <= CACHE_LINE_SIZE);
+    clflush(p, CACHE_LINE_SIZE, false);
 }
