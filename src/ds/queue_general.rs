@@ -45,14 +45,7 @@ impl<T> Default for Node<T> {
 // TODO(must): T should be collectable
 impl<T> Collectable for Node<T> {
     fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let guard = unsafe { epoch::unprotected() };
-
-        // Mark valid ptr to trace
-        let mut next = node.next.load(Ordering::SeqCst, guard);
-        if !next.is_null() {
-            let next = unsafe { next.deref_mut(pool) };
-            Node::<T>::mark(next, tid, gc);
-        }
+        GeneralSMOAtomic::filter(&mut node.next, tid, gc, pool);
     }
 }
 
