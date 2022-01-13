@@ -194,6 +194,25 @@ impl<T: Clone> PDefault for TreiberStack<T> {
 }
 
 impl<T: Clone> TreiberStack<T> {
+    /// Try push
+    pub fn try_push<const REC: bool>(
+        &self,
+        node: PShared<'_, Node<T>>,
+        try_push: &mut TryPush<T>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Result<(), TryFail> {
+        let top = self.top.load(Ordering::SeqCst, guard);
+        let node_ref = unsafe { node.deref(pool) };
+        node_ref.next.store(top, Ordering::SeqCst);
+        persist_obj(&node_ref.next, false); // we do CAS right after that
+
+        self.top
+            .cas::<REC>(top, node, &mut try_push.insert, tid, guard, pool)
+            .map_err(|_| TryFail)
+    }
+
     /// Push
     pub fn push<const REC: bool>(
         &self,
@@ -239,46 +258,6 @@ impl<T: Clone> TreiberStack<T> {
         }
     }
 
-    /// Try push
-    pub fn try_push<const REC: bool>(
-        &self,
-        node: PShared<'_, Node<T>>,
-        try_push: &mut TryPush<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> Result<(), TryFail> {
-        let top = self.top.load(Ordering::SeqCst, guard);
-        let node_ref = unsafe { node.deref(pool) };
-        node_ref.next.store(top, Ordering::SeqCst);
-        persist_obj(&node_ref.next, false); // we do CAS right after that
-
-        self.top
-            .cas::<REC>(top, node, &mut try_push.insert, tid, guard, pool)
-            .map_err(|_| TryFail)
-    }
-
-    /// Pop
-    pub fn pop<const REC: bool>(
-        &self,
-        pop: &mut Pop<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> Option<T> {
-        if let Ok(ret) = self.try_pop::<REC>(&mut pop.try_pop, tid, guard, pool) {
-            return ret;
-        }
-
-        let backoff = Backoff::default();
-        loop {
-            backoff.snooze();
-            if let Ok(ret) = self.try_pop::<false>(&mut pop.try_pop, tid, guard, pool) {
-                return ret;
-            }
-        }
-    }
-
     /// Try pop
     pub fn try_pop<const REC: bool>(
         &self,
@@ -305,6 +284,27 @@ impl<T: Clone> TreiberStack<T> {
                 Some(top_ref.data.clone())
             })
             .map_err(|_| TryFail)
+    }
+
+    /// Pop
+    pub fn pop<const REC: bool>(
+        &self,
+        pop: &mut Pop<T>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Option<T> {
+        if let Ok(ret) = self.try_pop::<REC>(&mut pop.try_pop, tid, guard, pool) {
+            return ret;
+        }
+
+        let backoff = Backoff::default();
+        loop {
+            backoff.snooze();
+            if let Ok(ret) = self.try_pop::<false>(&mut pop.try_pop, tid, guard, pool) {
+                return ret;
+            }
+        }
     }
 }
 
@@ -352,10 +352,10 @@ mod tests {
     #[test]
     fn push_pop() {
         const FILE_NAME: &str = "treiber_push_pop.pool";
-        run_test::<
-            TestRootObj<TreiberStack<usize>>,
-            PushPop<TreiberStack<usize>, NR_THREAD, COUNT>,
-            _,
-        >(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<TestRootObj<TreiberStack<usize>>, PushPop<_, NR_THREAD, COUNT>, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
     }
 }
