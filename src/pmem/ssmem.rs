@@ -13,6 +13,8 @@ use std::{
     ptr::{null, null_mut},
 };
 
+use crate::pmem::prefetchw;
+
 use super::{clflush, PoolHandle};
 
 /* ****************************************************************************************
@@ -290,7 +292,7 @@ pub fn ssmem_alloc(
         // fs.set[fs.curr-1]에 저장되어있는 collect된 obj 주소를 가져옴 (TODO: rust에선 이렇게 하는 게 맞나 확인)
         cs_ref.curr -= 1;
         m = unsafe { *(cs_ref.set.offset(cs_ref.curr as isize)) as *mut _ };
-        todo!("PREFETCHW(m)");
+        prefetchw(m);
 
         // collected set에 남은 재사용가능 obj가 없으면,
         // 이를 free set으로 재사용 할 수 있게 available list에 넣음
