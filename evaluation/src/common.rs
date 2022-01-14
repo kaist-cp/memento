@@ -99,8 +99,8 @@ fn pick(prob: u32) -> bool {
 // 우리의 pool API로 만든 테스트 로직 실행
 fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
-    O: PDefault + Send + Sync,
-    M: for<'o> Memento<Object<'o> = &'o O, Input<'o> = ()> + Send + Sync,
+    O: RootObj<M> + Send + Sync,
+    M: Collectable + Default + Send + Sync,
 {
     let _ = Pool::remove(filepath);
 
@@ -183,8 +183,8 @@ pub mod queue {
         type EnqInput;
         type DeqInput;
 
-        fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &'static PoolHandle);
-        fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle);
+        fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle);
+        fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle);
     }
 
     pub fn enq_deq_prob<Q: TestQueue>(
@@ -193,7 +193,7 @@ pub mod queue {
         deq: Q::DeqInput,
         prob: u32,
         guard: &Guard,
-        pool: &'static PoolHandle,
+        pool: &PoolHandle,
     ) {
         if pick(prob) {
             q.enqueue(enq, guard, pool);
@@ -207,7 +207,7 @@ pub mod queue {
         enq: Q::EnqInput,
         deq: Q::DeqInput,
         guard: &Guard,
-        pool: &'static PoolHandle,
+        pool: &PoolHandle,
     ) {
         q.enqueue(enq, guard, pool);
         q.dequeue(deq, guard, pool);
@@ -216,12 +216,16 @@ pub mod queue {
     pub fn bench_queue(opt: &Opt, target: TestTarget) -> usize {
         match target {
             TestTarget::MementoQueue(kind) => match kind {
-                TestKind::QueuePair => {
-                    get_nops::<TestMementoQueue, MementoQueueEnqDeqPair>(&opt.filepath, opt.threads)
-                }
+                TestKind::QueuePair => get_nops::<TestMementoQueue, TestMementoQueueEnqDeq<true>>(
+                    &opt.filepath,
+                    opt.threads,
+                ),
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
-                    get_nops::<TestMementoQueue, MementoQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                    get_nops::<TestMementoQueue, TestMementoQueueEnqDeq<false>>(
+                        &opt.filepath,
+                        opt.threads,
+                    )
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
