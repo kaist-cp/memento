@@ -258,11 +258,11 @@ pub mod queue {
             },
             TestTarget::FriedmanLogQueue(kind) => match kind {
                 TestKind::QueuePair => {
-                    get_nops::<TestLogQueue, LogQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                    get_nops::<TestLogQueue, TestLogQueueEnqDeq<true>>(&opt.filepath, opt.threads)
                 }
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
-                    get_nops::<TestLogQueue, LogQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                    get_nops::<TestLogQueue, TestLogQueueEnqDeq<false>>(&opt.filepath, opt.threads)
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },

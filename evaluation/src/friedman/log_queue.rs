@@ -76,7 +76,7 @@ impl<T: Clone> Collectable for LogQueue<T> {
 }
 
 impl<T: Clone> PDefault for LogQueue<T> {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
@@ -90,14 +90,7 @@ impl<T: Clone> PDefault for LogQueue<T> {
 }
 
 impl<T: Clone> LogQueue<T> {
-    fn enqueue(
-        &self,
-        val: T,
-        tid: usize,
-        op_num: &mut usize,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) {
+    fn enqueue(&self, val: T, tid: usize, op_num: &mut usize, guard: &Guard, pool: &PoolHandle) {
         // NOTE: Log 큐의 하자 (1/2)
         // - 우리 큐: enq할 노드만 새롭게 할당 & persist함
         // - Log 큐: enq할 노드 뿐 아니라 enq log 또한 할당하고 persist함
@@ -165,7 +158,7 @@ impl<T: Clone> LogQueue<T> {
         }
     }
 
-    fn dequeue(&self, tid: usize, op_num: &mut usize, guard: &Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, tid: usize, op_num: &mut usize, guard: &Guard, pool: &PoolHandle) {
         // NOTE: Log 큐의 하자 (2/2)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Log 큐: deq 로그 할당 및 persist
@@ -280,21 +273,16 @@ impl<T: Clone> LogQueue<T> {
 }
 
 impl<T: Clone> TestQueue for LogQueue<T> {
-    type EnqInput = (T, usize, &'static mut usize); // input, tid, op_num
+    type EnqInput = (T, usize, &'static mut usize); // value, tid, op_num
     type DeqInput = (usize, &'static mut usize); // tid, op_num
 
-    fn enqueue(
-        &self,
-        (input, tid, op_num): Self::EnqInput,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) {
+    fn enqueue(&self, (input, tid, op_num): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         self.enqueue(input, tid, op_num, guard, pool);
         *op_num += 1;
         persist_obj(op_num, true);
     }
 
-    fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         self.dequeue(tid, op_num, guard, pool);
         *op_num += 1;
         persist_obj(op_num, true);
@@ -313,7 +301,7 @@ impl Collectable for TestLogQueue {
 }
 
 impl PDefault for TestLogQueue {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         let queue = LogQueue::pdefault(pool);
         let guard = epoch::pin();
 
@@ -325,115 +313,53 @@ impl PDefault for TestLogQueue {
     }
 }
 
-// TODO: 모든 큐의 실험 로직이 통합되어야 함
+impl TestNOps for TestLogQueue {}
+
 #[derive(Default, Debug)]
-pub struct LogQueueEnqDeqPair {
+pub struct TestLogQueueEnqDeq<const PAIR: bool> {
     /// unique operation number
     op_num: CachePadded<usize>,
 }
 
-impl Collectable for LogQueueEnqDeqPair {
+impl<const PAIR: bool> Collectable for TestLogQueueEnqDeq<PAIR> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl TestNOps for LogQueueEnqDeqPair {}
-
-impl Memento for LogQueueEnqDeqPair {
-    type Object<'o> = &'o TestLogQueue;
-    type Input<'o> = ();
-    type Output<'o> = ();
-    type Error<'o> = ();
-
-    fn run<'o>(
-        &'o mut self,
-        queue: Self::Object<'o>,
-        _: Self::Input<'o>,
-        tid: usize,
-        _: bool,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
-        let q = &queue.queue;
-        let duration = unsafe { DURATION };
-
-        let ops = self.test_nops(
-            &|tid, guard| {
-                // TODO: 더 깔끔하게 op_num의 ref 전달
-                let op_num = unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
-                let op_num_same =
-                    unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
-                let enq_input = (tid, tid, op_num);
-                let deq_input = (tid, op_num_same);
-                enq_deq_pair(q, enq_input, deq_input, guard, pool);
-            },
-            tid,
-            duration,
-            guard,
-        );
-        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-        Ok(())
-    }
-
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-}
-
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
-#[derive(Default, Debug)]
-pub struct LogQueueEnqDeqProb {
-    /// unique operation number
-    op_num: CachePadded<usize>,
-}
-
-impl Collectable for LogQueueEnqDeqProb {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
-        todo!()
-    }
-}
-
-impl TestNOps for LogQueueEnqDeqProb {}
-
-impl Memento for LogQueueEnqDeqProb {
-    type Object<'o> = &'o TestLogQueue;
-    type Input<'o> = ();
-    type Output<'o> = ();
-    type Error<'o> = ();
-
-    fn run<'o>(
-        &'o mut self,
-        queue: Self::Object<'o>,
-        _: Self::Input<'o>,
+impl<const PAIR: bool> RootObj<TestLogQueueEnqDeq<PAIR>> for TestLogQueue {
+    fn run(
+        &self,
+        mmt: &mut TestLogQueueEnqDeq<PAIR>,
         tid: usize,
-        _: bool,
         guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
-        let q = &queue.queue;
+        pool: &PoolHandle,
+    ) {
+        let q = &self.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
 
         let ops = self.test_nops(
             &|tid, guard| {
                 // TODO: 더 깔끔하게 op_num의 ref 전달
-                let op_num = unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
+                let op_num = unsafe { (&*mmt.op_num as *const _ as *mut usize).as_mut() }.unwrap();
                 let op_num_same =
-                    unsafe { (&*self.op_num as *const _ as *mut usize).as_mut() }.unwrap();
+                    unsafe { (&*mmt.op_num as *const _ as *mut usize).as_mut() }.unwrap();
                 let enq_input = (tid, tid, op_num);
                 let deq_input = (tid, op_num_same);
-                enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+
+                if PAIR {
+                    enq_deq_pair(q, enq_input, deq_input, guard, pool);
+                } else {
+                    enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+                }
             },
             tid,
             duration,
             guard,
         );
-        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-        Ok(())
-    }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-        // no-op
+        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
     }
 }
