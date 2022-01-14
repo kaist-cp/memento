@@ -4,7 +4,7 @@ use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo::{self, Delete, SMOAtomic};
 use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertError, Traversable};
 use core::sync::atomic::Ordering;
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::CachePadded;
 use etrace::{ok_or, some_or};
 use smo::{DeleteMode, Insert};
 use std::mem::MaybeUninit;
@@ -345,9 +345,7 @@ impl<T: Clone> Queue<T> {
             return;
         }
 
-        // let backoff = Backoff::default();
         loop {
-            // backoff.snooze();
             if self
                 .try_enqueue::<false>(node, &mut enq.try_enq, guard, pool)
                 .is_ok()
@@ -418,9 +416,7 @@ impl<T: Clone> Queue<T> {
             return ret;
         }
 
-        // let backoff = Backoff::default();
         loop {
-            // backoff.snooze();
             if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
                 return ret;
             }

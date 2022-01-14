@@ -13,12 +13,12 @@ use crate::{
     list::{self, List},
     lock::RawLock,
     pepoch::{self as epoch, atomic::Pointer, Guard, PAtomic, POwned, PShared},
-    *,
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
+    *,
 };
 
 /// TicketLock은 1부터 시작. 0은 ticket이 없음을 표현하기 위해 예약됨.
@@ -242,10 +242,7 @@ impl TicketLock {
             };
         }
 
-        let backoff = Backoff::default();
-        while self.curr.load(Ordering::SeqCst) < m_ref.ticket {
-            backoff.snooze();
-        }
+        while self.curr.load(Ordering::SeqCst) < m_ref.ticket {}
 
         m_ref.ticket
     }
@@ -301,10 +298,7 @@ impl TicketLock {
             }
 
             // curr가 티켓에 도달할 때까지 기다림
-            let backoff = Backoff::default();
-            while lost > self.curr.load(Ordering::SeqCst) {
-                backoff.snooze();
-            }
+            while lost > self.curr.load(Ordering::SeqCst) {}
 
             // CAS로 잃어버린 티켓을 건너뛰게 해줌
             // 성공하면 잃어버린 티켓이 자기꺼였다고 간주하고 리턴

@@ -305,9 +305,7 @@ impl<T: Clone> QueueGeneral<T> {
             return;
         }
 
-        // let backoff = Backoff::default();
         loop {
-            // backoff.snooze();
             if self
                 .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
                 .is_ok()
@@ -373,9 +371,7 @@ impl<T: Clone> QueueGeneral<T> {
             return ret;
         }
 
-        // let backoff = Backoff::default();
         loop {
-            // backoff.snooze();
             if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
                 return ret;
             }

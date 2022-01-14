@@ -306,9 +306,7 @@ impl<T: Clone> Exchanger<T> {
             return ret;
         }
 
-        let backoff = Backoff::default();
         loop {
-            backoff.snooze();
             if let Ok(ret) = self.try_exchange::<false>(
                 value.clone(),
                 cond,

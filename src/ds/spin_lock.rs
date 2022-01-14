@@ -139,9 +139,7 @@ impl SpinLock {
             return;
         }
 
-        let backoff = Backoff::default();
         loop {
-            backoff.snooze();
             if self.try_lock::<REC>(&mut lock.try_lock, pool).is_ok() {
                 return;
             }

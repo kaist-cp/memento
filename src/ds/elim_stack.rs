@@ -294,9 +294,7 @@ impl<T: Clone> ElimStack<T> {
             return;
         }
 
-        let backoff = Backoff::default();
         loop {
-            backoff.snooze();
             if self
                 .try_push::<false>(node, &mut push.try_push, tid, guard, pool)
                 .is_ok()
@@ -358,9 +356,7 @@ impl<T: Clone> ElimStack<T> {
             return ret;
         }
 
-        let backoff = Backoff::default();
         loop {
-            backoff.snooze();
             if let Ok(ret) = self.try_pop::<false>(&mut pop.try_pop, tid, guard, pool) {
                 return ret;
             }
