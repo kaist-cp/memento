@@ -3,5 +3,5 @@
 mod durable_queue;
 mod log_queue;
 
-pub use durable_queue::{DurableQueueEnqDeqPair, DurableQueueEnqDeqProb, TestDurableQueue};
-pub use log_queue::{LogQueueEnqDeqPair, LogQueueEnqDeqProb, TestLogQueue};
+pub use durable_queue::*;
+pub use log_queue::*;

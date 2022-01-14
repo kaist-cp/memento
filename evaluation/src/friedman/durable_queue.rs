@@ -50,7 +50,7 @@ impl<T: Clone> Collectable for DurableQueue<T> {
 }
 
 impl<T: Clone> PDefault for DurableQueue<T> {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
@@ -64,7 +64,7 @@ impl<T: Clone> PDefault for DurableQueue<T> {
 }
 
 impl<T: Clone> DurableQueue<T> {
-    fn enqueue(&self, val: T, guard: &Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, val: T, guard: &Guard, pool: &PoolHandle) {
         let node = POwned::new(Node::new(val), pool).into_shared(guard);
         persist_obj(unsafe { node.deref(pool) }, true);
 
@@ -104,7 +104,7 @@ impl<T: Clone> DurableQueue<T> {
         }
     }
 
-    fn dequeue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, tid: usize, guard: &Guard, pool: &PoolHandle) {
         // NOTE: Durable 큐의 하자 (1/1)
         // - 우리 큐: deq에서 새롭게 할당하는 것 없음
         // - Durable 큐: deq한 값을 가리킬 포인터 할당 및 persist
@@ -205,14 +205,14 @@ impl<T: Clone> DurableQueue<T> {
 }
 
 impl<T: Clone> TestQueue for DurableQueue<T> {
-    type EnqInput = T; // input
+    type EnqInput = T; // value
     type DeqInput = usize; // tid
 
-    fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         self.enqueue(input, guard, pool);
     }
 
-    fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         self.dequeue(tid, guard, pool);
     }
 }
@@ -229,7 +229,7 @@ impl Collectable for TestDurableQueue {
 }
 
 impl PDefault for TestDurableQueue {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         let queue = DurableQueue::pdefault(pool);
         let guard = epoch::pin();
 
@@ -241,83 +241,27 @@ impl PDefault for TestDurableQueue {
     }
 }
 
-// TODO: 모든 큐의 실험 로직이 통합되어야 함
-#[derive(Default, Debug)]
-pub struct DurableQueueEnqDeqPair;
+impl TestNOps for TestDurableQueue {}
 
-impl Collectable for DurableQueueEnqDeqPair {
+#[derive(Default, Debug)]
+pub struct TestDurableQueueEnqDeq<const PAIR: bool> {}
+
+impl<const PAIR: bool> Collectable for TestDurableQueueEnqDeq<PAIR> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl TestNOps for DurableQueueEnqDeqPair {}
-
-impl Memento for DurableQueueEnqDeqPair {
-    type Object<'o> = &'o TestDurableQueue;
-    type Input<'o> = ();
-    type Output<'o> = ();
-    type Error<'o> = ();
-
-    fn run<'o>(
-        &'o mut self,
-        queue: Self::Object<'o>,
-        _: Self::Input<'o>,
-        tid: usize,
-        _: bool,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
-        let q = &queue.queue;
-        let duration = unsafe { DURATION };
-
-        let ops = self.test_nops(
-            &|tid, guard| {
-                let enq_input = tid;
-                let deq_input = tid;
-                enq_deq_pair(q, enq_input, deq_input, guard, pool);
-            },
-            tid,
-            duration,
-            guard,
-        );
-        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-        Ok(())
-    }
-
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-}
-
 // TODO: 모든 큐의 실험 로직이 통합되어야 함
-#[derive(Default, Debug)]
-pub struct DurableQueueEnqDeqProb;
-
-impl Collectable for DurableQueueEnqDeqProb {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
-        todo!()
-    }
-}
-
-impl TestNOps for DurableQueueEnqDeqProb {}
-
-impl Memento for DurableQueueEnqDeqProb {
-    type Object<'o> = &'o TestDurableQueue;
-    type Input<'o> = ();
-    type Output<'o> = ();
-    type Error<'o> = ();
-
-    fn run<'o>(
-        &'o mut self,
-        queue: Self::Object<'o>,
-        _: Self::Input<'o>,
+impl<const PAIR: bool> RootObj<TestDurableQueueEnqDeq<PAIR>> for TestDurableQueue {
+    fn run(
+        &self,
+        _: &mut TestDurableQueueEnqDeq<PAIR>,
         tid: usize,
-        _: bool,
         guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
-        let q = &queue.queue;
+        pool: &PoolHandle,
+    ) {
+        let q = &self.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
 
@@ -325,7 +269,12 @@ impl Memento for DurableQueueEnqDeqProb {
             &|tid, guard| {
                 let enq_input = tid;
                 let deq_input = tid;
-                enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+
+                if PAIR {
+                    enq_deq_pair(q, enq_input, deq_input, guard, pool);
+                } else {
+                    enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+                }
             },
             tid,
             duration,
@@ -333,11 +282,5 @@ impl Memento for DurableQueueEnqDeqProb {
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-
-        Ok(())
-    }
-
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-        // no-op
     }
 }

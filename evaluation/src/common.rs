@@ -160,20 +160,10 @@ pub mod queue {
 
     use crate::{
         common::{get_nops, PROB},
-        compositional_pobj::{MementoQueueEnqDeqPair, MementoQueueEnqDeqProb, TestMementoQueue},
-        compositional_pobj::{
-            MementoQueueGeneralEnqDeqPair, MementoQueueGeneralEnqDeqProb, TestMementoQueueGeneral,
-        },
-        crndm::{TestCrndmQueue, P},
-        // compositional_pobj::{
-        //     MementoQueueUnOptEnqDeqPair, MementoQueueUnOptEnqDeqProb, TestMementoQueueUnOpt,
-        // },
-        // compositional_pobj::{
-        //     MementoPipeQueueEnqDeqPair, MementoPipeQueueEnqDeqProb, TestPipeQueue,
-        // },
-        dss::{DSSQueueEnqDeqPair, DSSQueueEnqDeqProb, TestDSSQueue},
-        friedman::{DurableQueueEnqDeqPair, DurableQueueEnqDeqProb, TestDurableQueue},
-        friedman::{LogQueueEnqDeqPair, LogQueueEnqDeqProb, TestLogQueue},
+        compositional_pobj::*,
+        crndm::*,
+        dss::*,
+        friedman::*,
     };
 
     use super::{pick, Opt, TestKind, TestTarget};
@@ -245,28 +235,24 @@ pub mod queue {
             TestTarget::MementoPipeQueue(kind) => match kind {
                 TestKind::QueuePair => {
                     todo!()
-                    // get_nops::<TestPipeQueue, MementoPipeQueueEnqDeqPair>(
-                    //     &opt.filepath,
-                    //     opt.threads,
-                    // ),
                 }
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
                     todo!()
-                    // get_nops::<TestPipeQueue, MementoPipeQueueEnqDeqProb>(
-                    //     &opt.filepath,
-                    //     opt.threads,
-                    // )
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
             TestTarget::FriedmanDurableQueue(kind) => match kind {
-                TestKind::QueuePair => {
-                    get_nops::<TestDurableQueue, DurableQueueEnqDeqPair>(&opt.filepath, opt.threads)
-                }
+                TestKind::QueuePair => get_nops::<TestDurableQueue, TestDurableQueueEnqDeq<true>>(
+                    &opt.filepath,
+                    opt.threads,
+                ),
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
-                    get_nops::<TestDurableQueue, DurableQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                    get_nops::<TestDurableQueue, TestDurableQueueEnqDeq<false>>(
+                        &opt.filepath,
+                        opt.threads,
+                    )
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
