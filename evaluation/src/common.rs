@@ -268,11 +268,11 @@ pub mod queue {
             },
             TestTarget::DSSQueue(kind) => match kind {
                 TestKind::QueuePair => {
-                    get_nops::<TestDSSQueue, DSSQueueEnqDeqPair>(&opt.filepath, opt.threads)
+                    get_nops::<TestDSSQueue, TestDSSQueueEnqDeq<true>>(&opt.filepath, opt.threads)
                 }
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
-                    get_nops::<TestDSSQueue, DSSQueueEnqDeqProb>(&opt.filepath, opt.threads)
+                    get_nops::<TestDSSQueue, TestDSSQueueEnqDeq<false>>(&opt.filepath, opt.threads)
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },

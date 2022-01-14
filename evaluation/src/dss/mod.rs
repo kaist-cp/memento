@@ -2,4 +2,4 @@
 
 mod queue;
 
-pub use queue::{DSSQueueEnqDeqPair, DSSQueueEnqDeqProb, TestDSSQueue};
+pub use queue::*;

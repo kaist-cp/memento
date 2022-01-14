@@ -77,7 +77,7 @@ enum _OpResolved {
 }
 
 #[derive(Debug)]
-struct DSSQueue<T: Clone> {
+pub struct DSSQueue<T: Clone> {
     head: CachePadded<PAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
     x: [CachePadded<PAtomic<Node<T>>>; MAX_THREADS],
@@ -90,7 +90,7 @@ impl<T: Clone> Collectable for DSSQueue<T> {
 }
 
 impl<T: Clone> PDefault for DSSQueue<T> {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
@@ -104,14 +104,14 @@ impl<T: Clone> PDefault for DSSQueue<T> {
 }
 
 impl<T: Clone> DSSQueue<T> {
-    fn prep_enqueue(&self, val: T, tid: usize, pool: &'static PoolHandle) {
+    fn prep_enqueue(&self, val: T, tid: usize, pool: &PoolHandle) {
         let node = POwned::new(Node::new(val), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
         self.x[tid].store(node.with_tag(ENQ_PREP_TAG), Ordering::Relaxed);
         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
-    fn exec_enqueue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) {
+    fn exec_enqueue(&self, tid: usize, guard: &Guard, pool: &PoolHandle) {
         let node = self.x[tid].load(Ordering::Relaxed, guard);
 
         loop {
@@ -191,7 +191,7 @@ impl<T: Clone> DSSQueue<T> {
         persist_obj(&*self.x[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
     }
 
-    fn exec_dequeue(&self, tid: usize, guard: &Guard, pool: &'static PoolHandle) -> Option<T> {
+    fn exec_dequeue(&self, tid: usize, guard: &Guard, pool: &PoolHandle) -> Option<T> {
         loop {
             let first = self.head.load(Ordering::SeqCst, guard);
             let last = self.tail.load(Ordering::SeqCst, guard);
@@ -314,10 +314,10 @@ impl<T: Clone> DSSQueue<T> {
 }
 
 impl<T: Clone> TestQueue for DSSQueue<T> {
-    type EnqInput = (T, usize); // input, tid
+    type EnqInput = (T, usize); // value, tid
     type DeqInput = usize; // tid
 
-    fn enqueue(&self, (input, tid): Self::EnqInput, guard: &Guard, pool: &'static PoolHandle) {
+    fn enqueue(&self, (input, tid): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_enqueue(input, tid, pool);
         self.exec_enqueue(tid, guard, pool);
@@ -325,7 +325,7 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
         // 다음 prep으로 x[tid]를 덮어씌우더라도 여기서 x[tid]가 가리키는 노드는 free하면 안됨. 이미 enq된 노드임
     }
 
-    fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &'static PoolHandle) {
+    fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_dequeue(tid);
         let val = self.exec_dequeue(tid, guard, pool);
@@ -347,12 +347,12 @@ pub struct TestDSSQueue {
 
 impl Collectable for TestDSSQueue {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
-        todo!()
+        // no-op
     }
 }
 
 impl PDefault for TestDSSQueue {
-    fn pdefault(pool: &'static PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         let queue = DSSQueue::pdefault(pool);
         let guard = epoch::pin();
 
@@ -365,81 +365,20 @@ impl PDefault for TestDSSQueue {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct DSSQueueEnqDeqPair;
+impl TestNOps for TestDSSQueue {}
 
-impl Collectable for DSSQueueEnqDeqPair {
+#[derive(Default, Debug)]
+pub struct TestDSSQueueEnqDeq<const PAIR: bool> {}
+
+impl<const PAIR: bool> Collectable for TestDSSQueueEnqDeq<PAIR> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
-impl TestNOps for DSSQueueEnqDeqPair {}
-
-impl Memento for DSSQueueEnqDeqPair {
-    type Object<'o> = &'o TestDSSQueue;
-    type Input<'o> = ();
-    type Output<'o> = ();
-    type Error<'o> = ();
-
-    fn run<'o>(
-        &'o mut self,
-        queue: Self::Object<'o>,
-        _: Self::Input<'o>,
-        tid: usize,
-        _: bool,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
-        let q = &queue.queue;
-        let duration = unsafe { DURATION };
-
-        let ops = self.test_nops(
-            &|tid, guard| {
-                let enq_input = (tid, tid);
-                let deq_input = tid;
-                enq_deq_pair(q, enq_input, deq_input, guard, pool);
-            },
-            tid,
-            duration,
-            guard,
-        );
-        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-        Ok(())
-    }
-
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-        // no-op
-    }
-}
-
-#[derive(Default, Debug)]
-pub struct DSSQueueEnqDeqProb;
-
-impl Collectable for DSSQueueEnqDeqProb {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
-        todo!()
-    }
-}
-
-impl TestNOps for DSSQueueEnqDeqProb {}
-
-impl Memento for DSSQueueEnqDeqProb {
-    type Object<'o> = &'o TestDSSQueue;
-    type Input<'o> = ();
-    type Output<'o> = ();
-    type Error<'o> = ();
-
-    fn run<'o>(
-        &'o mut self,
-        queue: Self::Object<'o>,
-        _: Self::Input<'o>,
-        tid: usize,
-        _: bool,
-        guard: &Guard,
-        pool: &'static PoolHandle,
-    ) -> Result<Self::Output<'o>, Self::Error<'_>> {
-        let q = &queue.queue;
+impl<const PAIR: bool> RootObj<TestDSSQueueEnqDeq<PAIR>> for TestDSSQueue {
+    fn run(&self, _: &mut TestDSSQueueEnqDeq<PAIR>, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        let q = &self.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
 
@@ -447,17 +386,18 @@ impl Memento for DSSQueueEnqDeqProb {
             &|tid, guard| {
                 let enq_input = (tid, tid);
                 let deq_input = tid;
-                enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+
+                if PAIR {
+                    enq_deq_pair(q, enq_input, deq_input, guard, pool);
+                } else {
+                    enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+                }
             },
             tid,
             duration,
             guard,
         );
-        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
-        Ok(())
-    }
 
-    fn reset(&mut self, _: &Guard, _: &'static PoolHandle) {
-        // no-op
+        let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
     }
 }
