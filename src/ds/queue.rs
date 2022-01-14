@@ -365,9 +365,9 @@ impl<T: Clone> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let head = self.head.load(Ordering::SeqCst, guard);
+        let head = self.head.load_helping(guard, pool).unwrap();
         let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard);
+        let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
         let tail = self.tail.load(Ordering::SeqCst, guard);
 
         let chk = ok_or!(
