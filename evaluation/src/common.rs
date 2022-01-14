@@ -1,8 +1,7 @@
 //! Abstraction for evaluation
 
 use crossbeam_epoch::Guard;
-use memento::pmem::Pool;
-use memento::{Memento, PDefault};
+use memento::pmem::{Collectable, Pool, RootObj};
 use rand::Rng;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -232,11 +231,11 @@ pub mod queue {
             TestTarget::MementoQueueGeneral(kind) => match kind {
                 TestKind::QueuePair => get_nops::<
                     TestMementoQueueGeneral,
-                    MementoQueueGeneralEnqDeqPair,
+                    TestMementoQueueGeneralEnqDeq<true>,
                 >(&opt.filepath, opt.threads),
                 TestKind::QueueProb(prob) => {
                     unsafe { PROB = prob };
-                    get_nops::<TestMementoQueueGeneral, MementoQueueGeneralEnqDeqProb>(
+                    get_nops::<TestMementoQueueGeneral, TestMementoQueueGeneralEnqDeq<false>>(
                         &opt.filepath,
                         opt.threads,
                     )
