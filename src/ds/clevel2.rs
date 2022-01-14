@@ -9,9 +9,6 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::borrow::BorrowMut;
-use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 
 use cfg_if::cfg_if;
@@ -24,6 +21,7 @@ use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
+use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
@@ -69,6 +67,7 @@ fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
     let hash = hasher.finish() as usize;
 
     let tag = hash.rotate_left(16) as u16;
+    let tag = cut_as_high_tag_len(tag as usize) as u16;
     let left = hash as u32;
     let right = hash.rotate_right(32) as u32;
 
@@ -120,13 +119,44 @@ struct Context<K, V> {
     resize_size: usize,
 }
 
+/// TODO(doc)
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct ClevelInner<K, V> {
+pub struct ClevelInner<K, V> {
     context: PAtomic<Context<K, V>>,
 
     #[derivative(Debug = "ignore")]
     add_level_lock: RawMutexImpl,
+}
+
+impl<K, V> Collectable for ClevelInner<K, V> {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<K, V> PDefault for ClevelInner<K, V> {
+    fn pdefault(pool: &PoolHandle) -> Self {
+        let guard = unsafe { unprotected() }; // SAFE for initialization
+
+        let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
+        let last_level = new_node(MIN_SIZE, pool);
+        let last_level_ref = unsafe { last_level.deref(pool) };
+        last_level_ref.next.store(first_level, Ordering::Relaxed);
+        // persist_obj(&last_level_ref.next, true); // TODO(opt): false
+
+        ClevelInner {
+            context: PAtomic::new(
+                Context {
+                    first_level: first_level.into(),
+                    last_level: last_level.into(),
+                    resize_size: 0,
+                },
+                pool,
+            ),
+            add_level_lock: RawMutexImpl::INIT, // TODO: use our spinlock
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -136,25 +166,37 @@ pub struct Clevel<K, V> {
 }
 
 #[derive(Debug)]
-pub struct ClevelResize<K, V> {
-    inner: Arc<ClevelInner<K, V>>,
+pub struct ClevelResize<'a, K, V> {
+    inner: &'a ClevelInner<K, V>,
     resize_recv: mpsc::Receiver<()>,
+}
+
+impl<'a, K: PartialEq + Hash, V> ClevelResize<'a, K, V> {
+    pub fn resize_loop(&self, guard: &mut Guard, pool: &PoolHandle) {
+        println!("[resize loop] start loop");
+        while let Ok(()) = self.resize_recv.recv() {
+            println!("[resize_loop] do resize!");
+            self.inner.resize(guard, pool);
+            guard.repin_after(|| {});
+        }
+    }
 }
 
 #[derive(Debug)]
 struct FindResult<'g, K, V> {
     /// level's size
     size: usize,
-    bucket_index: usize,
+    _bucket_index: usize,
     slot: &'g PAtomic<Slot<K, V>>,
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
 
 impl<'g, K, V> Default for FindResult<'g, K, V> {
+    #[allow(deref_nullptr)]
     fn default() -> Self {
         Self {
             size: 0,
-            bucket_index: 0,
+            _bucket_index: 0,
             slot: unsafe { &*ptr::null() },
             slot_ptr: PShared::null(),
         }
@@ -237,7 +279,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
 
                     return Ok(Some(FindResult {
                         size,
-                        bucket_index: key_hash,
+                        _bucket_index: key_hash,
                         slot,
                         slot_ptr,
                     }));
@@ -292,7 +334,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
 
                     found.push(FindResult {
                         size,
-                        bucket_index: key_hash,
+                        _bucket_index: key_hash,
                         slot,
                         slot_ptr,
                     });
@@ -522,7 +564,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
             // if we don't need to resize, break out.
             println!(
-                "[reisze] resize_size: {}, last_level_size: {}",
+                "[resize] resize_size: {}, last_level_size: {}",
                 context_ref.resize_size, last_level_size
             );
             if context_ref.resize_size < last_level_size {
@@ -782,9 +824,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn insert_inner<'g>(
+    fn insert_inner2<'g>(
         &'g self,
-        tid: usize,
+        _tid: usize,
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
@@ -827,7 +869,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                     ) {
                         return Ok(FindResult {
                             size,
-                            bucket_index: key_hash,
+                            _bucket_index: key_hash,
                             slot,
                             slot_ptr,
                         });
@@ -847,37 +889,37 @@ pub enum InsertError {
     Occupied,
 }
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
-    pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
-        let guard = unsafe { unprotected() };
+impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
+    // pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
+    //     let guard = unsafe { unprotected() };
 
-        let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
-        let last_level = new_node(MIN_SIZE, pool);
-        let last_level_ref = unsafe { last_level.deref(pool) };
-        last_level_ref.next.store(first_level, Ordering::Relaxed);
-        let inner = Arc::new(ClevelInner {
-            context: PAtomic::new(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: last_level.into(),
-                    resize_size: 0,
-                },
-                pool,
-            ),
-            add_level_lock: RawMutexImpl::INIT,
-        });
-        let (resize_send, resize_recv) = mpsc::channel();
-        (
-            Self {
-                inner: inner.clone(),
-                resize_send,
-            },
-            ClevelResize { inner, resize_recv },
-        )
-    }
+    //     let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
+    //     let last_level = new_node(MIN_SIZE, pool);
+    //     let last_level_ref = unsafe { last_level.deref(pool) };
+    //     last_level_ref.next.store(first_level, Ordering::Relaxed);
+    //     let inner = Arc::new(ClevelInner {
+    //         context: PAtomic::new(
+    //             Context {
+    //                 first_level: first_level.into(),
+    //                 last_level: last_level.into(),
+    //                 resize_size: 0,
+    //             },
+    //             pool,
+    //         ),
+    //         add_level_lock: RawMutexImpl::INIT,
+    //     });
+    //     let (resize_send, resize_recv) = mpsc::channel();
+    //     (
+    //         Self {
+    //             inner: inner.clone(),
+    //             resize_send,
+    //         },
+    //         ClevelResize { inner, resize_recv },
+    //     )
+    // }
 
     pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
-        let context = self.inner.context.load(Ordering::Acquire, guard);
+        let context = self.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
@@ -902,7 +944,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
 
     pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Option<&'g V> {
         let (key_tag, key_hashes) = hashes(key);
-        let (_, find_result) = self.inner.find_fast(key, key_tag, key_hashes, guard, pool);
+        let (_, find_result) = self.find_fast(key, key_tag, key_hashes, guard, pool);
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
     }
 
@@ -912,14 +954,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         mut context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
+        sender: &mpsc::Sender<()>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         loop {
-            if let Ok(result) = self
-                .inner
-                .insert_inner(tid, context, slot, key_hashes, guard, pool)
-            {
+            if let Ok(result) = self.insert_inner2(tid, context, slot, key_hashes, guard, pool) {
                 return (context, result);
             }
 
@@ -928,9 +968,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             let context_ref = unsafe { context.deref(pool) };
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
-            let (context_new, added) = self.inner.add_level(context, first_level_ref, guard, pool);
+            let (context_new, added) = self.add_level(context, first_level_ref, guard, pool);
             if added {
-                let _ = self.resize_send.send(());
+                let _ = sender.send(());
             }
             context = context_new;
         }
@@ -942,6 +982,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         mut context: PShared<'g, Context<K, V>>,
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
+        sender: &mpsc::Sender<()>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
@@ -950,7 +991,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             fence(Ordering::SeqCst);
 
             // If the context remains the same, it's done.
-            let mut context_new = self.inner.context.load(Ordering::Acquire, guard);
+            let context_new = self.context.load(Ordering::Acquire, guard);
             if context == context_new {
                 return;
             }
@@ -989,6 +1030,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                 context_new,
                 insert_result.slot_ptr,
                 key_hashes,
+                sender,
                 guard,
                 pool,
             );
@@ -1005,6 +1047,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         tid: usize,
         key: K,
         value: V,
+        sender: &mpsc::Sender<()>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError>
@@ -1014,7 +1057,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         println!("[insert] tid: {tid} do insert");
         // println!("[insert] tid: {}, key: {}", tid, key);
         let (key_tag, key_hashes) = hashes(&key);
-        let (context, find_result) = self.inner.find(&key, key_tag, key_hashes, guard, pool);
+        let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
         if find_result.is_some() {
             return Err(InsertError::Occupied);
         }
@@ -1022,10 +1065,19 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         let slot = POwned::new(Slot { key, value }, pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
+        println!("{:?}", slot);
         // question: why `context_new` is created?
         let (context_new, insert_result) =
-            self.insert_inner(tid, context, slot, key_hashes, guard, pool);
-        self.move_if_resized(tid, context_new, insert_result, key_hashes, guard, pool);
+            self.insert_inner(tid, context, slot, key_hashes, sender, guard, pool);
+        self.move_if_resized(
+            tid,
+            context_new,
+            insert_result,
+            key_hashes,
+            sender,
+            guard,
+            pool,
+        );
         Ok(())
     }
 
@@ -1034,6 +1086,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         tid: usize,
         key: K,
         value: V,
+        sender: &mpsc::Sender<()>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), (K, V)>
@@ -1051,7 +1104,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         .with_high_tag(key_tag as usize);
 
         loop {
-            let (context, find_result) = self.inner.find(&key, key_tag, key_hashes, guard, pool);
+            let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
             let find_result = some_or!(find_result, {
                 let slot_ref = unsafe { slot_new.deref(pool) };
                 // TODO: 이렇게 k,v 리턴하면 안됨. 그냥 update 실패 리턴값 없애자
@@ -1074,7 +1127,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             unsafe {
                 guard.defer_pdestroy(find_result.slot_ptr);
             }
-            self.move_if_resized(tid, context, find_result, key_hashes, guard, pool);
+            self.move_if_resized(tid, context, find_result, key_hashes, sender, guard, pool);
             return Ok(());
         }
     }
@@ -1083,7 +1136,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         // println!("[delete] key: {}", key);
         let (key_tag, key_hashes) = hashes(&key);
         loop {
-            let (_, find_result) = self.inner.find(key, key_tag, key_hashes, guard, pool);
+            let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
             let find_result = some_or!(find_result, {
                 println!("[delete] suspicious...");
                 return;
@@ -1112,118 +1165,141 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     }
 }
 
-impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
-    pub fn resize_loop(&mut self, guard: &mut Guard, pool: &PoolHandle) {
-        println!("[resize loop] start loop");
-        while let Ok(()) = self.resize_recv.recv() {
-            println!("[resize_loop] do resize!");
-            self.inner.resize(guard, pool);
-            guard.repin_after(|| {});
+#[cfg(test)]
+mod tests {
+    use crate::{
+        pmem::RootObj,
+        test_utils::tests::{run_test, TestRootObj},
+    };
+
+    use crossbeam_epoch::pin;
+    use crossbeam_utils::thread;
+
+    use super::*;
+
+    struct Smoke {}
+
+    impl Default for Smoke {
+        fn default() -> Self {
+            Self {}
         }
     }
+
+    impl Collectable for Smoke {
+        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {}
+    }
+
+    impl RootObj<Smoke> for TestRootObj<ClevelInner<usize, usize>> {
+        fn run(&self, _mmt: &mut Smoke, _tid: usize, _guard: &Guard, pool: &PoolHandle) {
+            let kv = &self.obj;
+            let (send, recv) = mpsc::channel();
+
+            thread::scope(|s| {
+                // TODO(must): thread 분사는 execute에서 이루어지게끔... 다른 obj들의 test 처럼 tid로 분리
+                let _ = s.spawn(move |_| {
+                    let mut g = pin();
+                    let resize = ClevelResize {
+                        inner: kv,
+                        resize_recv: recv,
+                    };
+                    let _ = resize.resize_loop(&mut g, pool);
+                });
+
+                let guard = pin(); // TODO(must): use guard parameter
+
+                const RANGE: usize = 1usize << 8;
+
+                for i in 0..RANGE {
+                    let _ = kv.insert(0, i, i, &send, &guard, pool);
+                    assert_eq!(kv.search(&i, &guard, pool), Some(&i));
+
+                    let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
+                    assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+                }
+
+                for i in 0..RANGE {
+                    assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+                    kv.delete(&i, &guard, pool);
+                    assert_eq!(kv.search(&i, &guard, pool), None);
+                }
+
+                drop(send);
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn smoke() {
+        const FILE_NAME: &str = "clevel_smoke.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
+    }
+
+    // #[test]
+    // fn insert_search() {
+    //     thread::scope(|s| {
+    //         let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
+    //         let _ = s.spawn(move |_| {
+    //             let mut guard = pin();
+    //             kv_resize.resize_loop(&mut guard);
+    //         });
+
+    //         const THREADS: usize = 1usize << 4;
+    //         const RANGE: usize = 1usize << 6;
+    //         for tid in 0..THREADS {
+    //             let kv = kv.clone();
+    //             let _ = s.spawn(move |_| {
+    //                 let guard = pin();
+    //                 for i in 0..RANGE {
+    //                     // println!("[test] tid = {tid}, i = {i}, insert");
+    //                     let _ = kv.insert(tid, i, i, &guard);
+
+    //                     // println!("[test] tid = {tid}, i = {i}, search");
+    //                     if kv.search(&i, &guard) != Some(&i) {
+    //                         panic!("[test] tid = {tid} fail on {i}");
+    //                         // assert_eq!(kv.search(&i, &guard), Some(&i));
+    //                     }
+    //                 }
+    //             });
+    //         }
+    //     })
+    //     .unwrap();
+    // }
+
+    // #[test]
+    // fn insert_update_search() {
+    //     thread::scope(|s| {
+    //         let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
+    //         let _ = s.spawn(move |_| {
+    //             let mut guard = pin();
+    //             kv_resize.resize_loop(&mut guard);
+    //         });
+
+    //         const THREADS: usize = 1usize << 4;
+    //         const RANGE: usize = 1usize << 6;
+    //         for tid in 0..THREADS {
+    //             let kv = kv.clone();
+    //             let _ = s.spawn(move |_| {
+    //                 let guard = pin();
+    //                 for i in 0..RANGE {
+    //                     // println!("[test] tid = {tid}, i = {i}, insert");
+    //                     let _ = kv.insert(tid, i, i, &guard);
+
+    //                     // println!("[test] tid = {tid}, i = {i}, update");
+    //                     let _ = kv.insert(tid, i, i + RANGE, &guard);
+
+    //                     // println!("[test] tid = {tid}, i = {i}, search");
+    //                     if kv.search(&i, &guard) != Some(&i)
+    //                         && kv.search(&i, &guard) != Some(&(i + RANGE))
+    //                     {
+    //                         panic!("[test] tid = {tid} fail on {i}");
+    //                     }
+    //                 }
+    //             });
+    //         }
+    //     })
+    //     .unwrap();
+    // }
 }
-
-// TODO: 테스트도 컴파일시키기
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     use crossbeam_epoch::pin;
-//     use crossbeam_utils::thread;
-
-//     #[test]
-//     fn smoke() {
-//         thread::scope(|s| {
-//             let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
-//             let _ = s.spawn(move |_| {
-//                 let mut guard = pin();
-//                 kv_resize.resize_loop(&mut guard);
-//             });
-
-//             let guard = pin();
-
-//             const RANGE: usize = 1usize << 8;
-
-//             for i in 0..RANGE {
-//                 let _ = kv.insert(0, i, i, &guard);
-//                 assert_eq!(kv.search(&i, &guard), Some(&i));
-
-//                 let _ = kv.update(0, i, i + RANGE, &guard);
-//                 assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
-//             }
-
-//             for i in 0..RANGE {
-//                 assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
-//                 kv.delete(&i, &guard);
-//                 assert_eq!(kv.search(&i, &guard), None);
-//             }
-//         })
-//         .unwrap();
-//     }
-
-//     #[test]
-//     fn insert_search() {
-//         thread::scope(|s| {
-//             let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
-//             let _ = s.spawn(move |_| {
-//                 let mut guard = pin();
-//                 kv_resize.resize_loop(&mut guard);
-//             });
-
-//             const THREADS: usize = 1usize << 4;
-//             const RANGE: usize = 1usize << 6;
-//             for tid in 0..THREADS {
-//                 let kv = kv.clone();
-//                 let _ = s.spawn(move |_| {
-//                     let guard = pin();
-//                     for i in 0..RANGE {
-//                         // println!("[test] tid = {tid}, i = {i}, insert");
-//                         let _ = kv.insert(tid, i, i, &guard);
-
-//                         // println!("[test] tid = {tid}, i = {i}, search");
-//                         if kv.search(&i, &guard) != Some(&i) {
-//                             panic!("[test] tid = {tid} fail on {i}");
-//                             // assert_eq!(kv.search(&i, &guard), Some(&i));
-//                         }
-//                     }
-//                 });
-//             }
-//         })
-//         .unwrap();
-//     }
-
-//     #[test]
-//     fn insert_update_search() {
-//         thread::scope(|s| {
-//             let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
-//             let _ = s.spawn(move |_| {
-//                 let mut guard = pin();
-//                 kv_resize.resize_loop(&mut guard);
-//             });
-
-//             const THREADS: usize = 1usize << 4;
-//             const RANGE: usize = 1usize << 6;
-//             for tid in 0..THREADS {
-//                 let kv = kv.clone();
-//                 let _ = s.spawn(move |_| {
-//                     let guard = pin();
-//                     for i in 0..RANGE {
-//                         // println!("[test] tid = {tid}, i = {i}, insert");
-//                         let _ = kv.insert(tid, i, i, &guard);
-
-//                         // println!("[test] tid = {tid}, i = {i}, update");
-//                         let _ = kv.insert(tid, i, i + RANGE, &guard);
-
-//                         // println!("[test] tid = {tid}, i = {i}, search");
-//                         if kv.search(&i, &guard) != Some(&i)
-//                             && kv.search(&i, &guard) != Some(&(i + RANGE))
-//                         {
-//                             panic!("[test] tid = {tid} fail on {i}");
-//                         }
-//                     }
-//                 });
-//             }
-//         })
-//         .unwrap();
-//     }
-// }

@@ -135,6 +135,12 @@ const POS_HIGH_BITS: u32 = POS_TID_BITS + NR_TID_BITS;
 const NR_HIGH_BITS: u32 = 6;
 impl_left_bits!(high_bits, POS_HIGH_BITS, NR_HIGH_BITS);
 
+/// Cut as the length of high tag
+#[inline]
+pub fn cut_as_high_tag_len(raw: usize) -> usize {
+    raw & !(usize::MAX << NR_HIGH_BITS)
+}
+
 /// Returns a bitmask containing the unused least significant bits of an aligned pointer to `T`.
 #[inline]
 fn low_bits<T: ?Sized + Pointable>() -> usize {
