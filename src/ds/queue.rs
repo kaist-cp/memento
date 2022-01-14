@@ -189,6 +189,7 @@ impl<T: Clone> Collectable for Dequeue<T> {
 
 impl<T: Clone> Dequeue<T> {
     /// Reset Dequeue memento
+    #[inline]
     pub fn reset(&mut self) {
         self.try_deq.reset();
     }
