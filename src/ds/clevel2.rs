@@ -399,7 +399,7 @@ fn new_node<K, V>(
     size: usize,
     pool: &PoolHandle,
 ) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-    println!("[new_node] size: {size}");
+    // println!("[new_node] size: {size}");
 
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
@@ -536,7 +536,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 }
             );
 
-            println!("[add_level] next_level_size: {next_level_size}");
+            // println!("[add_level] next_level_size: {next_level_size}");
             break;
         }
 
@@ -545,7 +545,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
     }
 
     pub fn resize(&self, guard: &Guard, pool: &PoolHandle) {
-        println!("[resize]");
+        // println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let mut context_ref = unsafe { context.deref(pool) };
@@ -561,10 +561,10 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
             let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
-            println!(
-                "[resize] resize_size: {}, last_level_size: {}",
-                context_ref.resize_size, last_level_size
-            );
+            // println!(
+            //     "[resize] resize_size: {}, last_level_size: {}",
+            //     context_ref.resize_size, last_level_size
+            // );
             if context_ref.resize_size < last_level_size {
                 break;
             }
@@ -617,7 +617,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                         continue
                     );
 
-                    // // println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
+                    println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
 
                     let mut moved = false;
                     loop {
@@ -675,9 +675,9 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                             break;
                         }
 
-                        println!(
-                            "[resize] resizing again for ({last_level_size}, {bid}, {sid})..."
-                        );
+                        // println!(
+                        //     "[resize] resizing again for ({last_level_size}, {bid}, {sid})..."
+                        // );
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
@@ -738,7 +738,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 break;
             }
 
-            println!("[resize] done!");
+            // println!("[resize] done!");
         }
     }
 }
@@ -1052,7 +1052,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     where
         V: Clone,
     {
-        println!("[insert] tid: {tid} do insert");
+        // println!("[insert] tid: {tid} do insert");
         // println!("[insert] tid: {}, key: {}", tid, key);
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
@@ -1063,7 +1063,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         let slot = POwned::new(Slot { key, value }, pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
-        println!("{:?}", slot);
         // question: why `context_new` is created?
         let (context_new, insert_result) =
             self.insert_inner(tid, context, slot, key_hashes, sender, guard, pool);
