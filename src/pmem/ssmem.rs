@@ -77,7 +77,7 @@ pub struct ssmem_allocator {
     /// allocator가 사용중인 메모리의 총 크기 (e.g. memory chunk 2개 가지고 있으면 mem_size * 2)
     tot_size: usize,
 
-    /// free set 하나에 저장될 수 있는 obj의 수 (TODO: 맞나?)
+    /// free set 하나에 저장될 수 있는 obj의 수
     fs_size: usize,
 
     /// 사용중인 memory chunk들의 리스트
@@ -121,11 +121,11 @@ struct ssmem_ts {
 struct ssmem_free_set {
     ts_set: *mut usize,
     size: usize,
-    curr: usize, // TODO: 원래 타입은 long int. 이렇게 usize로 해도 괜찮나?
+    curr: usize,
     set_next: *mut ssmem_free_set,
 
     /// 이 주소부터 free obj들이 위치함
-    set: *mut usize, // TODO: 원래 타입은 uintptr_t*. 이렇게 *const usize로 해도 괜찮나?
+    set: *mut usize,
 }
 
 // TODO: 필요한가?
