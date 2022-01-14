@@ -1,6 +1,7 @@
 //! Persistent Data Structures
 
 // pub mod clevel;
+pub mod clevel2;
 // pub mod elim_stack;
 pub mod exchanger;
 pub mod queue;

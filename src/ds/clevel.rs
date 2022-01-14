@@ -9,9 +9,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::marker::PhantomData;
 use std::mem;
-use std::sync::mpsc::Receiver;
 use std::sync::{mpsc, Arc};
 
 use cfg_if::cfg_if;
@@ -24,25 +22,12 @@ use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
-use crate::node::Node;
-use crate::pepoch::atomic::Pointer;
-use crate::pepoch::PShared;
-use crate::pepoch::{PAtomic, PDestroyable, POwned};
-use crate::ploc::Delete;
-use crate::ploc::Insert;
-use crate::ploc::NeedRetry;
-use crate::ploc::SMOAtomic;
-use crate::ploc::Traversable;
-use crate::ploc::Update;
-use crate::ploc::UpdateDeleteInfo;
-use crate::ploc::clear_owner;
-use crate::pmem::global_pool;
-use crate::pmem::persist_obj;
-use crate::pmem::sfence;
-use crate::pmem::Collectable;
-use crate::pmem::GarbageCollection;
-use crate::pmem::PoolHandle;
-use crate::Memento;
+use crate::pepoch::{
+    atomic::Pointer,
+    {PAtomic, PDestroyable, POwned, PShared},
+};
+use crate::ploc::{Delete, Insert, SMOAtomic, Traversable};
+use crate::pmem::{global_pool, persist_obj, sfence, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
 
 impl<K, V> PDefault for ClevelInner<K, V>
@@ -1706,14 +1691,15 @@ impl<K: 'static + Debug + Display + PartialEq + Hash, V: 'static + Debug> Clevel
 mod tests {
     use std::sync::mpsc::{channel, Sender};
 
-    use crate::test_utils::tests::{run_test, TestRootMemento, TestRootObj};
+    use crate::{
+        pmem::RootObj,
+        test_utils::tests::{run_test, TestRootMemento, TestRootObj},
+    };
 
     use super::*;
 
     use crossbeam_epoch::pin;
     use crossbeam_utils::thread;
-
-    impl TestRootObj for ClevelInner<usize, usize> {}
 
     static mut SEND: Option<Vec<Sender<()>>> = None;
     static mut RECV: Option<Receiver<()>> = None;
@@ -1805,7 +1791,7 @@ mod tests {
         const FILE_NAME: &str = "clevel_smoke.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<ClevelInner<usize, usize>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
     }
 
     struct InsertSearch {
