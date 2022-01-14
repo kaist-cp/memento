@@ -1300,69 +1300,72 @@ mod tests {
         )
     }
 
-    // #[test]
-    // fn insert_search() {
-    //     thread::scope(|s| {
-    //         let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
-    //         let _ = s.spawn(move |_| {
-    //             let mut guard = pin();
-    //             kv_resize.resize_loop(&mut guard);
-    //         });
+    struct InsertUpdateSearch {}
 
-    //         const THREADS: usize = 1usize << 4;
-    //         const RANGE: usize = 1usize << 6;
-    //         for tid in 0..THREADS {
-    //             let kv = kv.clone();
-    //             let _ = s.spawn(move |_| {
-    //                 let guard = pin();
-    //                 for i in 0..RANGE {
-    //                     // println!("[test] tid = {tid}, i = {i}, insert");
-    //                     let _ = kv.insert(tid, i, i, &guard);
+    impl Default for InsertUpdateSearch {
+        fn default() -> Self {
+            Self {}
+        }
+    }
 
-    //                     // println!("[test] tid = {tid}, i = {i}, search");
-    //                     if kv.search(&i, &guard) != Some(&i) {
-    //                         panic!("[test] tid = {tid} fail on {i}");
-    //                         // assert_eq!(kv.search(&i, &guard), Some(&i));
-    //                     }
-    //                 }
-    //             });
-    //         }
-    //     })
-    //     .unwrap();
-    // }
+    impl Collectable for InsertUpdateSearch {
+        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+            todo!()
+        }
+    }
 
-    // #[test]
-    // fn insert_update_search() {
-    //     thread::scope(|s| {
-    //         let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
-    //         let _ = s.spawn(move |_| {
-    //             let mut guard = pin();
-    //             kv_resize.resize_loop(&mut guard);
-    //         });
+    impl RootObj<InsertUpdateSearch> for TestRootObj<ClevelInner<usize, usize>> {
+        fn run(&self, _mmt: &mut InsertUpdateSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let kv = &self.obj;
 
-    //         const THREADS: usize = 1usize << 4;
-    //         const RANGE: usize = 1usize << 6;
-    //         for tid in 0..THREADS {
-    //             let kv = kv.clone();
-    //             let _ = s.spawn(move |_| {
-    //                 let guard = pin();
-    //                 for i in 0..RANGE {
-    //                     // println!("[test] tid = {tid}, i = {i}, insert");
-    //                     let _ = kv.insert(tid, i, i, &guard);
+            match tid {
+                0 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let mut g = pin();
+                    let _ = resize_loop(kv, recv, &mut g, pool);
+                }
+                _ => {
+                    let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
+                    const RANGE: usize = 1usize << 6;
 
-    //                     // println!("[test] tid = {tid}, i = {i}, update");
-    //                     let _ = kv.insert(tid, i, i + RANGE, &guard);
+                    for i in 0..RANGE {
+                        // println!("[test] tid = {tid}, i = {i}, insert");
+                        let _ = kv.insert(tid, i, i, &send, &guard, pool);
 
-    //                     // println!("[test] tid = {tid}, i = {i}, search");
-    //                     if kv.search(&i, &guard) != Some(&i)
-    //                         && kv.search(&i, &guard) != Some(&(i + RANGE))
-    //                     {
-    //                         panic!("[test] tid = {tid} fail on {i}");
-    //                     }
-    //                 }
-    //             });
-    //         }
-    //     })
-    //     .unwrap();
-    // }
+                        // println!("[test] tid = {tid}, i = {i}, update");
+                        let _ = kv.update(tid, i, i + RANGE, &send, &guard, pool);
+
+                        // println!("[test] tid = {tid}, i = {i}, search");
+                        if kv.search(&i, &guard, pool) != Some(&i)
+                            && kv.search(&i, &guard, pool) != Some(&(i + RANGE))
+                        {
+                            panic!("[test] tid = {tid} fail on {i}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn insert_update_search() {
+        const FILE_NAME: &str = "clevel_insert_update_search.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const THREADS: usize = 1usize << 4;
+
+        let (send, recv) = mpsc::channel();
+        let mut vec_s = Vec::new();
+        for _ in 0..THREADS - 1 {
+            vec_s.push(send.clone());
+        }
+        drop(send);
+        unsafe {
+            SEND = Some(vec_s);
+            RECV = Some(recv);
+        }
+
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertUpdateSearch, _>(
+            FILE_NAME, FILE_SIZE, THREADS,
+        )
+    }
 }
