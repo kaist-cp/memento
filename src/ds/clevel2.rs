@@ -165,20 +165,18 @@ pub struct Clevel<K, V> {
     resize_send: mpsc::Sender<()>,
 }
 
-#[derive(Debug)]
-pub struct ClevelResize<'a, K, V> {
-    inner: &'a ClevelInner<K, V>,
-    resize_recv: mpsc::Receiver<()>,
-}
-
-impl<'a, K: PartialEq + Hash, V> ClevelResize<'a, K, V> {
-    pub fn resize_loop(&self, guard: &mut Guard, pool: &PoolHandle) {
-        println!("[resize loop] start loop");
-        while let Ok(()) = self.resize_recv.recv() {
-            println!("[resize_loop] do resize!");
-            self.inner.resize(guard, pool);
-            guard.repin_after(|| {});
-        }
+/// Resize loop
+pub fn resize_loop<K: PartialEq + Hash, V>(
+    clevel: &ClevelInner<K, V>,
+    recv: &mpsc::Receiver<()>,
+    guard: &mut Guard,
+    pool: &PoolHandle,
+) {
+    println!("[resize loop] start loop");
+    while let Ok(()) = recv.recv() {
+        println!("[resize_loop] do resize!");
+        clevel.resize(guard, pool);
+        guard.repin_after(|| {});
     }
 }
 
@@ -1177,6 +1175,9 @@ mod tests {
 
     use super::*;
 
+    static mut SEND: Option<Vec<mpsc::Sender<()>>> = None;
+    static mut RECV: Option<mpsc::Receiver<()>> = None;
+
     struct Smoke {}
 
     impl Default for Smoke {
@@ -1186,7 +1187,9 @@ mod tests {
     }
 
     impl Collectable for Smoke {
-        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {}
+        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+            todo!()
+        }
     }
 
     impl RootObj<Smoke> for TestRootObj<ClevelInner<usize, usize>> {
@@ -1198,11 +1201,7 @@ mod tests {
                 // TODO(must): thread 분사는 execute에서 이루어지게끔... 다른 obj들의 test 처럼 tid로 분리
                 let _ = s.spawn(move |_| {
                     let mut g = pin();
-                    let resize = ClevelResize {
-                        inner: kv,
-                        resize_recv: recv,
-                    };
-                    let _ = resize.resize_loop(&mut g, pool);
+                    let _ = resize_loop(kv, &recv, &mut g, pool);
                 });
 
                 let guard = pin(); // TODO(must): use guard parameter
@@ -1235,6 +1234,71 @@ mod tests {
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
+    }
+
+    struct InsertSearch {}
+
+    impl Default for InsertSearch {
+        fn default() -> Self {
+            Self {}
+        }
+    }
+
+    impl Collectable for InsertSearch {
+        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+            todo!()
+        }
+    }
+
+    impl RootObj<InsertSearch> for TestRootObj<ClevelInner<usize, usize>> {
+        fn run(&self, _mmt: &mut InsertSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let kv = &self.obj;
+
+            match tid {
+                0 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let mut g = pin();
+                    let _ = resize_loop(kv, recv, &mut g, pool);
+                }
+                _ => {
+                    let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
+                    const RANGE: usize = 1usize << 6;
+
+                    for i in 0..RANGE {
+                        // println!("[test] tid = {tid}, i = {i}, insert");
+                        let _ = kv.insert(tid, i, i, &send, &guard, pool);
+
+                        // println!("[test] tid = {tid}, i = {i}, search");
+                        if kv.search(&i, &guard, pool) != Some(&i) {
+                            panic!("[test] tid = {tid} fail on {i}");
+                            // assert_eq!(kv.search(&i, &guard), Some(&i));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn insert_search() {
+        const FILE_NAME: &str = "clevel_insert_search.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const NR_THREADS: usize = 1usize << 4;
+
+        let (send, recv) = mpsc::channel();
+        let mut vec_s = Vec::new();
+        for _ in 0..NR_THREADS - 1 {
+            vec_s.push(send.clone());
+        }
+        drop(send);
+        unsafe {
+            SEND = Some(vec_s);
+            RECV = Some(recv);
+        }
+
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertSearch, _>(
+            FILE_NAME, FILE_SIZE, NR_THREADS,
+        )
     }
 
     // #[test]
