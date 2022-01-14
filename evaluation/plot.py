@@ -10,7 +10,6 @@ objs = {
     "queue": {
         "targets": {
             "memento_queue": {'data_id': '', 'label': "Memento queue", 'marker': 'o', 'color': 'k', 'style': '-'},
-            # "memento_queue_unopt": {'data_id': '', 'label': "Memento queue-unopt", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
             "memento_queue_general": {'data_id': '', 'label': "Memento queue-general", 'marker': 'o', 'color': 'k', 'style': '--'},
             # # 'memento_pipe_queue': {'data_id': '', 'label': "Memento pipe-queue", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
             'durable_queue': {'data_id': '', 'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
