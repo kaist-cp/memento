@@ -14,10 +14,15 @@ use std::{
 };
 
 thread_local! {
-    // per-thread persistent ssmem allocator
+    /// per-thread persistent ssmem allocator
+    // TODO:
+    //  - 이 reference는 persistent 해야할듯: 왜냐하면 복구시 crash 이전에 쓰던 durable area과 같은 곳을 가리킬 수 있도록 해야함
+    //  - 이게 가능하면 volatile하게 둬도 됨: 복구시 reference를 다시 세팅할 때 crash 이전과 같은 durable area를 가리키게 하기
+    // TODO: Ralloc GC시 ssmem_allocator가 가진 memory chunk들은 mark 되게 해야할 듯. 안그러면 Ralloc GC가 ssmem이 사용하던 memory chunk들을 free해감
     static ALLOC: RefCell<*mut ssmem_allocator> = RefCell::new(null_mut());
 
-    // per-thread volatile ssmem allocator
+    /// per-thread volatile ssmem allocator
+    // TODO: volatile ssmem allocator는 굳이 필요한가? volatile node는 그냥 Rust standard allocator 써도 되는 거 아닌가?
     static VOLATILE_ALLOC: *mut ssmem_allocator = null_mut();
 }
 
