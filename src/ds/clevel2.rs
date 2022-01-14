@@ -48,8 +48,8 @@ cfg_if! {
 
         // 해시 크기: MIN_SIZE * SLOTS_IN_BUCKET * (1+LEVEL_RATIO)
         const SLOTS_IN_BUCKET: usize = 8; // 고정
-        const LEVEL_RATIO: usize = 2; // 고정
-        const MIN_SIZE: usize = 786432; // 이걸로 해시 크기 조절
+        const LEVEL_RATIO: usize = 1; // 고정
+        const MIN_SIZE: usize = 76432; // 이걸로 해시 크기 조절
 
         const fn level_size_next(size: usize) -> usize {
             size * LEVEL_RATIO
@@ -629,6 +629,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                             .dedup();
                         for i in 0..SLOTS_IN_BUCKET {
                             for key_hash in key_hashes.clone() {
+                                // println!("1");
                                 let slot = unsafe {
                                     first_level_data[key_hash]
                                         .assume_init_ref()
@@ -822,7 +823,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn insert_inner2<'g>(
+    fn insert_inner2<'g>( // TODO(must): 이름 바꾸기
         &'g self,
         _tid: usize,
         context: PShared<'g, Context<K, V>>,
@@ -1261,7 +1262,7 @@ mod tests {
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
-                    const RANGE: usize = 1usize << 6;
+                    const RANGE: usize = 1usize << 30;
 
                     for i in 0..RANGE {
                         // println!("[test] tid = {tid}, i = {i}, insert");
@@ -1281,7 +1282,7 @@ mod tests {
     #[test]
     fn insert_search() {
         const FILE_NAME: &str = "clevel_insert_search.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
         const NR_THREADS: usize = 1usize << 4;
 
         let (send, recv) = mpsc::channel();
