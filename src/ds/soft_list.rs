@@ -1,6 +1,7 @@
 //! TODO: doc
 
 use crossbeam_epoch::Atomic;
+use libc::c_void;
 
 use crate::pmem::{
     ssmem_alloc, ssmem_alloc_init, ssmem_allocator, PoolHandle, SSMEM_DEFAULT_MEM_SIZE,
@@ -35,6 +36,13 @@ pub fn init_volatileAlloc(id: usize) {
     todo!()
 }
 
+enum State {
+    INSERTED,
+    INTEND_TO_DELETE,
+    INTEND_TO_INSERT,
+    DELETED,
+}
+
 /// TODO: doc
 #[derive(Debug)]
 pub struct SOFTList<T> {
@@ -59,7 +67,7 @@ impl<T> SOFTList<T> {
         todo!()
     }
 
-    fn find(&self) -> *mut VNode<T> {
+    fn find(&self, key: usize, predPtr: *mut *mut VNode<T>) -> *mut VNode<T> {
         todo!()
     }
 
@@ -134,4 +142,31 @@ struct VNode<T> {
     pptr: *mut PNode<T>,
     pValidity: bool,
     next: Atomic<*mut VNode<T>>,
+}
+
+// helper function
+
+#[inline]
+fn getRef<Node>(ptr: *mut Node) -> *mut Node {
+    todo!()
+}
+
+#[inline]
+fn createRef<Node>(p: *mut Node, s: State) -> *mut Node {
+    todo!()
+}
+
+#[inline]
+fn stateCAS<Node>(atomicP: &Atomic<*mut Node>, expected: State, newVal: State) -> bool {
+    todo!()
+}
+
+#[inline]
+fn getState(p: *mut c_void) {
+    todo!()
+}
+
+#[inline]
+fn isOut() -> bool {
+    todo!()
 }
