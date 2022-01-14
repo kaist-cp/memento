@@ -72,7 +72,6 @@ show_cfg
 # 2. Benchmarking queue performance
 for kind in pair prob50; do
     benches memento_queue $kind
-    # benches memento_queue_unopt $kind
     benches memento_queue_general $kind
     # benches memento_pipe_queue $kind
     benches durable_queue $kind

@@ -74,7 +74,6 @@ pub fn get_total_nops() -> usize {
 #[derive(Debug)]
 pub enum TestTarget {
     MementoQueue(TestKind),
-    MementoQueueUnOpt(TestKind),
     MementoQueueGeneral(TestKind),
     MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
@@ -226,22 +225,6 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
-            // TestTarget::MementoQueueUnOpt(kind) => {
-            //     match kind {
-            //         TestKind::QueuePair => get_nops::<
-            //             TestMementoQueueUnOpt,
-            //             MementoQueueUnOptEnqDeqPair,
-            //         >(&opt.filepath, opt.threads),
-            //         TestKind::QueueProb(prob) => {
-            //             unsafe { PROB = prob };
-            //             get_nops::<TestMementoQueueUnOpt, MementoQueueUnOptEnqDeqProb>(
-            //                 &opt.filepath,
-            //                 opt.threads,
-            //             )
-            //         }
-            //         _ => unreachable!("Queue를 위한 테스트만 해야함"),
-            //     }
-            // },
             TestTarget::MementoQueueGeneral(kind) => match kind {
                 TestKind::QueuePair => get_nops::<
                     TestMementoQueueGeneral,
