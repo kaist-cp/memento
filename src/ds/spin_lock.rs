@@ -2,7 +2,6 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crossbeam_utils::Backoff;
 use etrace::some_or;
 
 use crate::{

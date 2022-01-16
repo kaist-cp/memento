@@ -3,7 +3,6 @@
 use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::{self as epoch, Guard};
-use crossbeam_utils::Backoff;
 use etrace::ok_or;
 use rand::{thread_rng, Rng};
 

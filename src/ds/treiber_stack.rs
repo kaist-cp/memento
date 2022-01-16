@@ -2,7 +2,6 @@
 
 use core::sync::atomic::Ordering;
 
-use crossbeam_utils::Backoff;
 use etrace::{ok_or, some_or};
 
 use super::stack::*;

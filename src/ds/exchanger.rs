@@ -5,7 +5,6 @@
 use std::{sync::atomic::Ordering, time::Duration};
 
 use crossbeam_epoch::{self as epoch, Guard};
-use crossbeam_utils::Backoff;
 use etrace::ok_or;
 
 use crate::{

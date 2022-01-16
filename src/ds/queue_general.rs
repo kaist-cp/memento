@@ -4,7 +4,7 @@ use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo_general::Cas;
 use crate::ploc::{Checkpoint, Checkpointable, GeneralSMOAtomic, Traversable};
 use core::sync::atomic::Ordering;
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::CachePadded;
 use etrace::{ok_or, some_or};
 use std::mem::MaybeUninit;
 
