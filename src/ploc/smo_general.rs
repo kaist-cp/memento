@@ -53,21 +53,17 @@ impl<N: Collectable> From<PShared<'_, N>> for GeneralSMOAtomic<N> {
 
 impl<N: Collectable> GeneralSMOAtomic<N> {
     /// TODO(doc)
-    pub fn cas<const REC: bool>(
+    pub fn cas<'g, const REC: bool>(
         &self,
         old: PShared<'_, N>,
         new: PShared<'_, N>,
         mmt: &mut Cas<N>,
         tid: usize,
-        guard: &Guard,
+        guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<(), ()> {
+    ) -> Result<(), PShared<'g, N>> {
         if REC {
-            return self.cas_result(new, mmt, tid, guard, &pool.cas_info);
-        }
-
-        if !self.help(old, &pool.cas_info, guard) {
-            return Err(());
+            return self.cas_result(new, mmt, tid, &pool.cas_info, guard);
         }
 
         let prev_chk = pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
@@ -95,24 +91,25 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
                     )
                     .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
             })
-            .map_err(|_| ())
+            .map_err(|e| self.help(e.current, &pool.cas_info, guard))
     }
 
     /// TODO(doc)
     #[inline]
-    pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
-        self.inner.load(ord, guard)
+    pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
+        let cur = self.inner.load(ord, guard);
+        self.help(cur, &pool.cas_info, guard)
     }
 
     #[inline]
-    fn cas_result(
+    fn cas_result<'g>(
         &self,
         new: PShared<'_, N>,
         mmt: &mut Cas<N>,
         tid: usize,
-        guard: &Guard,
         cas_info: &CasInfo,
-    ) -> Result<(), ()> {
+        guard: &'g Guard,
+    ) -> Result<(), PShared<'g, N>> {
         let cur = self.inner.load(Ordering::SeqCst, guard);
         if mmt.checkpoint != NOT_CHECKED {
             if cur.with_cas_bit(0) == new.with_cas_bit(0).with_tid(tid) {
@@ -140,52 +137,96 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
             return Ok(());
         }
 
-        Err(())
+        Err(self.help(cur, cas_info, guard))
     }
 
     /// return bool: 계속 진행 가능 여부 (`old`로 CAS를 해도 되는지 여부)
     #[inline]
-    fn help<'g>(&self, old: PShared<'_, N>, cas_info: &CasInfo, guard: &'g Guard) -> bool {
-        let succ_tid = old.tid();
-
-        if succ_tid == 0 {
-            return true;
-        }
-
-        let now = calc_checkpoint(rdtsc(), cas_info);
-        lfence();
-
-        let start = Utc::now();
+    fn help<'g>(
+        &self,
+        mut old: PShared<'g, N>,
+        cas_info: &CasInfo,
+        guard: &'g Guard,
+    ) -> PShared<'g, N> {
         loop {
-            let cur = self.inner.load(Ordering::SeqCst, guard);
-            if old != cur {
-                return false;
+            // return if old is clean
+            if old.tid() == 0 {
+                return old;
             }
-            let now = Utc::now();
-            if now.signed_duration_since(start) > Duration::nanoseconds(4000) {
-                break;
+
+            let chk = loop {
+                // get checkpoint timestamp
+                let chk = calc_checkpoint(rdtsc(), cas_info);
+                lfence();
+
+                // start spin loop
+                let start = Utc::now();
+                let out = loop {
+                    let cur = self.inner.load(Ordering::SeqCst, guard);
+
+                    // return if cur is clean. (previous chk timestamp is useless.)
+                    if cur.tid() == 0 {
+                        return cur;
+                    }
+
+                    // if old was changed, new spin loop needs to be started.
+                    if old != cur {
+                        old = cur;
+                        break false;
+                    }
+
+                    // if patience is over, I have to help it.
+                    let now = Utc::now();
+                    if now.signed_duration_since(start) > Duration::nanoseconds(4000) {
+                        break true;
+                    }
+                };
+
+                if out {
+                    break chk;
+                }
+            };
+
+            let winner_tid = old.tid();
+
+            // check if winner thread's pcheckpoint is stale
+            let pchk = cas_info.cas_pcheckpoint[winner_tid].load(Ordering::SeqCst);
+            let pchk_time = decompose_cas_bit(pchk as usize).1;
+            if chk <= pchk_time as u64 {
+                // Someone may already help it. I should retry to load.
+                old = self.inner.load(Ordering::SeqCst, guard);
+                continue;
+            }
+
+            // persist the pointer before CASing winner thread's pcheckpoint
+            persist_obj(&self.inner, false);
+
+            // CAS winner thread's pcheckpoint
+            let chk = compose_cas_bit(old.cas_bit(), chk as usize) as u64;
+            if cas_info.cas_pcheckpoint[winner_tid]
+                .compare_exchange(pchk, chk, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                // Someone may already help it. I should retry to load.
+                old = self.inner.load(Ordering::SeqCst, guard);
+                continue;
+            }
+
+            // help pointer to be clean.
+            persist_obj(&cas_info.cas_pcheckpoint[winner_tid], false);
+            match self.inner.compare_exchange(
+                old,
+                old.with_tid(0),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            ) {
+                Ok(ret) => return ret,
+                Err(e) => {
+                    old = e.current;
+                }
             }
         }
-
-        let pchk = cas_info.cas_pcheckpoint[succ_tid].load(Ordering::SeqCst);
-        let pchk_time = decompose_cas_bit(pchk as usize).1;
-        if now <= pchk_time as u64 {
-            // 이미 누가 한 거임
-            return false;
-        }
-
-        persist_obj(&self.inner, false);
-
-        let now = compose_cas_bit(old.cas_bit(), now as usize) as u64;
-        if cas_info.cas_pcheckpoint[succ_tid]
-            .compare_exchange(pchk, now, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-        {
-            persist_obj(&cas_info.cas_pcheckpoint[succ_tid], true);
-            return true;
-        }
-
-        false
     }
 }
 
