@@ -218,7 +218,7 @@ impl<T: Clone> Collectable for QueueGeneral<T> {
 impl<T: Clone> Traversable<Node<T>> for QueueGeneral<T> {
     /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.head.load(Ordering::SeqCst, guard);
+        let mut curr = self.head.load(Ordering::SeqCst, guard, pool);
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
@@ -227,7 +227,7 @@ impl<T: Clone> Traversable<Node<T>> for QueueGeneral<T> {
             }
 
             let curr_ref = unsafe { curr.deref(pool) };
-            curr = curr_ref.next.load(Ordering::SeqCst, guard);
+            curr = curr_ref.next.load(Ordering::SeqCst, guard, pool);
         }
 
         false
@@ -246,7 +246,7 @@ impl<T: Clone> QueueGeneral<T> {
     ) -> Result<(), TryFail> {
         let tail = self.tail.load(Ordering::SeqCst, guard);
         let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
-        let next = tail_ref.next.load(Ordering::SeqCst, guard);
+        let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
 
         if !next.is_null() {
             // tail is stale
@@ -323,9 +323,9 @@ impl<T: Clone> QueueGeneral<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let head = self.head.load(Ordering::SeqCst, guard);
+        let head = self.head.load(Ordering::SeqCst, guard, pool);
         let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard);
+        let next = head_ref.next.load(Ordering::SeqCst, guard, pool);
         let tail = self.tail.load(Ordering::SeqCst, guard);
 
         let chk = ok_or!(
