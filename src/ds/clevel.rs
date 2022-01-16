@@ -823,7 +823,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn insert_inner2<'g>( // TODO(must): rename
+    fn try_insert<'g>(
         &'g self,
         _tid: usize,
         context: PShared<'g, Context<K, V>>,
@@ -958,7 +958,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         loop {
-            if let Ok(result) = self.insert_inner2(tid, context, slot, key_hashes, guard, pool) {
+            if let Ok(result) = self.try_insert(tid, context, slot, key_hashes, guard, pool) {
                 return (context, result);
             }
 
