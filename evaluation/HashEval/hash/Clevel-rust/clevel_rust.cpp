@@ -22,9 +22,13 @@
 typedef uint64_t Key;
 typedef uint64_t Value;
 
-const uint IX_OBJ = 0;
-const uint IX_NR_MEMENTO = 1;
-const uint IX_MEMENTO_START = 2;
+enum RootIdx
+{
+    RootObj,       // root obj
+    CASCheckpoint, // cas general checkpoint
+    NrMemento,     // memento의 개수
+    MementoStart,  // root memento(s) 시작 위치
+};
 
 #ifdef __cplusplus
 extern "C"
@@ -65,17 +69,17 @@ public:
         char *path = "/mnt/pmem0/clevel_memento";
         const size_t size = 64UL * 1024 * 1024 * 1024;
         pool = pool_create(path, size, tnum);
-        c = reinterpret_cast<Clevel *>(get_root(IX_OBJ, pool));
+        c = reinterpret_cast<Clevel *>(get_root(RootObj, pool));
         m = (ClevelMemento **)malloc(sizeof(ClevelMemento *) * tnum);
 
         // `0~tnum-1` thread for insert, delete, search
         for (int tid = 0; tid < tnum; ++tid)
         {
-            m[tid] = reinterpret_cast<ClevelMemento *>(get_root(IX_MEMENTO_START + tid, pool));
+            m[tid] = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tid, pool));
         }
 
         // `tnum` thread is only for resize loop
-        ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(IX_MEMENTO_START + tnum, pool));
+        ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tnum, pool));
         std::thread{run_resize_loop, m_resize, c, pool}.detach();
     }
     ~CLevelMemento(){
