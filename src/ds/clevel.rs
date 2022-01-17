@@ -46,6 +46,20 @@ impl<K, V> Default for Insert<K, V> {
     }
 }
 
+/// Resize client
+#[derive(Debug)]
+pub struct Resize<K, V> {
+    move_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+}
+
+impl<K, V> Default for Resize<K, V> {
+    fn default() -> Self {
+        Self {
+            move_insert: Default::default(),
+        }
+    }
+}
+
 cfg_if! {
     if #[cfg(feature = "stress")] {
         // For stress test.
@@ -220,18 +234,19 @@ pub struct Clevel<K, V> {
 pub fn resize_loop<K: PartialEq + Hash, V, const REC: bool>(
     clevel: &ClevelInner<K, V>,
     recv: &mpsc::Receiver<()>,
+    resize: &mut Resize<K, V>,
     guard: &mut Guard,
     pool: &PoolHandle,
 ) {
     if REC {
-        clevel.resize(guard, pool);
+        clevel.resize::<REC>(resize, guard, pool);
         guard.repin_after(|| {});
     }
 
     println!("[resize loop] start loop");
     while let Ok(()) = recv.recv() {
         println!("[resize_loop] do resize!");
-        clevel.resize(guard, pool);
+        clevel.resize::<false>(resize, guard, pool);
         guard.repin_after(|| {});
     }
 }
@@ -600,7 +615,12 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         (context, true)
     }
 
-    pub fn resize(&self, guard: &Guard, pool: &PoolHandle) {
+    pub fn resize<const REC: bool>(
+        &self,
+        resize: &mut Resize<K, V>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
         // println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
@@ -707,13 +727,32 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     break;
                                 }
 
+                                // Before
+                                // if slot
+                                //     .compare_exchange(
+                                //         PShared::null(),
+                                //         slot_ptr,
+                                //         Ordering::AcqRel,
+                                //         Ordering::Relaxed,
+                                //         guard,
+                                //     )
+                                //     .is_ok()
+                                // {
+                                //     moved = true;
+                                //     break;
+                                // }
+
+                                // After
+                                // TODO(must): traverse obj를 clevel 전체로 해야할 듯함
+                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
                                 if slot
-                                    .compare_exchange(
-                                        PShared::null(),
+                                    .insert::<_, false>(
                                         slot_ptr,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
+                                        slot,
+                                        &mut resize.move_insert,
                                         guard,
+                                        pool,
                                     )
                                     .is_ok()
                                 {
@@ -1279,12 +1318,14 @@ mod tests {
 
     struct Smoke {
         insert: Insert<usize, usize>,
+        resize: Resize<usize, usize>,
     }
 
     impl Default for Smoke {
         fn default() -> Self {
             Self {
                 insert: Default::default(),
+                resize: Default::default(),
             }
         }
     }
@@ -1301,10 +1342,12 @@ mod tests {
             let (send, recv) = mpsc::channel();
 
             thread::scope(|s| {
+                let (insert, resize) = (&mut mmt.insert, &mut mmt.resize);
+
                 // TODO(must): thread 분사는 execute에서 이루어지게끔... 다른 obj들의 test 처럼 tid로 분리
                 let _ = s.spawn(move |_| {
                     let mut g = pin();
-                    let _ = resize_loop::<_, _, true>(kv, &recv, &mut g, pool);
+                    let _ = resize_loop::<_, _, true>(kv, &recv, resize, &mut g, pool);
                 });
 
                 let guard = pin(); // TODO(must): use guard parameter
@@ -1312,7 +1355,7 @@ mod tests {
                 const RANGE: usize = 1usize << 8;
 
                 for i in 0..RANGE {
-                    let _ = kv.insert::<true>(0, i, i, &send, &mut mmt.insert, &guard, pool);
+                    let _ = kv.insert::<true>(0, i, i, &send, insert, &guard, pool);
                     assert_eq!(kv.search(&i, &guard, pool), Some(&i));
 
                     // TODO(opt): update 살리기
@@ -1345,12 +1388,14 @@ mod tests {
 
     struct InsertSearch {
         insert: Insert<usize, usize>,
+        resize: Resize<usize, usize>,
     }
 
     impl Default for InsertSearch {
         fn default() -> Self {
             Self {
                 insert: Default::default(),
+                resize: Default::default(),
             }
         }
     }
@@ -1369,7 +1414,7 @@ mod tests {
                 0 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let mut g = pin();
-                    let _ = resize_loop::<_, _, true>(kv, recv, &mut g, pool);
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, &mut g, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
