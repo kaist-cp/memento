@@ -326,7 +326,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(Ordering::Acquire, guard); // TODO(opt): load_helping 안 해도 될 듯함. linearizability를 생각해봤을 때...
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -389,7 +389,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -500,7 +500,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
             for bucket in data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Relaxed, guard);
+                    let slot_ptr = slot.load(Ordering::Relaxed, guard); // TODO(opt): load_helping 안 해도 될 듯함. drop은 최후의 최후에 불린다고 생각해봤을 때...
                     if !slot_ptr.is_null() {
                         unsafe {
                             guard.defer_pdestroy(slot_ptr);
@@ -662,7 +662,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
-                            let mut slot_ptr = slot.load(Ordering::Acquire, guard);
+                            let mut slot_ptr = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
                             loop {
                                 if slot_ptr.is_null() {
                                     break None;
@@ -672,7 +672,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                 // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
                                 // TODO: should we do it...?
                                 if slot_ptr.tag() == 1 {
-                                    slot_ptr = slot.load(Ordering::Acquire, guard);
+                                    slot_ptr = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
                                     continue;
                                 }
 
@@ -712,7 +712,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                         .get_unchecked(i)
                                 };
 
-                                let slot_first_level = slot.load(Ordering::Acquire, guard);
+                                let slot_first_level = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
                                 if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
                                     // 2-byte tag checking
                                     if slot_first_level.high_tag() != key_tag as usize {
@@ -950,7 +950,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 for key_hash in key_hashes.clone() {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
 
-                    if !slot.load(Ordering::Acquire, guard).is_null() {
+                    if !slot.load_helping(guard, pool).unwrap().is_null() {
+                        // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
                         continue;
                     }
 
