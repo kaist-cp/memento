@@ -172,6 +172,11 @@ pub fn resize_loop<K: PartialEq + Hash, V, const REC: bool>(
     guard: &mut Guard,
     pool: &PoolHandle,
 ) {
+    if REC {
+        clevel.resize(guard, pool);
+        guard.repin_after(|| {});
+    }
+
     println!("[resize loop] start loop");
     while let Ok(()) = recv.recv() {
         println!("[resize_loop] do resize!");
