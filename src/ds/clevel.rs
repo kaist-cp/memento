@@ -1113,64 +1113,73 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
         // question: why `context_new` is created?
-        let (context_new, insert_result) =
-            self.insert_inner(tid, context, slot, key_hashes, sender, guard, pool);
-        self.move_if_resized(
+        let (context_new, insert_result) = self.insert_inner::<REC>(
+            tid,
+            context,
+            slot,
+            key_hashes,
+            sender,
+            &mut insert.insert_insert,
+            guard,
+            pool,
+        );
+        self.move_if_resized::<REC>(
             tid,
             context_new,
             insert_result,
             key_hashes,
             sender,
+            &mut insert.resize_insert,
             guard,
             pool,
         );
         Ok(())
     }
 
-    pub fn update(
-        &self,
-        tid: usize,
-        key: K,
-        value: V,
-        sender: &mpsc::Sender<()>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> Result<(), (K, V)>
-    where
-        K: Clone,
-    {
-        let (key_tag, key_hashes) = hashes(&key);
-        let mut slot_new =
-            POwned::new(Slot::from((key.clone(), value)), pool).with_high_tag(key_tag as usize);
+    // pub fn update(
+    //     &self,
+    //     tid: usize,
+    //     key: K,
+    //     value: V,
+    //     sender: &mpsc::Sender<()>,
+    //     guard: &Guard,
+    //     pool: &PoolHandle,
+    // ) -> Result<(), (K, V)>
+    // where
+    //     K: Clone,
+    // {
+    //     let (key_tag, key_hashes) = hashes(&key);
+    //     let mut slot_new =
+    //         POwned::new(Slot::from((key.clone(), value)), pool).with_high_tag(key_tag as usize);
 
-        loop {
-            let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
-            let find_result = some_or!(find_result, {
-                let slot_ref = unsafe { slot_new.deref(pool) };
-                // TODO: 이렇게 k,v 리턴하면 안됨. 그냥 update 실패 리턴값 없애자
-                let (k, v) = (slot_ref.key.clone(), unsafe { ptr::read(&slot_ref.value) });
-                // TODO(must): free new slot
-                return Err((k, v));
-            });
+    //     loop {
+    //         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
+    //         let find_result = some_or!(find_result, {
+    //             let slot_ref = unsafe { slot_new.deref(pool) };
+    //             // TODO: 이렇게 k,v 리턴하면 안됨. 그냥 update 실패 리턴값 없애자
+    //             let (k, v) = (slot_ref.key.clone(), unsafe { ptr::read(&slot_ref.value) });
+    //             // TODO(must): free new slot
+    //             return Err((k, v));
+    //         });
 
-            if let Err(e) = find_result.slot.compare_exchange(
-                find_result.slot_ptr,
-                slot_new,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-                guard,
-            ) {
-                slot_new = e.new;
-                continue;
-            }
+    //         if let Err(e) = find_result.slot.compare_exchange(
+    //             find_result.slot_ptr,
+    //             slot_new,
+    //             Ordering::AcqRel,
+    //             Ordering::Acquire,
+    //             guard,
+    //         ) {
+    //             slot_new = e.new;
+    //             continue;
+    //         }
 
-            unsafe {
-                guard.defer_pdestroy(find_result.slot_ptr);
-            }
-            self.move_if_resized(tid, context, find_result, key_hashes, sender, guard, pool);
-            return Ok(());
-        }
-    }
+    //         unsafe {
+    //             guard.defer_pdestroy(find_result.slot_ptr);
+    //         }
+    //         self.move_if_resized(tid, context, find_result, key_hashes, sender, guard, pool);
+    //         return Ok(());
+    //     }
+    // }
 
     pub fn delete<const REC: bool>(&self, key: &K, guard: &Guard, pool: &PoolHandle) {
         // println!("[delete] key: {}", key);
@@ -1254,12 +1263,16 @@ mod tests {
                     let _ = kv.insert::<true>(0, i, i, &send, &guard, pool);
                     assert_eq!(kv.search(&i, &guard, pool), Some(&i));
 
-                    let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
-                    assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+                    // TODO(opt): update 살리기
+                    // let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
+                    // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
                 }
 
                 for i in 0..RANGE {
-                    assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+                    assert_eq!(kv.search(&i, &guard, pool), Some(&i));
+                    // TODO(opt): update 살리기
+                    // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+
                     kv.delete::<true>(&i, &guard, pool);
                     assert_eq!(kv.search(&i, &guard, pool), None);
                 }
