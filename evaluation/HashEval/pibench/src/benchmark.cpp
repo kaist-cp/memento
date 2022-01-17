@@ -211,7 +211,7 @@ namespace PiBench
       std::this_thread::sleep_for(std::chrono::milliseconds(5000));
       is_resizing = tree_->hash_is_resizing();
     }
-    std::cout << "runing..." << std::endl;
+    std::cout << "running..." << std::endl;
     stopwatch_t swt;
     uint64_t current_id = key_generator_->current_id_;
     float elapsed;
