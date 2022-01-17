@@ -940,12 +940,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         (first_level_data.len() * 2 - last_level_data.len()) * SLOTS_IN_BUCKET
     }
 
-    pub fn is_resizing<'g>(
-        inner: &'g ClevelInner<K, V>,
-        guard: &'g Guard,
-        pool: &'static PoolHandle,
-    ) -> bool {
-        let context = inner.context.load(Ordering::Acquire, guard);
+    pub fn is_resizing<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> bool {
+        let context = self.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
 

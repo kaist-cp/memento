@@ -141,14 +141,13 @@ pub extern "C" fn search(
 }
 
 #[no_mangle]
-pub extern "C" fn get_capacity(obj: &ClevelInner<Key, Value>, pool: &'static PoolHandle) -> usize {
+pub extern "C" fn get_capacity(obj: &ClevelInner<Key, Value>, pool: &PoolHandle) -> usize {
     let guard = crossbeam_epoch::pin();
     obj.get_capacity(&guard, pool)
 }
 
 #[no_mangle]
-pub extern "C" fn is_resizing(obj: &ClevelInner<Key, Value>, pool: &'static PoolHandle) -> bool {
-    // let guard = crossbeam_epoch::pin();
-    // Clevel::is_resizing(obj, &guard, pool)
-    false // TODO: is_resizing() 사용?
+pub extern "C" fn is_resizing(obj: &ClevelInner<Key, Value>, pool: &PoolHandle) -> bool {
+    let guard = crossbeam_epoch::pin();
+    obj.is_resizing(&guard, pool)
 }
