@@ -202,7 +202,7 @@ impl<T: Clone> TreiberStack<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let top = self.top.load(Ordering::SeqCst, guard);
+        let top = self.top.load(Ordering::SeqCst, guard, pool);
         let node_ref = unsafe { node.deref(pool) };
         node_ref.next.store(top, Ordering::SeqCst);
         persist_obj(&node_ref.next, false); // we do CAS right after that
@@ -263,7 +263,7 @@ impl<T: Clone> TreiberStack<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let top = self.top.load(Ordering::SeqCst, guard);
+        let top = self.top.load(Ordering::SeqCst, guard, pool);
         let top = ok_or!(
             try_pop.top.checkpoint::<REC>(PAtomic::from(top)),
             e,
