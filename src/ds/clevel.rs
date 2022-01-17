@@ -255,7 +255,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(Ordering::Relaxed, guard); // TODO(must): Acquire.. search 실험을 위해 잠시 바꿔둠
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -617,7 +617,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                         continue
                     );
 
-                    println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
+                    // println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
 
                     let mut moved = false;
                     loop {
