@@ -940,6 +940,25 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         (first_level_data.len() * 2 - last_level_data.len()) * SLOTS_IN_BUCKET
     }
 
+    pub fn is_resizing<'g>(
+        inner: &'g ClevelInner<K, V>,
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> bool {
+        let context = inner.context.load(Ordering::Acquire, guard);
+        let context_ref = unsafe { context.deref(pool) };
+        let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
+
+        (unsafe {
+            last_level
+                .deref(pool)
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+                .len()
+        }) <= context_ref.resize_size
+    }
+
     pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Option<&'g V> {
         let (key_tag, key_hashes) = hashes(key);
         let (_, find_result) = self.find_fast(key, key_tag, key_hashes, guard, pool);
