@@ -23,6 +23,7 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
+use crate::ploc::smo;
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
 
@@ -78,6 +79,25 @@ fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
 struct Slot<K, V> {
     key: K,
     value: V,
+    owner: PAtomic<Self>,
+}
+
+impl<K, V> From<(K, V)> for Slot<K, V> {
+    #[inline]
+    fn from((key, value): (K, V)) -> Self {
+        Self {
+            key,
+            value,
+            owner: PAtomic::null(),
+        }
+    }
+}
+
+impl<K, V> smo::Node for Slot<K, V> {
+    #[inline]
+    fn owner(&self) -> &PAtomic<Self> {
+        &self.owner
+    }
 }
 
 #[derive(Debug)]
@@ -587,8 +607,8 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
             );
 
-            for (bid, bucket) in last_level_data.iter().enumerate() {
-                for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
+            for (_bid, bucket) in last_level_data.iter().enumerate() {
+                for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
                             let mut slot_ptr = slot.load(Ordering::Acquire, guard);
@@ -863,6 +883,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                         continue;
                     }
 
+                    // TODO(must): 가장 먼저 이걸 smo로 바꾸자
                     if let Ok(slot_ptr) = slot.compare_exchange(
                         PShared::null(),
                         slot_new,
@@ -1080,7 +1101,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new(Slot { key, value }, pool)
+        let slot = POwned::new(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
         // question: why `context_new` is created?
@@ -1111,14 +1132,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         K: Clone,
     {
         let (key_tag, key_hashes) = hashes(&key);
-        let mut slot_new = POwned::new(
-            Slot {
-                key: key.clone(),
-                value,
-            },
-            pool,
-        )
-        .with_high_tag(key_tag as usize);
+        let mut slot_new =
+            POwned::new(Slot::from((key.clone(), value)), pool).with_high_tag(key_tag as usize);
 
         loop {
             let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
