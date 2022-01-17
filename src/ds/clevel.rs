@@ -1310,7 +1310,6 @@ mod tests {
     };
 
     use crossbeam_epoch::pin;
-    use crossbeam_utils::thread;
 
     use super::*;
 
@@ -1338,44 +1337,39 @@ mod tests {
     }
 
     impl RootObj<Smoke> for TestRootObj<ClevelInner<usize, usize>> {
-        fn run(&self, mmt: &mut Smoke, _tid: usize, _guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
             let kv = &self.obj;
-            let (send, recv) = mpsc::channel();
 
-            thread::scope(|s| {
-                let (insert, resize) = (&mut mmt.insert, &mut mmt.resize);
-
-                // TODO(must): thread 분사는 execute에서 이루어지게끔... 다른 obj들의 test 처럼 tid로 분리
-                let _ = s.spawn(move |_| {
-                    let mut g = pin();
-                    let _ = resize_loop::<_, _, true>(kv, &recv, resize, &mut g, pool);
-                });
-
-                let guard = pin(); // TODO(must): use guard parameter
-
-                const RANGE: usize = 1usize << 8;
-
-                for i in 0..RANGE {
-                    let _ = kv.insert::<true>(0, i, i, &send, insert, &guard, pool);
-                    assert_eq!(kv.search(&i, &guard, pool), Some(&i));
-
-                    // TODO(opt): update 살리기
-                    // let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
-                    // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+            match tid {
+                0 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, &mut g, pool);
                 }
+                _ => {
+                    let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
 
-                for i in 0..RANGE {
-                    assert_eq!(kv.search(&i, &guard, pool), Some(&i));
-                    // TODO(opt): update 살리기
-                    // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+                    const RANGE: usize = 1usize << 8;
 
-                    kv.delete::<true>(&i, &guard, pool);
-                    assert_eq!(kv.search(&i, &guard, pool), None);
+                    for i in 0..RANGE {
+                        let _ = kv.insert::<true>(0, i, i, &send, &mut mmt.insert, guard, pool);
+                        assert_eq!(kv.search(&i, guard, pool), Some(&i));
+
+                        // TODO(opt): update 살리기
+                        // let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
+                        // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+                    }
+
+                    for i in 0..RANGE {
+                        assert_eq!(kv.search(&i, guard, pool), Some(&i));
+                        // TODO(opt): update 살리기
+                        // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+
+                        kv.delete::<true>(&i, guard, pool);
+                        assert_eq!(kv.search(&i, guard, pool), None);
+                    }
                 }
-
-                drop(send);
-            })
-            .unwrap();
+            }
         }
     }
 
@@ -1383,8 +1377,20 @@ mod tests {
     fn smoke() {
         const FILE_NAME: &str = "clevel_smoke.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const NR_THREADS: usize = 2;
 
-        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
+        let (send, recv) = mpsc::channel();
+        let mut vec_s = Vec::new();
+        for _ in 0..NR_THREADS - 1 {
+            vec_s.push(send.clone());
+        }
+        drop(send);
+        unsafe {
+            SEND = Some(vec_s);
+            RECV = Some(recv);
+        }
+
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, NR_THREADS);
     }
 
     struct InsertSearch {
@@ -1414,7 +1420,7 @@ mod tests {
             match tid {
                 0 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
-                    let mut g = pin();
+                    let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
                     let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, &mut g, pool);
                 }
                 _ => {
@@ -1423,7 +1429,7 @@ mod tests {
 
                     for i in 0..RANGE {
                         // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert::<true>(tid, i, i, &send, &mut mmt.insert, &guard, pool);
+                        let _ = kv.insert::<true>(tid, i, i, &send, &mut mmt.insert, guard, pool);
 
                         // println!("[test] tid = {tid}, i = {i}, search");
                         if kv.search(&i, &guard, pool) != Some(&i) {
