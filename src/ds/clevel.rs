@@ -19,6 +19,7 @@ use fasthash::Murmur3HasherExt;
 use itertools::*;
 use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
+use smo::SMOAtomic;
 use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
@@ -100,10 +101,17 @@ impl<K, V> smo::Node for Slot<K, V> {
     }
 }
 
+// TODO(must): V도 collectable 해야 함
+impl<K, V> Collectable for Slot<K, V> {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
 #[repr(align(64))]
 struct Bucket<K, V> {
-    slots: [PAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
+    slots: [SMOAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
 #[derive(Debug)]
