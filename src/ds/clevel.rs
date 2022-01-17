@@ -19,16 +19,32 @@ use fasthash::Murmur3HasherExt;
 use itertools::*;
 use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
-use smo::SMOAtomic;
 use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::smo;
+use crate::ploc::Traversable;
+use crate::ploc::{smo, SMOAtomic};
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
 
 const TINY_VEC_CAPACITY: usize = 8;
+
+/// Insert client
+#[derive(Debug)]
+pub struct Insert<K, V> {
+    insert_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+    resize_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+}
+
+impl<K, V> Default for Insert<K, V> {
+    fn default() -> Self {
+        Self {
+            insert_insert: Default::default(),
+            resize_insert: Default::default(),
+        }
+    }
+}
 
 cfg_if! {
     if #[cfg(feature = "stress")] {
@@ -105,6 +121,13 @@ impl<K, V> smo::Node for Slot<K, V> {
 impl<K, V> Collectable for Slot<K, V> {
     fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
+    }
+}
+
+// TODO(must): 이건 임시임. insert에서 traverse obj를 hash table로 설정하고 이건 지우기
+impl<K, V> Traversable<Slot<K, V>> for SMOAtomic<Slot<K, V>> {
+    fn search(&self, target: PShared<'_, Slot<K, V>>, guard: &Guard, _pool: &PoolHandle) -> bool {
+        target == self.load(Ordering::SeqCst, guard)
     }
 }
 
@@ -855,12 +878,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn try_insert<'g>(
+    fn try_insert<'g, const REC: bool>(
         &'g self,
         _tid: usize,
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
+        insert: &mut smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
@@ -891,19 +915,35 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                         continue;
                     }
 
-                    // TODO(must): 가장 먼저 이걸 smo로 바꾸자
-                    if let Ok(slot_ptr) = slot.compare_exchange(
-                        PShared::null(),
-                        slot_new,
-                        Ordering::AcqRel,
-                        Ordering::Relaxed,
-                        guard,
-                    ) {
+                    // Before
+                    // if let Ok(slot_ptr) = slot.compare_exchange(
+                    //     PShared::null(),
+                    //     slot_new,
+                    //     Ordering::AcqRel,
+                    //     Ordering::Relaxed,
+                    //     guard,
+                    // ) {
+                    //     return Ok(FindResult {
+                    //         size,
+                    //         _bucket_index: key_hash,
+                    //         slot,
+                    //         slot_ptr,
+                    //     });
+                    // }
+
+                    // After
+                    // TODO(must): traverse obj를 clevel 전체로 해야할 듯함
+                    // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                    // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                    if slot
+                        .insert::<_, false>(slot_new, slot, insert, guard, pool)
+                        .is_ok()
+                    {
                         return Ok(FindResult {
                             size,
                             _bucket_index: key_hash,
                             slot,
-                            slot_ptr,
+                            slot_ptr: slot_new,
                         });
                     }
                 }
@@ -995,18 +1035,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
     }
 
-    fn insert_inner<'g>(
+    fn insert_inner<'g, const REC: bool>(
         &'g self,
         tid: usize,
         mut context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
+        insert: &mut smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         loop {
-            if let Ok(result) = self.try_insert(tid, context, slot, key_hashes, guard, pool) {
+            if let Ok(result) =
+                self.try_insert::<REC>(tid, context, slot, key_hashes, insert, guard, pool)
+            {
                 return (context, result);
             }
 
@@ -1023,13 +1066,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn move_if_resized<'g>(
+    fn move_if_resized<'g, const REC: bool>(
         &'g self,
         tid: usize,
         mut context: PShared<'g, Context<K, V>>,
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
+        insert: &mut smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
@@ -1072,12 +1116,15 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             //     insert_result.size,
             //     insert_result.bucket_index
             // );
-            let (context_insert, insert_result_insert) = self.insert_inner(
+
+            // TODO(must): 상황에 따라 insert_inner 반복 호출되므로 reset 해야 함
+            let (context_insert, insert_result_insert) = self.insert_inner::<REC>(
                 tid,
                 context_new,
                 insert_result.slot_ptr,
                 key_hashes,
                 sender,
+                insert,
                 guard,
                 pool,
             );
@@ -1095,6 +1142,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         key: K,
         value: V,
         sender: &mpsc::Sender<()>,
+        insert: &mut Insert<K, V>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError>
@@ -1229,11 +1277,15 @@ mod tests {
     static mut SEND: Option<Vec<mpsc::Sender<()>>> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
-    struct Smoke {}
+    struct Smoke {
+        insert: Insert<usize, usize>,
+    }
 
     impl Default for Smoke {
         fn default() -> Self {
-            Self {}
+            Self {
+                insert: Default::default(),
+            }
         }
     }
 
@@ -1244,7 +1296,7 @@ mod tests {
     }
 
     impl RootObj<Smoke> for TestRootObj<ClevelInner<usize, usize>> {
-        fn run(&self, _mmt: &mut Smoke, _tid: usize, _guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, mmt: &mut Smoke, _tid: usize, _guard: &Guard, pool: &PoolHandle) {
             let kv = &self.obj;
             let (send, recv) = mpsc::channel();
 
@@ -1260,7 +1312,7 @@ mod tests {
                 const RANGE: usize = 1usize << 8;
 
                 for i in 0..RANGE {
-                    let _ = kv.insert::<true>(0, i, i, &send, &guard, pool);
+                    let _ = kv.insert::<true>(0, i, i, &send, &mut mmt.insert, &guard, pool);
                     assert_eq!(kv.search(&i, &guard, pool), Some(&i));
 
                     // TODO(opt): update 살리기
@@ -1291,11 +1343,15 @@ mod tests {
         run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
     }
 
-    struct InsertSearch {}
+    struct InsertSearch {
+        insert: Insert<usize, usize>,
+    }
 
     impl Default for InsertSearch {
         fn default() -> Self {
-            Self {}
+            Self {
+                insert: Default::default(),
+            }
         }
     }
 
@@ -1306,7 +1362,7 @@ mod tests {
     }
 
     impl RootObj<InsertSearch> for TestRootObj<ClevelInner<usize, usize>> {
-        fn run(&self, _mmt: &mut InsertSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, mmt: &mut InsertSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
             let kv = &self.obj;
 
             match tid {
@@ -1321,7 +1377,7 @@ mod tests {
 
                     for i in 0..RANGE {
                         // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert::<true>(tid, i, i, &send, &guard, pool);
+                        let _ = kv.insert::<true>(tid, i, i, &send, &mut mmt.insert, &guard, pool);
 
                         // println!("[test] tid = {tid}, i = {i}, search");
                         if kv.search(&i, &guard, pool) != Some(&i) {
