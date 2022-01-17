@@ -60,6 +60,20 @@ impl<K, V> Default for Resize<K, V> {
     }
 }
 
+/// Delete client
+#[derive(Debug)]
+pub struct Delete<K, V> {
+    delete: smo::Delete<Slot<K, V>>,
+}
+
+impl<K, V> Default for Delete<K, V> {
+    fn default() -> Self {
+        Self {
+            delete: Default::default(),
+        }
+    }
+}
+
 cfg_if! {
     if #[cfg(feature = "stress")] {
         // For stress test.
@@ -256,7 +270,7 @@ struct FindResult<'g, K, V> {
     /// level's size
     size: usize,
     _bucket_index: usize,
-    slot: &'g PAtomic<Slot<K, V>>,
+    slot: &'g SMOAtomic<Slot<K, V>>,
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
 
@@ -1269,7 +1283,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     //     }
     // }
 
-    pub fn delete<const REC: bool>(&self, key: &K, guard: &Guard, pool: &PoolHandle) {
+    pub fn delete<const REC: bool>(
+        &self,
+        key: &K,
+        delete: &mut Delete<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
         // println!("[delete] key: {}", key);
         let (key_tag, key_hashes) = hashes(&key);
         loop {
@@ -1279,23 +1300,43 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 return;
             });
 
+            // Before
+            // if find_result
+            //     .slot
+            //     .compare_exchange(
+            //         find_result.slot_ptr,
+            //         PShared::null(),
+            //         Ordering::AcqRel,
+            //         Ordering::Relaxed,
+            //         guard,
+            //     )
+            //     .is_err()
+            // {
+            //     continue;
+            // }
+            // unsafe {
+            //     guard.defer_pdestroy(find_result.slot_ptr);
+            // }
+
+            // After
+            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
             if find_result
                 .slot
-                .compare_exchange(
+                .delete::<false>(
                     find_result.slot_ptr,
                     PShared::null(),
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
+                    smo::DeleteMode::Drop,
+                    &mut delete.delete,
+                    tid,
                     guard,
+                    pool,
                 )
                 .is_err()
             {
                 continue;
             }
 
-            unsafe {
-                guard.defer_pdestroy(find_result.slot_ptr);
-            }
             // println!("[delete] finish!");
             return;
         }
@@ -1317,15 +1358,17 @@ mod tests {
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
     struct Smoke {
-        insert: Insert<usize, usize>,
         resize: Resize<usize, usize>,
+        insert: Insert<usize, usize>,
+        delete: Delete<usize, usize>,
     }
 
     impl Default for Smoke {
         fn default() -> Self {
             Self {
-                insert: Default::default(),
                 resize: Default::default(),
+                insert: Default::default(),
+                delete: Default::default(),
             }
         }
     }
@@ -1365,7 +1408,7 @@ mod tests {
                         // TODO(opt): update 살리기
                         // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
 
-                        kv.delete::<true>(&i, guard, pool);
+                        kv.delete::<true>(&i, &mut mmt.delete, tid, guard, pool);
                         assert_eq!(kv.search(&i, guard, pool), None);
                     }
                 }
@@ -1390,7 +1433,9 @@ mod tests {
             RECV = Some(recv);
         }
 
-        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, NR_THREADS);
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(
+            FILE_NAME, FILE_SIZE, NR_THREADS,
+        );
     }
 
     struct InsertSearch {
