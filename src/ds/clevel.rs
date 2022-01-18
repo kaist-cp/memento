@@ -35,6 +35,7 @@ const TINY_VEC_CAPACITY: usize = 8;
 pub struct Insert<K, V> {
     insert_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
     resize_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+    dedup_delete: smo::Delete<Slot<K, V>>,
 }
 
 impl<K, V> Default for Insert<K, V> {
@@ -42,6 +43,7 @@ impl<K, V> Default for Insert<K, V> {
         Self {
             insert_insert: Default::default(),
             resize_insert: Default::default(),
+            dedup_delete: Default::default(),
         }
     }
 }
@@ -49,12 +51,14 @@ impl<K, V> Default for Insert<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V> {
+    move_delete: smo::Delete<Slot<K, V>>,
     move_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
 }
 
 impl<K, V> Default for Resize<K, V> {
     fn default() -> Self {
         Self {
+            move_delete: Default::default(),
             move_insert: Default::default(),
         }
     }
@@ -63,13 +67,15 @@ impl<K, V> Default for Resize<K, V> {
 /// Delete client
 #[derive(Debug)]
 pub struct Delete<K, V> {
-    delete: smo::Delete<Slot<K, V>>,
+    dedup_delete: smo::Delete<Slot<K, V>>,
+    delete_delete: smo::Delete<Slot<K, V>>,
 }
 
 impl<K, V> Default for Delete<K, V> {
     fn default() -> Self {
         Self {
-            delete: Default::default(),
+            dedup_delete: Default::default(),
+            delete_delete: Default::default(),
         }
     }
 }
@@ -249,18 +255,19 @@ pub fn resize_loop<K: PartialEq + Hash, V, const REC: bool>(
     clevel: &ClevelInner<K, V>,
     recv: &mpsc::Receiver<()>,
     resize: &mut Resize<K, V>,
+    tid: usize,
     guard: &mut Guard,
     pool: &PoolHandle,
 ) {
     if REC {
-        clevel.resize::<REC>(resize, guard, pool);
+        clevel.resize::<REC>(resize, tid, guard, pool);
         guard.repin_after(|| {});
     }
 
     println!("[resize loop] start loop");
     while let Ok(()) = recv.recv() {
         println!("[resize_loop] do resize!");
-        clevel.resize::<false>(resize, guard, pool);
+        clevel.resize::<false>(resize, tid, guard, pool);
         guard.repin_after(|| {});
     }
 }
@@ -383,11 +390,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     /// `Ok`: found a unique item (by deduplication)
     ///
     /// `Err` means contention
-    fn find<'g>(
+    fn find<'g, const REC: bool>(
         &'g self,
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
+        dedup_delete: &mut smo::Delete<Slot<K, V>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<Option<FindResult<'g, K, V>>, ()> {
@@ -403,7 +412,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
+                    let slot_ptr = ok_or!(slot.load_helping(guard, pool), e, e); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -457,21 +466,46 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         // remove everything else.
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
-            match find_result.slot.compare_exchange(
-                find_result.slot_ptr,
-                PShared::null(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-                guard,
-            ) {
-                Ok(_) => unsafe {
-                    guard.defer_pdestroy(find_result.slot_ptr);
-                },
-                Err(e) => {
-                    if e.current == find_result.slot_ptr.with_tag(1) {
-                        // If the item is moved, retry.
-                        return Err(());
-                    }
+
+            // Before
+            // match find_result.slot.compare_exchange(
+            //     find_result.slot_ptr,
+            //     PShared::null(),
+            //     Ordering::AcqRel,
+            //     Ordering::Acquire,
+            //     guard,
+            // ) {
+            //     Ok(_) => unsafe {
+            //         guard.defer_pdestroy(find_result.slot_ptr);
+            //     },
+            //     Err(e) => {
+            //         if e.current == find_result.slot_ptr.with_tag(1) {
+            //             // If the item is moved, retry.
+            //             return Err(());
+            //         }
+            //     }
+            // }
+
+            // After
+            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+            if find_result
+                .slot
+                .delete::<false>(
+                    find_result.slot_ptr,
+                    PShared::null(),
+                    smo::DeleteMode::Drop,
+                    dedup_delete,
+                    tid,
+                    guard,
+                    pool,
+                )
+                .is_err()
+            {
+                let slot = ok_or!(find_result.slot.load_helping(guard, pool), e, e);
+                if slot == find_result.slot_ptr.with_tag(1) {
+                    // If the item is moved, retry.
+                    return Err(());
                 }
             }
         }
@@ -632,6 +666,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
     pub fn resize<const REC: bool>(
         &self,
         resize: &mut Resize<K, V>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) {
@@ -690,14 +725,34 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     continue;
                                 }
 
-                                if let Err(e) = slot.compare_exchange(
-                                    slot_ptr,
-                                    slot_ptr.with_tag(1),
-                                    Ordering::AcqRel,
-                                    Ordering::Acquire,
-                                    guard,
-                                ) {
-                                    slot_ptr = e.current;
+                                // Before
+                                // if let Err(e) = slot.compare_exchange(
+                                //     slot_ptr,
+                                //     slot_ptr.with_tag(1),
+                                //     Ordering::AcqRel,
+                                //     Ordering::Acquire,
+                                //     guard,
+                                // ) {
+                                //     slot_ptr = e.current;
+                                //     continue;
+                                // }
+
+                                // After
+                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                                if slot
+                                    .delete::<false>(
+                                        slot_ptr,
+                                        slot_ptr.with_tag(1),
+                                        smo::DeleteMode::Recycle,
+                                        &mut resize.move_delete,
+                                        tid,
+                                        guard,
+                                        pool,
+                                    )
+                                    .is_err()
+                                {
+                                    slot_ptr = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
                                     continue;
                                 }
 
@@ -901,18 +956,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn find<'g>(
+    fn find<'g, const REC: bool>(
         &'g self,
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
+        dedup_delete: &mut smo::Delete<Slot<K, V>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
+            let find_result =
+                context_ref.find::<REC>(key, key_tag, key_hashes, dedup_delete, tid, guard, pool);
             let find_result = ok_or!(find_result, {
                 context = self.context.load(Ordering::Acquire, guard);
                 continue;
@@ -1192,11 +1250,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
     pub fn insert<const REC: bool>(
         &self,
-        tid: usize,
         key: K,
         value: V,
         sender: &mpsc::Sender<()>,
         insert: &mut Insert<K, V>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError>
@@ -1206,7 +1264,15 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         // println!("[insert] tid: {tid} do insert");
         // println!("[insert] tid: {}, key: {}", tid, key);
         let (key_tag, key_hashes) = hashes(&key);
-        let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
+        let (context, find_result) = self.find::<REC>(
+            &key,
+            key_tag,
+            key_hashes,
+            &mut insert.dedup_delete,
+            tid,
+            guard,
+            pool,
+        );
         if find_result.is_some() {
             return Err(InsertError::Occupied);
         }
@@ -1294,7 +1360,15 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         // println!("[delete] key: {}", key);
         let (key_tag, key_hashes) = hashes(&key);
         loop {
-            let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
+            let (_, find_result) = self.find::<REC>(
+                key,
+                key_tag,
+                key_hashes,
+                &mut delete.dedup_delete,
+                tid,
+                guard,
+                pool,
+            );
             let find_result = some_or!(find_result, {
                 println!("[delete] suspicious...");
                 return;
@@ -1327,7 +1401,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                     find_result.slot_ptr,
                     PShared::null(),
                     smo::DeleteMode::Drop,
-                    &mut delete.delete,
+                    &mut delete.delete_delete,
                     tid,
                     guard,
                     pool,
@@ -1385,7 +1459,7 @@ mod tests {
                 0 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
-                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, &mut g, pool);
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
@@ -1393,7 +1467,7 @@ mod tests {
                     const RANGE: usize = 1usize << 8;
 
                     for i in 0..RANGE {
-                        let _ = kv.insert::<true>(0, i, i, &send, &mut mmt.insert, guard, pool);
+                        let _ = kv.insert::<true>(i, i, &send, &mut mmt.insert, tid, guard, pool);
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
 
                         // TODO(opt): update 살리기
@@ -1464,7 +1538,7 @@ mod tests {
                 0 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
-                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, &mut g, pool);
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
@@ -1472,7 +1546,7 @@ mod tests {
 
                     for i in 0..RANGE {
                         // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert::<true>(tid, i, i, &send, &mut mmt.insert, guard, pool);
+                        let _ = kv.insert::<true>(i, i, &send, &mut mmt.insert, tid, guard, pool);
 
                         // println!("[test] tid = {tid}, i = {i}, search");
                         if kv.search(&i, &guard, pool) != Some(&i) {
