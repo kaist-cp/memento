@@ -25,7 +25,8 @@ function bench() {
     rm -rf /mnt/pmem0/*
     out_dir=./$OUT/$mode/$dist/$workload
     mkdir -p $out_dir
-    out=$out_dir/$target.out
+    version=$(git log -1 --format="%h")
+    out=$out_dir/${target}_${version}.out
     echo "out: $out"
 
     # clevel, clevel-rust 제외한 나머지는 더미 폴더 필요
