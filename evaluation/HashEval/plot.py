@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os.path
+import git
 
 objs = {
     "hash": {
@@ -13,7 +14,18 @@ objs = {
             'PCLHT': {'label': "PCLHT", 'marker': 'v', 'color': 'gold', 'style': '-'},
             # 'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
             "clevel": {'label': "CLEVEL", 'marker': 's', 'color': 'gray', 'style': '-'},
-            "clevel_rust": {'label': "CLEVEL-RUST", 'marker': 'o', 'color': 'black', 'style': '-'},
+            "clevel_rust": {
+                'label': "CLEVEL-RUST", 'marker': 'o', 'color': 'black', 'style': '-',
+                'data_id': {  # select data manually
+                    'insert': '',
+                    'pos_search': '',
+                    'neg_search': '',
+                    'delete': '',
+                    'write_heavy': '',
+                    'balanced': '',
+                    'read_heavy': '',
+                }
+            },
         },
         'bench_kinds': {
             'throughput': {
@@ -48,6 +60,24 @@ objs = {
         },
     },
 }
+
+
+def get_filepath(bench, dist, workload, target):
+    # print(bench, dist, workload, target)
+    if 'data_id' in objs['hash']['targets'][target]:
+        data_id = objs['hash']['targets'][target]['data_id'][workload]
+
+        # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용
+        if data_id == '':
+            data_id = git.Repo(
+                search_parent_directories=True).head.object.hexsha[:7]
+
+        filepath = "./out/{}/{}/{}/{}_{}.out".format(
+            bench.upper(), dist.upper(), workload, target, data_id)
+    else:
+        filepath = "./out/{}/{}/{}/{}.out".format(
+            bench.upper(), dist.upper(), workload, target)
+    return filepath
 
 
 def read_throughputs(filepath):
@@ -124,8 +154,9 @@ def draw(bench, dist, targets):
         # target: CCEH, Level, ...
         for t, t_plot in targets.items():
 
-            filepath = "./out/{}/{}/{}/{}.out".format(
-                bench.upper(), dist.upper(), wl, t)
+            filepath = get_filepath(bench, dist, wl, t)
+            # filepath = "./out/{}/{}/{}/{}.out".format(
+            #     bench.upper(), dist.upper(), wl, t)
 
             if not os.path.isfile(filepath):
                 continue
@@ -186,8 +217,10 @@ for obj, obj_info in objs.items():
             wl_datas = {"workload": wl}
 
             for t, t_plot in targets.items():
-                filepath = "./out/THROUGHPUT/{}/{}/{}.out".format(
-                    dist.upper(), wl, t)
+                filepath = get_filepath('throughput', dist, wl, t)
+
+                # filepath = "./out/THROUGHPUT/{}/{}/{}.out".format(
+                #     dist.upper(), wl, t)
 
                 if not os.path.isfile(filepath):
                     continue
