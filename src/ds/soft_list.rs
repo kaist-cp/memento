@@ -1,12 +1,7 @@
 //! SOFT list
 
-use crate::{
-    pmem::{
-        barrier, ssmem_alloc, ssmem_alloc_init, ssmem_allocator, ssmem_free, Collectable,
-        GarbageCollection, PoolHandle, SSMEM_DEFAULT_MEM_SIZE,
-    },
-    PDefault,
-};
+use crate::pmem::*;
+use crate::PDefault;
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
 use epoch::{unprotected, Guard};
 use libc::c_void;
@@ -236,12 +231,16 @@ impl<T: Clone> SOFTList<T> {
                     )
                     .is_ok()
                 {
-                    VOLATILE_ALLOC.try_with(|a| {
-                        ssmem_free(*a.borrow_mut(), new_node.as_raw() as *mut c_void, None);
-                    });
-                    ALLOC.try_with(|a| {
-                        ssmem_free(*a.borrow_mut(), new_pnode as *mut c_void, Some(pool));
-                    });
+                    VOLATILE_ALLOC
+                        .try_with(|a| {
+                            ssmem_free(*a.borrow_mut(), new_node.as_raw() as *mut c_void, None);
+                        })
+                        .unwrap();
+                    ALLOC
+                        .try_with(|a| {
+                            ssmem_free(*a.borrow_mut(), new_pnode as *mut c_void, Some(pool));
+                        })
+                        .unwrap();
                     continue 'retry;
                 }
                 result_node = Some(new_node);
@@ -346,7 +345,7 @@ impl<T: Clone> SOFTList<T> {
     }
 
     /// recovery용 insert. newPNode에 대한 VNode를 volatile list에 insert함
-    fn quickInsert(&self, new_pnode: *mut PNode<T>, guard: &Guard) {
+    fn quick_insert(&self, new_pnode: *mut PNode<T>, guard: &Guard) {
         let new_pnode_ref = unsafe { new_pnode.as_ref() }.unwrap();
         let p_valid = new_pnode_ref.recovery_validity();
         let key = new_pnode_ref.key.load(Ordering::SeqCst);
@@ -402,6 +401,8 @@ impl<T: Clone> SOFTList<T> {
         }
     }
 
+    // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
+    // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
     fn recovery(&self, palloc: &mut ssmem_allocator, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
         while !curr.is_null() {
@@ -420,7 +421,7 @@ impl<T: Clone> SOFTList<T> {
                     ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
                 } else {
                     // construct volatile SOFT list
-                    self.quickInsert(curr_node, &epoch::pin());
+                    self.quick_insert(curr_node, &epoch::pin());
                 }
             }
             curr = curr_ref.next;

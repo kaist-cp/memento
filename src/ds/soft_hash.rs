@@ -1,14 +1,12 @@
 //! TODO doc
-use crossbeam_epoch::Guard;
-use fasthash::Murmur3Hasher;
-
+use super::soft_list::{thread_ini, SOFTList};
 use crate::{
     pmem::{Collectable, GarbageCollection, PoolHandle},
     PDefault,
 };
 use core::hash::{Hash, Hasher};
-
-use super::soft_list::{thread_ini, SOFTList};
+use crossbeam_epoch::Guard;
+use fasthash::Murmur3Hasher;
 
 const BUCKET_NUM: usize = 16777216;
 
