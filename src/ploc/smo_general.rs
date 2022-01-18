@@ -127,11 +127,11 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
         // CAS 성공하고 죽었는지 체크
         let vchk = cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
         let (vbit, vchk) = decompose_cas_bit(vchk as usize);
-        let pchk = cas_info.cas_pcheckpoint[tid].load(Ordering::SeqCst);
-        let (pbit, pchk) = decompose_cas_bit(pchk as usize);
+        let pbit = 1 - vbit;
+        let pchk = cas_info.cas_pcheckpoint[pbit][tid].load(Ordering::SeqCst);
 
         // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
-        if vchk < pchk && vbit != pbit {
+        if vchk < pchk as usize {
             mmt.checkpoint_succ(pbit, tid, cas_info);
             return Ok(());
         }
@@ -188,9 +188,10 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
             };
 
             let winner_tid = old.tid();
+            let winner_bit = old.cas_bit();
 
             // check if winner thread's pcheckpoint is stale
-            let pchk = cas_info.cas_pcheckpoint[winner_tid].load(Ordering::SeqCst);
+            let pchk = cas_info.cas_pcheckpoint[winner_bit][winner_tid].load(Ordering::SeqCst);
             let pchk_time = decompose_cas_bit(pchk as usize).1;
             if chk <= pchk_time as u64 {
                 // Someone may already help it. I should retry to load.
@@ -202,8 +203,7 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
             persist_obj(&self.inner, false);
 
             // CAS winner thread's pcheckpoint
-            let chk = compose_cas_bit(old.cas_bit(), chk as usize) as u64;
-            if cas_info.cas_pcheckpoint[winner_tid]
+            if cas_info.cas_pcheckpoint[winner_bit][winner_tid]
                 .compare_exchange(pchk, chk, Ordering::SeqCst, Ordering::SeqCst)
                 .is_err()
             {
@@ -213,7 +213,7 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
             }
 
             // help pointer to be clean.
-            persist_obj(&cas_info.cas_pcheckpoint[winner_tid], false);
+            persist_obj(&cas_info.cas_pcheckpoint[winner_bit][winner_tid], false);
             match self.inner.compare_exchange(
                 old,
                 old.with_tid(0),
@@ -239,7 +239,7 @@ pub(crate) struct CasInfo {
     cas_vcheckpoint: CASCheckpointArr,
 
     /// tid별 helping 받은 시간
-    cas_pcheckpoint: &'static CASCheckpointArr,
+    cas_pcheckpoint: &'static [CASCheckpointArr; 2],
 
     /// 지난 실행에서 최대 체크포인트 시간
     prev_max_checkpoint: u64,
@@ -248,8 +248,8 @@ pub(crate) struct CasInfo {
     timestamp_init: u64,
 }
 
-impl From<&'static CASCheckpointArr> for CasInfo {
-    fn from(chk_ref: &'static CASCheckpointArr) -> Self {
+impl From<&'static [CASCheckpointArr; 2]> for CasInfo {
+    fn from(chk_ref: &'static [CASCheckpointArr; 2]) -> Self {
         Self {
             cas_vcheckpoint: array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
             cas_pcheckpoint: chk_ref,
@@ -266,9 +266,11 @@ impl CasInfo {
             let t = chk.load(Ordering::Relaxed);
             std::cmp::max(m, t)
         });
-        let max = self.cas_pcheckpoint.iter().fold(max, |m, chk| {
-            let t = chk.load(Ordering::Relaxed);
-            std::cmp::max(m, t)
+        let max = self.cas_pcheckpoint.iter().fold(max, |m, chk_arr| {
+            chk_arr.iter().fold(m, |mm, chk| {
+                let t = chk.load(Ordering::Relaxed);
+                std::cmp::max(mm, t)
+            })
         });
 
         self.prev_max_checkpoint = max;

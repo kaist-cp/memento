@@ -267,10 +267,10 @@ impl Pool {
 
         unsafe {
             // general cas checkpoint 세팅
-            let cas_chk_arr =
-                RP_malloc(mem::size_of::<CASCheckpointArr>() as u64) as *mut CASCheckpointArr;
+            let cas_chk_arr = RP_malloc(mem::size_of::<[CASCheckpointArr; 2]>() as u64)
+                as *mut [CASCheckpointArr; 2];
             cas_chk_arr.write(array_init::array_init(|_| {
-                CachePadded::new(AtomicU64::new(0))
+                array_init::array_init(|_| CachePadded::new(AtomicU64::new(0)))
             }));
             persist_obj(cas_chk_arr.as_mut().unwrap(), true);
             let _prev = RP_set_root(cas_chk_arr as *mut c_void, RootIdx::CASCheckpoint as u64);
@@ -352,7 +352,8 @@ impl Pool {
         assert_eq!(is_reopen, 1);
 
         // 매핑된 주소의 시작주소를 얻고 글로벌 pool 세팅
-        let chk_ref = (RP_get_root_c(RootIdx::CASCheckpoint as u64) as *const CASCheckpointArr)
+        let chk_ref = (RP_get_root_c(RootIdx::CASCheckpoint as u64)
+            as *const [CASCheckpointArr; 2])
             .as_ref()
             .unwrap();
 
