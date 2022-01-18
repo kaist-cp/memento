@@ -5,7 +5,6 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use chrono::{Duration, Utc};
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
 
@@ -140,7 +139,7 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
         Err(self.help(cur, cas_info, guard))
     }
 
-    const PATIENCE: u64 = 4000;
+    const PATIENCE: u64 = 40000;
 
     /// return bool: 계속 진행 가능 여부 (`old`로 CAS를 해도 되는지 여부)
     #[inline]
