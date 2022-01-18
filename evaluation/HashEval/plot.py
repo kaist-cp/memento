@@ -45,7 +45,7 @@ objs = {
                 'x_label': 'Percentile',
                 'y_label': 'Latency (ns)',
             },
-        }
+        },
     },
 }
 
@@ -66,7 +66,10 @@ def read_throughputs(filepath):
                 throughputs[tn] = float(m[0])
     return threads, throughputs
 
+
 N_LATENCY = len(objs['hash']['bench_kinds']['latency']['x'])
+
+
 def read_latency(filepath):
     latency = []
     with open(filepath, "r") as f:
@@ -92,6 +95,7 @@ def draw_ax(bench, ax, datas):
     ax.grid()
     plt.setp(ax, xlabel=data['xlabel'])
 
+
 def draw_axes(bench, ylabel, axes_datas):
     fig, axes = plt.subplots(1, len(axes_datas), figsize=(20, 3))
     for i, ax_datas in enumerate(axes_datas):
@@ -105,6 +109,8 @@ def draw_axes(bench, ylabel, axes_datas):
 #
 # each <bench-dist> may have multiple workloads.
 # therefore, we collect data for all workloads belonging to that <bench-dist> and plot them together.
+
+
 def draw(bench, dist, targets):
 
     plt.clf()
@@ -115,7 +121,7 @@ def draw(bench, dist, targets):
     for wl, wl_info in bench_info['workloads'].items():
         wl_datas = []
 
-        # target: CCEH, Level, ... 
+        # target: CCEH, Level, ...
         for t, t_plot in targets.items():
 
             filepath = "./out/{}/{}/{}/{}.out".format(
@@ -145,6 +151,7 @@ def draw(bench, dist, targets):
 
     draw_axes(bench, bench_info['y_label'], bd_datas)
 
+
 # 1. multi-threads thourghput, latency (line graph)
 for obj, obj_info in objs.items():
     targets = obj_info['targets']
@@ -167,8 +174,8 @@ for obj, obj_info in objs.items():
 # 2. single-thread throughput (bar graph)
 for obj, obj_info in objs.items():
     targets = obj_info['targets']
-    dfs=[]
-    dfs_xlabel=[]
+    dfs = []
+    dfs_xlabel = []
 
     for ix, dist in enumerate(["uniform", "selfsimilar"]):
         plt.clf()
@@ -186,19 +193,21 @@ for obj, obj_info in objs.items():
                     continue
 
                 _, data = read_throughputs(filepath)
-                wl_datas[t]=data[0]
+                wl_datas[t] = data[0]
             bd_datas.append(wl_datas)
-        
+
         dfs.append(pd.DataFrame.from_dict(bd_datas))
         dfs_xlabel.append('('+chr(ix+ord('a'))+') '+dist)
-    
+
     # draw graph, not save
     fig, axes = plt.subplots(1, 2, figsize=(10, 3))
     for ix, df in enumerate(dfs):
-        p = df.plot(ax=axes[ix], x="workload", xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False)
+        p = df.plot(ax=axes[ix], x="workload",
+                    xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False)
         p.grid(True, axis='y', linestyle='--')
     axLine, axLabel = axes[0].get_legend_handles_labels()
-    fig.legend(axLine, axLabel, loc='upper center', ncol=dfs[1].shape[1]-1, borderaxespad=0.1)
+    fig.legend(axLine, axLabel, loc='upper center',
+               ncol=dfs[1].shape[1]-1, borderaxespad=0.1)
     plt.setp(axes[0], ylabel="Throughput (M op/s)")
 
     # save
