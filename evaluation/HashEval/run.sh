@@ -15,7 +15,7 @@ function dmsg() {
 }
 
 function bench() {
-    target=$1   # possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel, clevel_rust (TODO: clevel_rust -> clevel_memento)
+    target=$1   # possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel, clevel_rust, SOFT_rust (TODO: clevel_rust -> clevel_memento)
     workload=$2 # possible arg: insert, pos_search, ...
     mode=$3     # possible arg: THROUGHPUT, LOAD_FACTOR, RESIZE, LATENCY (대소문자 중요!!)
     dist=$4     # possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN
@@ -35,7 +35,7 @@ function bench() {
     fi
 
     # workload에 맞게 파라미터 설정
-    HASH_SIZE=16777216      # Initial capacity of hash table (TODO: SOFT는 init capacity 0으로 하고 다른 설정 필요)
+    HASH_SIZE=16777216      # Initial capacity of hash table
     OP=200000000            # Load, Run phase 각가에서 실행시킬 op 수
     SKIP_LOAD=false         # Load phase를 skip할지 여부
     READ_RT=0               # Run phase에 실행시킬 op 중 몇 %를 read로 할건가
@@ -127,7 +127,8 @@ function bench_all() {
         bench Level $workload $mode $dist $THREAD
         bench Dash $workload $mode $dist $THREAD
         bench PCLHT $workload $mode $dist $THREAD
-        # bench SOFT $workload $mode $dist $THREAD # (TODO: 필요하면 추가, 추가시 init capacity 확인 필요)
+        bench SOFT $workload $mode $dist $THREAD
+        bench SOFT_rust $workload $mode $dist $THREAD
 
         # LATENCY 측정은 32 스레드로만 한 번 하고 끝냄
         if [ "$mode" == "LATENCY" ]; then

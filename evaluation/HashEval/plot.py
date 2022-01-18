@@ -12,11 +12,23 @@ objs = {
             'Level': {'label': "LEVEL", 'marker': 'o', 'color': 'orange', 'style': '-'},
             'Dash': {'label': "Dash", 'marker': '^', 'color': 'green', 'style': '-'},
             'PCLHT': {'label': "PCLHT", 'marker': 'v', 'color': 'gold', 'style': '-'},
-            # 'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
+            'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
             "clevel": {'label': "CLEVEL", 'marker': 's', 'color': 'gray', 'style': '-'},
             "clevel_rust": {
                 'label': "CLEVEL-RUST", 'marker': 'o', 'color': 'black', 'style': '-',
-                'data_id': {  # select data manually
+                'data_id': {  # select data manually. 지정값 없을시 최신 commit의 데이터 읽음
+                    'insert': '',
+                    'pos_search': '',
+                    'neg_search': '',
+                    'delete': '',
+                    'write_heavy': '',
+                    'balanced': '',
+                    'read_heavy': '',
+                }
+            },
+            'SOFT_rust': {
+                'label': "SOFT-RUST", 'marker': 'o', 'color': 'blue', 'style': '-',
+                'data_id': {  # select data manually. 지정값 없을시 최신 commit의 데이터 읽음
                     'insert': '',
                     'pos_search': '',
                     'neg_search': '',
