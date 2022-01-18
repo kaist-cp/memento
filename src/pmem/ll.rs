@@ -8,8 +8,11 @@ const CACHE_LINE: usize = 64;
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{_mm_mfence, _mm_sfence, clflush};
 
+use std::arch::x86_64::_MM_HINT_ET1;
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{__rdtscp, _mm_clflush, _mm_lfence, _mm_mfence, _mm_sfence, _rdtsc};
+use std::arch::x86_64::{
+    __rdtscp, _mm_clflush, _mm_lfence, _mm_mfence, _mm_prefetch, _mm_sfence, _rdtsc,
+};
 
 /// Synchronize caches and memories and acts like a write barrier
 #[inline(always)]
@@ -127,4 +130,11 @@ pub fn rdtscp() -> u64 {
         let mut rdtscp_result = 0;
         __rdtscp(&mut rdtscp_result)
     }
+}
+
+/// Fetches the cache line of data from memory that contains the byte specified with the source operand to a location in the 1st or 2nd level cache and invalidates other cached instances of the line.
+// meaning of "w": indicate an anticipation to write to the address.
+#[inline]
+pub fn prefetchw<T>(p: *const T) {
+    unsafe { _mm_prefetch::<_MM_HINT_ET1>(p as *const i8) }
 }

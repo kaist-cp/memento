@@ -36,6 +36,7 @@
 #![feature(never_type)] // to use `!`
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 #![feature(new_uninit)] // for clevel
+#![feature(core_intrinsics)]
 #![recursion_limit = "512"]
 
 // Persistent objects collection
