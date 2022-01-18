@@ -140,6 +140,8 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
         Err(self.help(cur, cas_info, guard))
     }
 
+    const PATIENCE: u64 = 4000;
+
     /// return bool: 계속 진행 가능 여부 (`old`로 CAS를 해도 되는지 여부)
     #[inline]
     fn help<'g>(
@@ -156,11 +158,10 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
 
             let chk = loop {
                 // get checkpoint timestamp
-                let chk = calc_checkpoint(rdtsc(), cas_info);
+                let start = rdtsc();
                 lfence();
 
                 // start spin loop
-                let start = Utc::now();
                 let out = loop {
                     let cur = self.inner.load(Ordering::SeqCst, guard);
 
@@ -176,14 +177,14 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
                     }
 
                     // if patience is over, I have to help it.
-                    let now = Utc::now();
-                    if now.signed_duration_since(start) > Duration::nanoseconds(4000) {
+                    let now = rdtsc();
+                    if now > start + Self::PATIENCE {
                         break true;
                     }
                 };
 
                 if out {
-                    break chk;
+                    break calc_checkpoint(start, cas_info);
                 }
             };
 
