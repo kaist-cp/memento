@@ -1332,13 +1332,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                     guard,
                     pool,
                 )
-                .is_err()
+                .is_ok()
             {
-                continue;
+                return;
             }
-
             // println!("[delete] finish!");
-            return;
         }
     }
 }
