@@ -299,10 +299,8 @@ impl<T: Clone> Queue<T> {
                 );
             })
             .map_err(|e| {
-                if let InsertError::NonNull = e {
+                if let InsertError::CASFail(next) = e {
                     // tail is stale
-                    persist_obj(&tail_ref.next, true);
-                    let next = tail_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 또 로드 해서 성능 저하 생길지도?
                     let _ = self.tail.compare_exchange(
                         tail,
                         next,

@@ -67,9 +67,6 @@ impl<O: Traversable<N>, N> Insert<O, N> {
 /// Insert Error
 #[derive(Debug)]
 pub enum InsertError<'g, T> {
-    /// The atomic location is not null
-    NonNull,
-
     /// CAS fail (Strong fail)
     CASFail(PShared<'g, T>),
 
@@ -204,15 +201,15 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
 
         // Normal run
-        let old = self.inner.load(Ordering::SeqCst, guard);
-
-        if !old.is_null() {
-            return Err(InsertError::NonNull);
-        }
-
         let ret = self
             .inner
-            .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
+            .compare_exchange(
+                PShared::null(),
+                new,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            )
             .map(|_| ())
             .map_err(|e| InsertError::CASFail(e.current));
 
