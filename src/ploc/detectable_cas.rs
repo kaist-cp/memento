@@ -34,7 +34,7 @@ thread_local! {
 /// TODO(doc)
 #[derive(Debug)]
 pub struct DetectableCASAtomic<N: Collectable> {
-    inner: PAtomic<N>,
+    pub inner: PAtomic<N>,
 }
 
 impl<N: Collectable> Collectable for DetectableCASAtomic<N> {
