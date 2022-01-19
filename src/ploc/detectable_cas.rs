@@ -11,7 +11,7 @@ use crossbeam_utils::CachePadded;
 use crate::{
     pepoch::{PAtomic, PShared},
     pmem::{
-        lfence, ll::persist_obj, rdtsc, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle,
+        lfence, ll::persist_obj, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle,
     },
 };
 
@@ -79,6 +79,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
                     // 성공했다고 체크포인팅
                     mmt.checkpoint_succ(cas_bit, tid, &pool.cas_info);
+                    lfence();
 
                     // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
                     let _ = self
@@ -169,7 +170,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             let chk = loop {
                 // get checkpoint timestamp
-                let start = rdtsc();
+                let start = rdtscp();
                 lfence();
 
                 // start spin loop
@@ -188,7 +189,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     }
 
                     // if patience is over, I have to help it.
-                    let now = rdtsc();
+                    let now = rdtscp();
                     if now > start + Self::PATIENCE {
                         break true;
                     }
