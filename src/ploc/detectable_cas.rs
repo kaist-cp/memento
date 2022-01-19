@@ -69,28 +69,40 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let cas_bit = 1 - decompose_cas_bit(prev_chk as usize).0;
         let tmp_new = new.with_cas_bit(cas_bit).with_tid(tid);
 
-        self.inner
-            .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
-            .map(|_| {
-                // 성공하면 target을 persist
-                persist_obj(&self.inner, true);
+        loop {
+            let res = self
+                .inner
+                .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
+                .map(|_| {
+                    // 성공하면 target을 persist
+                    persist_obj(&self.inner, true);
 
-                // 성공했다고 체크포인팅
-                mmt.checkpoint_succ(cas_bit, tid, &pool.cas_info);
+                    // 성공했다고 체크포인팅
+                    mmt.checkpoint_succ(cas_bit, tid, &pool.cas_info);
 
-                // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
-                let _ = self
-                    .inner
-                    .compare_exchange(
-                        tmp_new,
-                        new.with_tid(0),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    )
-                    .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
-            })
-            .map_err(|e| self.help(e.current, &pool.cas_info, guard))
+                    // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
+                    let _ = self
+                        .inner
+                        .compare_exchange(
+                            tmp_new,
+                            new.with_tid(0),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        )
+                        .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
+                })
+                .map_err(|e| self.help(e.current, &pool.cas_info, guard));
+
+            if let Err(cur) = res {
+                // retry for the property of strong CAS
+                if cur == old {
+                    continue;
+                }
+            }
+
+            return res;
+        }
     }
 
     /// TODO(doc)
