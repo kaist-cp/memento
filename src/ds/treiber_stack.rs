@@ -6,7 +6,7 @@ use etrace::{ok_or, some_or};
 
 use super::stack::*;
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::{Cas, Checkpoint, GeneralSMOAtomic};
+use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -169,20 +169,20 @@ unsafe impl<T: Clone> Send for Pop<T> {}
 /// Persistent Treiber stack
 #[derive(Debug)]
 pub struct TreiberStack<T: Clone> {
-    top: GeneralSMOAtomic<Node<T>>,
+    top: DetectableCASAtomic<Node<T>>,
 }
 
 impl<T: Clone> Default for TreiberStack<T> {
     fn default() -> Self {
         Self {
-            top: GeneralSMOAtomic::default(),
+            top: DetectableCASAtomic::default(),
         }
     }
 }
 
 impl<T: Clone> Collectable for TreiberStack<T> {
     fn filter(stack: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        GeneralSMOAtomic::filter(&mut stack.top, tid, gc, pool);
+        DetectableCASAtomic::filter(&mut stack.top, tid, gc, pool);
     }
 }
 

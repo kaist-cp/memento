@@ -24,17 +24,17 @@ pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS];
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct GeneralSMOAtomic<N: Collectable> {
+pub struct DetectableCASAtomic<N: Collectable> {
     inner: PAtomic<N>,
 }
 
-impl<N: Collectable> Collectable for GeneralSMOAtomic<N> {
+impl<N: Collectable> Collectable for DetectableCASAtomic<N> {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         PAtomic::filter(&mut s.inner, tid, gc, pool);
     }
 }
 
-impl<N: Collectable> Default for GeneralSMOAtomic<N> {
+impl<N: Collectable> Default for DetectableCASAtomic<N> {
     fn default() -> Self {
         Self {
             inner: PAtomic::null(),
@@ -42,7 +42,7 @@ impl<N: Collectable> Default for GeneralSMOAtomic<N> {
     }
 }
 
-impl<N: Collectable> From<PShared<'_, N>> for GeneralSMOAtomic<N> {
+impl<N: Collectable> From<PShared<'_, N>> for DetectableCASAtomic<N> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
             inner: PAtomic::from(node),
@@ -50,7 +50,7 @@ impl<N: Collectable> From<PShared<'_, N>> for GeneralSMOAtomic<N> {
     }
 }
 
-impl<N: Collectable> GeneralSMOAtomic<N> {
+impl<N: Collectable> DetectableCASAtomic<N> {
     /// TODO(doc)
     pub fn cas<'g, const REC: bool>(
         &self,
@@ -230,8 +230,8 @@ impl<N: Collectable> GeneralSMOAtomic<N> {
     }
 }
 
-unsafe impl<N: Collectable> Send for GeneralSMOAtomic<N> {}
-unsafe impl<N: Collectable> Sync for GeneralSMOAtomic<N> {}
+unsafe impl<N: Collectable> Send for DetectableCASAtomic<N> {}
+unsafe impl<N: Collectable> Sync for DetectableCASAtomic<N> {}
 
 #[derive(Debug)]
 pub(crate) struct CasInfo {

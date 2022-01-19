@@ -2,7 +2,7 @@
 
 use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::smo_general::Cas;
-use crate::ploc::{Checkpoint, Checkpointable, GeneralSMOAtomic, Traversable};
+use crate::ploc::{Checkpoint, Checkpointable, DetectableCASAtomic, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::{ok_or, some_or};
@@ -21,14 +21,14 @@ pub struct TryFail;
 #[derive(Debug)]
 pub struct Node<T> {
     data: MaybeUninit<T>,
-    next: GeneralSMOAtomic<Self>,
+    next: DetectableCASAtomic<Self>,
 }
 
 impl<T> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: MaybeUninit::new(value),
-            next: GeneralSMOAtomic::default(),
+            next: DetectableCASAtomic::default(),
         }
     }
 }
@@ -37,7 +37,7 @@ impl<T> Default for Node<T> {
     fn default() -> Self {
         Self {
             data: MaybeUninit::uninit(),
-            next: GeneralSMOAtomic::default(),
+            next: DetectableCASAtomic::default(),
         }
     }
 }
@@ -45,7 +45,7 @@ impl<T> Default for Node<T> {
 // TODO(must): T should be collectable
 impl<T> Collectable for Node<T> {
     fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        GeneralSMOAtomic::filter(&mut node.next, tid, gc, pool);
+        DetectableCASAtomic::filter(&mut node.next, tid, gc, pool);
     }
 }
 
@@ -192,7 +192,7 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 /// Persistent Queue
 #[derive(Debug)]
 pub struct QueueGeneral<T: Clone> {
-    head: CachePadded<GeneralSMOAtomic<Node<T>>>,
+    head: CachePadded<DetectableCASAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
 }
 
@@ -203,7 +203,7 @@ impl<T: Clone> PDefault for QueueGeneral<T> {
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
         Self {
-            head: CachePadded::new(GeneralSMOAtomic::from(sentinel)),
+            head: CachePadded::new(DetectableCASAtomic::from(sentinel)),
             tail: CachePadded::new(PAtomic::from(sentinel)),
         }
     }
@@ -211,7 +211,7 @@ impl<T: Clone> PDefault for QueueGeneral<T> {
 
 impl<T: Clone> Collectable for QueueGeneral<T> {
     fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        GeneralSMOAtomic::filter(&mut queue.head, tid, gc, pool);
+        DetectableCASAtomic::filter(&mut queue.head, tid, gc, pool);
     }
 }
 
