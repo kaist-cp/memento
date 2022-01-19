@@ -322,7 +322,7 @@ impl<T: Clone> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let node = POwned::new(Node::from(value), pool);
+        let node = POwned::new(Node::from(value), pool); // TODO(opt): persist_obj를 new 안으로 넣기
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = ok_or!(enq.node.checkpoint::<REC>(PAtomic::from(node)), e, unsafe {
