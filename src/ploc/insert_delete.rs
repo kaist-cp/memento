@@ -140,14 +140,6 @@ impl<N: Node + Collectable> From<PShared<'_, N>> for SMOAtomic<N> {
     }
 }
 
-impl<N: Node + Collectable> Deref for SMOAtomic<N> {
-    type Target = PAtomic<N>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
 impl<N: Node + Collectable> SMOAtomic<N> {
     /// Ok(ptr): helping 다 해준 뒤의 최종 ptr
     /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
@@ -185,6 +177,13 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 Err(e) => e.current,
             };
         }
+    }
+
+    /// Load
+    pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
+        let ret = self.inner.load(ord, guard);
+        persist_obj(&self.inner, true);
+        ret
     }
 
     /// Insert

@@ -377,9 +377,6 @@ impl<T: Clone> Queue<T> {
         let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
 
         if head == tail {
-            let tail_ref = unsafe { tail.deref(pool) };
-            persist_obj(&tail_ref.next, true);
-
             let _ =
                 self.tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
