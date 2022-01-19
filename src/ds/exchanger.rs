@@ -12,7 +12,7 @@ use crate::{
     ploc::{
         common::Checkpoint,
         insert_delete::{Delete, Insert, Node as SMONode, SMOAtomic},
-        not_deleted, DeleteMode, Traversable,
+        not_deleted, Traversable,
     },
     pmem::{
         ll::persist_obj,
@@ -262,15 +262,7 @@ impl<T: Clone> Exchanger<T> {
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
         let updated = self
             .slot
-            .delete::<REC>(
-                init_slot,
-                mine,
-                DeleteMode::Drop,
-                &mut try_xchg.update,
-                tid,
-                guard,
-                pool,
-            )
+            .delete::<REC>(init_slot, mine, &mut try_xchg.update, tid, guard, pool)
             .map_err(|_| {
                 // 실패하면 contention으로 인한 fail 리턴
                 unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
@@ -356,7 +348,6 @@ impl<T: Clone> Exchanger<T> {
             .delete::<REC>(
                 mine,
                 PShared::null(),
-                DeleteMode::Drop,
                 &mut try_xchg.delete,
                 tid,
                 guard,

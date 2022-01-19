@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
 use crate::pepoch::atomic::invalid_ptr;
-use crate::ploc::insert_delete::{self, Delete, DeleteMode, Insert, SMOAtomic};
+use crate::ploc::insert_delete::{self, Delete, Insert, SMOAtomic};
 use crate::ploc::{not_deleted, Checkpoint, Checkpointable, InsertError, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -393,7 +393,6 @@ impl<T: Clone> Queue<T> {
             .delete::<REC>(
                 head,
                 next,
-                DeleteMode::Drop,
                 &mut try_deq.delete,
                 tid,
                 guard,

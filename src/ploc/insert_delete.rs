@@ -77,16 +77,6 @@ pub enum InsertError<'g, T> {
     RecFail,
 }
 
-/// Delete mode
-#[derive(Debug, Clone)]
-pub enum DeleteMode {
-    /// Drop the node
-    Drop,
-
-    /// Don't drop the node for the recycle purpose
-    Recycle,
-}
-
 /// Delete
 ///
 /// Do not use LSB while using `Delete`.
@@ -124,12 +114,6 @@ where
         persist_obj(&self.target_loc, false);
     }
 }
-
-// Recycle 상태 저장을 target_loc에서 tid 필드에 사용할 것임
-// 0: 기본, 1: owner cas 성공, 2: owner 지운 후
-const RECYCLE_START: usize = 0;
-const RECYCLE_MID: usize = 1;
-const RECYCLE_END: usize = 2;
 
 /// Atomic pointer for use of `Insert'/`Delete`
 #[derive(Debug)]
@@ -259,26 +243,17 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         &self,
         old: PShared<'g, N>,
         new: PShared<'_, N>,
-        mode: DeleteMode,
         delete: &mut Delete<N>,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, ()> {
         if REC {
-            return self.delete_result(old, new, mode, delete, tid, guard, pool);
+            return self.delete_result(delete, tid, guard, pool);
         }
 
         // 우선 내가 target을 가리키고
-        match mode {
-            DeleteMode::Drop => {
-                if old.as_ptr() == new.as_ptr() {
-                    panic!("Delete: `new` must have a different pointer from `old`");
-                }
-                delete.target_loc.store(old, Ordering::Relaxed)
-            }
-            DeleteMode::Recycle => delete.target_loc.store(old.with_tid(0), Ordering::Relaxed), // TODO(opt): tid 0으로 세팅할 필요 있나? invariant 있음?
-        };
+        delete.target_loc.store(old, Ordering::Relaxed);
         persist_obj(&delete.target_loc, false); // we're doing CAS soon.
 
         // 빼려는 node에 내 이름 새겨넣음
@@ -302,32 +277,11 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             .inner
             .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-        match mode {
-            DeleteMode::Drop => {
-                // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
-                // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
-                // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
-                guard.defer_persist(&self.inner);
-                unsafe { guard.defer_pdestroy(old) } // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
-            }
-            DeleteMode::Recycle => {
-                persist_obj(&self.inner, false);
-
-                delete
-                    .target_loc
-                    .store(old.with_tid(RECYCLE_MID), Ordering::Relaxed);
-                persist_obj(&delete.target_loc, true);
-
-                // clear owner
-                owner.store(not_deleted(), Ordering::SeqCst);
-                persist_obj(owner, true);
-
-                delete
-                    .target_loc
-                    .store(old.with_tid(RECYCLE_END), Ordering::Relaxed);
-                persist_obj(&delete.target_loc, true);
-            }
-        };
+        // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
+        // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
+        // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
+        guard.defer_persist(&self.inner);
+        unsafe { guard.defer_pdestroy(old) } // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
 
         Ok(old)
     }
@@ -335,9 +289,6 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     #[inline]
     fn delete_result<'g>(
         &self,
-        old: PShared<'_, N>,
-        new: PShared<'_, N>,
-        mode: DeleteMode,
         delete: &mut Delete<N>,
         tid: usize,
         guard: &'g Guard,
@@ -346,75 +297,13 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         let target = delete.target_loc.load(Ordering::Relaxed, guard);
         let target_ref = some_or!(unsafe { target.as_ref(pool) }, return Err(())); // if null, return failure.
 
-        match mode {
-            DeleteMode::Drop => {
-                // owner가 내가 아니면 실패
-                let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
-                if owner.tid() == tid {
-                    unsafe { guard.defer_pdestroy(target) };
-                    Ok(target)
-                } else {
-                    Err(())
-                }
-            }
-            DeleteMode::Recycle => {
-                let mut recycle_tag = target.tid();
-                let mut cas = false;
-
-                loop {
-                    match recycle_tag {
-                        RECYCLE_START => {
-                            let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
-                            if owner.tid() != tid {
-                                // owner가 내가 아니면 실패
-                                return Err(());
-                            }
-
-                            let _ = self.inner.compare_exchange(
-                                old,
-                                new,
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                                guard,
-                            );
-                            cas = true;
-
-                            delete
-                                .target_loc
-                                .store(target.with_tid(RECYCLE_MID), Ordering::Relaxed);
-                            persist_obj(&delete.target_loc, true);
-
-                            recycle_tag = RECYCLE_MID;
-                        }
-                        RECYCLE_MID => {
-                            // Recycle: owner 지우기 전 단계
-
-                            if !cas {
-                                let _ = self.inner.compare_exchange(
-                                    old,
-                                    new,
-                                    Ordering::SeqCst,
-                                    Ordering::SeqCst,
-                                    guard,
-                                );
-                            }
-                            persist_obj(&self.inner, true);
-
-                            target_ref.tid_next().store(not_deleted(), Ordering::SeqCst);
-                            persist_obj(target_ref.tid_next(), true);
-
-                            delete
-                                .target_loc
-                                .store(target.with_tid(RECYCLE_END), Ordering::Relaxed);
-                            persist_obj(&delete.target_loc, true);
-
-                            recycle_tag = RECYCLE_END;
-                        }
-                        RECYCLE_END => return Ok(target),
-                        _ => unreachable!("No more cases"),
-                    }
-                }
-            }
+        // owner가 내가 아니면 실패
+        let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
+        if owner.tid() == tid {
+            unsafe { guard.defer_pdestroy(target) };
+            Ok(target)
+        } else {
+            Err(())
         }
     }
 }
