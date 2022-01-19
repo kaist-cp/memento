@@ -14,30 +14,30 @@ use crate::{
     },
 };
 
-/// TODO(doc)
+/// Node for `Insert`/`Delete`
 pub trait Node: Sized {
-    /// TODO(doc)
+    /// Indication of acknowledgement for `Insert`
     fn acked(&self, guard: &Guard) -> bool {
-        self.owner().load(Ordering::SeqCst, guard) != no_owner()
+        self.tid_next().load(Ordering::SeqCst, guard) != not_deleted()
     }
 
-    /// TODO(doc)
-    fn owner(&self) -> &PAtomic<Self>;
+    /// Deleter's tid and next pointer for helping
+    fn tid_next(&self) -> &PAtomic<Self>;
 }
 
 /// No owner를 표시하기 위함
 #[inline]
-pub fn no_owner<'g, T>() -> PShared<'g, T> {
+pub fn not_deleted<'g, T>() -> PShared<'g, T> {
     PShared::null()
 }
 
-/// TODO(doc)
+/// Traversable object for recovery of `Insert`
 pub trait Traversable<N> {
-    /// TODO(doc)
+    /// Search specific target pointer through the object
     fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
 }
 
-/// TODO(doc)
+/// Insert
 #[derive(Debug)]
 pub struct Insert<O: Traversable<N>, N> {
     _marker: PhantomData<*const (O, N)>,
@@ -64,30 +64,31 @@ impl<O: Traversable<N>, N> Insert<O, N> {
     pub fn reset(&mut self) {}
 }
 
-/// TODO(doc)
+/// Insert Error
 #[derive(Debug)]
 pub enum InsertError<'g, T> {
-    /// Insert를 위한 atomic operation 전에 기각됨
+    /// The atomic location is not null
     NonNull,
 
-    /// CAS에 실패 (Strong fail)
+    /// CAS fail (Strong fail)
     CASFail(PShared<'g, T>),
 
-    /// Recovery run 때 fail임을 판단 (Weak fail)
+    /// Fail judged when recovered (Weak fail)
     RecFail,
 }
 
-/// TODO(doc)
+/// Delete mode
 #[derive(Debug, Clone)]
 pub enum DeleteMode {
-    /// TODO(doc)
+    /// Drop the node
     Drop,
 
-    /// TODO(doc)
+    /// Don't drop the node for the recycle purpose
     Recycle,
 }
 
-/// TODO(doc)
+/// Delete
+///
 /// Do not use LSB while using `Delete`.
 /// It's reserved for it.
 /// - 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
@@ -130,7 +131,7 @@ const RECYCLE_START: usize = 0;
 const RECYCLE_MID: usize = 1;
 const RECYCLE_END: usize = 2;
 
-/// TODO(doc)
+/// Atomic pointer for use of `Insert'/`Delete`
 #[derive(Debug)]
 pub struct SMOAtomic<N: Node + Collectable> {
     inner: PAtomic<N>,
@@ -179,9 +180,9 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         loop {
             let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
 
-            let owner = cur_ref.owner();
+            let owner = cur_ref.tid_next();
             let next = owner.load(Ordering::SeqCst, guard);
-            if next == no_owner() {
+            if next == not_deleted() {
                 return Ok(cur);
             }
 
@@ -282,7 +283,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
 
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { old.deref(pool) };
-        let owner = target_ref.owner();
+        let owner = target_ref.tid_next();
         let _ = owner
             .compare_exchange(
                 PShared::null(),
@@ -318,7 +319,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 persist_obj(&delete.target_loc, true);
 
                 // clear owner
-                owner.store(no_owner(), Ordering::SeqCst);
+                owner.store(not_deleted(), Ordering::SeqCst);
                 persist_obj(owner, true);
 
                 delete
@@ -348,7 +349,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         match mode {
             DeleteMode::Drop => {
                 // owner가 내가 아니면 실패
-                let owner = target_ref.owner().load(Ordering::SeqCst, guard);
+                let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
                 if owner.tid() == tid {
                     unsafe { guard.defer_pdestroy(target) };
                     Ok(target)
@@ -363,7 +364,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 loop {
                     match recycle_tag {
                         RECYCLE_START => {
-                            let owner = target_ref.owner().load(Ordering::SeqCst, guard);
+                            let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
                             if owner.tid() != tid {
                                 // owner가 내가 아니면 실패
                                 return Err(());
@@ -399,8 +400,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                             }
                             persist_obj(&self.inner, true);
 
-                            target_ref.owner().store(no_owner(), Ordering::SeqCst);
-                            persist_obj(target_ref.owner(), true);
+                            target_ref.tid_next().store(not_deleted(), Ordering::SeqCst);
+                            persist_obj(target_ref.tid_next(), true);
 
                             delete
                                 .target_loc

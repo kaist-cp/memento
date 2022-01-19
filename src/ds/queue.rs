@@ -2,7 +2,7 @@
 
 use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::insert_delete::{self, Delete, DeleteMode, Insert, SMOAtomic};
-use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertError, Traversable};
+use crate::ploc::{not_deleted, Checkpoint, Checkpointable, InsertError, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::{ok_or, some_or};
@@ -30,7 +30,7 @@ impl<T> From<T> for Node<T> {
         Self {
             data: MaybeUninit::new(value),
             next: SMOAtomic::default(),
-            owner: PAtomic::from(no_owner()),
+            owner: PAtomic::from(not_deleted()),
         }
     }
 }
@@ -40,7 +40,7 @@ impl<T> Default for Node<T> {
         Self {
             data: MaybeUninit::uninit(),
             next: SMOAtomic::default(),
-            owner: PAtomic::from(no_owner()),
+            owner: PAtomic::from(not_deleted()),
         }
     }
 }
@@ -54,7 +54,7 @@ impl<T> Collectable for Node<T> {
 
 impl<T> insert_delete::Node for Node<T> {
     #[inline]
-    fn owner(&self) -> &PAtomic<Self> {
+    fn tid_next(&self) -> &PAtomic<Self> {
         &self.owner
     }
 }

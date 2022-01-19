@@ -12,7 +12,7 @@ use crate::{
     ploc::{
         common::Checkpoint,
         insert_delete::{Delete, Insert, Node as SMONode, SMOAtomic},
-        no_owner, DeleteMode, Traversable,
+        not_deleted, DeleteMode, Traversable,
     },
     pmem::{
         ll::persist_obj,
@@ -51,7 +51,7 @@ impl<T> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: value,
-            owner: PAtomic::from(no_owner()),
+            owner: PAtomic::from(not_deleted()),
         }
     }
 }
@@ -63,7 +63,7 @@ impl<T> Collectable for Node<T> {
 
 impl<T> SMONode for Node<T> {
     #[inline]
-    fn owner(&self) -> &PAtomic<Self> {
+    fn tid_next(&self) -> &PAtomic<Self> {
         &self.owner
     }
 }
@@ -374,7 +374,7 @@ impl<T: Clone> Exchanger<T> {
     fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
-        let partner = mine_ref.owner().load(Ordering::SeqCst, guard);
+        let partner = mine_ref.tid_next().load(Ordering::SeqCst, guard);
         let partner_ref = unsafe { partner.deref(pool) };
         partner_ref.data.clone()
     }
