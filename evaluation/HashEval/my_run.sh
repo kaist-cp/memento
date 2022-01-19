@@ -2,11 +2,9 @@
 
 # TODO: 이 파일은 프로젝트에 필요없음. 간단한 테스트 용도
 
-rm -rf /mnt/pmem0/*
-export LD_LIBRARY_PATH=./hash/Dash/pmdk/src/nondebug:$LD_LIBRARY_PATH # for dash
+# NOTE: SOFT_rust는 SOFTHash obj가 크기 때문에 stack size를 늘려줘야함. `ulimit -s 8192000`
 
-
-target="Dash"    # 측정 대상 (possible arg: CCEH, Level, Dash, PCLHT, clevel, clevel_rust)
+target="SOFT"    # 측정 대상 (possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel, clevel_rust, SOFT_rust)
 HASH_SIZE=16777216      # Initial capacity of hash table
 OP=200000000            # Load, Run phase 각가에서 실행시킬 op 수
 SKIP_LOAD=true          # Load phase를 skip할지 여부
@@ -17,6 +15,10 @@ NEGATIVE_RT=0           # Run phase에 실행시킬 read 중 몇 %를 negative s
 MODE="THROUGHPUT"       # Evaluation mode (possbile arg: THROUGHPUT, LATENCY, LOAD_FACTOR)
 DISTRIBUTION="UNIFORM"  # Key distribution (possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN)
 THREAD=48
+
+set -e
+export LD_LIBRARY_PATH=./hash/Dash/pmdk/src/nondebug:$LD_LIBRARY_PATH # for Dash
+rm -rf /mnt/pmem0/*
 
 # clevel, clevel-rust 제외한 나머지는 더미 폴더 필요
 if [[ "$target" != "clevel" && "$target" != "clevel_rust" ]]; then

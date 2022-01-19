@@ -37,7 +37,7 @@ extern "C"
     typedef struct _poolhandle PoolHandle;
     PoolHandle *pool_create(char *path, size_t size, int tnum);
     void *get_root(size_t ix, PoolHandle *pool);
-    void thread_init(int tid);
+    void thread_init(int tid, PoolHandle *pool);
 
     typedef struct _SOFT SOFT;
     bool search(SOFT *obj, unsigned tid, Key k, PoolHandle *pool);
@@ -90,7 +90,7 @@ public:
     }
     void thread_ini(int id)
     {
-        thread_init(id);
+        thread_init(id, pool);
     }
     bool find(const char *key, size_t key_sz, char *value_out, unsigned tid)
     {

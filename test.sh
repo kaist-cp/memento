@@ -20,10 +20,8 @@ set -e
 # done
 
 rm -rf /mnt/pmem0/test
-RUST_MIN_STACK=10073741824 cargo test soft_list::test::smoke -- --nocapture
-RUST_MIN_STACK=10073741824 cargo test soft_list::test::insert_contain_remove -- --nocapture
-RUST_MIN_STACK=10073741824 cargo test soft_hash::test::smoke -- --nocapture
-RUST_MIN_STACK=10073741824 cargo test soft_hash::test::insert_contain_remove -- --nocapture
+RUST_MIN_STACK=10073741824 cargo test --release soft_list -- --nocapture
+RUST_MIN_STACK=10073741824 cargo test --release soft_hash -- --nocapture
 
 # while true; do
 #     rm -rf /mnt/pmem0/test

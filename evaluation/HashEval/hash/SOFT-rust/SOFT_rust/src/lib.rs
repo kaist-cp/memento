@@ -3,13 +3,33 @@
 use crossbeam_epoch::{self as epoch, Guard};
 use memento::ds::soft_hash::*;
 use memento::pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj};
+use memento::PDefault;
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
 
-static mut POOL: Option<&'static PoolHandle> = None;
-
 type Key = usize;
 type Value = u64;
+
+/// Persistent root for SOFT hash
+#[derive(Debug)]
+pub struct SOFTHash<T: 'static> {
+    inner: Box<SOFTHashTable<T>>,
+}
+
+impl<T: Default> PDefault for SOFTHash<T> {
+    #![allow(box_pointers)]
+    fn pdefault(_: &PoolHandle) -> Self {
+        Self {
+            inner: Box::new(SOFTHashTable::default()),
+        }
+    }
+}
+
+impl<T> Collectable for SOFTHash<T> {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct SOFTMemento {}
@@ -20,7 +40,7 @@ impl Collectable for SOFTMemento {
     }
 }
 
-impl RootObj<SOFTMemento> for SOFTHashTable<Value> {
+impl RootObj<SOFTMemento> for SOFTHash<Value> {
     fn run(&self, mmt: &mut SOFTMemento, tid: usize, guard: &Guard, pool: &PoolHandle) {
         todo!()
     }
@@ -42,8 +62,8 @@ fn get_guard(tid: usize) -> &'static mut Guard {
 }
 
 #[no_mangle]
-pub extern "C" fn thread_init(tid: usize) {
-    hash_thread_ini(tid, unsafe { POOL.as_ref().unwrap() });
+pub extern "C" fn thread_init(tid: usize, pool: &PoolHandle) {
+    hash_thread_ini(tid, pool);
     let guards = unsafe { GUARD.get_or_insert(array_init::array_init(|_| None)) };
     guards[tid] = Some(epoch::pin());
 }
@@ -55,11 +75,7 @@ pub extern "C" fn pool_create(
     nr_thread: usize,
 ) -> &'static PoolHandle {
     let c_str: &CStr = unsafe { CStr::from_ptr(path) };
-    let pool =
-        Pool::create::<SOFTHashTable<Value>, SOFTMemento>(c_str.to_str().unwrap(), size, nr_thread)
-            .unwrap();
-    unsafe { POOL = Some(pool) };
-    pool
+    Pool::create::<SOFTHash<Value>, SOFTMemento>(c_str.to_str().unwrap(), size, nr_thread).unwrap()
 }
 
 #[no_mangle]
@@ -70,35 +86,30 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 #[no_mangle]
 pub extern "C" fn run_insert(
     m: &mut SOFTMemento,
-    obj: &SOFTHashTable<Value>,
+    obj: &SOFTHash<Value>,
     tid: usize,
     k: Key,
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.insert(k, v, guard, pool)
+    obj.inner.insert(k, v, guard, pool)
 }
 
 #[no_mangle]
 pub extern "C" fn run_delete(
     m: &mut SOFTMemento,
-    obj: &SOFTHashTable<Value>,
+    obj: &SOFTHash<Value>,
     tid: usize,
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.remove(k, &guard, pool)
+    obj.inner.remove(k, &guard, pool)
 }
 
 #[no_mangle]
-pub extern "C" fn search(
-    obj: &SOFTHashTable<Value>,
-    tid: usize,
-    k: Key,
-    pool: &PoolHandle,
-) -> bool {
+pub extern "C" fn search(obj: &SOFTHash<Value>, tid: usize, k: Key, pool: &PoolHandle) -> bool {
     let guard = get_guard(tid);
-    obj.contains(k, &guard)
+    obj.inner.contains(k, &guard)
 }

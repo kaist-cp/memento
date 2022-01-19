@@ -72,18 +72,6 @@ impl<T: Default> Default for SOFTList<T> {
     }
 }
 
-impl<T: Default> PDefault for SOFTList<T> {
-    fn pdefault(_: &PoolHandle) -> Self {
-        Self::default()
-    }
-}
-
-impl<T> Collectable for SOFTList<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        todo!()
-    }
-}
-
 impl<T: Clone> SOFTList<T> {
     // TODO: return PPtr<PNode<T>>?
     fn alloc_new_pnode(&self, pool: &PoolHandle) -> *mut PNode<T> {
@@ -276,7 +264,7 @@ impl<T: Clone> SOFTList<T> {
         let mut curr_state = State::Dummy;
         let (pred, curr) = self.find(key, &mut curr_state, guard, pool);
         let curr_ref = unsafe { curr.deref() };
-        // let pred_state = getState(curr); // TODO: 오타 인듯. 쓰는 곳 없음
+        // let pred_state = getState(curr); // SOFT 본래 구현엔 있지만 오타 인듯. 쓰는 곳 없음
 
         if curr_ref.key != key {
             return false;
@@ -536,64 +524,45 @@ fn get_state<T>(p: Shared<'_, VNode<T>>) -> State {
     State::from(p.tag())
 }
 #[cfg(test)]
+#[allow(box_pointers)]
 mod test {
     use epoch::Guard;
     use lazy_static::*;
     use std::sync::{Arc, Barrier};
 
     use crate::{
-        ds::soft_list::{init_alloc, init_volatile_alloc},
         pmem::{Collectable, GarbageCollection, PoolHandle, RootObj},
         test_utils::tests::{run_test, TestRootObj},
+        PDefault,
     };
     use crossbeam_epoch::{self as epoch};
 
     use super::{thread_ini, SOFTList};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
+    const COUNT: usize = 100000;
 
     lazy_static! {
         static ref BARRIER: Arc<Barrier> = Arc::new(Barrier::new(NR_THREAD));
     }
 
-    #[derive(Debug, Default)]
-    struct Smoke {}
-
-    impl Collectable for Smoke {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            todo!()
-        }
+    struct SOFTListRoot {
+        list: Box<SOFTList<usize>>,
     }
 
-    impl RootObj<Smoke> for TestRootObj<SOFTList<usize>> {
-        fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            // per-thread init
-            let barrier = BARRIER.clone();
-            thread_ini(tid, pool);
-            let _ = barrier.wait();
-
-            // insert, check
-            let list = &self.obj;
-            for i in 0..COUNT {
-                let _ = list.insert(i, tid, guard, pool);
-                let _ = list.insert(i + COUNT, tid, guard, pool);
-                assert!(list.contains(i, guard));
-                assert!(list.contains(i + COUNT, guard));
+    impl PDefault for SOFTListRoot {
+        fn pdefault(_: &PoolHandle) -> Self {
+            Self {
+                list: Box::new(SOFTList::default()),
             }
         }
     }
 
-    #[test]
-    fn insert_contain() {
-        const FILE_NAME: &str = "soft_list_smoke.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-        run_test::<TestRootObj<SOFTList<usize>>, InsertContainRemove, _>(
-            FILE_NAME, FILE_SIZE, NR_THREAD,
-        )
+    impl Collectable for SOFTListRoot {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            todo!()
+        }
     }
-
     #[derive(Debug, Default)]
     struct InsertContainRemove {}
 
@@ -603,7 +572,7 @@ mod test {
         }
     }
 
-    impl RootObj<InsertContainRemove> for TestRootObj<SOFTList<usize>> {
+    impl RootObj<InsertContainRemove> for TestRootObj<SOFTListRoot> {
         fn run(&self, mmt: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
@@ -611,7 +580,7 @@ mod test {
             let _ = barrier.wait();
 
             // insert, check, remove, check
-            let list = &self.obj;
+            let list = &self.obj.list;
             for _ in 0..COUNT {
                 assert!(list.insert(tid, tid, guard, pool));
                 assert!(list.contains(tid, guard));
@@ -626,7 +595,7 @@ mod test {
         const FILE_NAME: &str = "soft_list_insert_contain_remmove.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<SOFTList<usize>>, InsertContainRemove, _>(
+        run_test::<TestRootObj<SOFTListRoot>, InsertContainRemove, _>(
             FILE_NAME, FILE_SIZE, NR_THREAD,
         )
     }
