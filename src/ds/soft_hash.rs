@@ -21,10 +21,10 @@ pub struct SOFTHashTable<T> {
     table: [SOFTList<T>; BUCKET_NUM],
 }
 
-impl<T: Default> PDefault for SOFTHashTable<T> {
-    fn pdefault(pool: &PoolHandle) -> Self {
+impl<T: Default> Default for SOFTHashTable<T> {
+    fn default() -> Self {
         Self {
-            table: array_init::array_init(|_| SOFTList::pdefault(pool)),
+            table: array_init::array_init(|_| SOFTList::default()),
         }
     }
 }
@@ -60,13 +60,10 @@ impl<T: 'static + Clone> SOFTHashTable<T> {
         let hash = hasher.finish() as usize;
         &self.table[hash % BUCKET_NUM] // TODO: c++에선 abs() 왜함?
     }
-
-    fn SOFTrecovery() {
-        todo!()
-    }
 }
 
 #[cfg(test)]
+#[allow(box_pointers)]
 mod test {
     use epoch::Guard;
     use lazy_static::*;
@@ -75,6 +72,7 @@ mod test {
     use crate::{
         pmem::{Collectable, GarbageCollection, PoolHandle, RootObj},
         test_utils::tests::{run_test, TestRootObj},
+        PDefault,
     };
     use crossbeam_epoch::{self as epoch};
 
@@ -87,43 +85,23 @@ mod test {
         static ref BARRIER: Arc<Barrier> = Arc::new(Barrier::new(NR_THREAD));
     }
 
-    #[derive(Debug, Default)]
-    struct Smoke {}
-
-    impl Collectable for Smoke {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            todo!()
-        }
+    struct SOFTHashRoot {
+        hash: Box<SOFTHashTable<usize>>,
     }
 
-    impl RootObj<Smoke> for TestRootObj<SOFTHashTable<usize>> {
-        fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let list = &self.obj;
-
-            // per-thread init
-            let barrier = BARRIER.clone();
-            hash_thread_ini(tid, pool);
-            let _ = barrier.wait();
-
-            // insert, check
-            let guard = epoch::pin();
-            for i in 0..COUNT {
-                let _ = list.insert(i, tid, &guard, pool);
-                let _ = list.insert(i + COUNT, tid, &guard, pool);
-                assert!(list.contains(i, &guard));
-                assert!(list.contains(i + COUNT, &guard));
+    impl PDefault for SOFTHashRoot {
+        #![allow(box_pointers)]
+        fn pdefault(_: &PoolHandle) -> Self {
+            Self {
+                hash: Box::new(SOFTHashTable::default()),
             }
         }
     }
 
-    #[test]
-    fn insert_contain() {
-        const FILE_NAME: &str = "soft_hash_smoke.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-        run_test::<TestRootObj<SOFTHashTable<usize>>, InsertContainRemove, _>(
-            FILE_NAME, FILE_SIZE, NR_THREAD,
-        )
+    impl Collectable for SOFTHashRoot {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            todo!()
+        }
     }
 
     #[derive(Debug, Default)]
@@ -135,7 +113,7 @@ mod test {
         }
     }
 
-    impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashTable<usize>> {
+    impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
         fn run(&self, mmt: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
@@ -143,7 +121,7 @@ mod test {
             let _ = barrier.wait();
 
             // insert, check, remove, check
-            let list = &self.obj;
+            let list = &self.obj.hash;
             for _ in 0..COUNT {
                 assert!(list.insert(tid, tid, guard, pool));
                 assert!(list.contains(tid, guard));
@@ -158,7 +136,7 @@ mod test {
         const FILE_NAME: &str = "soft_hash_insert_contain_remove.pool";
         const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<SOFTHashTable<usize>>, InsertContainRemove, _>(
+        run_test::<TestRootObj<SOFTHashRoot>, InsertContainRemove, _>(
             FILE_NAME, FILE_SIZE, NR_THREAD,
         )
     }
