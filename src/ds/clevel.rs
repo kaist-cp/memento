@@ -703,9 +703,9 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                     .deref(pool)
             };
             let mut first_level_size = first_level_data.len();
-            println!(
-                "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
-            );
+            // println!(
+            //     "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
+            // );
 
             for (_bid, bucket) in last_level_data.iter().enumerate() {
                 for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
@@ -744,7 +744,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     .delete::<false>(
                                         slot_ptr,
                                         slot_ptr.with_tag(1),
-                                        smo::DeleteMode::Recycle,
+                                        smo::DeleteMode::Drop,
                                         &mut resize.move_delete,
                                         tid,
                                         guard,
@@ -756,7 +756,15 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     continue;
                                 }
 
-                                break Some(slot_ptr);
+                                // break Some(slot_ptr);
+
+                                // TODO(must): Recycle 못하므로 slot 새로 할당. (임시 코드)
+                                let slot_ref = unsafe { slot_ptr.deref(pool) };
+                                let new_slot: Slot<K, V> =
+                                    unsafe { ptr::read(slot_ref as *const _) };
+                                new_slot.owner.store(PShared::null(), Ordering::Relaxed);
+                                let n = POwned::new(new_slot, pool).into_shared(guard);
+                                break Some(n);
                             }
                         },
                         continue
