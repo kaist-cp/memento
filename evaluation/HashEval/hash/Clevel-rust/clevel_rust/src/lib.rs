@@ -12,7 +12,11 @@ type Key = u64;
 type Value = u64;
 
 #[derive(Debug, Default)]
-pub struct ClevelMemento {}
+pub struct ClevelMemento {
+    insert: Insert<Key, Value>, // insert client
+    delete: Delete<Key, Value>, // delete client
+    resize: Resize<Key, Value>, // resize client
+}
 
 impl Collectable for ClevelMemento {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
@@ -90,7 +94,8 @@ pub extern "C" fn run_insert(
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.insert(tid, k, v, get_send(tid), &guard, pool).is_ok()
+    obj.insert::<false>(k, v, get_send(tid), &mut m.insert, tid, &guard, pool)
+        .is_ok()
 }
 
 #[no_mangle]
@@ -103,7 +108,8 @@ pub extern "C" fn run_update(
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.update(tid, k, v, get_send(tid), &guard, pool).is_ok()
+    // obj.update(tid, k, v, get_send(tid), &guard, pool).is_ok()
+    todo!()
 }
 
 #[no_mangle]
@@ -115,18 +121,19 @@ pub extern "C" fn run_delete(
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.delete(&k, &guard, pool);
+    obj.delete::<false>(&k, &mut m.delete, tid, &guard, pool);
     true
 }
 #[no_mangle]
 pub extern "C" fn run_resize_loop(
     m: &mut ClevelMemento,
     obj: &ClevelInner<Key, Value>,
+    tid: usize,
     pool: &'static PoolHandle,
 ) {
     let mut guard = epoch::pin();
     let recv = unsafe { RECV.as_ref().unwrap() };
-    resize_loop(obj, recv, &mut guard, pool);
+    resize_loop::<_, _, false>(obj, recv, &mut m.resize, tid, &mut guard, pool);
 }
 
 #[no_mangle]
@@ -148,6 +155,7 @@ pub extern "C" fn get_capacity(obj: &ClevelInner<Key, Value>, pool: &PoolHandle)
 
 #[no_mangle]
 pub extern "C" fn is_resizing(obj: &ClevelInner<Key, Value>, pool: &PoolHandle) -> bool {
-    let guard = crossbeam_epoch::pin();
-    obj.is_resizing(&guard, pool)
+    // let guard = crossbeam_epoch::pin();
+    // obj.is_resizing(&guard, pool)
+    false
 }

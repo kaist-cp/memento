@@ -14,7 +14,7 @@ REMOVE_RT=0             # Run phase에 실행시킬 op 중 몇 %를 remove로 �
 NEGATIVE_RT=0           # Run phase에 실행시킬 read 중 몇 %를 negative search로 할건가
 MODE="THROUGHPUT"       # Evaluation mode (possbile arg: THROUGHPUT, LATENCY, LOAD_FACTOR)
 DISTRIBUTION="UNIFORM"  # Key distribution (possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN)
-THREAD=48
+THREAD=32
 
 set -e
 export LD_LIBRARY_PATH=./hash/Dash/pmdk/src/nondebug:$LD_LIBRARY_PATH # for Dash
