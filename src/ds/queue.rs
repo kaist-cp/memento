@@ -1,12 +1,11 @@
 //! Persistent opt queue
 
 use crate::pepoch::atomic::invalid_ptr;
-use crate::ploc::smo::{self, Delete, SMOAtomic};
+use crate::ploc::insert_delete::{self, Delete, DeleteMode, Insert, SMOAtomic};
 use crate::ploc::{no_owner, Checkpoint, Checkpointable, InsertError, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::{ok_or, some_or};
-use smo::{DeleteMode, Insert};
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
@@ -53,7 +52,7 @@ impl<T> Collectable for Node<T> {
     }
 }
 
-impl<T> smo::Node for Node<T> {
+impl<T> insert_delete::Node for Node<T> {
     #[inline]
     fn owner(&self) -> &PAtomic<Self> {
         &self.owner

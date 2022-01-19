@@ -11,9 +11,8 @@ use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
-        no_owner,
-        smo::{Delete, Insert, Node as SMONode, SMOAtomic},
-        DeleteMode, Traversable,
+        insert_delete::{Delete, Insert, Node as SMONode, SMOAtomic},
+        no_owner, DeleteMode, Traversable,
     },
     pmem::{
         ll::persist_obj,

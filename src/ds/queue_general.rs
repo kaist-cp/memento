@@ -1,7 +1,7 @@
 //! Persistent queue
 
 use crate::pepoch::atomic::invalid_ptr;
-use crate::ploc::smo_general::Cas;
+use crate::ploc::detectable_cas::Cas;
 use crate::ploc::{Checkpoint, Checkpointable, DetectableCASAtomic, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;

@@ -1,20 +1,9 @@
 //! Structure Modification Operations
 
 pub mod common;
-pub mod smo;
-pub mod smo_base;
-pub mod smo_general;
+pub mod insert_delete;
+pub mod detectable_cas;
 
 pub use common::*;
-use crossbeam_epoch::Guard;
-pub use smo::*;
-pub use smo_base::*;
-pub use smo_general::*;
-
-use crate::{pepoch::PShared, pmem::PoolHandle};
-
-/// TODO(doc)
-pub trait Traversable<N> {
-    /// TODO(doc)
-    fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
-}
+pub use insert_delete::*;
+pub use detectable_cas::*;

@@ -5,8 +5,6 @@ use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
 use crossbeam_epoch::Guard;
 use etrace::*;
 
-use super::{no_owner, InsertError, Traversable};
-
 use crate::{
     pepoch::{PAtomic, PDestroyable, PShared},
     pmem::{
@@ -25,6 +23,18 @@ pub trait Node: Sized {
 
     /// TODO(doc)
     fn owner(&self) -> &PAtomic<Self>;
+}
+
+/// No owner를 표시하기 위함
+#[inline]
+pub fn no_owner<'g, T>() -> PShared<'g, T> {
+    PShared::null()
+}
+
+/// TODO(doc)
+pub trait Traversable<N> {
+    /// TODO(doc)
+    fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
 }
 
 /// TODO(doc)
@@ -52,6 +62,19 @@ impl<O: Traversable<N>, N> Insert<O, N> {
     /// Reset Insert memento
     #[inline]
     pub fn reset(&mut self) {}
+}
+
+/// TODO(doc)
+#[derive(Debug)]
+pub enum InsertError<'g, T> {
+    /// Insert를 위한 atomic operation 전에 기각됨
+    NonNull,
+
+    /// CAS에 실패 (Strong fail)
+    CASFail(PShared<'g, T>),
+
+    /// Recovery run 때 fail임을 판단 (Weak fail)
+    RecFail,
 }
 
 /// TODO(doc)
