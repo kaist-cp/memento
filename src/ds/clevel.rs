@@ -23,8 +23,7 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::Traversable;
-use crate::ploc::{smo, SMOAtomic};
+use crate::ploc::{insert_delete, SMOAtomic, Traversable, DeleteMode};
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
 
@@ -33,9 +32,9 @@ const TINY_VEC_CAPACITY: usize = 8;
 /// Insert client
 #[derive(Debug)]
 pub struct Insert<K, V> {
-    insert_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
-    resize_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
-    dedup_delete: smo::Delete<Slot<K, V>>,
+    insert_insert: insert_delete::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+    resize_insert: insert_delete::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+    dedup_delete: insert_delete::Delete<Slot<K, V>>,
 }
 
 impl<K, V> Default for Insert<K, V> {
@@ -51,8 +50,8 @@ impl<K, V> Default for Insert<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V> {
-    move_delete: smo::Delete<Slot<K, V>>,
-    move_insert: smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+    move_delete: insert_delete::Delete<Slot<K, V>>,
+    move_insert: insert_delete::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
 }
 
 impl<K, V> Default for Resize<K, V> {
@@ -67,8 +66,8 @@ impl<K, V> Default for Resize<K, V> {
 /// Delete client
 #[derive(Debug)]
 pub struct Delete<K, V> {
-    dedup_delete: smo::Delete<Slot<K, V>>,
-    delete_delete: smo::Delete<Slot<K, V>>,
+    dedup_delete: insert_delete::Delete<Slot<K, V>>,
+    delete_delete: insert_delete::Delete<Slot<K, V>>,
 }
 
 impl<K, V> Default for Delete<K, V> {
@@ -144,7 +143,7 @@ impl<K, V> From<(K, V)> for Slot<K, V> {
     }
 }
 
-impl<K, V> smo::Node for Slot<K, V> {
+impl<K, V> insert_delete::Node for Slot<K, V> {
     #[inline]
     fn owner(&self) -> &PAtomic<Self> {
         &self.owner
@@ -395,7 +394,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
-        dedup_delete: &mut smo::Delete<Slot<K, V>>,
+        dedup_delete: &mut insert_delete::Delete<Slot<K, V>>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -494,7 +493,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .delete::<false>(
                     find_result.slot_ptr,
                     PShared::null(),
-                    smo::DeleteMode::Drop,
+                    DeleteMode::Drop,
                     dedup_delete,
                     tid,
                     guard,
@@ -744,7 +743,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     .delete::<false>(
                                         slot_ptr,
                                         slot_ptr.with_tag(1),
-                                        smo::DeleteMode::Drop,
+                                        DeleteMode::Drop,
                                         &mut resize.move_delete,
                                         tid,
                                         guard,
@@ -969,7 +968,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
-        dedup_delete: &mut smo::Delete<Slot<K, V>>,
+        dedup_delete: &mut insert_delete::Delete<Slot<K, V>>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1003,7 +1002,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        insert: &mut smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+        insert: &mut insert_delete::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
@@ -1162,7 +1161,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        insert: &mut smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+        insert: &mut insert_delete::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
@@ -1193,7 +1192,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        insert: &mut smo::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
+        insert: &mut insert_delete::Insert<SMOAtomic<Slot<K, V>>, Slot<K, V>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
@@ -1408,7 +1407,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 .delete::<false>(
                     find_result.slot_ptr,
                     PShared::null(),
-                    smo::DeleteMode::Drop,
+                    DeleteMode::Drop,
                     &mut delete.delete_delete,
                     tid,
                     guard,
