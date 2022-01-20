@@ -1,6 +1,7 @@
 //! General SMO
 
 use std::{
+    cell::RefCell,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -10,16 +11,24 @@ use crossbeam_utils::CachePadded;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{lfence, ll::persist_obj, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle},
+    pmem::{
+        lfence, ll::persist_obj, rdtscp, sfence, AsPPtr, Collectable, GarbageCollection, PPtr,
+        PoolHandle,
+    },
 };
 
 use super::{compose_cas_bit, decompose_cas_bit};
 
 const NOT_CHECKED: u64 = 0;
 const FAILED: u64 = 1;
-const NR_MAX_THREADS: usize = 512;
+const NR_MAX_THREADS: usize = 511;
 
-pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS];
+pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS + 1];
+
+thread_local! {
+    /// 마지막 실패한 cas의 체크포인트
+    static LAST_FAILED_CAS: RefCell<Option<PPtr<u64>>> = RefCell::new(None)
+}
 
 /// TODO(doc)
 #[derive(Debug)]
@@ -64,6 +73,19 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return self.cas_result(new, mmt, tid, &pool.cas_info, guard);
         }
 
+        LAST_FAILED_CAS.with(|c| {
+            let failed = c.borrow_mut();
+            if let Some(last_chk) = *failed {
+                unsafe {
+                    if last_chk != mmt.checkpoint.as_pptr(pool) {
+                        let last_chk_ref = last_chk.deref_mut(pool);
+                        std::ptr::write(last_chk_ref as *mut _, FAILED);
+                        persist_obj(last_chk_ref as &_, true);
+                    }
+                }
+            }
+        });
+
         let prev_chk = pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
         let cas_bit = 1 - decompose_cas_bit(prev_chk as usize).0;
         let tmp_new = new.with_cas_bit(cas_bit).with_tid(tid);
@@ -100,8 +122,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     continue;
                 }
 
-                mmt.checkpoint = FAILED;
-                persist_obj(&mmt.checkpoint, true);
+                LAST_FAILED_CAS.with(|failed| {
+                    *failed.borrow_mut() = Some(unsafe { mmt.checkpoint.as_pptr(pool) });
+                });
             }
 
             return res;

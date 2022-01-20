@@ -59,7 +59,7 @@ pub struct PoolHandle {
     /// 풀의 길이
     len: usize,
 
-    /// tid별 스스로 cas 성공한 시간
+    /// Detectable CAS information per thread
     pub(crate) cas_info: CasInfo,
 }
 
