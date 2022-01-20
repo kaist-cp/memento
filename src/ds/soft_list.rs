@@ -1,7 +1,6 @@
 //! SOFT list
 
 use crate::pmem::*;
-use crate::PDefault;
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
 use epoch::{unprotected, Guard};
 use libc::c_void;
@@ -19,16 +18,16 @@ thread_local! {
     //  - 이 reference는 persistent 해야할듯: 왜냐하면 복구시 crash 이전에 쓰던 durable area과 같은 곳을 가리킬 수 있도록 해야함
     //  - 이게 가능하면 volatile하게 둬도 됨: 복구시 reference를 다시 세팅할 때 crash 이전과 같은 durable area를 가리키게 하기
     // TODO: Ralloc GC시 ssmem_allocator가 가진 memory chunk들은 mark 되게 해야할 듯. 안그러면 Ralloc GC가 ssmem이 사용하던 memory chunk들을 free해감
-    static ALLOC: RefCell<*mut ssmem_allocator> = RefCell::new(null_mut());
+    static ALLOC: RefCell<*mut SsmemAllocator> = RefCell::new(null_mut());
 
     /// per-thread volatile ssmem allocator
     // TODO: volatile ssmem allocator는 굳이 필요한가? volatile node는 그냥 Rust standard allocator 써도 되는 거 아닌가?
-    static VOLATILE_ALLOC: RefCell<*mut ssmem_allocator> = RefCell::new(null_mut());
+    static VOLATILE_ALLOC: RefCell<*mut SsmemAllocator> = RefCell::new(null_mut());
 }
 
 /// initialize thread-local persistent allocator
 fn init_alloc(id: isize, pool: &PoolHandle) {
-    let r = pool.alloc::<ssmem_allocator>();
+    let r = pool.alloc::<SsmemAllocator>();
     ALLOC.with(|a| {
         let mut alloc = a.borrow_mut();
         *alloc = unsafe { r.deref_mut(pool) };
@@ -41,7 +40,7 @@ fn init_volatile_alloc(id: isize) {
     VOLATILE_ALLOC.with(|a| {
         let mut alloc = a.borrow_mut();
         *alloc =
-            unsafe { std::alloc::alloc(Layout::new::<ssmem_allocator>()) as *mut ssmem_allocator };
+            unsafe { std::alloc::alloc(Layout::new::<SsmemAllocator>()) as *mut SsmemAllocator };
         ssmem_alloc_init(*alloc, SSMEM_DEFAULT_MEM_SIZE, id, None);
     });
 }
@@ -148,7 +147,7 @@ impl<T: Clone> SOFTList<T> {
     fn find<'g>(
         &self,
         key: usize,
-        currStatePtr: &mut State,
+        curr_state_ptr: &mut State,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> (Shared<'g, VNode<T>>, Shared<'g, VNode<T>>) {
@@ -175,7 +174,7 @@ impl<T: Clone> SOFTList<T> {
             curr = succ.with_tag(prev_state as usize);
             curr_ref = succ_ref;
         }
-        *currStatePtr = curr_state;
+        *curr_state_ptr = curr_state;
         (prev, curr)
     }
 
@@ -238,7 +237,7 @@ impl<T: Clone> SOFTList<T> {
             // Mark PNode as inserted (durable point)
             let result_node = unsafe { result_node.unwrap().deref() };
             let pptr = unsafe { &mut *result_node.pptr };
-            pptr.create(key, value, result_node.p_validity); // 이게 detectable 해야할듯
+            pptr.create(key, value, result_node.p_validity); // TODO: 이게 detectable 해야할듯
 
             // State: IntendToInsert -> Inserted
             loop {
@@ -293,7 +292,7 @@ impl<T: Clone> SOFTList<T> {
 
         // Mark PNode as delete (durable point)
         let pptr = unsafe { &mut *curr_ref.pptr };
-        pptr.destroy(curr_ref.p_validity); // 이게 detectable 해야할듯
+        pptr.destroy(curr_ref.p_validity); // TODO: 이게 detectable 해야할듯
 
         // Modify state: INTEND_TO_DELETE -> DELETED (logical delete)
         while get_state(curr_ref.next.load(Ordering::SeqCst, guard)) == State::IntendToDelete {
@@ -391,7 +390,7 @@ impl<T: Clone> SOFTList<T> {
 
     // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
     // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
-    fn recovery(&self, palloc: &mut ssmem_allocator, pool: &PoolHandle) {
+    fn recovery(&self, palloc: &mut SsmemAllocator, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
         while !curr.is_null() {
             let curr_ref = unsafe { curr.as_ref() }.unwrap();
@@ -559,7 +558,7 @@ mod test {
     }
 
     impl Collectable for SOFTListRoot {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(s: &mut Self, _: usize, gc: &mut GarbageCollection, _: &PoolHandle) {
             todo!()
         }
     }
@@ -567,13 +566,13 @@ mod test {
     struct InsertContainRemove {}
 
     impl Collectable for InsertContainRemove {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             todo!()
         }
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTListRoot> {
-        fn run(&self, mmt: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, _: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             thread_ini(tid, pool);

@@ -29,12 +29,6 @@ impl<T: Default> Default for SOFTHashTable<T> {
     }
 }
 
-impl<T> Collectable for SOFTHashTable<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        todo!()
-    }
-}
-
 impl<T: 'static + Clone> SOFTHashTable<T> {
     /// TODO: doc
     pub fn insert(&self, k: usize, item: T, guard: &Guard, pool: &PoolHandle) -> bool {
@@ -99,7 +93,7 @@ mod test {
     }
 
     impl Collectable for SOFTHashRoot {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(s: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             todo!()
         }
     }
@@ -108,13 +102,13 @@ mod test {
     struct InsertContainRemove {}
 
     impl Collectable for InsertContainRemove {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             todo!()
         }
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
-        fn run(&self, mmt: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, _: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             hash_thread_ini(tid, pool);

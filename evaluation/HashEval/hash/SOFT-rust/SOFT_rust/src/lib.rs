@@ -12,7 +12,7 @@ type Value = u64;
 
 /// Persistent root for SOFT hash
 #[derive(Debug)]
-pub struct SOFTHash<T: 'static> {
+pub struct SOFTHash<T> {
     inner: Box<SOFTHashTable<T>>,
 }
 
@@ -26,7 +26,7 @@ impl<T: Default> PDefault for SOFTHash<T> {
 }
 
 impl<T> Collectable for SOFTHash<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
@@ -35,13 +35,13 @@ impl<T> Collectable for SOFTHash<T> {
 pub struct SOFTMemento {}
 
 impl Collectable for SOFTMemento {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
 impl RootObj<SOFTMemento> for SOFTHash<Value> {
-    fn run(&self, mmt: &mut SOFTMemento, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut SOFTMemento, _: usize, _: &Guard, _: &PoolHandle) {
         todo!()
     }
 }
@@ -85,7 +85,7 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn run_insert(
-    m: &mut SOFTMemento,
+    _: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
     tid: usize,
     k: Key,
@@ -98,7 +98,7 @@ pub extern "C" fn run_insert(
 
 #[no_mangle]
 pub extern "C" fn run_delete(
-    m: &mut SOFTMemento,
+    _: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
     tid: usize,
     k: Key,
@@ -109,7 +109,7 @@ pub extern "C" fn run_delete(
 }
 
 #[no_mangle]
-pub extern "C" fn search(obj: &SOFTHash<Value>, tid: usize, k: Key, pool: &PoolHandle) -> bool {
+pub extern "C" fn search(obj: &SOFTHash<Value>, tid: usize, k: Key, _: &PoolHandle) -> bool {
     let guard = get_guard(tid);
     obj.inner.contains(k, &guard)
 }
