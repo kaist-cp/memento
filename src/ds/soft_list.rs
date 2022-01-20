@@ -160,7 +160,7 @@ impl<T: Clone> SOFTList<T> {
 
         loop {
             let succ = curr_ref.next.load(Ordering::SeqCst, guard);
-            let succ_ref = unsafe { succ.deref() }; // TODO: succ는 null일 수 있는데 ㄱㅊ? ref만 얻을뿐 참조는 안하니 괜찮나?
+            let succ_ref = unsafe { succ.deref() };
             curr_state = get_state(succ);
             if curr_state != State::Deleted {
                 if curr_ref.key >= key {

@@ -71,6 +71,7 @@ public:
         {
             m[tid] = reinterpret_cast<SOFTMemento *>(get_root(MementoStart + tid, pool));
         }
+        thread_ini(-1);
     }
     ~SOFTRust(){
         // TODO: pool close?

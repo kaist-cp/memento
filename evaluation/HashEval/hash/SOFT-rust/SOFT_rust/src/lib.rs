@@ -64,8 +64,10 @@ fn get_guard(tid: usize) -> &'static mut Guard {
 #[no_mangle]
 pub extern "C" fn thread_init(tid: usize, pool: &PoolHandle) {
     hash_thread_ini(tid, pool);
-    let guards = unsafe { GUARD.get_or_insert(array_init::array_init(|_| None)) };
-    guards[tid] = Some(epoch::pin());
+    if tid < MAX_THREAD {
+        let guards = unsafe { GUARD.get_or_insert(array_init::array_init(|_| None)) };
+        guards[tid] = Some(epoch::pin());
+    }
 }
 
 #[no_mangle]

@@ -13,7 +13,9 @@ template <class T>
 class SOFTHashTable : public hash_api
 {
 public:
-  SOFTHashTable() { thread_ini(-1); }
+  SOFTHashTable() {
+    thread_ini(-1); // TODO: -1 init 왜함? 아마 기존 bench 따라한 것 같은데..
+  }
   bool insert(uintptr_t k, T item)
   {
     SOFTList<T> &bucket = getBucket(k);

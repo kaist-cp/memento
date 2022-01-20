@@ -489,10 +489,13 @@ fn ssmem_ts_set_collect(ts_set: *mut usize, pool: Option<&PoolHandle>) -> *mut u
     };
     assert!(ts_set != null_mut());
 
-    let mut cur = unsafe { SSMEM_TS_LIST.as_mut() };
-    while let Some(cur_ref) = cur {
-        unsafe { *(ts_set.offset(cur_ref.id as isize)) = cur_ref.version };
-        cur = unsafe { cur_ref.next.as_mut() };
+    unsafe {
+        let mut cur = SSMEM_TS_LIST;
+        while !cur.is_null() && cur.as_ref().unwrap().id < SSMEM_TS_LIST_LEN {
+            let cur_ref = cur.as_ref().unwrap();
+            *ts_set.offset(cur_ref.id as isize) = cur_ref.version;
+            cur = cur_ref.next;
+        }
     }
 
     ts_set
@@ -519,7 +522,7 @@ fn ssmem_mem_reclaim(a: *mut SsmemAllocator, _: Option<&PoolHandle>) -> isize {
     }
     let fs_nxt_ref = unsafe { fs_nxt.as_mut() }.unwrap();
 
-    if ssmem_ts_compare(fs_cur_ref.ts_set, fs_nxt_ref.ts_set) > 0 {
+    if ssmem_ts_compare(fs_cur_ref.ts_set, fs_nxt_ref.ts_set) == 1 {
         // head를 제외하고 모두 garbage collect
         gced_num = a_ref.free_set_num - 1;
 
