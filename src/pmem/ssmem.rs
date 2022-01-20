@@ -9,7 +9,7 @@ use std::{
     ptr::{null, null_mut},
 };
 
-use crate::pmem::{clflush, prefetchw, PoolHandle};
+use crate::pmem::*;
 
 /* ****************************************************************************************
  */
@@ -602,13 +602,6 @@ fn ssmem_ts_compare(s_new: *const usize, s_old: *const usize) -> usize {
         }
     }
     return is_newer;
-}
-
-/// flush
-#[inline]
-pub fn barrier<T>(p: *const T) {
-    debug_assert!(size_of::<T>() <= CACHE_LINE_SIZE);
-    clflush(p, CACHE_LINE_SIZE, false);
 }
 
 fn alloc<T>(layout: Layout, pool: Option<&PoolHandle>) -> *mut T {
