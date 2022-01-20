@@ -1,11 +1,7 @@
 //! TODO doc
 use super::soft_list::{thread_ini, SOFTList};
-use crate::{
-    pmem::{Collectable, GarbageCollection, PoolHandle},
-    PDefault,
-};
+use crate::pmem::PoolHandle;
 use core::hash::{Hash, Hasher};
-use crossbeam_epoch::Guard;
 use fasthash::Murmur3Hasher;
 
 const BUCKET_NUM: usize = 16777216;
@@ -31,21 +27,21 @@ impl<T: Default> Default for SOFTHashTable<T> {
 
 impl<T: 'static + Clone> SOFTHashTable<T> {
     /// TODO: doc
-    pub fn insert(&self, k: usize, item: T, guard: &Guard, pool: &PoolHandle) -> bool {
+    pub fn insert(&self, k: usize, item: T, pool: &PoolHandle) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.insert(k, item, guard, pool)
+        bucket.insert(k, item, pool)
     }
 
     /// TODO: doc
-    pub fn remove(&self, k: usize, guard: &Guard, pool: &PoolHandle) -> bool {
+    pub fn remove(&self, k: usize, pool: &PoolHandle) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.remove(k, guard, pool)
+        bucket.remove(k, pool)
     }
 
     /// TODO: doc
-    pub fn contains(&self, k: usize, guard: &Guard) -> bool {
+    pub fn contains(&self, k: usize) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.contains(k, guard)
+        bucket.contains(k)
     }
 
     fn get_bucket(&self, k: usize) -> &SOFTList<T> {
@@ -108,7 +104,7 @@ mod test {
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
-        fn run(&self, _: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, _: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             hash_thread_ini(tid, pool);
@@ -117,10 +113,10 @@ mod test {
             // insert, check, remove, check
             let list = &self.obj.hash;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, guard, pool));
-                assert!(list.contains(tid, guard));
-                assert!(list.remove(tid, guard, pool));
-                assert!(!list.contains(tid, guard));
+                assert!(list.insert(tid, tid, pool));
+                assert!(list.contains(tid));
+                assert!(list.remove(tid, pool));
+                assert!(!list.contains(tid));
             }
         }
     }

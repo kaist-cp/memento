@@ -1,6 +1,6 @@
 #![feature(generic_associated_types)]
 
-use crossbeam_epoch::{self as epoch, Guard};
+use crossbeam_epoch::Guard;
 use memento::ds::soft_hash::*;
 use memento::pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj};
 use memento::PDefault;
@@ -46,28 +46,9 @@ impl RootObj<SOFTMemento> for SOFTHash<Value> {
     }
 }
 
-const MAX_THREAD: usize = 256;
-static mut GUARD: Option<[Option<Guard>; MAX_THREAD]> = None;
-static mut CNT: [usize; MAX_THREAD] = [0; MAX_THREAD];
-
-fn get_guard(tid: usize) -> &'static mut Guard {
-    let guard = unsafe { GUARD.as_mut().unwrap()[tid].as_mut().unwrap() };
-    unsafe {
-        CNT[tid] += 1;
-        if CNT[tid] % 1024 == 0 {
-            guard.repin_after(|| {});
-        }
-    }
-    guard
-}
-
 #[no_mangle]
 pub extern "C" fn thread_init(tid: usize, pool: &PoolHandle) {
     hash_thread_ini(tid, pool);
-    if tid < MAX_THREAD {
-        let guards = unsafe { GUARD.get_or_insert(array_init::array_init(|_| None)) };
-        guards[tid] = Some(epoch::pin());
-    }
 }
 
 #[no_mangle]
@@ -94,8 +75,7 @@ pub extern "C" fn run_insert(
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    let guard = get_guard(tid);
-    obj.inner.insert(k, v, guard, pool)
+    obj.inner.insert(k, v, pool)
 }
 
 #[no_mangle]
@@ -106,12 +86,10 @@ pub extern "C" fn run_delete(
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
-    let guard = get_guard(tid);
-    obj.inner.remove(k, &guard, pool)
+    obj.inner.remove(k, pool)
 }
 
 #[no_mangle]
 pub extern "C" fn search(obj: &SOFTHash<Value>, tid: usize, k: Key, _: &PoolHandle) -> bool {
-    let guard = get_guard(tid);
-    obj.inner.contains(k, &guard)
+    obj.inner.contains(k)
 }

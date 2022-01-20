@@ -2,7 +2,7 @@
 
 use crate::pmem::*;
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
-use epoch::{unprotected, Guard};
+use epoch::unprotected;
 use libc::c_void;
 use std::{
     alloc::Layout,
@@ -59,6 +59,7 @@ pub struct SOFTList<T> {
 
 impl<T: Default> Default for SOFTList<T> {
     fn default() -> Self {
+        // head, tail sentinel 노드 삽입. head, tail은 free되지 않으며 다른 노드는 둘의 사이에 삽입됐다 빠졌다함
         let guard = unsafe { unprotected() };
         let head = Atomic::new(VNode::new(0, T::default(), null_mut(), false));
         let head_ref = unsafe { head.load(Ordering::SeqCst, guard).deref() };
@@ -72,7 +73,6 @@ impl<T: Default> Default for SOFTList<T> {
 }
 
 impl<T: Clone> SOFTList<T> {
-    // TODO: return PPtr<PNode<T>>?
     fn alloc_new_pnode(&self, pool: &PoolHandle) -> *mut PNode<T> {
         ALLOC
             .try_with(|a| {
@@ -82,7 +82,6 @@ impl<T: Clone> SOFTList<T> {
             .unwrap()
     }
 
-    // TODO: volatile alloc은 ssmem 안써도 되지 않나?
     fn alloc_new_vnode(
         &self,
         key: usize,
@@ -115,9 +114,9 @@ impl<T: Clone> SOFTList<T> {
         &self,
         prev: Shared<'_, VNode<T>>,
         curr: Shared<'_, VNode<T>>,
-        guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let prev_state = State::from(curr.tag());
         let prev_ref = unsafe { prev.deref() };
         let curr_ref = unsafe { curr.deref() };
@@ -146,9 +145,9 @@ impl<T: Clone> SOFTList<T> {
         &self,
         key: usize,
         curr_state_ptr: &mut State,
-        guard: &'g Guard,
         pool: &PoolHandle,
     ) -> (Shared<'g, VNode<T>>, Shared<'g, VNode<T>>) {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut prev = self.head.load(Ordering::SeqCst, guard);
         let prev_ref = unsafe { prev.deref() };
         let mut curr = prev_ref.next.load(Ordering::SeqCst, guard);
@@ -167,7 +166,7 @@ impl<T: Clone> SOFTList<T> {
                 prev = curr;
                 prev_state = curr_state;
             } else {
-                let _ = self.trim(prev, curr, guard, pool);
+                let _ = self.trim(prev, curr, pool);
             }
             curr = succ.with_tag(prev_state as usize);
             curr_ref = succ_ref;
@@ -177,12 +176,13 @@ impl<T: Clone> SOFTList<T> {
     }
 
     /// TODO: doc
-    pub fn insert(&self, key: usize, value: T, guard: &Guard, pool: &PoolHandle) -> bool {
+    pub fn insert(&self, key: usize, value: T, pool: &PoolHandle) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut result = false;
         let mut result_node = None;
         let mut curr_state = State::Dummy;
         'retry: loop {
-            let (pred, curr) = self.find(key, &mut curr_state, guard, pool);
+            let (pred, curr) = self.find(key, &mut curr_state, pool);
             let curr_ref = unsafe { curr.deref() };
             let pred_state = get_state(curr);
 
@@ -255,10 +255,11 @@ impl<T: Clone> SOFTList<T> {
     }
 
     /// TODO: doc
-    pub fn remove(&self, key: usize, guard: &Guard, pool: &PoolHandle) -> bool {
+    pub fn remove(&self, key: usize, pool: &PoolHandle) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut cas_result = false;
         let mut curr_state = State::Dummy;
-        let (pred, curr) = self.find(key, &mut curr_state, guard, pool);
+        let (pred, curr) = self.find(key, &mut curr_state, pool);
         let curr_ref = unsafe { curr.deref() };
         // let pred_state = getState(curr); // SOFT 본래 구현엔 있지만 오타 인듯. 쓰는 곳 없음
 
@@ -305,14 +306,15 @@ impl<T: Clone> SOFTList<T> {
 
         // State를 INSERTED에서 INTEND_TO_DELETE로 바꾼 한 명만 physical delete
         if cas_result {
-            let _ = self.trim(pred, curr, guard, pool);
+            let _ = self.trim(pred, curr, pool);
         }
         cas_result
     }
 
     /// TODO: doc
     // TODO: SOFT 본래 구현은 bool 반환하지만 hashEval에선 찾은 T*를 반환함. 왜지? -> 이게 없으면 value를 가져오는 게 없으니까 그런거 같네
-    pub fn contains(&self, key: usize, guard: &Guard) -> bool {
+    pub fn contains(&self, key: usize) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let curr = unsafe { self.head.load(Ordering::SeqCst, guard).deref() }
             .next
             .load(Ordering::SeqCst, guard);
@@ -329,7 +331,8 @@ impl<T: Clone> SOFTList<T> {
     }
 
     /// recovery용 insert. newPNode에 대한 VNode를 volatile list에 insert함
-    fn quick_insert(&self, new_pnode: *mut PNode<T>, guard: &Guard) {
+    fn quick_insert(&self, new_pnode: *mut PNode<T>) {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let new_pnode_ref = unsafe { new_pnode.as_ref() }.unwrap();
         let p_valid = new_pnode_ref.recovery_validity();
         let key = new_pnode_ref.key.load(Ordering::SeqCst);
@@ -387,7 +390,7 @@ impl<T: Clone> SOFTList<T> {
 
     // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
     // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
-    fn recovery(&self, palloc: &mut SsmemAllocator, guard: &Guard, pool: &PoolHandle) {
+    fn recovery(&self, palloc: &mut SsmemAllocator, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
         while !curr.is_null() {
             let curr_ref = unsafe { curr.as_ref() }.unwrap();
@@ -405,7 +408,7 @@ impl<T: Clone> SOFTList<T> {
                     ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
                 } else {
                     // construct volatile SOFT list
-                    self.quick_insert(curr_node, guard);
+                    self.quick_insert(curr_node);
                 }
             }
             curr = curr_ref.next;
@@ -569,7 +572,7 @@ mod test {
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTListRoot> {
-        fn run(&self, _: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, _: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             thread_ini(tid, pool);
@@ -578,10 +581,10 @@ mod test {
             // insert, check, remove, check
             let list = &self.obj.list;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, guard, pool));
-                assert!(list.contains(tid, guard));
-                assert!(list.remove(tid, guard, pool));
-                assert!(!list.contains(tid, guard));
+                assert!(list.insert(tid, tid, pool));
+                assert!(list.contains(tid));
+                assert!(list.remove(tid, pool));
+                assert!(!list.contains(tid));
             }
         }
     }
