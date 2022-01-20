@@ -149,67 +149,54 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         let mut old = self.inner.load(Ordering::SeqCst, guard);
-        'out: loop {
-            let old_ref = some_or!(unsafe { old.as_ref(pool) }, return Ok(old));
+        let mut cur = old;
 
-            let tid_next = old_ref.tid_next();
+        let mut start = rdtscp();
+        loop {
+            let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
+
+            let tid_next = cur_ref.tid_next();
             let next = tid_next.load(Ordering::SeqCst, guard);
             if next == not_deleted() {
-                return Ok(old);
+                return Ok(cur);
             }
 
-            if next.as_ptr() == old.as_ptr() {
+            if next.as_ptr() == cur.as_ptr() {
                 // 자기 자신이 owner인 상태
                 // 현재로썬 delete는 사용할 수 없음을 알림
-                return Err(old);
+                return Err(cur);
             }
 
-            let mut start = rdtscp();
-            loop {
-                let cur = self.inner.load(Ordering::SeqCst, guard);
-                let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
-
-                let tid_next = cur_ref.tid_next();
-                let next = tid_next.load(Ordering::SeqCst, guard);
-                if next == not_deleted() {
-                    return Ok(cur);
-                }
-
-                if next.as_ptr() == cur.as_ptr() {
-                    // 자기 자신이 owner인 상태
-                    // 현재로썬 delete는 사용할 수 없음을 알림
-                    return Err(cur);
-                }
-
-                if old != cur {
-                    old = cur;
-                    start = rdtscp();
-                    continue;
-                }
-
-                let now = rdtscp();
-                if now > start + Self::PATIENCE {
-                    persist_obj(tid_next, false); // cas soon
-                    let c = match self.inner.compare_exchange(
-                        cur,
-                        next.with_tid(0),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    ) {
-                        Ok(n) => n,
-                        Err(e) => e.current,
-                    };
+            let now = rdtscp();
+            cur = if now <= start + Self::PATIENCE {
+                let c = self.inner.load(Ordering::SeqCst, guard);
+                if old != c {
                     old = c;
-                    continue 'out;
+                    start = rdtscp();
                 }
-            }
+                c
+            } else {
+                persist_obj(tid_next, false); // cas soon
+                let c = match self.inner.compare_exchange(
+                    cur,
+                    next.with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                ) {
+                    Ok(n) => n,
+                    Err(e) => e.current,
+                };
+                start = rdtscp();
+                c
+            };
         }
     }
 
     const PATIENCE: u64 = 40000;
 
     /// Load
+    // TODO(opt): Simplify control flow
     pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
         let mut old = self.inner.load(ord, guard);
         'out: loop {
