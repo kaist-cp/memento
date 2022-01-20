@@ -141,6 +141,8 @@ impl<N: Node + Collectable> From<PShared<'_, N>> for SMOAtomic<N> {
 }
 
 impl<N: Node + Collectable> SMOAtomic<N> {
+    const PATIENCE: u64 = 40000;
+
     /// Ok(ptr): helping 다 해준 뒤의 최종 ptr
     /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
     pub fn load_helping<'g>(
@@ -187,55 +189,50 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                     Ok(n) => n,
                     Err(e) => e.current,
                 };
+                old = c;
                 start = rdtscp();
                 c
             };
         }
     }
 
-    const PATIENCE: u64 = 40000;
-
     /// Load
     // TODO(opt): Simplify control flow
     pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
         let mut old = self.inner.load(ord, guard);
-        'out: loop {
-            if old.cas_bit() == 0 {
-                return old;
+        let mut cur = old;
+
+        let mut start = rdtscp();
+        loop {
+            if cur.cas_bit() == 0 {
+                return cur;
             }
 
-            let mut start = rdtscp();
-            loop {
-                let cur = self.inner.load(ord, guard);
-
-                if cur.cas_bit() == 0 {
-                    return cur;
-                }
-
-                if old != cur {
-                    old = cur;
+            let now = rdtscp();
+            cur = if now <= start + Self::PATIENCE {
+                let c = self.inner.load(ord, guard);
+                if old != c {
+                    old = c;
                     start = rdtscp();
-                    continue;
                 }
+                c
+            } else {
+                persist_obj(&self.inner, true);
+                let c = match self.inner.compare_exchange(
+                    old,
+                    old.with_cas_bit(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                ) {
+                    Ok(_) => return old.with_cas_bit(0),
+                    Err(e) => e.current,
+                };
 
-                let now = rdtscp();
-                if now > start + Self::PATIENCE {
-                    persist_obj(&self.inner, true);
-                    match self.inner.compare_exchange(
-                        old,
-                        old.with_cas_bit(0),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    ) {
-                        Ok(_) => return old.with_cas_bit(0),
-                        Err(e) => {
-                            old = e.current;
-                            continue 'out;
-                        }
-                    };
-                }
-            }
+                old = c;
+                start = rdtscp();
+                c
+            };
         }
     }
 
