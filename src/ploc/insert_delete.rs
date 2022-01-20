@@ -148,13 +148,15 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        let mut cur = self.inner.load(Ordering::SeqCst, guard);
+        let mut old = self.inner.load(Ordering::SeqCst, guard);
+        let mut cur = old;
 
+        let mut start = rdtscp();
         loop {
             let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
 
-            let owner = cur_ref.tid_next();
-            let next = owner.load(Ordering::SeqCst, guard);
+            let tid_next = cur_ref.tid_next();
+            let next = tid_next.load(Ordering::SeqCst, guard);
             if next == not_deleted() {
                 return Ok(cur);
             }
@@ -165,16 +167,28 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 return Err(cur);
             }
 
-            persist_obj(owner, false); // cas soon
-            cur = match self.inner.compare_exchange(
-                cur,
-                next.with_tid(0),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            ) {
-                Ok(n) => n,
-                Err(e) => e.current,
+            let now = rdtscp();
+            cur = if now <= start + Self::PATIENCE {
+                let c = self.inner.load(Ordering::SeqCst, guard);
+                if old != c {
+                    old = c;
+                    start = rdtscp();
+                }
+                c
+            } else {
+                persist_obj(tid_next, false); // cas soon
+                let c = match self.inner.compare_exchange(
+                    cur,
+                    next.with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                ) {
+                    Ok(n) => n,
+                    Err(e) => e.current,
+                };
+                start = rdtscp();
+                c
             };
         }
     }
