@@ -89,9 +89,7 @@ impl<T: Clone> SOFTList<T> {
         value: T,
         pptr: *mut PNode<T>,
         p_validity: bool,
-    ) -> Owned<VNode<T>> {
-        // Owned::new(VNode::new(key, value, pptr, p_validity))
-
+    ) -> Shared<'_, VNode<T>> {
         VOLATILE_ALLOC
             .try_with(|a| {
                 let r = ssmem_alloc(*a.borrow_mut(), size_of::<VNode<T>>(), None);
@@ -100,7 +98,7 @@ impl<T: Clone> SOFTList<T> {
                 n.value = value;
                 n.pptr = pptr;
                 n.p_validity = p_validity;
-                n
+                n.into_shared(unsafe { unprotected() })
             })
             .unwrap()
     }
@@ -200,11 +198,10 @@ impl<T: Clone> SOFTList<T> {
                 let new_pnode = self.alloc_new_pnode(pool);
                 let p_valid = unsafe { &mut *new_pnode }.alloc();
                 let new_node = self.alloc_new_vnode(key, value.clone(), new_pnode, p_valid);
-                new_node.next.store(
+                unsafe { new_node.deref() }.next.store(
                     curr.with_tag(State::IntendToInsert as usize),
                     Ordering::Relaxed,
                 );
-                let new_node = new_node.into_shared(guard);
 
                 let pred_ref = unsafe { pred.deref() };
                 if !pred_ref
@@ -390,7 +387,7 @@ impl<T: Clone> SOFTList<T> {
 
     // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
     // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
-    fn recovery(&self, palloc: &mut SsmemAllocator, pool: &PoolHandle) {
+    fn recovery(&self, palloc: &mut SsmemAllocator, guard: &Guard, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
         while !curr.is_null() {
             let curr_ref = unsafe { curr.as_ref() }.unwrap();
@@ -408,7 +405,7 @@ impl<T: Clone> SOFTList<T> {
                     ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
                 } else {
                     // construct volatile SOFT list
-                    self.quick_insert(curr_node, &epoch::pin());
+                    self.quick_insert(curr_node, guard);
                 }
             }
             curr = curr_ref.next;
