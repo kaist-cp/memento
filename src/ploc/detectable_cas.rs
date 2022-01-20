@@ -10,14 +10,13 @@ use crossbeam_utils::CachePadded;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{
-        lfence, ll::persist_obj, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle,
-    },
+    pmem::{lfence, ll::persist_obj, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle},
 };
 
 use super::{compose_cas_bit, decompose_cas_bit};
 
 const NOT_CHECKED: u64 = 0;
+const FAILED: u64 = 1;
 const NR_MAX_THREADS: usize = 512;
 
 pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS];
@@ -100,6 +99,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 if cur == old {
                     continue;
                 }
+
+                mmt.checkpoint = FAILED;
+                persist_obj(&mmt.checkpoint, true);
             }
 
             return res;
