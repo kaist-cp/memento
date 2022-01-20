@@ -10,7 +10,7 @@ use crate::{
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
-        PoolHandle,
+        rdtscp, PoolHandle,
     },
 };
 
@@ -179,11 +179,50 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
     }
 
+    const PATIENCE: u64 = 40000;
+
     /// Load
+    // TODO(opt): Simplify control flow
     pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
-        let ret = self.inner.load(ord, guard);
-        persist_obj(&self.inner, true);
-        ret
+        let mut old = self.inner.load(ord, guard);
+        'out: loop {
+            if old.cas_bit() == 0 {
+                return old;
+            }
+
+            let mut start = rdtscp();
+            loop {
+                let cur = self.inner.load(ord, guard);
+
+                if cur.cas_bit() == 0 {
+                    return cur;
+                }
+
+                if old != cur {
+                    old = cur;
+                    start = rdtscp();
+                    continue;
+                }
+
+                let now = rdtscp();
+                if now > start + Self::PATIENCE {
+                    persist_obj(&self.inner, true);
+                    match self.inner.compare_exchange(
+                        old,
+                        old.with_cas_bit(0),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    ) {
+                        Ok(_) => return old.with_cas_bit(0),
+                        Err(e) => {
+                            old = e.current;
+                            continue 'out;
+                        }
+                    };
+                }
+            }
+        }
     }
 
     /// Insert
@@ -200,20 +239,28 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
 
         // Normal run
-        let ret = self
-            .inner
+        self.inner
             .compare_exchange(
                 PShared::null(),
-                new,
+                new.with_cas_bit(1),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
             )
-            .map(|_| ())
-            .map_err(|e| InsertError::CASFail(e.current));
-
-        persist_obj(&self.inner, true);
-        ret
+            .map(|_| {
+                persist_obj(&self.inner, true);
+                let _ = self.inner.compare_exchange(
+                    new.with_cas_bit(1),
+                    new,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+            })
+            .map_err(|_| {
+                let cur = self.load(Ordering::SeqCst, guard);
+                InsertError::CASFail(cur)
+            })
     }
 
     #[inline]
