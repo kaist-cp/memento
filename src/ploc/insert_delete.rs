@@ -145,11 +145,10 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
     pub fn load_helping<'g>(
         &self,
+        mut cur: PShared<'g, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        let mut cur = self.inner.load(Ordering::SeqCst, guard);
-
         loop {
             let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
 
@@ -309,7 +308,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 Ordering::SeqCst,
                 guard,
             )
-            .map_err(|_| self.load_helping(guard, pool).unwrap())?;
+            .map_err(|e| self.load_helping(e.current, guard, pool).unwrap())?;
 
         // Now I own the location. flush the owner.
         persist_obj(owner, false); // we're doing CAS soon.
@@ -337,10 +336,10 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         let target = delete.target_loc.load(Ordering::Relaxed, guard);
-        let target_ref = some_or!(
-            unsafe { target.as_ref(pool) },
-            return Err(self.load_helping(guard, pool).unwrap())
-        ); // if null, return failure.
+        let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
+            let cur = self.load(Ordering::SeqCst, guard);
+            return Err(ok_or!(self.load_helping(cur, guard, pool), e, e));
+        }); // if null, return failure.
 
         // owner가 내가 아니면 실패
         let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
@@ -348,7 +347,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             unsafe { guard.defer_pdestroy(target) };
             Ok(target)
         } else {
-            Err(self.load_helping(guard, pool).unwrap())
+            let cur = self.load(Ordering::SeqCst, guard);
+            Err(ok_or!(self.load_helping(cur, guard, pool), e, e))
         }
     }
 }
