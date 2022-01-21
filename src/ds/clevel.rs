@@ -23,10 +23,63 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
+use crate::ploc::Cas;
+use crate::ploc::DetectableCASAtomic;
+use crate::ploc::{insert_delete, DeleteMode, SMOAtomic, Traversable};
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
 
 const TINY_VEC_CAPACITY: usize = 8;
+
+/// Insert client
+#[derive(Debug)]
+pub struct Insert<K, V> {
+    insert_insert: Cas<Slot<K, V>>,
+    resize_insert: Cas<Slot<K, V>>,
+    dedup_delete: Cas<Slot<K, V>>,
+}
+
+impl<K, V> Default for Insert<K, V> {
+    fn default() -> Self {
+        Self {
+            insert_insert: Default::default(),
+            resize_insert: Default::default(),
+            dedup_delete: Default::default(),
+        }
+    }
+}
+
+/// Resize client
+#[derive(Debug)]
+pub struct Resize<K, V> {
+    move_delete: Cas<Slot<K, V>>,
+    move_insert: Cas<Slot<K, V>>,
+}
+
+impl<K, V> Default for Resize<K, V> {
+    fn default() -> Self {
+        Self {
+            move_delete: Default::default(),
+            move_insert: Default::default(),
+        }
+    }
+}
+
+/// Delete client
+#[derive(Debug)]
+pub struct Delete<K, V> {
+    dedup_delete: Cas<Slot<K, V>>,
+    delete_delete: Cas<Slot<K, V>>,
+}
+
+impl<K, V> Default for Delete<K, V> {
+    fn default() -> Self {
+        Self {
+            dedup_delete: Default::default(),
+            delete_delete: Default::default(),
+        }
+    }
+}
 
 cfg_if! {
     if #[cfg(feature = "stress")] {
@@ -80,10 +133,24 @@ struct Slot<K, V> {
     value: V,
 }
 
+impl<K, V> From<(K, V)> for Slot<K, V> {
+    #[inline]
+    fn from((key, value): (K, V)) -> Self {
+        Self { key, value }
+    }
+}
+
+// TODO(must): V도 collectable 해야 함
+impl<K, V> Collectable for Slot<K, V> {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
 #[repr(align(64))]
 struct Bucket<K, V> {
-    slots: [PAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
+    slots: [DetectableCASAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
 #[derive(Debug)]
@@ -166,16 +233,23 @@ pub struct Clevel<K, V> {
 }
 
 /// Resize loop
-pub fn resize_loop<K: PartialEq + Hash, V>(
+pub fn resize_loop<K: PartialEq + Hash, V, const REC: bool>(
     clevel: &ClevelInner<K, V>,
     recv: &mpsc::Receiver<()>,
+    resize: &mut Resize<K, V>,
+    tid: usize,
     guard: &mut Guard,
     pool: &PoolHandle,
 ) {
+    if REC {
+        clevel.resize::<REC>(resize, tid, guard, pool);
+        guard.repin_after(|| {});
+    }
+
     println!("[resize loop] start loop");
     while let Ok(()) = recv.recv() {
         println!("[resize_loop] do resize!");
-        clevel.resize(guard, pool);
+        clevel.resize::<false>(resize, tid, guard, pool);
         guard.repin_after(|| {});
     }
 }
@@ -185,7 +259,7 @@ struct FindResult<'g, K, V> {
     /// level's size
     size: usize,
     _bucket_index: usize,
-    slot: &'g PAtomic<Slot<K, V>>,
+    slot: &'g DetectableCASAtomic<Slot<K, V>>,
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
 
@@ -255,7 +329,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(Ordering::Acquire, guard, pool);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -298,11 +372,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     /// `Ok`: found a unique item (by deduplication)
     ///
     /// `Err` means contention
-    fn find<'g>(
+    fn find<'g, const REC: bool>(
         &'g self,
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
+        dedup_delete: &mut Cas<Slot<K, V>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<Option<FindResult<'g, K, V>>, ()> {
@@ -318,7 +394,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(Ordering::Acquire, guard, pool);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -358,7 +434,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                     // If the moved item is found again, help moving.
                     find_result
                         .slot
-                        .store(PShared::null().with_tag(1), Ordering::Release);
+                        .inner
+                        .store(PShared::null().with_tag(1), Ordering::Release); // TODO(must): store도 helping 해야 함
                 } else {
                     // If the moved item is not found again, retry.
                     return Err(());
@@ -372,18 +449,65 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         // remove everything else.
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
-            match find_result.slot.compare_exchange(
+
+            // Before
+            // match find_result.slot.compare_exchange(
+            //     find_result.slot_ptr,
+            //     PShared::null(),
+            //     Ordering::AcqRel,
+            //     Ordering::Acquire,
+            //     guard,
+            // ) {
+            //     Ok(_) => unsafe {
+            //         guard.defer_pdestroy(find_result.slot_ptr);
+            //     },
+            //     Err(e) => {
+            //         if e.current == find_result.slot_ptr.with_tag(1) {
+            //             // If the item is moved, retry.
+            //             return Err(());
+            //         }
+            //     }
+            // }
+
+            // After(insdel)
+            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+            // if find_result
+            //     .slot
+            //     .delete::<false>(
+            //         find_result.slot_ptr,
+            //         PShared::null(),
+            //         DeleteMode::Drop,
+            //         dedup_delete,
+            //         tid,
+            //         guard,
+            //         pool,
+            //     )
+            //     .is_err()
+            // {
+            //     let slot = ok_or!(find_result.slot.load_helping(guard, pool), e, e);
+            //     if slot == find_result.slot_ptr.with_tag(1) {
+            //         // If the item is moved, retry.
+            //         return Err(());
+            //     }
+            // }
+
+            // After(general)
+            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+            match find_result.slot.cas::<false>(
                 find_result.slot_ptr,
                 PShared::null(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
+                dedup_delete,
+                tid,
                 guard,
+                pool,
             ) {
                 Ok(_) => unsafe {
                     guard.defer_pdestroy(find_result.slot_ptr);
                 },
                 Err(e) => {
-                    if e.current == find_result.slot_ptr.with_tag(1) {
+                    if e == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
                     }
@@ -429,7 +553,7 @@ impl<K, V> Drop for ClevelInner<K, V> {
             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
             for bucket in data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Relaxed, guard);
+                    let slot_ptr = slot.load(Ordering::Relaxed, guard, pool);
                     if !slot_ptr.is_null() {
                         unsafe {
                             guard.defer_pdestroy(slot_ptr);
@@ -544,7 +668,13 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         (context, true)
     }
 
-    pub fn resize(&self, guard: &Guard, pool: &PoolHandle) {
+    pub fn resize<const REC: bool>(
+        &self,
+        resize: &mut Resize<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
         // println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
@@ -578,15 +708,15 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                     .deref(pool)
             };
             let mut first_level_size = first_level_data.len();
-            println!(
-                "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
-            );
+            // println!(
+            //     "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
+            // );
 
-            for (bid, bucket) in last_level_data.iter().enumerate() {
-                for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
+            for (_bid, bucket) in last_level_data.iter().enumerate() {
+                for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
-                            let mut slot_ptr = slot.load(Ordering::Acquire, guard);
+                            let mut slot_ptr = slot.load(Ordering::Acquire, guard, pool);
                             loop {
                                 if slot_ptr.is_null() {
                                     break None;
@@ -596,18 +726,53 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                 // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
                                 // TODO: should we do it...?
                                 if slot_ptr.tag() == 1 {
-                                    slot_ptr = slot.load(Ordering::Acquire, guard);
+                                    slot_ptr = slot.load(Ordering::Acquire, guard, pool);
                                     continue;
                                 }
 
-                                if let Err(e) = slot.compare_exchange(
+                                // Before
+                                // if let Err(e) = slot.compare_exchange(
+                                //     slot_ptr,
+                                //     slot_ptr.with_tag(1),
+                                //     Ordering::AcqRel,
+                                //     Ordering::Acquire,
+                                //     guard,
+                                // ) {
+                                //     slot_ptr = e.current;
+                                //     continue;
+                                // }
+
+                                // After(insdel)
+                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                                // if slot
+                                //     .delete::<false>(
+                                //         slot_ptr,
+                                //         slot_ptr.with_tag(1),
+                                //         DeleteMode::Drop,
+                                //         &mut resize.move_delete,
+                                //         tid,
+                                //         guard,
+                                //         pool,
+                                //     )
+                                //     .is_err()
+                                // {
+                                //     slot_ptr = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
+                                //     continue;
+                                // }
+
+                                // After(general)
+                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                                if let Err(e) = slot.cas::<false>(
                                     slot_ptr,
                                     slot_ptr.with_tag(1),
-                                    Ordering::AcqRel,
-                                    Ordering::Acquire,
+                                    &mut resize.move_delete,
+                                    tid,
                                     guard,
+                                    pool,
                                 ) {
-                                    slot_ptr = e.current;
+                                    slot_ptr = e;
                                     continue;
                                 }
 
@@ -636,7 +801,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                         .get_unchecked(i)
                                 };
 
-                                let slot_first_level = slot.load(Ordering::Acquire, guard);
+                                let slot_first_level = slot.load(Ordering::Acquire, guard, pool);
                                 if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
                                     // 2-byte tag checking
                                     if slot_first_level.high_tag() != key_tag as usize {
@@ -651,13 +816,50 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                                     break;
                                 }
 
+                                // Before
+                                // if slot
+                                //     .compare_exchange(
+                                //         PShared::null(),
+                                //         slot_ptr,
+                                //         Ordering::AcqRel,
+                                //         Ordering::Relaxed,
+                                //         guard,
+                                //     )
+                                //     .is_ok()
+                                // {
+                                //     moved = true;
+                                //     break;
+                                // }
+
+                                // After(insdel)
+                                // TODO(must): traverse obj를 clevel 전체로 해야할 듯함
+                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                                // if slot
+                                //     .insert::<_, false>(
+                                //         slot_ptr,
+                                //         slot,
+                                //         &mut resize.move_insert,
+                                //         guard,
+                                //         pool,
+                                //     )
+                                //     .is_ok()
+                                // {
+                                //     moved = true;
+                                //     break;
+                                // }
+
+                                // After(general)
+                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
                                 if slot
-                                    .compare_exchange(
+                                    .cas::<false>(
                                         PShared::null(),
                                         slot_ptr,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
+                                        &mut resize.move_insert,
+                                        tid,
                                         guard,
+                                        pool,
                                     )
                                     .is_ok()
                                 {
@@ -792,18 +994,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn find<'g>(
+    fn find<'g, const REC: bool>(
         &'g self,
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
+        dedup_delete: &mut Cas<Slot<K, V>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
+            let find_result =
+                context_ref.find::<REC>(key, key_tag, key_hashes, dedup_delete, tid, guard, pool);
             let find_result = ok_or!(find_result, {
                 context = self.context.load(Ordering::Acquire, guard);
                 continue;
@@ -822,12 +1027,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn try_insert<'g>(
+    fn try_insert<'g, const REC: bool>(
         &'g self,
-        _tid: usize,
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
+        insert: &mut Cas<Slot<K, V>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
@@ -854,22 +1060,54 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 for key_hash in key_hashes.clone() {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
 
-                    if !slot.load(Ordering::Acquire, guard).is_null() {
+                    if !slot.load(Ordering::Acquire, guard, pool).is_null() {
                         continue;
                     }
 
-                    if let Ok(slot_ptr) = slot.compare_exchange(
-                        PShared::null(),
-                        slot_new,
-                        Ordering::AcqRel,
-                        Ordering::Relaxed,
-                        guard,
-                    ) {
+                    // Before
+                    // if let Ok(slot_ptr) = slot.compare_exchange(
+                    //     PShared::null(),
+                    //     slot_new,
+                    //     Ordering::AcqRel,
+                    //     Ordering::Relaxed,
+                    //     guard,
+                    // ) {
+                    //     return Ok(FindResult {
+                    //         size,
+                    //         _bucket_index: key_hash,
+                    //         slot,
+                    //         slot_ptr,
+                    //     });
+                    // }
+
+                    // After(insdel)
+                    // TODO(must): traverse obj를 clevel 전체로 해야할 듯함
+                    // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                    // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                    // if slot
+                    //     .insert::<_, false>(slot_new, slot, insert, guard, pool)
+                    //     .is_ok()
+                    // {
+                    //     return Ok(FindResult {
+                    //         size,
+                    //         _bucket_index: key_hash,
+                    //         slot,
+                    //         slot_ptr: slot_new,
+                    //     });
+                    // }
+
+                    // After(general)
+                    // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+                    // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                    if slot
+                        .cas::<false>(PShared::null(), slot_new, insert, tid, guard, pool)
+                        .is_ok()
+                    {
                         return Ok(FindResult {
                             size,
                             _bucket_index: key_hash,
                             slot,
-                            slot_ptr,
+                            slot_ptr: slot_new,
                         });
                     }
                 }
@@ -961,18 +1199,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
     }
 
-    fn insert_inner<'g>(
+    fn insert_inner<'g, const REC: bool>(
         &'g self,
-        tid: usize,
         mut context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
+        insert: &mut Cas<Slot<K, V>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         loop {
-            if let Ok(result) = self.try_insert(tid, context, slot, key_hashes, guard, pool) {
+            if let Ok(result) =
+                self.try_insert::<REC>(context, slot, key_hashes, insert, tid, guard, pool)
+            {
                 return (context, result);
             }
 
@@ -989,13 +1230,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn move_if_resized<'g>(
+    fn move_if_resized<'g, const REC: bool>(
         &'g self,
-        tid: usize,
         mut context: PShared<'g, Context<K, V>>,
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
+        insert: &mut Cas<Slot<K, V>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
@@ -1018,14 +1260,34 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             // Move the slot if the slot is not already (being) moved.
             //
             // the resize thread may already have passed the slot. I need to move it.
+
+            // Before
+            // if insert_result
+            //     .slot
+            //     .compare_exchange(
+            //         insert_result.slot_ptr,
+            //         insert_result.slot_ptr.with_tag(1),
+            //         Ordering::AcqRel,
+            //         Ordering::Acquire,
+            //         guard,
+            //     )
+            //     .is_err()
+            // {
+            //     break;
+            // }
+
+            // After(general)
+            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
             if insert_result
                 .slot
-                .compare_exchange(
+                .cas::<false>(
                     insert_result.slot_ptr,
                     insert_result.slot_ptr.with_tag(1),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
+                    insert,
+                    tid,
                     guard,
+                    pool,
                 )
                 .is_err()
             {
@@ -1038,29 +1300,34 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             //     insert_result.size,
             //     insert_result.bucket_index
             // );
-            let (context_insert, insert_result_insert) = self.insert_inner(
-                tid,
+
+            // TODO(must): 상황에 따라 insert_inner 반복 호출되므로 reset 해야 함
+            let (context_insert, insert_result_insert) = self.insert_inner::<REC>(
                 context_new,
                 insert_result.slot_ptr,
                 key_hashes,
                 sender,
+                insert,
+                tid,
                 guard,
                 pool,
             );
             insert_result
                 .slot
-                .store(PShared::null().with_tag(1), Ordering::Release);
+                .inner
+                .store(PShared::null().with_tag(1), Ordering::Release); // TODO(must): store도 helping 해야 함
             context = context_insert;
             insert_result = insert_result_insert;
         }
     }
 
-    pub fn insert(
+    pub fn insert<const REC: bool>(
         &self,
-        tid: usize,
         key: K,
         value: V,
         sender: &mpsc::Sender<()>,
+        insert: &mut Insert<K, V>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError>
@@ -1070,108 +1337,171 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         // println!("[insert] tid: {tid} do insert");
         // println!("[insert] tid: {}, key: {}", tid, key);
         let (key_tag, key_hashes) = hashes(&key);
-        let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
+        let (context, find_result) = self.find::<REC>(
+            &key,
+            key_tag,
+            key_hashes,
+            &mut insert.dedup_delete,
+            tid,
+            guard,
+            pool,
+        );
         if find_result.is_some() {
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new(Slot { key, value }, pool)
+        let slot = POwned::new(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
         // question: why `context_new` is created?
-        let (context_new, insert_result) =
-            self.insert_inner(tid, context, slot, key_hashes, sender, guard, pool);
-        self.move_if_resized(
+        let (context_new, insert_result) = self.insert_inner::<REC>(
+            context,
+            slot,
+            key_hashes,
+            sender,
+            &mut insert.insert_insert,
             tid,
+            guard,
+            pool,
+        );
+        self.move_if_resized::<REC>(
             context_new,
             insert_result,
             key_hashes,
             sender,
+            &mut insert.resize_insert,
+            tid,
             guard,
             pool,
         );
         Ok(())
     }
 
-    pub fn update(
+    // pub fn update(
+    //     &self,
+    //     tid: usize,
+    //     key: K,
+    //     value: V,
+    //     sender: &mpsc::Sender<()>,
+    //     guard: &Guard,
+    //     pool: &PoolHandle,
+    // ) -> Result<(), (K, V)>
+    // where
+    //     K: Clone,
+    // {
+    //     let (key_tag, key_hashes) = hashes(&key);
+    //     let mut slot_new =
+    //         POwned::new(Slot::from((key.clone(), value)), pool).with_high_tag(key_tag as usize);
+
+    //     loop {
+    //         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
+    //         let find_result = some_or!(find_result, {
+    //             let slot_ref = unsafe { slot_new.deref(pool) };
+    //             // TODO: 이렇게 k,v 리턴하면 안됨. 그냥 update 실패 리턴값 없애자
+    //             let (k, v) = (slot_ref.key.clone(), unsafe { ptr::read(&slot_ref.value) });
+    //             // TODO(must): free new slot
+    //             return Err((k, v));
+    //         });
+
+    //         if let Err(e) = find_result.slot.compare_exchange(
+    //             find_result.slot_ptr,
+    //             slot_new,
+    //             Ordering::AcqRel,
+    //             Ordering::Acquire,
+    //             guard,
+    //         ) {
+    //             slot_new = e.new;
+    //             continue;
+    //         }
+
+    //         unsafe {
+    //             guard.defer_pdestroy(find_result.slot_ptr);
+    //         }
+    //         self.move_if_resized(tid, context, find_result, key_hashes, sender, guard, pool);
+    //         return Ok(());
+    //     }
+    // }
+
+    pub fn delete<const REC: bool>(
         &self,
+        key: &K,
+        delete: &mut Delete<K, V>,
         tid: usize,
-        key: K,
-        value: V,
-        sender: &mpsc::Sender<()>,
         guard: &Guard,
         pool: &PoolHandle,
-    ) -> Result<(), (K, V)>
-    where
-        K: Clone,
-    {
-        let (key_tag, key_hashes) = hashes(&key);
-        let mut slot_new = POwned::new(
-            Slot {
-                key: key.clone(),
-                value,
-            },
-            pool,
-        )
-        .with_high_tag(key_tag as usize);
-
-        loop {
-            let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
-            let find_result = some_or!(find_result, {
-                let slot_ref = unsafe { slot_new.deref(pool) };
-                // TODO: 이렇게 k,v 리턴하면 안됨. 그냥 update 실패 리턴값 없애자
-                let (k, v) = (slot_ref.key.clone(), unsafe { ptr::read(&slot_ref.value) });
-                // TODO(must): free new slot
-                return Err((k, v));
-            });
-
-            if let Err(e) = find_result.slot.compare_exchange(
-                find_result.slot_ptr,
-                slot_new,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-                guard,
-            ) {
-                slot_new = e.new;
-                continue;
-            }
-
-            unsafe {
-                guard.defer_pdestroy(find_result.slot_ptr);
-            }
-            self.move_if_resized(tid, context, find_result, key_hashes, sender, guard, pool);
-            return Ok(());
-        }
-    }
-
-    pub fn delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) {
+    ) {
         // println!("[delete] key: {}", key);
         let (key_tag, key_hashes) = hashes(&key);
         loop {
-            let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
+            let (_, find_result) = self.find::<REC>(
+                key,
+                key_tag,
+                key_hashes,
+                &mut delete.dedup_delete,
+                tid,
+                guard,
+                pool,
+            );
             let find_result = some_or!(find_result, {
                 println!("[delete] suspicious...");
                 return;
             });
 
+            // Before
+            // if find_result
+            //     .slot
+            //     .compare_exchange(
+            //         find_result.slot_ptr,
+            //         PShared::null(),
+            //         Ordering::AcqRel,
+            //         Ordering::Relaxed,
+            //         guard,
+            //     )
+            //     .is_err()
+            // {
+            //     continue;
+            // }
+            // unsafe {
+            //     guard.defer_pdestroy(find_result.slot_ptr);
+            // }
+
+            // After(insdel)
+            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
+            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+            // if find_result
+            //     .slot
+            //     .delete::<false>(
+            //         find_result.slot_ptr,
+            //         PShared::null(),
+            //         DeleteMode::Drop,
+            //         &mut delete.delete_delete,
+            //         tid,
+            //         guard,
+            //         pool,
+            //     )
+            //     .is_ok()
+            // {
+            //     return;
+            // }
+
+            // After(general)
             if find_result
                 .slot
-                .compare_exchange(
+                .cas::<false>(
                     find_result.slot_ptr,
                     PShared::null(),
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
+                    &mut delete.delete_delete,
+                    tid,
                     guard,
+                    pool,
                 )
                 .is_err()
             {
                 continue;
             }
-
             unsafe {
                 guard.defer_pdestroy(find_result.slot_ptr);
             }
-            // println!("[delete] finish!");
             return;
         }
     }
@@ -1185,18 +1515,25 @@ mod tests {
     };
 
     use crossbeam_epoch::pin;
-    use crossbeam_utils::thread;
 
     use super::*;
 
     static mut SEND: Option<Vec<mpsc::Sender<()>>> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
-    struct Smoke {}
+    struct Smoke {
+        resize: Resize<usize, usize>,
+        insert: Insert<usize, usize>,
+        delete: Delete<usize, usize>,
+    }
 
     impl Default for Smoke {
         fn default() -> Self {
-            Self {}
+            Self {
+                resize: Default::default(),
+                insert: Default::default(),
+                delete: Default::default(),
+            }
         }
     }
 
@@ -1207,38 +1544,39 @@ mod tests {
     }
 
     impl RootObj<Smoke> for TestRootObj<ClevelInner<usize, usize>> {
-        fn run(&self, _mmt: &mut Smoke, _tid: usize, _guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
             let kv = &self.obj;
-            let (send, recv) = mpsc::channel();
 
-            thread::scope(|s| {
-                // TODO(must): thread 분사는 execute에서 이루어지게끔... 다른 obj들의 test 처럼 tid로 분리
-                let _ = s.spawn(move |_| {
-                    let mut g = pin();
-                    let _ = resize_loop(kv, &recv, &mut g, pool);
-                });
-
-                let guard = pin(); // TODO(must): use guard parameter
-
-                const RANGE: usize = 1usize << 8;
-
-                for i in 0..RANGE {
-                    let _ = kv.insert(0, i, i, &send, &guard, pool);
-                    assert_eq!(kv.search(&i, &guard, pool), Some(&i));
-
-                    let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
-                    assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+            match tid {
+                0 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);
                 }
+                _ => {
+                    let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
 
-                for i in 0..RANGE {
-                    assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
-                    kv.delete(&i, &guard, pool);
-                    assert_eq!(kv.search(&i, &guard, pool), None);
+                    const RANGE: usize = 1usize << 8;
+
+                    for i in 0..RANGE {
+                        let _ = kv.insert::<true>(i, i, &send, &mut mmt.insert, tid, guard, pool);
+                        assert_eq!(kv.search(&i, guard, pool), Some(&i));
+
+                        // TODO(opt): update 살리기
+                        // let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
+                        // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+                    }
+
+                    for i in 0..RANGE {
+                        assert_eq!(kv.search(&i, guard, pool), Some(&i));
+                        // TODO(opt): update 살리기
+                        // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
+
+                        kv.delete::<true>(&i, &mut mmt.delete, tid, guard, pool);
+                        assert_eq!(kv.search(&i, guard, pool), None);
+                    }
                 }
-
-                drop(send);
-            })
-            .unwrap();
+            }
         }
     }
 
@@ -1246,15 +1584,35 @@ mod tests {
     fn smoke() {
         const FILE_NAME: &str = "clevel_smoke.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const NR_THREADS: usize = 2;
 
-        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(FILE_NAME, FILE_SIZE, 1)
+        let (send, recv) = mpsc::channel();
+        let mut vec_s = Vec::new();
+        for _ in 0..NR_THREADS - 1 {
+            vec_s.push(send.clone());
+        }
+        drop(send);
+        unsafe {
+            SEND = Some(vec_s);
+            RECV = Some(recv);
+        }
+
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(
+            FILE_NAME, FILE_SIZE, NR_THREADS,
+        );
     }
 
-    struct InsertSearch {}
+    struct InsertSearch {
+        insert: Insert<usize, usize>,
+        resize: Resize<usize, usize>,
+    }
 
     impl Default for InsertSearch {
         fn default() -> Self {
-            Self {}
+            Self {
+                insert: Default::default(),
+                resize: Default::default(),
+            }
         }
     }
 
@@ -1265,14 +1623,14 @@ mod tests {
     }
 
     impl RootObj<InsertSearch> for TestRootObj<ClevelInner<usize, usize>> {
-        fn run(&self, _mmt: &mut InsertSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, mmt: &mut InsertSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
             let kv = &self.obj;
 
             match tid {
                 0 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
-                    let mut g = pin();
-                    let _ = resize_loop(kv, recv, &mut g, pool);
+                    let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
@@ -1280,7 +1638,7 @@ mod tests {
 
                     for i in 0..RANGE {
                         // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert(tid, i, i, &send, &guard, pool);
+                        let _ = kv.insert::<true>(i, i, &send, &mut mmt.insert, tid, guard, pool);
 
                         // println!("[test] tid = {tid}, i = {i}, search");
                         if kv.search(&i, &guard, pool) != Some(&i) {
@@ -1315,72 +1673,72 @@ mod tests {
         )
     }
 
-    struct InsertUpdateSearch {}
+    // struct InsertUpdateSearch {}
 
-    impl Default for InsertUpdateSearch {
-        fn default() -> Self {
-            Self {}
-        }
-    }
+    // impl Default for InsertUpdateSearch {
+    //     fn default() -> Self {
+    //         Self {}
+    //     }
+    // }
 
-    impl Collectable for InsertUpdateSearch {
-        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
-        }
-    }
+    // impl Collectable for InsertUpdateSearch {
+    //     fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    //         todo!()
+    //     }
+    // }
 
-    impl RootObj<InsertUpdateSearch> for TestRootObj<ClevelInner<usize, usize>> {
-        fn run(&self, _mmt: &mut InsertUpdateSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let kv = &self.obj;
+    // impl RootObj<InsertUpdateSearch> for TestRootObj<ClevelInner<usize, usize>> {
+    //     fn run(&self, _mmt: &mut InsertUpdateSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    //         let kv = &self.obj;
 
-            match tid {
-                0 => {
-                    let recv = unsafe { RECV.as_ref().unwrap() };
-                    let mut g = pin();
-                    let _ = resize_loop(kv, recv, &mut g, pool);
-                }
-                _ => {
-                    let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
-                    const RANGE: usize = 1usize << 6;
+    //         match tid {
+    //             0 => {
+    //                 let recv = unsafe { RECV.as_ref().unwrap() };
+    //                 let mut g = pin();
+    //                 let _ = resize_loop::<_, _, true>(kv, recv, &mut g, pool);
+    //             }
+    //             _ => {
+    //                 let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
+    //                 const RANGE: usize = 1usize << 6;
 
-                    for i in 0..RANGE {
-                        // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert(tid, i, i, &send, &guard, pool);
+    //                 for i in 0..RANGE {
+    //                     // println!("[test] tid = {tid}, i = {i}, insert");
+    //                     let _ = kv.insert::<true>(tid, i, i, &send, &guard, pool);
 
-                        // println!("[test] tid = {tid}, i = {i}, update");
-                        let _ = kv.update(tid, i, i + RANGE, &send, &guard, pool);
+    //                     // println!("[test] tid = {tid}, i = {i}, update");
+    //                     let _ = kv.update(tid, i, i + RANGE, &send, &guard, pool);
 
-                        // println!("[test] tid = {tid}, i = {i}, search");
-                        if kv.search(&i, &guard, pool) != Some(&i)
-                            && kv.search(&i, &guard, pool) != Some(&(i + RANGE))
-                        {
-                            panic!("[test] tid = {tid} fail on {i}");
-                        }
-                    }
-                }
-            }
-        }
-    }
+    //                     // println!("[test] tid = {tid}, i = {i}, search");
+    //                     if kv.search(&i, &guard, pool) != Some(&i)
+    //                         && kv.search(&i, &guard, pool) != Some(&(i + RANGE))
+    //                     {
+    //                         panic!("[test] tid = {tid} fail on {i}");
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
-    #[test]
-    fn insert_update_search() {
-        const FILE_NAME: &str = "clevel_insert_update_search.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-        const THREADS: usize = 1usize << 4;
+    // #[test]
+    // fn insert_update_search() {
+    //     const FILE_NAME: &str = "clevel_insert_update_search.pool";
+    //     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    //     const THREADS: usize = 1usize << 4;
 
-        let (send, recv) = mpsc::channel();
-        let mut vec_s = Vec::new();
-        for _ in 0..THREADS - 1 {
-            vec_s.push(send.clone());
-        }
-        drop(send);
-        unsafe {
-            SEND = Some(vec_s);
-            RECV = Some(recv);
-        }
+    //     let (send, recv) = mpsc::channel();
+    //     let mut vec_s = Vec::new();
+    //     for _ in 0..THREADS - 1 {
+    //         vec_s.push(send.clone());
+    //     }
+    //     drop(send);
+    //     unsafe {
+    //         SEND = Some(vec_s);
+    //         RECV = Some(recv);
+    //     }
 
-        run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertUpdateSearch, _>(
-            FILE_NAME, FILE_SIZE, THREADS,
-        )
-    }
+    //     run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertUpdateSearch, _>(
+    //         FILE_NAME, FILE_SIZE, THREADS,
+    //     )
+    // }
 }

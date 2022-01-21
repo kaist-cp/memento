@@ -48,7 +48,7 @@ extern "C"
     bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
     bool run_update(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
     bool run_delete(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, PoolHandle *pool);
-    void run_resize_loop(ClevelMemento *m, Clevel *obj, PoolHandle *pool);
+    void run_resize_loop(ClevelMemento *m, Clevel *obj, unsigned tid, PoolHandle *pool);
 
 #ifdef __cplusplus
 }
@@ -80,7 +80,7 @@ public:
 
         // `tnum` thread is only for resize loop
         ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tnum, pool));
-        std::thread{run_resize_loop, m_resize, c, pool}.detach();
+        std::thread{run_resize_loop, m_resize, c, tnum, pool}.detach();
     }
     ~CLevelMemento(){
         // TODO: pool close?
