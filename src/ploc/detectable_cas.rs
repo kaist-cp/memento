@@ -159,7 +159,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         if mmt.checkpoint != NOT_CHECKED {
             match mmt.checkpoint.cmp(&(vchk as u64)) {
-                cmp::Ordering::Less => {}
+                cmp::Ordering::Less => return Ok(()),
                 cmp::Ordering::Equal => {
                     let _ = self.inner.compare_exchange(
                         new.with_cas_bit(cur_bit).with_tid(tid),
@@ -168,19 +168,28 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                         Ordering::SeqCst,
                         guard,
                     );
+                    return Ok(());
                 }
                 cmp::Ordering::Greater => {
-                    // Occured when thread crash
-                    cas_info.cas_vcheckpoint[tid].store(mmt.checkpoint, Ordering::Relaxed);
-                    let _ = self.inner.compare_exchange(
-                        new.with_cas_bit(next_bit).with_tid(tid),
-                        new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    );
+                    // Occured when thread crash. Just continue below... (It should return `Ok` finally)
                 }
             }
+        }
+
+        let cur = self.inner.load(Ordering::SeqCst, guard);
+
+        if cur == new.with_cas_bit(next_bit).with_tid(tid) {
+            mmt.checkpoint_succ(next_bit, tid, cas_info);
+            let _ = self
+                .inner
+                .compare_exchange(
+                    cur,
+                    new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                )
+                .map_err(|_| sfence);
             return Ok(());
         }
 
@@ -190,17 +199,19 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
         if vchk < pchk as usize {
             mmt.checkpoint_succ(next_bit, tid, cas_info);
-            let _ = self.inner.compare_exchange(
-                new.with_cas_bit(next_bit).with_tid(tid),
-                new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            );
+            let _ = self
+                .inner
+                .compare_exchange(
+                    new.with_cas_bit(next_bit).with_tid(tid),
+                    new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                )
+                .map_err(|_| sfence);
             return Ok(());
         }
 
-        let cur = self.inner.load(Ordering::SeqCst, guard);
         Err(self.help(cur, cas_info, guard))
     }
 
@@ -384,7 +395,7 @@ impl<N> Cas<N> {
         let t = calc_checkpoint(rdtscp(), cas_info);
         let new_chk = compose_cas_bit(cas_bit, t as usize) as u64;
         self.checkpoint = new_chk;
-        persist_obj(&self.checkpoint, true);
+        persist_obj(&self.checkpoint, false); // There is always a CAS after this function
         cas_info.cas_vcheckpoint[tid].store(new_chk, Ordering::Relaxed);
     }
 }
