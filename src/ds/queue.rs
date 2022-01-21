@@ -254,7 +254,7 @@ impl<T: Clone> Collectable for Queue<T> {
 
 impl<T: Clone> Traversable<Node<T>> for Queue<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.head.load_helping(guard, pool).unwrap();
+        let mut curr = self.head.load(Ordering::SeqCst, guard);
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
@@ -360,7 +360,7 @@ impl<T: Clone> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let head = self.head.load_helping(guard, pool).unwrap();
+        let head = self.head.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head.deref(pool) };
         let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
         let tail = self.tail.load(Ordering::SeqCst, guard);
@@ -385,14 +385,7 @@ impl<T: Clone> Queue<T> {
         }
 
         self.head
-            .delete::<REC>(
-                head,
-                next,
-                &mut try_deq.delete,
-                tid,
-                guard,
-                pool,
-            )
+            .delete::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
             .map(|_| unsafe { Some((*next_ref.data.as_ptr()).clone()) })
             .map_err(|_| TryFail)
     }

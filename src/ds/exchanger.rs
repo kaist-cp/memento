@@ -174,8 +174,8 @@ impl<T: Clone> PDefault for Exchanger<T> {
 }
 
 impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
-    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let slot = self.slot.load_helping(guard, pool).unwrap();
+    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
+        let slot = self.slot.load(Ordering::SeqCst, guard);
         slot == target
     }
 }
@@ -215,7 +215,7 @@ impl<T: Clone> Exchanger<T> {
         .load(Ordering::Relaxed, guard);
 
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
-        let init_slot = self.slot.load_helping(guard, pool).unwrap();
+        let init_slot = self.slot.load(Ordering::SeqCst, guard);
         let init_slot = ok_or!(
             try_xchg
                 .init_slot
@@ -326,7 +326,7 @@ impl<T: Clone> Exchanger<T> {
             std::thread::sleep(Duration::from_nanos(100));
         }
 
-        let wait_slot = self.slot.load_helping(guard, pool).unwrap();
+        let wait_slot = self.slot.load(Ordering::SeqCst, guard);
         let wait_slot = ok_or!(
             try_xchg
                 .wait_slot

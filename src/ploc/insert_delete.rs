@@ -289,7 +289,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<PShared<'g, N>, ()> {
+    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         if REC {
             return self.delete_result(delete, tid, guard, pool);
         }
@@ -309,7 +309,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 Ordering::SeqCst,
                 guard,
             )
-            .map_err(|_| ())?;
+            .map_err(|_| self.load_helping(guard, pool).unwrap())?;
 
         // Now I own the location. flush the owner.
         persist_obj(owner, false); // we're doing CAS soon.
@@ -335,9 +335,12 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<PShared<'g, N>, ()> {
+    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         let target = delete.target_loc.load(Ordering::Relaxed, guard);
-        let target_ref = some_or!(unsafe { target.as_ref(pool) }, return Err(())); // if null, return failure.
+        let target_ref = some_or!(
+            unsafe { target.as_ref(pool) },
+            return Err(self.load_helping(guard, pool).unwrap())
+        ); // if null, return failure.
 
         // owner가 내가 아니면 실패
         let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
@@ -345,7 +348,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             unsafe { guard.defer_pdestroy(target) };
             Ok(target)
         } else {
-            Err(())
+            Err(self.load_helping(guard, pool).unwrap())
         }
     }
 }
