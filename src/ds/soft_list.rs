@@ -182,11 +182,12 @@ impl<T: Clone> SOFTList<T> {
         let mut result_node = None;
         let mut curr_state = State::Dummy;
         'retry: loop {
+            // 삽입할 위치를 탐색
             let (pred, curr) = self.find(key, &mut curr_state, pool);
             let curr_ref = unsafe { curr.deref() };
             let pred_state = get_state(curr);
 
-            // State: Inserted
+            // 중복 키를 발견. 삽입 중이라면 helping하고, 삽입 완료된 거면 그냥 끝냄
             if curr_ref.key == key {
                 if curr_state != State::IntendToInsert {
                     // 이미 삽입된 노드. INTEND_TO_INSERT가 아니니 헬핑할 필요도 없음
@@ -194,7 +195,9 @@ impl<T: Clone> SOFTList<T> {
                 }
                 // 이 result_node를 helping
                 result_node = Some(curr);
-            } else {
+            } 
+            // 중복 키 없으므로 State: IntendToInsert 노드를 만들어 삽입 시도 
+            else {
                 let new_pnode = self.alloc_new_pnode(pool);
                 let p_valid = unsafe { &mut *new_pnode }.alloc();
                 let new_node = self.alloc_new_vnode(key, value.clone(), new_pnode, p_valid);
