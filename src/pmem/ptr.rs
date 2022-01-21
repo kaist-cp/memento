@@ -1,5 +1,5 @@
 //! Persistent Pointer
-use super::pool::PoolHandle;
+use super::{pool::PoolHandle, Collectable};
 use std::marker::PhantomData;
 
 /// 상대주소의 NULL 식별자
@@ -10,10 +10,10 @@ const NULL_OFFSET: usize = 0;
 /// - 참조시 풀의 시작주소와 offset을 더한 절대주소를 참조
 // `T: ?Sized`인 이유: `PPtr::null()`을 사용해야하는 Atomic 포인터의 T가 ?Sized임
 // NOTE: plocation offset의 align이 안맞을 수 있음. 주의 필요
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PPtr<T: ?Sized> {
     offset: usize,
-    _marker: PhantomData<*const T>,
+    _marker: PhantomData<T>,
 }
 
 impl<T: ?Sized> Clone for PPtr<T> {
@@ -23,6 +23,10 @@ impl<T: ?Sized> Clone for PPtr<T> {
             _marker: PhantomData,
         }
     }
+}
+
+impl<T> Collectable for PPtr<T> {
+    fn filter(_: &mut Self, _: usize, _: &mut super::GarbageCollection, _: &PoolHandle) {}
 }
 
 impl<T: ?Sized> Copy for PPtr<T> {}

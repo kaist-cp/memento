@@ -24,7 +24,11 @@ use tinyvec::*;
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::Cas;
+use crate::ploc::Checkpoint;
+use crate::ploc::Checkpointable;
 use crate::ploc::DetectableCASAtomic;
+use crate::pmem::AsPPtr;
+use crate::pmem::PPtr;
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
 
@@ -48,6 +52,12 @@ impl<K, V> Default for Insert<K, V> {
     }
 }
 
+impl<K, V> Collectable for Insert<K, V> {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V> {
@@ -64,19 +74,63 @@ impl<K, V> Default for Resize<K, V> {
     }
 }
 
+impl<K, V> Collectable for Resize<K, V> {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+/// Delete client
+#[derive(Debug)]
+pub struct TryDelete<K, V> {
+    dedup_delete: Cas<Slot<K, V>>,
+    delete_delete: Cas<Slot<K, V>>,
+    find_result_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+}
+
+impl<K, V> Default for TryDelete<K, V> {
+    fn default() -> Self {
+        Self {
+            dedup_delete: Default::default(),
+            delete_delete: Default::default(),
+            find_result_chk: Default::default(),
+        }
+    }
+}
+
+impl<K, V> Collectable for TryDelete<K, V> {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
+    }
+}
+
+impl<'g, K, V> Checkpointable for (PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>) {
+    fn invalidate(&mut self) {
+        self.1.invalidate();
+    }
+
+    fn is_invalid(&self) -> bool {
+        self.1.is_invalid()
+    }
+}
+
 /// Delete client
 #[derive(Debug)]
 pub struct Delete<K, V> {
-    dedup_delete: Cas<Slot<K, V>>,
-    delete_delete: Cas<Slot<K, V>>,
+    try_delete: TryDelete<K, V>,
 }
 
 impl<K, V> Default for Delete<K, V> {
     fn default() -> Self {
         Self {
-            dedup_delete: Default::default(),
-            delete_delete: Default::default(),
+            try_delete: Default::default(),
         }
+    }
+}
+
+impl<K, V> Collectable for Delete<K, V> {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        todo!()
     }
 }
 
@@ -1421,6 +1475,88 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     //     }
     // }
 
+    fn try_delete<const REC: bool>(
+        &self,
+        key: &K,
+        try_delete: &mut TryDelete<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Result<bool, ()> {
+        let (key_tag, key_hashes) = hashes(&key);
+        let (_, find_result) = self.find::<REC>(
+            key,
+            key_tag,
+            key_hashes,
+            &mut try_delete.dedup_delete,
+            tid,
+            guard,
+            pool,
+        );
+
+        // Before
+        // let find_result = some_or!(find_result, {
+        //     println!("[delete] None");
+        //     return Ok(false);
+        // });
+        //
+        // if find_result
+        //     .slot
+        //     .compare_exchange(
+        //         find_result.slot_ptr,
+        //         PShared::null(),
+        //         Ordering::AcqRel,
+        //         Ordering::Relaxed,
+        //         guard,
+        //     )
+        //     .is_err()
+        // {
+        //     continue;
+        // }
+        // unsafe {
+        //     guard.defer_pdestroy(find_result.slot_ptr);
+        // }
+
+        // After(general)
+        let (slot, slot_ptr) = match find_result {
+            Some(res) => (
+                PPtr::from(unsafe { res.slot.as_pptr(pool) }),
+                PAtomic::from(res.slot_ptr),
+            ),
+            None => (PPtr::null(), PAtomic::null()),
+        };
+
+        let chk = ok_or!(
+            try_delete
+                .find_result_chk
+                .checkpoint::<REC>((slot, slot_ptr)),
+            e,
+            e.current
+        );
+
+        if chk.0.is_null() {
+            // slot is null if find result is none
+            return Ok(false);
+        }
+
+        let slot = unsafe { chk.0.deref(pool) };
+        let slot_ptr = chk.1.load(Ordering::Relaxed, guard);
+
+        slot.cas::<REC>(
+            slot_ptr,
+            PShared::null(),
+            &mut try_delete.delete_delete,
+            tid,
+            guard,
+            pool,
+        )
+        .map(|_| unsafe {
+            guard.defer_pdestroy(slot_ptr);
+            true
+        })
+        .map_err(|_| ())
+    }
+
     pub fn delete<const REC: bool>(
         &self,
         key: &K,
@@ -1428,80 +1564,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
-    ) {
-        // println!("[delete] key: {}", key);
-        let (key_tag, key_hashes) = hashes(&key);
+    ) -> bool {
+        if let Ok(ret) = self.try_delete::<REC>(key, &mut delete.try_delete, tid, guard, pool) {
+            return ret;
+        }
+
         loop {
-            let (_, find_result) = self.find::<REC>(
-                key,
-                key_tag,
-                key_hashes,
-                &mut delete.dedup_delete,
-                tid,
-                guard,
-                pool,
-            );
-            let find_result = some_or!(find_result, {
-                println!("[delete] suspicious...");
-                return;
-            });
-
-            // Before
-            // if find_result
-            //     .slot
-            //     .compare_exchange(
-            //         find_result.slot_ptr,
-            //         PShared::null(),
-            //         Ordering::AcqRel,
-            //         Ordering::Relaxed,
-            //         guard,
-            //     )
-            //     .is_err()
-            // {
-            //     continue;
-            // }
-            // unsafe {
-            //     guard.defer_pdestroy(find_result.slot_ptr);
-            // }
-
-            // After(insdel)
-            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
-            // if find_result
-            //     .slot
-            //     .delete::<false>(
-            //         find_result.slot_ptr,
-            //         PShared::null(),
-            //         DeleteMode::Drop,
-            //         &mut delete.delete_delete,
-            //         tid,
-            //         guard,
-            //         pool,
-            //     )
-            //     .is_ok()
-            // {
-            //     return;
-            // }
-
-            // After(general)
-            if find_result
-                .slot
-                .cas::<false>(
-                    find_result.slot_ptr,
-                    PShared::null(),
-                    &mut delete.delete_delete,
-                    tid,
-                    guard,
-                    pool,
-                )
-                .is_err()
+            if let Ok(ret) = self.try_delete::<false>(key, &mut delete.try_delete, tid, guard, pool)
             {
-                continue;
+                return ret;
             }
-            unsafe {
-                guard.defer_pdestroy(find_result.slot_ptr);
-            }
-            return;
         }
     }
 }
@@ -1520,10 +1592,12 @@ mod tests {
     static mut SEND: Option<Vec<mpsc::Sender<()>>> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
+    const COUNT: usize = 100_000;
+
     struct Smoke {
         resize: Resize<usize, usize>,
         insert: Insert<usize, usize>,
-        delete: Delete<usize, usize>,
+        delete: [Delete<usize, usize>; COUNT],
     }
 
     impl Default for Smoke {
@@ -1531,14 +1605,17 @@ mod tests {
             Self {
                 resize: Default::default(),
                 insert: Default::default(),
-                delete: Default::default(),
+                delete: array_init::array_init(|_| Delete::<usize, usize>::default()),
             }
         }
     }
 
     impl Collectable for Smoke {
-        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            for i in 0..COUNT {
+                // TODO(must): filter insert array
+                Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
+            }
         }
     }
 
@@ -1555,9 +1632,7 @@ mod tests {
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
 
-                    const RANGE: usize = 1usize << 8;
-
-                    for i in 0..RANGE {
+                    for i in 0..COUNT {
                         let _ = kv.insert::<true>(i, i, &send, &mut mmt.insert, tid, guard, pool);
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
 
@@ -1566,12 +1641,13 @@ mod tests {
                         // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
                     }
 
-                    for i in 0..RANGE {
+                    for i in 0..COUNT {
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
                         // TODO(opt): update 살리기
                         // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
 
-                        kv.delete::<true>(&i, &mut mmt.delete, tid, guard, pool);
+                        let del_res = kv.delete::<true>(&i, &mut mmt.delete[i], tid, guard, pool);
+                        assert!(del_res);
                         assert_eq!(kv.search(&i, guard, pool), None);
                     }
                 }
