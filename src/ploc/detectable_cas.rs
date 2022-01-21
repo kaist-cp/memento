@@ -75,13 +75,15 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
 
         LAST_FAILED_CAS.with(|c| {
-            let failed = c.borrow_mut();
+            let mut failed = c.borrow_mut();
             if let Some(last_chk) = *failed {
                 unsafe {
                     if last_chk != mmt.checkpoint.as_pptr(pool) {
                         let last_chk_ref = last_chk.deref_mut(pool);
                         std::ptr::write(last_chk_ref as *mut _, FAILED);
                         persist_obj(last_chk_ref as &_, true);
+                    } else {
+                        *failed = None;
                     }
                 }
             }
