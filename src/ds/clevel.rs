@@ -114,6 +114,14 @@ impl<'g, K, V> Checkpointable for (PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomi
     }
 }
 
+impl<K, V> TryDelete<K, V> {
+    fn reset(&mut self) {
+        self.dedup_delete.reset();
+        self.delete_delete.reset();
+        self.find_result_chk.reset();
+    }
+}
+
 /// Delete client
 #[derive(Debug)]
 pub struct Delete<K, V> {
@@ -131,6 +139,13 @@ impl<K, V> Default for Delete<K, V> {
 impl<K, V> Collectable for Delete<K, V> {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         todo!()
+    }
+}
+
+impl<K, V> Delete<K, V> {
+    /// Reset Delete memento
+    pub fn reset(&mut self) {
+        self.try_delete.reset();
     }
 }
 
