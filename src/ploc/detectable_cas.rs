@@ -154,11 +154,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
 
         let vchk = cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let (cur_bit, vchk) = decompose_cas_bit(vchk as usize);
+        let (cur_bit, max_chk) = decompose_cas_bit(vchk as usize);
         let next_bit = 1 - cur_bit;
 
         if mmt.checkpoint != NOT_CHECKED {
-            match mmt.checkpoint.cmp(&(vchk as u64)) {
+            let (_, cli_chk) = decompose_cas_bit(mmt.checkpoint as usize);
+
+            match cli_chk.cmp(&max_chk) {
                 cmp::Ordering::Less => return Ok(()),
                 cmp::Ordering::Equal => {
                     let _ = self.inner.compare_exchange(
@@ -197,7 +199,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let pchk = cas_info.cas_pcheckpoint[next_bit][tid].load(Ordering::SeqCst);
 
         // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
-        if vchk < pchk as usize {
+        if max_chk < pchk as usize {
             mmt.checkpoint_succ(next_bit, tid, cas_info);
             let _ = self
                 .inner
