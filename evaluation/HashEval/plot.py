@@ -247,12 +247,14 @@ for obj, obj_info in objs.items():
     # draw graph, not save
     fig, axes = plt.subplots(1, 2, figsize=(10, 3))
     for ix, df in enumerate(dfs):
+        colors = [objs["hash"]["targets"][target]["color"]
+                  for target in df.columns[1:]]
         p = df.plot(ax=axes[ix], x="workload",
-                    xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False)
+                    xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False, color=colors)
         p.grid(True, axis='y', linestyle='--')
     axLine, axLabel = axes[0].get_legend_handles_labels()
     fig.legend(axLine, axLabel, loc='upper center',
-               ncol=dfs[1].shape[1]-1, borderaxespad=0.1)
+               ncol=dfs[1].shape[1], borderaxespad=0.1)
     plt.setp(axes[0], ylabel="Throughput (M op/s)")
 
     # save
