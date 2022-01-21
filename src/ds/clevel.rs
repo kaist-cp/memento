@@ -13,6 +13,7 @@ use std::sync::{mpsc, Arc};
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use etrace::*;
 use fasthash::Murmur3HasherExt;
@@ -83,17 +84,17 @@ impl<K, V> Collectable for Resize<K, V> {
 /// Delete client
 #[derive(Debug)]
 pub struct TryDelete<K, V> {
-    dedup_delete: Cas<Slot<K, V>>,
-    delete_delete: Cas<Slot<K, V>>,
-    find_result_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    dedup_delete: CachePadded<Cas<Slot<K, V>>>,
+    delete_delete: CachePadded<Cas<Slot<K, V>>>,
+    find_result_chk: CachePadded<Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
 }
 
 impl<K, V> Default for TryDelete<K, V> {
     fn default() -> Self {
         Self {
-            dedup_delete: Default::default(),
-            delete_delete: Default::default(),
-            find_result_chk: Default::default(),
+            dedup_delete: CachePadded::new(Default::default()),
+            delete_delete: CachePadded::new(Default::default()),
+            find_result_chk: CachePadded::new(Default::default()),
         }
     }
 }
