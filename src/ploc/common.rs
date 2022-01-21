@@ -17,21 +17,25 @@ macro_rules! impl_left_bits {
     };
 }
 
-// cas bits: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
-pub(crate) const POS_CAS_BITS: u32 = 0;
-pub(crate) const NR_CAS_BITS: u32 = 1;
-impl_left_bits!(cas_bits, POS_CAS_BITS, NR_CAS_BITS);
+// Auxiliary Bit
+// aux bit: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
+// Used for:
+// - Detectable CAS: Indicating CAS parity (Odd/Even)
+// - Insert: Indicating if the pointer is persisted
+pub(crate) const POS_AUX_BITS: u32 = 0;
+pub(crate) const NR_AUX_BITS: u32 = 1;
+impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS);
 
 #[inline]
-pub(crate) fn compose_cas_bit(cas_bit: usize, data: usize) -> usize {
-    (cas_bits() & (cas_bit.rotate_right(POS_CAS_BITS + NR_CAS_BITS))) | (!cas_bits() & data)
+pub(crate) fn compose_aux_bit(cas_bit: usize, data: usize) -> usize {
+    (aux_bits() & (cas_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
 }
 
 #[inline]
-pub(crate) fn decompose_cas_bit(data: usize) -> (usize, usize) {
+pub(crate) fn decompose_aux_bit(data: usize) -> (usize, usize) {
     (
-        (data & cas_bits()).rotate_left(POS_CAS_BITS + NR_CAS_BITS),
-        !cas_bits() & data,
+        (data & aux_bits()).rotate_left(POS_AUX_BITS + NR_AUX_BITS),
+        !aux_bits() & data,
     )
 }
 

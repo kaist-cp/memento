@@ -28,7 +28,7 @@ use core::sync::atomic::Ordering;
 
 use super::Guard;
 use crate::impl_left_bits;
-use crate::ploc::{cas_bits, compose_cas_bit, Checkpointable, NR_CAS_BITS, POS_CAS_BITS};
+use crate::ploc::{aux_bits, compose_aux_bit, Checkpointable, NR_AUX_BITS, POS_AUX_BITS};
 use crate::pmem::{
     global_pool, ll::persist_obj, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection,
 };
@@ -126,7 +126,7 @@ impl CompareAndSetOrdering for (Ordering, Ordering) {
 }
 
 // tid bits: 0b011111111100000000000000000000000000000000000000000000000000000000 in 64-bit
-const POS_TID_BITS: u32 = POS_CAS_BITS + NR_CAS_BITS;
+const POS_TID_BITS: u32 = POS_AUX_BITS + NR_AUX_BITS;
 const NR_TID_BITS: u32 = 9;
 impl_left_bits!(tid_bits, POS_TID_BITS, NR_TID_BITS);
 
@@ -177,10 +177,10 @@ fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
 #[inline]
 fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, usize, usize) {
     (
-        (data & cas_bits()).rotate_left(POS_CAS_BITS + NR_CAS_BITS),
+        (data & aux_bits()).rotate_left(POS_AUX_BITS + NR_AUX_BITS),
         (data & tid_bits()).rotate_left(POS_TID_BITS + NR_TID_BITS),
         (data & high_bits()).rotate_left(POS_HIGH_BITS + NR_HIGH_BITS),
-        data & !cas_bits() & !tid_bits() & !high_bits() & !low_bits::<T>(),
+        data & !aux_bits() & !tid_bits() & !high_bits() & !low_bits::<T>(),
         data & low_bits::<T>(),
     )
 }
@@ -1049,10 +1049,10 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
 impl<T: ?Sized + Pointable> fmt::Debug for PAtomic<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
-        let (cas_bit, tid, htag, offset, ltag) = decompose_tag::<T>(data);
+        let (aux_bit, tid, htag, offset, ltag) = decompose_tag::<T>(data);
 
         f.debug_struct("Atomic")
-            .field("cas bit", &cas_bit)
+            .field("aux bit", &aux_bit)
             .field("tid", &tid)
             .field("high tag", &htag)
             .field("offset", &offset)
@@ -1359,9 +1359,9 @@ impl<T: ?Sized + Pointable> POwned<T> {
     }
 
     /// TODO(doc)
-    pub fn cas_bit(&self) -> usize {
-        let (cas_bit, _, _, _, _) = decompose_tag::<T>(self.data);
-        cas_bit
+    pub fn aux_bit(&self) -> usize {
+        let (aux_bit, _, _, _, _) = decompose_tag::<T>(self.data);
+        aux_bit
     }
 
     /// TODO(doc)
@@ -1401,9 +1401,9 @@ impl<T: ?Sized + Pointable> POwned<T> {
     }
 
     /// TODO(doc)
-    pub fn with_cas_bit(self, cas_bit: usize) -> POwned<T> {
+    pub fn with_aux_bit(self, aux_bit: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_cas_bit(cas_bit, data)) }
+        unsafe { Self::from_usize(compose_aux_bit(aux_bit, data)) }
     }
 
     /// TODO(doc)
@@ -1498,10 +1498,10 @@ impl<T: ?Sized + Pointable> Drop for POwned<T> {
 
 impl<T: ?Sized + Pointable> fmt::Debug for POwned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (cas_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
+        let (aux_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Owned")
-            .field("cas bit", &cas_bit)
+            .field("aux bit", &aux_bit)
             .field("tid", &tid)
             .field("high tag", &high_tag)
             .field("offset", &offset)
@@ -1861,9 +1861,9 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     }
 
     /// TODO(doc)
-    pub fn cas_bit(&self) -> usize {
-        let (cas_bit, _, _, _, _) = decompose_tag::<T>(self.data);
-        cas_bit
+    pub fn aux_bit(&self) -> usize {
+        let (aux_bit, _, _, _, _) = decompose_tag::<T>(self.data);
+        aux_bit
     }
 
     /// TODO(doc)
@@ -1908,8 +1908,8 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     }
 
     /// TODO(doc)
-    pub fn with_cas_bit(&self, cas_bit: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_cas_bit(cas_bit, self.data)) }
+    pub fn with_aux_bit(&self, aux_bit: usize) -> PShared<'g, T> {
+        unsafe { Self::from_usize(compose_aux_bit(aux_bit, self.data)) }
     }
 
     /// TODO(doc)
@@ -1981,10 +1981,10 @@ impl<T: ?Sized + Pointable> Ord for PShared<'_, T> {
 
 impl<T: ?Sized + Pointable> fmt::Debug for PShared<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (cas_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
+        let (aux_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Shared")
-            .field("cas bit", &cas_bit)
+            .field("aux bit", &aux_bit)
             .field("tid", &tid)
             .field("high tag", &high_tag)
             .field("offset", &offset)

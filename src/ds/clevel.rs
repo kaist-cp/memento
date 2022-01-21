@@ -25,7 +25,6 @@ use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::Cas;
 use crate::ploc::DetectableCASAtomic;
-use crate::ploc::{insert_delete, DeleteMode, SMOAtomic, Traversable};
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
 

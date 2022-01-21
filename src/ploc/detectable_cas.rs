@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-use super::{compose_cas_bit, decompose_cas_bit};
+use super::{compose_aux_bit, decompose_aux_bit};
 
 const NOT_CHECKED: u64 = 0;
 const FAILED: u64 = 1;
@@ -91,8 +91,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         });
 
         let prev_chk = pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let cas_bit = 1 - decompose_cas_bit(prev_chk as usize).0;
-        let tmp_new = new.with_cas_bit(cas_bit).with_tid(tid);
+        let cas_bit = 1 - decompose_aux_bit(prev_chk as usize).0;
+        let tmp_new = new.with_aux_bit(cas_bit).with_tid(tid);
 
         loop {
             let res = self
@@ -157,17 +157,17 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
 
         let vchk = cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let (cur_bit, max_chk) = decompose_cas_bit(vchk as usize);
+        let (cur_bit, max_chk) = decompose_aux_bit(vchk as usize);
         let next_bit = 1 - cur_bit;
 
         if mmt.checkpoint != NOT_CHECKED {
-            let (_, cli_chk) = decompose_cas_bit(mmt.checkpoint as usize);
+            let (_, cli_chk) = decompose_aux_bit(mmt.checkpoint as usize);
 
             match cli_chk.cmp(&max_chk) {
                 cmp::Ordering::Less => return Ok(()),
                 cmp::Ordering::Equal => {
                     let _ = self.inner.compare_exchange(
-                        new.with_cas_bit(cur_bit).with_tid(tid),
+                        new.with_aux_bit(cur_bit).with_tid(tid),
                         new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
                         Ordering::SeqCst,
                         Ordering::SeqCst,
@@ -183,7 +183,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         let cur = self.inner.load(Ordering::SeqCst, guard);
 
-        if cur == new.with_cas_bit(next_bit).with_tid(tid) {
+        if cur == new.with_aux_bit(next_bit).with_tid(tid) {
             mmt.checkpoint_succ(next_bit, tid, cas_info);
             let _ = self
                 .inner
@@ -207,7 +207,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             let _ = self
                 .inner
                 .compare_exchange(
-                    new.with_cas_bit(next_bit).with_tid(tid),
+                    new.with_aux_bit(next_bit).with_tid(tid),
                     new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
                     Ordering::SeqCst,
                     Ordering::SeqCst,
@@ -269,11 +269,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             };
 
             let winner_tid = old.tid();
-            let winner_bit = old.cas_bit();
+            let winner_bit = old.aux_bit();
 
             // check if winner thread's pcheckpoint is stale
             let pchk = cas_info.cas_pcheckpoint[winner_bit][winner_tid].load(Ordering::SeqCst);
-            let pchk_time = decompose_cas_bit(pchk as usize).1;
+            let pchk_time = decompose_aux_bit(pchk as usize).1;
             if chk <= pchk_time as u64 {
                 // Someone may already help it. I should retry to load.
                 old = self.inner.load(Ordering::SeqCst, guard);
@@ -378,8 +378,8 @@ impl<N> Collectable for Cas<N> {
     fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &PoolHandle) {
         // CAS client 중 max checkpoint를 가진 걸로 vcheckpoint에 기록해줌
         let vchk = pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let (_, cur_chk) = decompose_cas_bit(cas.checkpoint as usize);
-        let (_, max_chk) = decompose_cas_bit(vchk as usize);
+        let (_, cur_chk) = decompose_aux_bit(cas.checkpoint as usize);
+        let (_, max_chk) = decompose_aux_bit(vchk as usize);
 
         if cur_chk > max_chk {
             pool.cas_info.cas_vcheckpoint[tid].store(cas.checkpoint, Ordering::Relaxed);
@@ -398,7 +398,7 @@ impl<N> Cas<N> {
     #[inline]
     fn checkpoint_succ(&mut self, cas_bit: usize, tid: usize, cas_info: &CasInfo) {
         let t = calc_checkpoint(rdtscp(), cas_info);
-        let new_chk = compose_cas_bit(cas_bit, t as usize) as u64;
+        let new_chk = compose_aux_bit(cas_bit, t as usize) as u64;
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, false); // There is always a CAS after this function
         cas_info.cas_vcheckpoint[tid].store(new_chk, Ordering::Relaxed);

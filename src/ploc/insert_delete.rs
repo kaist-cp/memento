@@ -185,7 +185,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
         let mut old = self.inner.load(ord, guard);
         'out: loop {
-            if old.cas_bit() == 0 {
+            if old.aux_bit() == 0 {
                 return old;
             }
 
@@ -193,7 +193,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             loop {
                 let cur = self.inner.load(ord, guard);
 
-                if cur.cas_bit() == 0 {
+                if cur.aux_bit() == 0 {
                     return cur;
                 }
 
@@ -208,12 +208,12 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                     persist_obj(&self.inner, true);
                     match self.inner.compare_exchange(
                         old,
-                        old.with_cas_bit(0),
+                        old.with_aux_bit(0),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                         guard,
                     ) {
-                        Ok(_) => return old.with_cas_bit(0),
+                        Ok(_) => return old.with_aux_bit(0),
                         Err(e) => {
                             old = e.current;
                             continue 'out;
@@ -241,7 +241,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         self.inner
             .compare_exchange(
                 PShared::null(),
-                new.with_cas_bit(1),
+                new.with_aux_bit(1),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
@@ -249,7 +249,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             .map(|_| {
                 persist_obj(&self.inner, true);
                 let _ = self.inner.compare_exchange(
-                    new.with_cas_bit(1),
+                    new.with_aux_bit(1),
                     new,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
