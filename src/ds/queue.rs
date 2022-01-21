@@ -136,15 +136,15 @@ impl<T: Clone> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone> {
-    delete: Delete<Node<T>>,
-    head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
+    delete: CachePadded<Delete<Node<T>>>,
+    head_next: CachePadded<Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>>,
 }
 
 impl<T: Clone> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
-            delete: Default::default(),
-            head_next: Default::default(),
+            delete: CachePadded::new(Default::default()),
+            head_next: CachePadded::new(Default::default()),
         }
     }
 }
