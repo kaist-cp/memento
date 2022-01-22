@@ -315,7 +315,6 @@ pub fn resize_loop<K: PartialEq + Hash, V, const REC: bool>(
         guard.repin_after(|| {});
     }
 
-    println!("[resize loop] start loop");
     while let Ok(()) = recv.recv() {
         println!("[resize_loop] do resize!");
         clevel.resize::<false>(resize, tid, guard, pool);
@@ -592,8 +591,6 @@ fn new_node<K, V>(
     size: usize,
     pool: &PoolHandle,
 ) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-    // println!("[new_node] size: {size}");
-
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
@@ -729,7 +726,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 }
             );
 
-            // println!("[add_level] next_level_size: {next_level_size}");
             break;
         }
 
@@ -744,7 +740,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        // println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let mut context_ref = unsafe { context.deref(pool) };
@@ -760,10 +755,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
             let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
-            // println!(
-            //     "[resize] resize_size: {}, last_level_size: {}",
-            //     context_ref.resize_size, last_level_size
-            // );
             if context_ref.resize_size < last_level_size {
                 break;
             }
@@ -777,9 +768,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                     .deref(pool)
             };
             let mut first_level_size = first_level_data.len();
-            // println!(
-            //     "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
-            // );
 
             for (_bid, bucket) in last_level_data.iter().enumerate() {
                 for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
@@ -946,10 +934,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                             break;
                         }
 
-                        // println!(
-                        //     "[resize] resizing again for ({last_level_size}, {bid}, {sid})..."
-                        // );
-
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
                             self.add_level(context, first_level_ref, guard, pool);
@@ -1008,8 +992,6 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 }
                 break;
             }
-
-            // println!("[resize] done!");
         }
     }
 }
@@ -1184,8 +1166,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
 
         Err(())
-
-        // println!("[insert_inner] tid = {tid}, key = {}, count = {}, level = {}, bucket index = {}, slot index = {}, slot = {:?}", unsafe { slot_new.deref() }.key, found.0, found.1, found.2, index, slot as *const _);
     }
 }
 
@@ -1363,13 +1343,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 break;
             }
 
-            // println!(
-            //     "[insert] tid = {tid} inserted {} to resized array ({}, {}). move.",
-            //     unsafe { insert_result.slot_ptr.deref() }.key,
-            //     insert_result.size,
-            //     insert_result.bucket_index
-            // );
-
             // TODO(must): 상황에 따라 insert_inner 반복 호출되므로 reset 해야 함
             let (context_insert, insert_result_insert) = self.insert_inner::<REC>(
                 context_new,
@@ -1403,8 +1376,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     where
         V: Clone,
     {
-        // println!("[insert] tid: {tid} do insert");
-        // println!("[insert] tid: {}, key: {}", tid, key);
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.find::<REC>(
             &key,
