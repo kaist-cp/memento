@@ -28,9 +28,9 @@ use crate::ploc::Cas;
 use crate::ploc::Checkpoint;
 use crate::ploc::Checkpointable;
 use crate::ploc::DetectableCASAtomic;
-use crate::pmem::AsPPtr;
-use crate::pmem::PPtr;
-use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
+use crate::pmem::{
+    global_pool, persist_obj, sfence, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle,
+};
 use crate::PDefault;
 
 const TINY_VEC_CAPACITY: usize = 8;
@@ -40,7 +40,6 @@ const TINY_VEC_CAPACITY: usize = 8;
 pub struct Insert<K, V> {
     insert_insert: Cas<Slot<K, V>>,
     resize_insert: Cas<Slot<K, V>>,
-    dedup_delete: Cas<Slot<K, V>>,
 }
 
 impl<K, V> Default for Insert<K, V> {
@@ -48,7 +47,6 @@ impl<K, V> Default for Insert<K, V> {
         Self {
             insert_insert: Default::default(),
             resize_insert: Default::default(),
-            dedup_delete: Default::default(),
         }
     }
 }
@@ -84,15 +82,14 @@ impl<K, V> Collectable for Resize<K, V> {
 /// Delete client
 #[derive(Debug)]
 pub struct TryDelete<K, V> {
-    dedup_delete: CachePadded<Cas<Slot<K, V>>>,
     delete_delete: CachePadded<Cas<Slot<K, V>>>,
-    find_result_chk: CachePadded<Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
+    find_result_chk:
+        CachePadded<Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
 }
 
 impl<K, V> Default for TryDelete<K, V> {
     fn default() -> Self {
         Self {
-            dedup_delete: CachePadded::new(Default::default()),
             delete_delete: CachePadded::new(Default::default()),
             find_result_chk: CachePadded::new(Default::default()),
         }
@@ -117,7 +114,6 @@ impl<'g, K, V> Checkpointable for (PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomi
 
 impl<K, V> TryDelete<K, V> {
     fn reset(&mut self) {
-        self.dedup_delete.reset();
         self.delete_delete.reset();
         self.find_result_chk.reset();
     }
@@ -326,7 +322,6 @@ pub fn resize_loop<K: PartialEq + Hash, V, const REC: bool>(
 struct FindResult<'g, K, V> {
     /// level's size
     size: usize,
-    _bucket_index: usize,
     slot: &'g DetectableCASAtomic<Slot<K, V>>,
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
@@ -336,7 +331,6 @@ impl<'g, K, V> Default for FindResult<'g, K, V> {
     fn default() -> Self {
         Self {
             size: 0,
-            _bucket_index: 0,
             slot: unsafe { &*ptr::null() },
             slot_ptr: PShared::null(),
         }
@@ -419,7 +413,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
 
                     return Ok(Some(FindResult {
                         size,
-                        _bucket_index: key_hash,
                         slot,
                         slot_ptr,
                     }));
@@ -440,13 +433,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     /// `Ok`: found a unique item (by deduplication)
     ///
     /// `Err` means contention
-    fn find<'g, const REC: bool>(
+    fn find<'g>(
         &'g self,
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
-        dedup_delete: &mut Cas<Slot<K, V>>,
-        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<Option<FindResult<'g, K, V>>, ()> {
@@ -476,7 +467,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
 
                     found.push(FindResult {
                         size,
-                        _bucket_index: key_hash,
                         slot,
                         slot_ptr,
                     });
@@ -513,29 +503,33 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
             }
         }
 
+        let mut fence = false;
+
         // last is the find result to return.
         // remove everything else.
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
 
             // Before
-            // match find_result.slot.compare_exchange(
-            //     find_result.slot_ptr,
-            //     PShared::null(),
-            //     Ordering::AcqRel,
-            //     Ordering::Acquire,
-            //     guard,
-            // ) {
-            //     Ok(_) => unsafe {
-            //         guard.defer_pdestroy(find_result.slot_ptr);
-            //     },
-            //     Err(e) => {
-            //         if e.current == find_result.slot_ptr.with_tag(1) {
-            //             // If the item is moved, retry.
-            //             return Err(());
-            //         }
-            //     }
-            // }
+            match find_result.slot.inner.compare_exchange(
+                find_result.slot_ptr,
+                PShared::null(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                guard,
+            ) {
+                Ok(_) => unsafe {
+                    persist_obj(&find_result.slot.inner, false);
+                    fence = true;
+                    guard.defer_pdestroy(find_result.slot_ptr);
+                },
+                Err(e) => {
+                    if e.current == find_result.slot_ptr.with_tag(1) {
+                        // If the item is moved, retry.
+                        return Err(());
+                    }
+                }
+            }
 
             // After(insdel)
             // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
@@ -563,26 +557,29 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
             // After(general)
             // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
             // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
-            match find_result.slot.cas::<false>(
-                find_result.slot_ptr,
-                PShared::null(),
-                dedup_delete,
-                tid,
-                guard,
-                pool,
-            ) {
-                Ok(_) => unsafe {
-                    guard.defer_pdestroy(find_result.slot_ptr);
-                },
-                Err(e) => {
-                    if e == find_result.slot_ptr.with_tag(1) {
-                        // If the item is moved, retry.
-                        return Err(());
-                    }
-                }
-            }
+            // match find_result.slot.cas::<false>(
+            //     find_result.slot_ptr,
+            //     PShared::null(),
+            //     dedup_delete,
+            //     tid,
+            //     guard,
+            //     pool,
+            // ) {
+            //     Ok(_) => unsafe {
+            //         guard.defer_pdestroy(find_result.slot_ptr);
+            //     },
+            //     Err(e) => {
+            //         if e == find_result.slot_ptr.with_tag(1) {
+            //             // If the item is moved, retry.
+            //             return Err(());
+            //         }
+            //     }
+            // }
         }
 
+        if fence {
+            sfence();
+        }
         Ok(Some(last))
     }
 }
@@ -1045,21 +1042,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn find<'g, const REC: bool>(
+    fn find<'g>(
         &'g self,
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
-        dedup_delete: &mut Cas<Slot<K, V>>,
-        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let context_ref = unsafe { context.deref(pool) };
-            let find_result =
-                context_ref.find::<REC>(key, key_tag, key_hashes, dedup_delete, tid, guard, pool);
+            let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
                 context = self.context.load(Ordering::Acquire, guard);
                 continue;
@@ -1156,7 +1150,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                     {
                         return Ok(FindResult {
                             size,
-                            _bucket_index: key_hash,
                             slot,
                             slot_ptr: slot_new,
                         });
@@ -1377,15 +1370,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         V: Clone,
     {
         let (key_tag, key_hashes) = hashes(&key);
-        let (context, find_result) = self.find::<REC>(
-            &key,
-            key_tag,
-            key_hashes,
-            &mut insert.dedup_delete,
-            tid,
-            guard,
-            pool,
-        );
+        let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
         if find_result.is_some() {
             return Err(InsertError::Occupied);
         }
@@ -1471,15 +1456,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &PoolHandle,
     ) -> Result<bool, ()> {
         let (key_tag, key_hashes) = hashes(&key);
-        let (_, find_result) = self.find::<REC>(
-            key,
-            key_tag,
-            key_hashes,
-            &mut try_delete.dedup_delete,
-            tid,
-            guard,
-            pool,
-        );
+        let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
 
         // Before
         // let find_result = some_or!(find_result, {
