@@ -1592,19 +1592,19 @@ mod tests {
     static mut SEND: Option<Vec<mpsc::Sender<()>>> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
-    const COUNT: usize = 100_000;
+    const SMOKE_CNT: usize = 100_000;
 
     struct Smoke {
         resize: Resize<usize, usize>,
-        insert: Insert<usize, usize>,
-        delete: [Delete<usize, usize>; COUNT],
+        insert: [Insert<usize, usize>; SMOKE_CNT],
+        delete: [Delete<usize, usize>; SMOKE_CNT],
     }
 
     impl Default for Smoke {
         fn default() -> Self {
             Self {
                 resize: Default::default(),
-                insert: Default::default(),
+                insert: array_init::array_init(|_| Insert::<usize, usize>::default()),
                 delete: array_init::array_init(|_| Delete::<usize, usize>::default()),
             }
         }
@@ -1612,8 +1612,9 @@ mod tests {
 
     impl Collectable for Smoke {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-            for i in 0..COUNT {
-                // TODO(must): filter insert array
+            for i in 0..SMOKE_CNT {
+                // TODO(must): filter resize
+                Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
                 Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
             }
         }
@@ -1632,8 +1633,9 @@ mod tests {
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
 
-                    for i in 0..COUNT {
-                        let _ = kv.insert::<true>(i, i, &send, &mut mmt.insert, tid, guard, pool);
+                    for i in 0..SMOKE_CNT {
+                        let _ =
+                            kv.insert::<true>(i, i, &send, &mut mmt.insert[i], tid, guard, pool);
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
 
                         // TODO(opt): update 살리기
@@ -1641,7 +1643,7 @@ mod tests {
                         // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
                     }
 
-                    for i in 0..COUNT {
+                    for i in 0..SMOKE_CNT {
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
                         // TODO(opt): update 살리기
                         // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
@@ -1677,23 +1679,28 @@ mod tests {
         );
     }
 
+    const INSERT_SEARCH_CNT: usize = 3_000;
+
     struct InsertSearch {
-        insert: Insert<usize, usize>,
+        insert: [Insert<usize, usize>; INSERT_SEARCH_CNT],
         resize: Resize<usize, usize>,
     }
 
     impl Default for InsertSearch {
         fn default() -> Self {
             Self {
-                insert: Default::default(),
+                insert: array_init::array_init(|_| Insert::<usize, usize>::default()),
                 resize: Default::default(),
             }
         }
     }
 
     impl Collectable for InsertSearch {
-        fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-            todo!()
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+            for i in 0..INSERT_SEARCH_CNT {
+                // TODO(must): filter resize
+                Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
+            }
         }
     }
 
@@ -1709,11 +1716,11 @@ mod tests {
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
-                    const RANGE: usize = 1usize << 6;
 
-                    for i in 0..RANGE {
+                    for i in 0..INSERT_SEARCH_CNT {
                         // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert::<true>(i, i, &send, &mut mmt.insert, tid, guard, pool);
+                        let _ =
+                            kv.insert::<true>(i, i, &send, &mut mmt.insert[i], tid, guard, pool);
 
                         // println!("[test] tid = {tid}, i = {i}, search");
                         if kv.search(&i, &guard, pool) != Some(&i) {
@@ -1729,7 +1736,7 @@ mod tests {
     #[test]
     fn insert_search() {
         const FILE_NAME: &str = "clevel_insert_search.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const FILE_SIZE: usize = 16 * 1024 * 1024 * 1024;
         const NR_THREADS: usize = 1usize << 4;
 
         let (send, recv) = mpsc::channel();
