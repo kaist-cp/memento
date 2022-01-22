@@ -10,7 +10,7 @@ use crate::{
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
-        rdtscp, PoolHandle,
+        rdtsc, rdtscp, PoolHandle,
     },
 };
 
@@ -164,7 +164,20 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 return Err(cur);
             }
 
-            persist_obj(owner, false); // cas soon
+            let start = rdtsc();
+            loop {
+                let cur_next = owner.load(Ordering::SeqCst, guard);
+                if cur_next.aux_bit() == 0 {
+                    break;
+                }
+
+                let now = rdtsc();
+                if now > start + Self::PATIENCE {
+                    persist_obj(owner, false); // cas soon
+                    break;
+                }
+            }
+
             cur = match self.inner.compare_exchange(
                 cur,
                 next.with_tid(0),
@@ -303,7 +316,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         let _ = owner
             .compare_exchange(
                 PShared::null(),
-                new.with_tid(tid),
+                new.with_aux_bit(1).with_tid(tid),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
@@ -312,6 +325,14 @@ impl<N: Node + Collectable> SMOAtomic<N> {
 
         // Now I own the location. flush the owner.
         persist_obj(owner, false); // we're doing CAS soon.
+
+        let _ = owner.compare_exchange(
+            new.with_aux_bit(1).with_tid(tid),
+            new.with_aux_bit(0).with_tid(tid),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            guard,
+        );
 
         // 주인을 정했으니 이제 point를 바꿔줌
         let _ = self
