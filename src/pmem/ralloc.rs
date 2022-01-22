@@ -169,3 +169,7 @@ impl<T: Collectable, U: Collectable> Collectable for (T, U) {
         U::filter(&mut s.1, tid, gc, pool);
     }
 }
+
+impl Collectable for usize {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+}

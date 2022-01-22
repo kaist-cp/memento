@@ -95,8 +95,11 @@ pub extern "C" fn run_insert(
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.insert::<false>(k, v, get_send(tid), &mut m.insert, tid, &guard, pool)
-        .is_ok()
+    let res = obj
+        .insert::<false>(k, v, get_send(tid), &mut m.insert, tid, &guard, pool)
+        .is_ok();
+    // TODO: m.insert.reset()
+    res
 }
 
 #[no_mangle]
@@ -110,6 +113,7 @@ pub extern "C" fn run_update(
 ) -> bool {
     // let guard = get_guard(tid);
     // obj.update(tid, k, v, get_send(tid), &guard, pool).is_ok()
+    // m.update.reset()
     todo!()
 }
 
@@ -122,8 +126,9 @@ pub extern "C" fn run_delete(
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.delete::<false>(&k, &mut m.delete, tid, &guard, pool);
-    true
+    let res = obj.delete::<false>(&k, &mut m.delete, tid, &guard, pool);
+    m.delete.reset();
+    res
 }
 #[no_mangle]
 pub extern "C" fn run_resize_loop(
@@ -135,6 +140,7 @@ pub extern "C" fn run_resize_loop(
     let mut guard = epoch::pin();
     let recv = unsafe { RECV.as_ref().unwrap() };
     resize_loop::<_, _, false>(obj, recv, &mut m.resize, tid, &mut guard, pool);
+    // TODO: m.resize.reset()?
 }
 
 #[no_mangle]
