@@ -1,4 +1,5 @@
 #![feature(generic_associated_types)]
+#![deny(warnings)]
 
 use crossbeam_epoch::{self as epoch, Guard};
 use memento::ds::clevel::*;
@@ -19,13 +20,13 @@ pub struct ClevelMemento {
 }
 
 impl Collectable for ClevelMemento {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
         todo!()
     }
 }
 
 impl RootObj<ClevelMemento> for ClevelInner<Key, Value> {
-    fn run(&self, mmt: &mut ClevelMemento, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut ClevelMemento, _: usize, _: &Guard, _: &PoolHandle) {
         todo!()
     }
 }
@@ -100,14 +101,14 @@ pub extern "C" fn run_insert(
 
 #[no_mangle]
 pub extern "C" fn run_update(
-    m: &mut ClevelMemento,
-    obj: &ClevelInner<Key, Value>,
-    tid: usize,
-    k: Key,
-    v: Value,
-    pool: &'static PoolHandle,
+    _m: &mut ClevelMemento,
+    _obj: &ClevelInner<Key, Value>,
+    _tid: usize,
+    _k: Key,
+    _v: Value,
+    _pool: &'static PoolHandle,
 ) -> bool {
-    let guard = get_guard(tid);
+    // let guard = get_guard(tid);
     // obj.update(tid, k, v, get_send(tid), &guard, pool).is_ok()
     todo!()
 }
@@ -154,7 +155,7 @@ pub extern "C" fn get_capacity(obj: &ClevelInner<Key, Value>, pool: &PoolHandle)
 }
 
 #[no_mangle]
-pub extern "C" fn is_resizing(obj: &ClevelInner<Key, Value>, pool: &PoolHandle) -> bool {
+pub extern "C" fn is_resizing(_obj: &ClevelInner<Key, Value>, _pool: &PoolHandle) -> bool {
     // let guard = crossbeam_epoch::pin();
     // obj.is_resizing(&guard, pool)
     false
