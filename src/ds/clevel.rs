@@ -38,8 +38,19 @@ const TINY_VEC_CAPACITY: usize = 8;
 /// Insert client
 #[derive(Debug)]
 pub struct Insert<K, V> {
-    insert_insert: Cas<Slot<K, V>>,
-    resize_insert: Cas<Slot<K, V>>,
+    insert_insert: CachePadded<Cas<Slot<K, V>>>,
+    resize_insert: CachePadded<Cas<Slot<K, V>>>,
+    find_result_chk: CachePadded<Checkpoint<(PAtomic<Context<K, V>>, PAtomic<Slot<K, V>>)>>,
+}
+
+impl<K, V> Checkpointable for (PAtomic<Context<K, V>>, PAtomic<Slot<K, V>>) {
+    fn invalidate(&mut self) {
+        self.1.invalidate();
+    }
+
+    fn is_invalid(&self) -> bool {
+        self.1.is_invalid()
+    }
 }
 
 impl<K, V> Default for Insert<K, V> {
@@ -47,6 +58,7 @@ impl<K, V> Default for Insert<K, V> {
         Self {
             insert_insert: Default::default(),
             resize_insert: Default::default(),
+            find_result_chk: Default::default(),
         }
     }
 }
@@ -102,7 +114,7 @@ impl<K, V> Collectable for TryDelete<K, V> {
     }
 }
 
-impl<'g, K, V> Checkpointable for (PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>) {
+impl<K, V> Checkpointable for (PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>) {
     fn invalidate(&mut self) {
         self.1.invalidate();
     }
@@ -249,6 +261,12 @@ struct Context<K, V> {
     ///
     /// invariant: resize_size = first_level_size / 2 / 2
     resize_size: usize,
+}
+
+impl<K, V> Collectable for Context<K, V> {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+        todo!()
+    }
 }
 
 /// TODO(doc)
@@ -1371,14 +1389,32 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     {
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
-        if find_result.is_some() {
+
+        let (context, occupied) = match find_result {
+            Some(res) => (PAtomic::null(), PAtomic::from(res.slot_ptr)),
+            None => (PAtomic::from(context), PAtomic::null()),
+        };
+
+        let chk = ok_or!(
+            insert
+                .find_result_chk
+                .checkpoint::<REC>((context, occupied)),
+            e,
+            e.current
+        );
+
+        let context = chk.0.load(Ordering::Relaxed, guard);
+        let occupied = chk.1.load(Ordering::Relaxed, guard);
+
+        if !occupied.is_null() {
+            // slot_ptr is not null if find result is Some
             return Err(InsertError::Occupied);
         }
 
         let slot = POwned::new(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
-        // question: why `context_new` is created?
+
         let (context_new, insert_result) = self.insert_inner::<REC>(
             context,
             slot,
