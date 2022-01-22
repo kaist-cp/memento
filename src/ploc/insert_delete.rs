@@ -145,56 +145,48 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
     pub fn load_helping<'g>(
         &self,
-        mut cur: PShared<'g, N>,
+        old: PShared<'g, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         loop {
-            let cur_ref = some_or!(unsafe { cur.as_ref(pool) }, return Ok(cur));
+            let old_ref = some_or!(unsafe { old.as_ref(pool) }, return Ok(old));
 
-            let owner = cur_ref.tid_next();
+            let owner = old_ref.tid_next();
             let next = owner.load(Ordering::SeqCst, guard);
             if next == not_deleted() {
-                return Ok(cur);
+                return Ok(old);
             }
 
-            if next.as_ptr() == cur.as_ptr() {
+            if next.as_ptr() == old.as_ptr() {
                 // 자기 자신이 owner인 상태
                 // 현재로썬 delete는 사용할 수 없음을 알림
-                return Err(cur);
+                return Err(old);
             }
 
             let start = rdtsc();
             loop {
-                let cur_next = owner.load(Ordering::SeqCst, guard);
-                if cur_next.aux_bit() == 0 {
-                    break;
+                let cur = self.inner.load(Ordering::SeqCst, guard);
+                if cur != old {
+                    return Ok(cur);
                 }
 
                 let now = rdtsc();
                 if now > start + Self::PATIENCE {
                     persist_obj(owner, false); // cas soon
-                    let _ = owner.compare_exchange(
-                        cur_next,
-                        cur_next.with_aux_bit(0),
+                    let ret = match self.inner.compare_exchange(
+                        cur,
+                        next.with_tid(0),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                         guard,
-                    );
-                    break;
+                    ) {
+                        Ok(n) => n,
+                        Err(e) => e.current,
+                    };
+                    return Ok(ret);
                 }
             }
-
-            cur = match self.inner.compare_exchange(
-                cur,
-                next.with_tid(0),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            ) {
-                Ok(n) => n,
-                Err(e) => e.current,
-            };
         }
     }
 
@@ -323,23 +315,15 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         let _ = owner
             .compare_exchange(
                 PShared::null(),
-                new.with_aux_bit(1).with_tid(tid),
+                new.with_tid(tid),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
             )
-            .map_err(|e| self.load_helping(e.current, guard, pool).unwrap())?;
+            .map_err(|_| self.load_helping(old, guard, pool).unwrap())?;
 
         // Now I own the location. flush the owner.
         persist_obj(owner, false); // we're doing CAS soon.
-
-        let _ = owner.compare_exchange(
-            new.with_aux_bit(1).with_tid(tid),
-            new.with_aux_bit(0).with_tid(tid),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            guard,
-        );
 
         // 주인을 정했으니 이제 point를 바꿔줌
         let _ = self
