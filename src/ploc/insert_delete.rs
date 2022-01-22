@@ -10,7 +10,7 @@ use crate::{
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
-        rdtsc, rdtscp, PoolHandle,
+        rdtsc, PoolHandle,
     },
 };
 
@@ -149,43 +149,41 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
+        let old_ref = some_or!(unsafe { old.as_ref(pool) }, return Ok(old));
+
+        let owner = old_ref.tid_next();
+        let next = owner.load(Ordering::SeqCst, guard);
+        if next == not_deleted() {
+            return Ok(old);
+        }
+
+        if next.as_ptr() == old.as_ptr() {
+            // 자기 자신이 owner인 상태
+            // 현재로썬 delete는 사용할 수 없음을 알림
+            return Err(old);
+        }
+
+        let start = rdtsc();
         loop {
-            let old_ref = some_or!(unsafe { old.as_ref(pool) }, return Ok(old));
-
-            let owner = old_ref.tid_next();
-            let next = owner.load(Ordering::SeqCst, guard);
-            if next == not_deleted() {
-                return Ok(old);
+            let cur = self.inner.load(Ordering::SeqCst, guard);
+            if cur != old {
+                return Ok(cur);
             }
 
-            if next.as_ptr() == old.as_ptr() {
-                // 자기 자신이 owner인 상태
-                // 현재로썬 delete는 사용할 수 없음을 알림
-                return Err(old);
-            }
-
-            let start = rdtsc();
-            loop {
-                let cur = self.inner.load(Ordering::SeqCst, guard);
-                if cur != old {
-                    return Ok(cur);
-                }
-
-                let now = rdtsc();
-                if now > start + Self::PATIENCE {
-                    persist_obj(owner, false); // cas soon
-                    let ret = match self.inner.compare_exchange(
-                        cur,
-                        next.with_tid(0),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    ) {
-                        Ok(n) => n,
-                        Err(e) => e.current,
-                    };
-                    return Ok(ret);
-                }
+            let now = rdtsc();
+            if now > start + Self::PATIENCE {
+                persist_obj(owner, false); // cas soon
+                let ret = match self.inner.compare_exchange(
+                    cur,
+                    next.with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                ) {
+                    Ok(n) => n,
+                    Err(e) => e.current,
+                };
+                return Ok(ret);
             }
         }
     }
@@ -200,7 +198,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 return old;
             }
 
-            let mut start = rdtscp();
+            let mut start = rdtsc();
             loop {
                 let cur = self.inner.load(ord, guard);
 
@@ -210,11 +208,11 @@ impl<N: Node + Collectable> SMOAtomic<N> {
 
                 if old != cur {
                     old = cur;
-                    start = rdtscp();
+                    start = rdtsc();
                     continue;
                 }
 
-                let now = rdtscp();
+                let now = rdtsc();
                 if now > start + Self::PATIENCE {
                     persist_obj(&self.inner, true);
                     match self.inner.compare_exchange(
