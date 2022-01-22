@@ -1,4 +1,6 @@
 #![feature(generic_associated_types)]
+#![deny(warnings)]
+#![allow(non_snake_case)]
 
 use crossbeam_epoch::Guard;
 use memento::ds::soft_hash::*;
@@ -70,7 +72,7 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 pub extern "C" fn run_insert(
     _: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
-    tid: usize,
+    _tid: usize,
     k: Key,
     v: Value,
     pool: &'static PoolHandle,
@@ -82,7 +84,7 @@ pub extern "C" fn run_insert(
 pub extern "C" fn run_delete(
     _: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
-    tid: usize,
+    _tid: usize,
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
@@ -90,6 +92,6 @@ pub extern "C" fn run_delete(
 }
 
 #[no_mangle]
-pub extern "C" fn search(obj: &SOFTHash<Value>, tid: usize, k: Key, _: &PoolHandle) -> bool {
+pub extern "C" fn search(obj: &SOFTHash<Value>, _tid: usize, k: Key, _: &PoolHandle) -> bool {
     obj.inner.contains(k)
 }
