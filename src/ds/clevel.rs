@@ -676,13 +676,13 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         let next_level = if !next_level.is_null() {
             next_level
         } else {
-            self.add_level_lock.lock(); // TODO: persistent spin lock?
+            self.add_level_lock.lock(); // TODO(must): volatile lock을 쓴다해도 여기에 도달했을 때 다시 lock을 얻어야 함
             let next_level = first_level.next.load(Ordering::Acquire, guard);
             let next_level = if !next_level.is_null() {
                 next_level
             } else {
                 let next_node = new_node(next_level_size, pool);
-                // TODO: Should we use `Insert` for this?
+                // TODO(must): CAS 후 persist가 되어야 함
                 first_level
                     .next
                     .compare_exchange(
@@ -1287,7 +1287,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             }
 
             // No remaining slots. Resize.
-            // println!("[insert] tid = {tid} triggering resize");
             let context_ref = unsafe { context.deref(pool) };
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
@@ -1296,6 +1295,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 let _ = sender.send(());
             }
             context = context_new;
+            // TODO(must): insert에서의 context checkpoint를 여기서 재탕 가능할 듯
         }
     }
 

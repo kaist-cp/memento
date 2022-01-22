@@ -49,6 +49,8 @@ pub trait Checkpointable {
 }
 
 /// TODO(doc)
+/// TODO(must): 두 개 운용하고 0,1을 통해서 valid한 쪽을 나타내게 해야할 듯 (이유: normal run에서 덮어쓰다가 error날 경우)
+///             혹은 checkpoint는 여러 개 동시에 하지말고 한 큐에 되는 것만 하자 <- 안 된다... 사이즈 큰 거 checkpoint할 경우엔...
 #[derive(Debug)]
 pub struct Checkpoint<T: Checkpointable + Default + Clone + Collectable> {
     saved: T,
