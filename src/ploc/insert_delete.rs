@@ -174,6 +174,13 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 let now = rdtsc();
                 if now > start + Self::PATIENCE {
                     persist_obj(owner, false); // cas soon
+                    let _ = owner.compare_exchange(
+                        cur_next,
+                        cur_next.with_aux_bit(0),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
                     break;
                 }
             }
