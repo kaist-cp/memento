@@ -98,7 +98,7 @@ pub extern "C" fn run_insert(
     let res = obj
         .insert::<false>(k, v, get_send(tid), &mut m.insert, tid, &guard, pool)
         .is_ok();
-    // TODO: m.insert.reset()
+    m.insert.reset();
     res
 }
 

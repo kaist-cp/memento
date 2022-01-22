@@ -69,6 +69,15 @@ impl<K, V> Collectable for Insert<K, V> {
     }
 }
 
+impl<K, V> Insert<K, V> {
+    /// Reset Insert memento
+    pub fn reset(&mut self) {
+        self.insert_insert.reset();
+        self.resize_insert.reset();
+        self.find_result_chk.reset();
+    }
+}
+
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V> {
