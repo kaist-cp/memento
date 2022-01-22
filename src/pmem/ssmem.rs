@@ -1,4 +1,5 @@
 //! ssmem allocator
+#![allow(warnings)]
 
 use libc::c_void;
 use std::{

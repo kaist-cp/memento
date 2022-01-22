@@ -1,6 +1,6 @@
 //! Atomic update memento collections
 
-use std::{marker::PhantomData, ops::Deref, sync::atomic::Ordering};
+use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
 use etrace::*;

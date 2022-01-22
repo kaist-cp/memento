@@ -153,25 +153,25 @@ impl<T: Clone> SOFTList<T> {
         let mut curr = prev_ref.next.load(Ordering::SeqCst, guard);
         let mut curr_ref = unsafe { curr.deref() };
         let mut prev_state = get_state(curr);
-        let mut curr_state = State::Dummy; // dummy (TODO: 더 좋은 방법. None을 dummy로 사용?)
+        let mut _curr_state = State::Dummy; // // warning 때문에 `_` 붙음
 
         loop {
             let succ = curr_ref.next.load(Ordering::SeqCst, guard);
             let succ_ref = unsafe { succ.deref() };
-            curr_state = get_state(succ);
-            if curr_state != State::Deleted {
+            _curr_state = get_state(succ);
+            if _curr_state != State::Deleted {
                 if curr_ref.key >= key {
                     break;
                 }
                 prev = curr;
-                prev_state = curr_state;
+                prev_state = _curr_state;
             } else {
                 let _ = self.trim(prev, curr, pool);
             }
             curr = succ.with_tag(prev_state as usize);
             curr_ref = succ_ref;
         }
-        *curr_state_ptr = curr_state;
+        *curr_state_ptr = _curr_state;
         (prev, curr)
     }
 
@@ -179,7 +179,7 @@ impl<T: Clone> SOFTList<T> {
     pub fn insert(&self, key: usize, value: T, pool: &PoolHandle) -> bool {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut result = false;
-        let mut result_node = None;
+        let mut _result_node = None; // warning 때문에 `_` 붙음
         let mut curr_state = State::Dummy;
         'retry: loop {
             // 삽입할 위치를 탐색
@@ -194,7 +194,7 @@ impl<T: Clone> SOFTList<T> {
                     return false;
                 }
                 // 이 result_node를 helping
-                result_node = Some(curr);
+                _result_node = Some(curr);
             } 
             // 중복 키 없으므로 State: IntendToInsert 노드를 만들어 삽입 시도 
             else {
@@ -230,12 +230,12 @@ impl<T: Clone> SOFTList<T> {
                         .unwrap();
                     continue 'retry;
                 }
-                result_node = Some(new_node);
+                _result_node = Some(new_node);
                 result = true;
             }
 
             // Mark PNode as inserted (durable point)
-            let result_node = unsafe { result_node.unwrap().deref() };
+            let result_node = unsafe { _result_node.unwrap().deref() };
             let pptr = unsafe { &mut *result_node.pptr };
             pptr.create(key, value, result_node.p_validity); // TODO: 이게 detectable 해야할듯
 
@@ -334,6 +334,7 @@ impl<T: Clone> SOFTList<T> {
     }
 
     /// recovery용 insert. newPNode에 대한 VNode를 volatile list에 insert함
+    #[allow(unused)]
     fn quick_insert(&self, new_pnode: *mut PNode<T>) {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let new_pnode_ref = unsafe { new_pnode.as_ref() }.unwrap();
@@ -393,6 +394,8 @@ impl<T: Clone> SOFTList<T> {
 
     // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
     // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
+    // #[allow(warnings)]
+    #[allow(unused)]
     fn recovery(&self, palloc: &mut SsmemAllocator, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
         while !curr.is_null() {
