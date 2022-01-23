@@ -1,7 +1,8 @@
 //! TODO doc
-use super::soft_list::{thread_ini, SOFTList};
+use super::soft_list::{thread_ini, Insert, SOFTList};
 use crate::pmem::PoolHandle;
 use core::hash::{Hash, Hasher};
+use crossbeam_utils::CachePadded;
 use fasthash::Murmur3Hasher;
 
 const BUCKET_NUM: usize = 16777216;
@@ -27,9 +28,9 @@ impl<T: Default> Default for SOFTHashTable<T> {
 
 impl<T: 'static + Clone> SOFTHashTable<T> {
     /// TODO: doc
-    pub fn insert(&self, k: usize, item: T, pool: &PoolHandle) -> bool {
+    pub fn insert(&self, k: usize, item: T, client: &mut HashInsert<T>, pool: &PoolHandle) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.insert(k, item, pool)
+        bucket.insert(k, item, &mut client.insert, pool)
     }
 
     /// TODO: doc
@@ -52,6 +53,27 @@ impl<T: 'static + Clone> SOFTHashTable<T> {
     }
 }
 
+/// TODO: doc
+#[derive(Debug)]
+pub struct HashInsert<T> {
+    insert: Insert<T>,
+}
+
+impl<T> Default for HashInsert<T> {
+    fn default() -> Self {
+        Self {
+            insert: Default::default(),
+        }
+    }
+}
+
+impl<T> HashInsert<T> {
+    /// TODO: doc
+    pub fn reset(&mut self) {
+        self.insert.reset()
+    }
+}
+
 #[cfg(test)]
 #[allow(box_pointers)]
 mod test {
@@ -66,7 +88,7 @@ mod test {
     };
     use crossbeam_epoch::{self as epoch};
 
-    use super::{hash_thread_ini, SOFTHashTable};
+    use super::{hash_thread_ini, HashInsert, SOFTHashTable};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
@@ -95,7 +117,9 @@ mod test {
     }
 
     #[derive(Debug, Default)]
-    struct InsertContainRemove {}
+    struct InsertContainRemove {
+        insert: HashInsert<usize>,
+    }
 
     impl Collectable for InsertContainRemove {
         fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
@@ -104,7 +128,7 @@ mod test {
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
-        fn run(&self, _: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
+        fn run(&self, m: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             hash_thread_ini(tid, pool);
@@ -112,11 +136,13 @@ mod test {
 
             // insert, check, remove, check
             let list = &self.obj.hash;
+            let insert_cli = &mut m.insert;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, pool));
+                assert!(list.insert(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
                 assert!(list.remove(tid, pool));
                 assert!(!list.contains(tid));
+                insert_cli.reset();
             }
         }
     }

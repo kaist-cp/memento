@@ -34,7 +34,9 @@ impl<T> Collectable for SOFTHash<T> {
 }
 
 #[derive(Debug, Default)]
-pub struct SOFTMemento {}
+pub struct SOFTMemento {
+    insert: HashInsert<Value>, // TODO: CachePadded?
+}
 
 impl Collectable for SOFTMemento {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
@@ -70,14 +72,16 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn run_insert(
-    _: &mut SOFTMemento,
+    m: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
     _tid: usize,
     k: Key,
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    obj.inner.insert(k, v, pool)
+    let res = obj.inner.insert(k, v, &mut m.insert, pool);
+    m.insert.reset();
+    res
 }
 
 #[no_mangle]
