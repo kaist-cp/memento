@@ -237,7 +237,11 @@ impl<T: Clone> SOFTList<T> {
             // Mark PNode as inserted (durable point)
             let result_node = unsafe { _result_node.unwrap().deref() };
             let pptr = unsafe { &mut *result_node.pptr };
-            pptr.create(key, value, result_node.p_validity); // TODO: 이게 detectable 해야할듯
+            pptr.create(
+                result_node.key,
+                result_node.value.clone(),
+                result_node.p_validity,
+            ); // TODO: 이게 detectable 해야할듯
 
             // State: IntendToInsert -> Inserted
             loop {
