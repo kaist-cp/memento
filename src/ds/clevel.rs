@@ -27,6 +27,7 @@ use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::Cas;
 use crate::ploc::Checkpoint;
 use crate::ploc::Checkpointable;
+use crate::ploc::CheckpointableUsize;
 use crate::ploc::DetectableCASAtomic;
 use crate::pmem::{
     global_pool, persist_obj, sfence, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle,
@@ -40,17 +41,8 @@ const TINY_VEC_CAPACITY: usize = 8;
 pub struct Insert<K, V> {
     insert_insert: CachePadded<Cas<Slot<K, V>>>,
     resize_insert: CachePadded<Cas<Slot<K, V>>>,
-    find_result_chk: CachePadded<Checkpoint<(PAtomic<Context<K, V>>, PAtomic<Slot<K, V>>)>>,
-}
-
-impl<K, V> Checkpointable for (PAtomic<Context<K, V>>, PAtomic<Slot<K, V>>) {
-    fn invalidate(&mut self) {
-        self.1.invalidate();
-    }
-
-    fn is_invalid(&self) -> bool {
-        self.1.is_invalid()
-    }
+    occupied: CachePadded<Checkpoint<CheckpointableUsize>>,
+    context: CachePadded<Checkpoint<PAtomic<Context<K, V>>>>,
 }
 
 impl<K, V> Default for Insert<K, V> {
@@ -58,7 +50,8 @@ impl<K, V> Default for Insert<K, V> {
         Self {
             insert_insert: Default::default(),
             resize_insert: Default::default(),
-            find_result_chk: Default::default(),
+            occupied: Default::default(),
+            context: Default::default(),
         }
     }
 }
@@ -74,7 +67,8 @@ impl<K, V> Insert<K, V> {
     pub fn reset(&mut self) {
         self.insert_insert.reset();
         self.resize_insert.reset();
-        self.find_result_chk.reset();
+        self.occupied.reset();
+        self.context.reset();
     }
 }
 
@@ -1101,14 +1095,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
     fn try_insert<'g, const REC: bool>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
+        mut context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        insert: &mut Cas<Slot<K, V>>,
+        insert: &mut Insert<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
+        context = ok_or!(
+            insert.context.checkpoint::<REC>(PAtomic::from(context)),
+            e,
+            e.current
+        )
+        .load(Ordering::Relaxed, guard);
+
         let context_ref = unsafe { context.deref(pool) };
         let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
         for array in context_ref.level_iter(guard) {
@@ -1152,27 +1153,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                     //     });
                     // }
 
-                    // After(insdel)
-                    // TODO(must): traverse obj를 clevel 전체로 해야할 듯함
-                    // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-                    // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
-                    // if slot
-                    //     .insert::<_, false>(slot_new, slot, insert, guard, pool)
-                    //     .is_ok()
-                    // {
-                    //     return Ok(FindResult {
-                    //         size,
-                    //         _bucket_index: key_hash,
-                    //         slot,
-                    //         slot_ptr: slot_new,
-                    //     });
-                    // }
-
                     // After(general)
                     // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
                     // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
                     if slot
-                        .cas::<false>(PShared::null(), slot_new, insert, tid, guard, pool)
+                        .cas::<false>(
+                            PShared::null(),
+                            slot_new,
+                            &mut insert.insert_insert,
+                            tid,
+                            guard,
+                            pool,
+                        )
                         .is_ok()
                     {
                         return Ok(FindResult {
@@ -1274,18 +1266,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        insert: &mut Cas<Slot<K, V>>,
+        insert: &mut Insert<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        loop {
-            if let Ok(result) =
-                self.try_insert::<REC>(context, slot, key_hashes, insert, tid, guard, pool)
-            {
-                return (context, result);
-            }
+        if let Ok(result) =
+            self.try_insert::<REC>(context, slot, key_hashes, insert, tid, guard, pool)
+        {
+            return (context, result);
+        }
 
+        loop {
             // No remaining slots. Resize.
             let context_ref = unsafe { context.deref(pool) };
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
@@ -1295,7 +1287,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 let _ = sender.send(());
             }
             context = context_new;
-            // TODO(must): insert에서의 context checkpoint를 여기서 재탕 가능할 듯
+
+            if let Ok(result) =
+                self.try_insert::<false>(context, slot, key_hashes, insert, tid, guard, pool)
+            {
+                return (context, result);
+            }
         }
     }
 
@@ -1305,7 +1302,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        insert: &mut Cas<Slot<K, V>>,
+        insert: &mut Insert<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1353,7 +1350,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 .cas::<false>(
                     insert_result.slot_ptr,
                     insert_result.slot_ptr.with_tag(1),
-                    insert,
+                    &mut insert.resize_insert,
                     tid,
                     guard,
                     pool,
@@ -1399,24 +1396,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
 
-        let (context, occupied) = match find_result {
-            Some(res) => (PAtomic::null(), PAtomic::from(res.slot_ptr)),
-            None => (PAtomic::from(context), PAtomic::null()),
+        let occupied = match find_result {
+            Some(_) => CheckpointableUsize(1),
+            None => CheckpointableUsize(0),
         };
-
-        let chk = ok_or!(
-            insert
-                .find_result_chk
-                .checkpoint::<REC>((context, occupied)),
-            e,
-            e.current
-        );
-
-        let context = chk.0.load(Ordering::Relaxed, guard);
-        let occupied = chk.1.load(Ordering::Relaxed, guard);
-
-        if !occupied.is_null() {
-            // slot_ptr is not null if find result is Some
+        let occupied = ok_or!(insert.occupied.checkpoint::<REC>(occupied), e, e.current);
+        if occupied.0 == 1 {
+            // occupied is `1` if `find_result` is `Some`
             return Err(InsertError::Occupied);
         }
 
@@ -1424,22 +1410,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
 
-        let (context_new, insert_result) = self.insert_inner::<REC>(
-            context,
-            slot,
-            key_hashes,
-            sender,
-            &mut insert.insert_insert,
-            tid,
-            guard,
-            pool,
-        );
+        let (context_new, insert_result) =
+            self.insert_inner::<REC>(context, slot, key_hashes, sender, insert, tid, guard, pool);
         self.move_if_resized::<REC>(
             context_new,
             insert_result,
             key_hashes,
             sender,
-            &mut insert.resize_insert,
+            insert,
             tid,
             guard,
             pool,
