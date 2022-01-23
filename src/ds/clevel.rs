@@ -3,13 +3,12 @@
 #![allow(box_pointers)]
 #![allow(unreachable_pub)]
 use core::cmp;
-use core::fmt::Debug;
-use core::fmt::Display;
+use core::fmt::{Debug, Display};
 use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{unprotected, Guard};
@@ -24,11 +23,7 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::Cas;
-use crate::ploc::Checkpoint;
-use crate::ploc::Checkpointable;
-use crate::ploc::CheckpointableUsize;
-use crate::ploc::DetectableCASAtomic;
+use crate::ploc::{Cas, Checkpoint, Checkpointable, CheckpointableUsize, DetectableCASAtomic};
 use crate::pmem::{
     global_pool, persist_obj, sfence, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle,
 };
