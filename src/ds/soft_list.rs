@@ -195,8 +195,8 @@ impl<T: Clone> SOFTList<T> {
                 }
                 // 이 result_node를 helping
                 _result_node = Some(curr);
-            } 
-            // 중복 키 없으므로 State: IntendToInsert 노드를 만들어 삽입 시도 
+            }
+            // 중복 키 없으므로 State: IntendToInsert 노드를 만들어 삽입 시도
             else {
                 let new_pnode = self.alloc_new_pnode(pool);
                 let p_valid = unsafe { &mut *new_pnode }.alloc();
@@ -564,7 +564,7 @@ mod test {
     }
 
     impl Collectable for SOFTListRoot {
-        fn filter(s: &mut Self, _: usize, gc: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             todo!()
         }
     }

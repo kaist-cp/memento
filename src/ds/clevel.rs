@@ -64,7 +64,7 @@ impl<K, V> Default for Insert<K, V> {
 }
 
 impl<K, V> Collectable for Insert<K, V> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -95,7 +95,7 @@ impl<K, V> Default for Resize<K, V> {
 }
 
 impl<K, V> Collectable for Resize<K, V> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -118,7 +118,7 @@ impl<K, V> Default for TryDelete<K, V> {
 }
 
 impl<K, V> Collectable for TryDelete<K, V> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
@@ -155,7 +155,7 @@ impl<K, V> Default for Delete<K, V> {
 }
 
 impl<K, V> Collectable for Delete<K, V> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
         todo!()
     }
 }
