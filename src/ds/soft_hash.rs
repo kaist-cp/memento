@@ -26,7 +26,7 @@ impl<T: Default> Default for SOFTHashTable<T> {
     }
 }
 
-impl<T: 'static + Clone> SOFTHashTable<T> {
+impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
     /// TODO: doc
     pub fn insert(&self, k: usize, item: T, client: &mut HashInsert<T>, pool: &PoolHandle) -> bool {
         let bucket = self.get_bucket(k);

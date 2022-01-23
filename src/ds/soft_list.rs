@@ -72,7 +72,7 @@ impl<T: Default> Default for SOFTList<T> {
     }
 }
 
-impl<T: Clone> SOFTList<T> {
+impl<T: Clone + PartialEq> SOFTList<T> {
     // TODO: PNode는 alloc 받았을 때 zero-initialized 돼있어야함. ssmem 구현보니 free obj를 재사용할때 zero-initialized 추가해야할듯
     fn alloc_new_pnode(&self, pool: &PoolHandle) -> *mut PNode<T> {
         ALLOC
@@ -236,7 +236,13 @@ impl<T: Clone> SOFTList<T> {
             persist_obj(&client.target, true);
 
             // Mark PNode as inserted (durable point)
-            let result = pnode.create(key, value, client, pool);
+            let result = pnode.create(
+                result_node.key,
+                result_node.value.clone(),
+                client,
+                value,
+                pool,
+            );
 
             // State: IntendToInsert -> Inserted
             loop {
@@ -497,15 +503,27 @@ pub struct PNode<T> {
     value: Atomic<T>,
 }
 
-impl<T> PNode<T> {
+impl<T: PartialEq> PNode<T> {
     /// PNode에 key, value를 쓰고 valid 표시
-    fn create(&self, key: usize, value: T, inserter: &mut Insert<T>, pool: &PoolHandle) -> bool {
-        self.key.store(key, Ordering::Relaxed);
-        self.value.store(Owned::new(value), Ordering::Relaxed);
-        let res = self
-            .inserter
-            .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
-            .is_ok();
+    fn create(
+        &self,
+        key: usize,
+        value: T,                 // PNode에 쓰일 value
+        inserter: &mut Insert<T>, // client
+        inserter_value: T,        // client가 시도하려던 value
+        pool: &PoolHandle,
+    ) -> bool {
+        let res = if value == inserter_value {
+            self.key.store(key, Ordering::Relaxed);
+            self.value.store(Owned::new(value), Ordering::Relaxed);
+            self.inserter
+                .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+        } else {
+            self.key.store(key, Ordering::Relaxed);
+            self.value.store(Owned::new(value), Ordering::Release);
+            false
+        };
         barrier(self);
         res
     }
