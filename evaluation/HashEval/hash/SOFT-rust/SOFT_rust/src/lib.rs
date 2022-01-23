@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 
 use crossbeam_epoch::Guard;
+use crossbeam_utils::CachePadded;
 use memento::ds::soft_hash::*;
 use memento::pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj};
 use memento::PDefault;
@@ -35,7 +36,7 @@ impl<T> Collectable for SOFTHash<T> {
 
 #[derive(Debug, Default)]
 pub struct SOFTMemento {
-    insert: HashInsert<Value>, // TODO: CachePadded?
+    insert: CachePadded<HashInsert<Value>>,
 }
 
 impl Collectable for SOFTMemento {
