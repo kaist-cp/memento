@@ -233,7 +233,7 @@ impl<T: Clone> SOFTList<T> {
             // clinet가 PNode를 타겟팅
             let pnode = unsafe { result_node.pptr.as_ref().unwrap() };
             client.target = unsafe { pnode.as_pptr(pool) };
-            // TODO: persist(client.target)
+            persist_obj(&client.target, true);
 
             // Mark PNode as inserted (durable point)
             let result = pnode.create(key, value, client, pool);
@@ -259,6 +259,7 @@ impl<T: Clone> SOFTList<T> {
     }
 
     /// TODO: doc
+    // TODO: detectable 버전으로 변경
     pub fn remove(&self, key: usize, pool: &PoolHandle) -> bool {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut cas_result = false;
@@ -336,6 +337,7 @@ impl<T: Clone> SOFTList<T> {
     }
 
     /// recovery용 insert. newPNode에 대한 VNode를 volatile list에 insert함
+    // TODO: 다른 거 detectable 버전으로 변경 완료되면 이 로직 다시 확인
     #[allow(unused)]
     fn quick_insert(&self, new_pnode: *mut PNode<T>) {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
@@ -395,7 +397,7 @@ impl<T: Clone> SOFTList<T> {
 
     // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
     // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
-    // #[allow(warnings)]
+    // TODO: 다른 거 detectable 버전으로 변경 완료되면 이 로직 다시 확인
     #[allow(unused)]
     fn recovery(&self, palloc: &mut SsmemAllocator, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
@@ -446,7 +448,7 @@ impl<T> Insert<T> {
         } else {
             self.target = PPtr::from(ClientState::Failed)
         }
-        // TODO: persist(&self.target)
+        persist_obj(&self.target, true);
     }
 
     fn result(&self) -> Option<bool> {
@@ -462,8 +464,8 @@ impl<T> Insert<T> {
     /// TODO: doc
     #[inline]
     pub fn reset(&mut self) {
-        self.target = PPtr::from(ClientState::NotFinished)
-        // TODO: persist(&self.target)
+        self.target = PPtr::from(ClientState::NotFinished);
+        persist_obj(&self.target, true);
     }
 }
 
