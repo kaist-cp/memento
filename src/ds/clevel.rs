@@ -654,13 +654,17 @@ impl<K, V> Drop for ClevelInner<K, V> {
 }
 
 impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
-    fn add_level<'g>(
+    fn add_level<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
+        if REC {
+            return (context, false);
+        }
+
         let first_level_data =
             unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
         let next_level_size = level_size_next(first_level_data.len());
@@ -954,7 +958,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
-                            self.add_level(context, first_level_ref, guard, pool);
+                            self.add_level::<false>(context, first_level_ref, guard, pool); // TODO(must): Use REC for add_level
                         context = context_new;
                         context_ref = unsafe { context.deref(pool) };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
@@ -1093,7 +1097,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
     }
 
-    fn try_insert<'g, const REC: bool>(
+    fn try_slot_insert<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
@@ -1260,6 +1264,36 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
     }
 
+    #[inline]
+    fn try_insert_inner<'g, const REC: bool>(
+        &'g self,
+        context: PShared<'g, Context<K, V>>,
+        slot: PShared<'g, Slot<K, V>>,
+        key_hashes: [u32; 2],
+        sender: &mpsc::Sender<()>,
+        insert: &mut Insert<K, V>,
+        tid: usize,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
+    {
+        if let Ok(result) =
+            self.try_slot_insert::<REC>(context, slot, key_hashes, insert, tid, guard, pool)
+        {
+            return Ok((context, result));
+        }
+
+        // No remaining slots. Resize.
+        let context_ref = unsafe { context.deref(pool) };
+        let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+        let first_level_ref = unsafe { first_level.deref(pool) };
+        let (context_new, added) = self.add_level::<REC>(context, first_level_ref, guard, pool);
+        if added {
+            let _ = sender.send(());
+        }
+        Err(context_new)
+    }
+
     fn insert_inner<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
@@ -1271,28 +1305,20 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        if let Ok(result) =
-            self.try_insert::<REC>(context, slot, key_hashes, insert, tid, guard, pool)
+        context = match self
+            .try_insert_inner::<REC>(context, slot, key_hashes, sender, insert, tid, guard, pool)
         {
-            return (context, result);
-        }
+            Ok(ret) => return ret,
+            Err(c) => c,
+        };
 
         loop {
-            // No remaining slots. Resize.
-            let context_ref = unsafe { context.deref(pool) };
-            let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-            let first_level_ref = unsafe { first_level.deref(pool) };
-            let (context_new, added) = self.add_level(context, first_level_ref, guard, pool);
-            if added {
-                let _ = sender.send(());
-            }
-            context = context_new;
-
-            if let Ok(result) =
-                self.try_insert::<false>(context, slot, key_hashes, insert, tid, guard, pool)
-            {
-                return (context, result);
-            }
+            context = match self.try_insert_inner::<false>(
+                context, slot, key_hashes, sender, insert, tid, guard, pool,
+            ) {
+                Ok(ret) => return ret,
+                Err(c) => c,
+            };
         }
     }
 
@@ -1709,6 +1735,14 @@ mod tests {
                         let _ =
                             kv.insert::<true>(i, i, &send, &mut mmt.insert[i], tid, guard, pool);
 
+                        // println!("[test] tid = {tid}, i = {i}, search");
+                        if kv.search(&i, &guard, pool) != Some(&i) {
+                            panic!("[test] tid = {tid} fail on {i}");
+                            // assert_eq!(kv.search(&i, &guard), Some(&i));
+                        }
+                    }
+
+                    for i in 0..INSERT_SEARCH_CNT {
                         // println!("[test] tid = {tid}, i = {i}, search");
                         if kv.search(&i, &guard, pool) != Some(&i) {
                             panic!("[test] tid = {tid} fail on {i}");
