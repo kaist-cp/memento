@@ -1,5 +1,7 @@
 //! Atomic Update Common
 
+use crossbeam_utils::CachePadded;
+
 use crate::pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
@@ -53,7 +55,7 @@ pub trait Checkpointable {
 ///             혹은 checkpoint는 여러 개 동시에 하지말고 한 큐에 되는 것만 하자 <- 안 된다... 사이즈 큰 거 checkpoint할 경우엔...
 #[derive(Debug)]
 pub struct Checkpoint<T: Checkpointable + Default + Clone + Collectable> {
-    saved: T,
+    saved: CachePadded<T>,
 }
 
 unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Send
@@ -70,7 +72,9 @@ impl<T: Checkpointable + Default + Clone + Collectable> Default for Checkpoint<T
         let mut t = T::default();
         t.invalidate();
 
-        Self { saved: t }
+        Self {
+            saved: CachePadded::new(t),
+        }
     }
 }
 
@@ -106,7 +110,7 @@ where
         }
 
         // Normal run
-        self.saved = new.clone();
+        self.saved = CachePadded::new(new.clone());
         persist_obj(&self.saved, true);
         Ok(new)
     }
@@ -126,7 +130,7 @@ impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
         if self.saved.is_invalid() {
             None
         } else {
-            Some(self.saved.clone())
+            Some((*self.saved).clone())
         }
     }
 }
