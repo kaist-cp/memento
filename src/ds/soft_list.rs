@@ -576,6 +576,7 @@ impl<T: Clone + PartialEq> PNode<T> {
         self.key = key;
         self.value = value.clone();
         self.inserted = true;
+        // TODO: persist 추가? (i.e. inserted -> inserter order가 중요한가?)
         let res = if value == inserter_value {
             self.inserter
                 .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
