@@ -524,7 +524,7 @@ impl<T: PartialEq> PNode<T> {
             self.value.store(Owned::new(value), Ordering::Release);
             false
         };
-        barrier(self);
+        persist_obj(self, true);
         res
     }
 
