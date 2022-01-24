@@ -453,13 +453,13 @@ impl<T> PNode<T> {
         self.key.store(key, Ordering::Relaxed);
         self.value.store(Owned::new(value), Ordering::Relaxed);
         self.valid_end.store(p_validity, Ordering::Release);
-        barrier(self);
+        persist_obj(self, true);
     }
 
     /// PNode에 delete 표시
     fn destroy(&self, p_validity: bool) {
         self.deleted.store(p_validity, Ordering::Release);
-        barrier(self);
+        persist_obj(self, true);
     }
 
     /// PNode가 valid한 건지 여부 반환

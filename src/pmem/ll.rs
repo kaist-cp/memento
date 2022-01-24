@@ -133,30 +133,6 @@ pub fn rdtscp() -> u64 {
     }
 }
 
-// TODO(opt): useless...
-/// flush (https://github.com/HNUSystemsLab/HashEvaluation/blob/master/hash/common/persist.h#L27)
-#[inline]
-pub fn barrier<T>(p: *const T) {
-    unsafe {
-        #[cfg(not(any(feature = "use_clflushopt", feature = "use_clwb")))]
-        {
-            asm!("clflush [{}]", in(reg) (p), options(nostack));
-        }
-        #[cfg(all(feature = "use_clflushopt", not(feature = "use_clwb")))]
-        {
-            asm!("clflushopt [{}]", in(reg) (p), options(nostack));
-        }
-        #[cfg(all(feature = "use_clwb", not(feature = "use_clflushopt")))]
-        {
-            asm!("clwb [{}]", in(reg) (p), options(nostack));
-        }
-        #[cfg(all(feature = "use_clwb", feature = "use_clflushopt"))]
-        {
-            compile_error!("Please Select only one from clflushopt and clwb")
-        }
-    }
-}
-
 /// Fetches the cache line of data from memory that contains the byte specified with the source operand to a location in the 1st or 2nd level cache and invalidates other cached instances of the line.
 // meaning of "w": indicate an anticipation to write to the address.
 #[inline]

@@ -199,10 +199,10 @@ pub fn ssmem_alloc_init_fs_size(
     ssmem_zero_memory(a);
 
     let new_mem_chunks: *const SsmemList = ssmem_list_node_new(a.mem, null(), pool);
-    barrier(new_mem_chunks);
+    persist_obj(unsafe { new_mem_chunks.as_ref() }.unwrap(), true);
 
     a.mem_chunks = new_mem_chunks;
-    barrier(a.mem_chunks);
+    persist_obj(unsafe { a.mem_chunks.as_ref() }.unwrap(), true);
     ssmem_gc_thread_init(a, id, pool);
 
     a.free_set_list = ssmem_free_set_new(a.fs_size, null_mut(), pool);
@@ -340,10 +340,10 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
 
             // 새로 할당한 memory chunk를 memory chunk list에 추가
             let new_mem_chunks = ssmem_list_node_new(a_ref.mem, a_ref.mem_chunks, pool);
-            barrier(new_mem_chunks);
+            persist_obj(unsafe { new_mem_chunks.as_ref() }.unwrap(), true);
 
             a_ref.mem_chunks = new_mem_chunks;
-            barrier(a_ref.mem_chunks);
+            persist_obj(unsafe { a_ref.mem_chunks.as_ref() }.unwrap(), true);
         }
 
         // 사용가능한 블록의 위치 계산 (start + offset)
@@ -444,7 +444,8 @@ fn ssmem_zero_memory(a: *mut SsmemAllocator) {
         }
         let mut i = 0;
         while i < a_ref.mem_size / CACHE_LINE_SIZE {
-            barrier((a_ref.mem as usize + i) as *mut c_void);
+            let curr = (a_ref.mem as usize + i) as *mut c_void;
+            persist_obj(unsafe { curr.as_ref() }.unwrap(), true);
             i += CACHE_LINE_SIZE;
         }
     }
