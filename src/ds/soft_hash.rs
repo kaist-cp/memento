@@ -1,5 +1,5 @@
 //! TODO doc
-use super::soft_list::{thread_ini, SOFTList};
+use super::soft_list::{thread_ini, Insert, Remove, SOFTList};
 use crate::pmem::PoolHandle;
 use core::hash::{Hash, Hasher};
 use fasthash::Murmur3Hasher;
@@ -25,17 +25,17 @@ impl<T: Default> Default for SOFTHashTable<T> {
     }
 }
 
-impl<T: 'static + Clone> SOFTHashTable<T> {
+impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
     /// TODO: doc
-    pub fn insert(&self, k: usize, item: T, pool: &PoolHandle) -> bool {
+    pub fn insert(&self, k: usize, item: T, client: &mut HashInsert<T>, pool: &PoolHandle) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.insert(k, item, pool)
+        bucket.insert(k, item, &mut client.insert, pool)
     }
 
     /// TODO: doc
-    pub fn remove(&self, k: usize, pool: &PoolHandle) -> bool {
+    pub fn remove(&self, k: usize, client: &mut HashRemove<T>, pool: &PoolHandle) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.remove(k, pool)
+        bucket.remove(k, &mut client.remove, pool)
     }
 
     /// TODO: doc
@@ -49,6 +49,32 @@ impl<T: 'static + Clone> SOFTHashTable<T> {
         k.hash(&mut hasher);
         let hash = hasher.finish() as usize;
         &self.table[hash % BUCKET_NUM] // TODO: c++에선 abs() 왜함?
+    }
+}
+
+/// TODO: doc
+#[derive(Debug, Default)]
+pub struct HashInsert<T> {
+    insert: Insert<T>,
+}
+
+impl<T> HashInsert<T> {
+    /// TODO: doc
+    pub fn reset(&mut self) {
+        self.insert.reset()
+    }
+}
+
+/// TODO: doc
+#[derive(Debug, Default)]
+pub struct HashRemove<T> {
+    remove: Remove<T>,
+}
+
+impl<T> HashRemove<T> {
+    /// TODO: doc
+    pub fn reset(&mut self) {
+        self.remove.reset()
     }
 }
 
@@ -66,7 +92,7 @@ mod test {
     };
     use crossbeam_epoch::{self as epoch};
 
-    use super::{hash_thread_ini, SOFTHashTable};
+    use super::{hash_thread_ini, HashInsert, HashRemove, SOFTHashTable};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
@@ -95,7 +121,10 @@ mod test {
     }
 
     #[derive(Debug, Default)]
-    struct InsertContainRemove {}
+    struct InsertContainRemove {
+        insert: HashInsert<usize>,
+        remover: HashRemove<usize>,
+    }
 
     impl Collectable for InsertContainRemove {
         fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
@@ -104,7 +133,7 @@ mod test {
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
-        fn run(&self, _: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
+        fn run(&self, m: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             hash_thread_ini(tid, pool);
@@ -112,11 +141,15 @@ mod test {
 
             // insert, check, remove, check
             let list = &self.obj.hash;
+            let insert_cli = &mut m.insert;
+            let remove_cli = &mut m.remover;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, pool));
+                assert!(list.insert(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
-                assert!(list.remove(tid, pool));
+                assert!(list.remove(tid, remove_cli, pool));
                 assert!(!list.contains(tid));
+                insert_cli.reset();
+                remove_cli.reset();
             }
         }
     }

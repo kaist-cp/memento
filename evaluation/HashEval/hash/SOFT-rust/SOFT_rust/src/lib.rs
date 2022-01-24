@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 
 use crossbeam_epoch::Guard;
+use crossbeam_utils::CachePadded;
 use memento::ds::soft_hash::*;
 use memento::pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj};
 use memento::PDefault;
@@ -34,7 +35,10 @@ impl<T> Collectable for SOFTHash<T> {
 }
 
 #[derive(Debug, Default)]
-pub struct SOFTMemento {}
+pub struct SOFTMemento {
+    insert: CachePadded<HashInsert<Value>>,
+    delete: CachePadded<HashRemove<Value>>,
+}
 
 impl Collectable for SOFTMemento {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
@@ -70,25 +74,29 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn run_insert(
-    _: &mut SOFTMemento,
+    m: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
     _tid: usize,
     k: Key,
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    obj.inner.insert(k, v, pool)
+    let res = obj.inner.insert(k, v, &mut m.insert, pool);
+    m.insert.reset();
+    res
 }
 
 #[no_mangle]
 pub extern "C" fn run_delete(
-    _: &mut SOFTMemento,
+    m: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
     _tid: usize,
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
-    obj.inner.remove(k, pool)
+    let res = obj.inner.remove(k, &mut m.delete, pool);
+    m.delete.reset();
+    res
 }
 
 #[no_mangle]
