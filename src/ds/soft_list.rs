@@ -9,7 +9,7 @@ use std::{
     cell::RefCell,
     mem::size_of,
     ptr::null_mut,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 thread_local! {

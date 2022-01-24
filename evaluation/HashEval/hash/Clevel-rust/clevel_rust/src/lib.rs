@@ -2,6 +2,7 @@
 #![deny(warnings)]
 
 use crossbeam_epoch::{self as epoch, Guard};
+use crossbeam_utils::CachePadded;
 use memento::ds::clevel::*;
 use memento::pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj};
 use std::ffi::{c_void, CStr};
@@ -14,9 +15,9 @@ type Value = u64;
 
 #[derive(Debug, Default)]
 pub struct ClevelMemento {
-    insert: Insert<Key, Value>, // insert client
-    delete: Delete<Key, Value>, // delete client
-    resize: Resize<Key, Value>, // resize client
+    insert: CachePadded<Insert<Key, Value>>, // insert client
+    delete: CachePadded<Delete<Key, Value>>, // delete client
+    resize: CachePadded<Resize<Key, Value>>, // resize client
 }
 
 impl Collectable for ClevelMemento {
