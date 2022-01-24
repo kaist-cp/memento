@@ -236,6 +236,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             persist_obj(&client.target, true);
 
             // Mark PNode as inserted (durable point)
+            let pnode = unsafe { result_node.pptr.as_mut().unwrap() };
             let result = pnode.create(
                 result_node.key,
                 result_node.value.clone(),
@@ -491,6 +492,9 @@ impl<T> From<ClientState> for PPtr<T> {
 #[repr(align(32))]
 #[derive(Debug)]
 pub struct PNode<T> {
+    /// PNode가 "삽입완료" 됐는지 여부
+    inserted: bool,
+
     /// PNode를 insert한 client(의 상대주소)
     inserter: AtomicUsize,
 
@@ -506,13 +510,14 @@ pub struct PNode<T> {
 impl<T: PartialEq> PNode<T> {
     /// PNode에 key, value를 쓰고 valid 표시
     fn create(
-        &self,
+        &mut self,
         key: usize,
         value: T,                 // PNode에 쓰일 value
         inserter: &mut Insert<T>, // client
         inserter_value: T,        // client가 시도하려던 value
         pool: &PoolHandle,
     ) -> bool {
+        self.inserted = true;
         let res = if value == inserter_value {
             self.key.store(key, Ordering::Relaxed);
             self.value.store(Owned::new(value), Ordering::Relaxed);
