@@ -82,7 +82,7 @@ pub enum InsertError<'g, T> {
 /// - Drop mode일 때는 new가 old와 같은 주소면 안 됨
 #[derive(Debug)]
 pub struct Delete<N: Node + Collectable> {
-    target_loc: PAtomic<N>,
+    _marker: PhantomData<N>,
 }
 
 unsafe impl<N: Node + Collectable + Send + Sync> Send for Delete<N> {}
@@ -91,7 +91,7 @@ unsafe impl<N: Node + Collectable + Send + Sync> Sync for Delete<N> {}
 impl<N: Node + Collectable> Default for Delete<N> {
     fn default() -> Self {
         Self {
-            target_loc: Default::default(),
+            _marker: Default::default(),
         }
     }
 }
@@ -106,10 +106,7 @@ where
 {
     /// Reset Delete memento
     #[inline]
-    pub fn reset(&mut self) {
-        self.target_loc.store(PShared::null(), Ordering::Relaxed);
-        persist_obj(&self.target_loc, false);
-    }
+    pub fn reset(&mut self) {}
 }
 
 /// Atomic pointer for use of `Insert'/`Delete`
@@ -300,12 +297,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         if REC {
-            return self.delete_result(delete, tid, guard, pool);
+            return self.delete_result(old, delete, tid, guard, pool);
         }
-
-        // 우선 내가 target을 가리키고
-        delete.target_loc.store(old, Ordering::Relaxed);
-        persist_obj(&delete.target_loc, false); // we're doing CAS soon.
 
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { old.deref(pool) };
@@ -340,22 +333,22 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     #[inline]
     fn delete_result<'g>(
         &self,
-        delete: &mut Delete<N>,
+        old: PShared<'g, N>,
+        _: &mut Delete<N>,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        let target = delete.target_loc.load(Ordering::Relaxed, guard);
-        let target_ref = some_or!(unsafe { target.as_ref(pool) }, {
+        let old_ref = some_or!(unsafe { old.as_ref(pool) }, {
             let cur = self.load(Ordering::SeqCst, guard);
             return Err(ok_or!(self.load_helping(cur, guard, pool), e, e));
         }); // if null, return failure.
 
         // owner가 내가 아니면 실패
-        let owner = target_ref.tid_next().load(Ordering::SeqCst, guard);
+        let owner = old_ref.tid_next().load(Ordering::SeqCst, guard);
         if owner.tid() == tid {
-            unsafe { guard.defer_pdestroy(target) };
-            Ok(target)
+            unsafe { guard.defer_pdestroy(old) };
+            Ok(old)
         } else {
             let cur = self.load(Ordering::SeqCst, guard);
             Err(ok_or!(self.load_helping(cur, guard, pool), e, e))
