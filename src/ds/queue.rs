@@ -62,12 +62,14 @@ impl<T> insert_delete::Node for Node<T> {
 /// try push operation for Queue
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
+    tail: Checkpoint<PAtomic<Node<T>>>,
     insert: Insert<Queue<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
     fn default() -> Self {
         Self {
+            tail: Default::default(),
             insert: Default::default(),
         }
     }
@@ -83,6 +85,7 @@ impl<T: Clone> TryEnqueue<T> {
     /// Reset TryEnqueue memento
     #[inline]
     pub fn reset(&mut self) {
+        self.tail.reset();
         self.insert.reset();
     }
 }
@@ -280,16 +283,19 @@ impl<T: Clone> Queue<T> {
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
         let tail = self.tail.load(Ordering::SeqCst, guard);
+        let tail = ok_or!(
+            try_enq.tail.checkpoint::<REC>(PAtomic::from(tail)),
+            e,
+            e.current
+        )
+        .load(Ordering::Relaxed, guard);
+
         let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
 
         tail_ref
             .next
             .insert::<_, REC>(node, self, &mut try_enq.insert, guard, pool)
             .map(|_| {
-                if REC {
-                    return;
-                }
-
                 let _ = self.tail.compare_exchange(
                     tail,
                     node,
