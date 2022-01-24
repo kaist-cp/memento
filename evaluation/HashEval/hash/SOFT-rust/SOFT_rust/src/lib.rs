@@ -37,6 +37,7 @@ impl<T> Collectable for SOFTHash<T> {
 #[derive(Debug, Default)]
 pub struct SOFTMemento {
     insert: CachePadded<HashInsert<Value>>,
+    delete: CachePadded<HashRemove<Value>>,
 }
 
 impl Collectable for SOFTMemento {
@@ -87,13 +88,15 @@ pub extern "C" fn run_insert(
 
 #[no_mangle]
 pub extern "C" fn run_delete(
-    _: &mut SOFTMemento,
+    m: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
     _tid: usize,
     k: Key,
-    _: &'static PoolHandle,
+    pool: &'static PoolHandle,
 ) -> bool {
-    obj.inner.remove(k)
+    let res = obj.inner.remove(k, &mut m.delete, pool);
+    m.delete.reset();
+    res
 }
 
 #[no_mangle]

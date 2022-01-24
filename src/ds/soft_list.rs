@@ -266,19 +266,25 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 
     /// TODO: doc
     // TODO: detectable 버전으로 변경
-    pub fn remove(&self, key: usize) -> bool {
+    pub fn remove(&self, key: usize, client: &mut Remove<T>, pool: &PoolHandle) -> bool {
+        // 이미 수행한 client라면 같은 결과를 반환
+        if let Some(res) = client.result() {
+            return res;
+        }
+
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut cas_result = false;
         let mut curr_state = State::Dummy;
         let (pred, curr) = self.find(key, &mut curr_state);
         let curr_ref = unsafe { curr.deref() };
-        // let pred_state = getState(curr); // SOFT 본래 구현엔 있지만 오타 인듯. 쓰는 곳 없음
 
         if curr_ref.key != key {
+            client.set_result(false);
             return false;
         }
 
         if curr_state == State::IntendToInsert || curr_state == State::Deleted {
+            client.set_result(false);
             return false;
         }
 
@@ -299,10 +305,13 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 .is_ok();
         }
 
+        // clinet가 PNode를 타겟팅
+        let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
+        client.target = unsafe { pnode.as_pptr(pool) };
+        // TODO: persist_obj(&client.target, true);
+
         // Mark PNode as delete (durable point)
-        let deleter = true; // TODO: delete client
-        let pptr = unsafe { &mut *curr_ref.pptr };
-        pptr.destroy(deleter);
+        let result = pnode.destroy(client, pool);
 
         // Modify state: INTEND_TO_DELETE -> DELETED (logical delete)
         while get_state(curr_ref.next.load(Ordering::SeqCst, guard)) == State::IntendToDelete {
@@ -317,10 +326,11 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         }
 
         // State를 INSERTED에서 INTEND_TO_DELETE로 바꾼 한 명만 physical delete
-        if cas_result {
+        if result {
             let _ = self.trim(pred, curr);
         }
-        cas_result
+        client.set_result(result);
+        result
     }
 
     /// TODO: doc
@@ -475,6 +485,54 @@ impl<T> Insert<T> {
     }
 }
 
+/// TODO: doc
+#[derive(Debug)]
+pub struct Remove<T> {
+    target: PPtr<PNode<T>>,
+}
+
+impl<T> Default for Remove<T> {
+    fn default() -> Self {
+        Self {
+            target: PPtr::from(ClientState::NotFinished),
+        }
+    }
+}
+
+impl<T> Remove<T> {
+    #[inline]
+    fn id(&self, pool: &PoolHandle) -> usize {
+        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
+        unsafe { self.as_pptr(pool).into_offset() }
+    }
+
+    fn set_result(&mut self, succeed: bool) {
+        if succeed {
+            self.target = PPtr::from(ClientState::Succeed)
+        } else {
+            self.target = PPtr::from(ClientState::Failed)
+        }
+        // TODO: persist_obj(&self.target, true);
+    }
+
+    fn result(&self) -> Option<bool> {
+        if self.target == PPtr::from(ClientState::Failed) {
+            Some(false)
+        } else if self.target == PPtr::from(ClientState::Succeed) {
+            Some(true)
+        } else {
+            None
+        }
+    }
+
+    /// TODO: doc
+    #[inline]
+    pub fn reset(&mut self) {
+        self.target = PPtr::from(ClientState::NotFinished);
+        // TODO: persist_obj(&self.target, true);
+    }
+}
+
 enum ClientState {
     NotFinished,
     Failed,
@@ -491,15 +549,14 @@ impl<T> From<ClientState> for PPtr<T> {
 #[repr(align(32))]
 #[derive(Debug)]
 pub struct PNode<T> {
-    /// PNode가 "삽입완료" 됐는지 여부
+    /// PNode가 "삽입완료" 됐는지 여부. true면 "삽입완료"를 의미
     inserted: bool,
 
-    /// PNode를 insert한 client(의 상대주소)
+    /// PNode를 삽입한 client(의 상대주소)
     inserter: AtomicUsize,
 
-    /// PNode가 delete 도ㅒㅆ는지 여부
-    // TODO: deleter: AtomicUsize로 대체 (PNode를 delete한 client(의 상대주소)
-    deleted: AtomicBool, // PNode가 delete 도ㅒㅆ는지 여부
+    // PNode를 삭제한 client(의 상대주소). 0이 아니면 "삭제완료"를 의미
+    deleter: AtomicUsize,
 
     // TODO: key, value는 CAS 안쓰는데 왜 Atomic? create시 valid_start, valid_end 사이에 존재하게끔 ordering 보장하려는 목적인가?
     key: usize,
@@ -531,21 +588,30 @@ impl<T: Clone + PartialEq> PNode<T> {
     }
 
     /// PNode에 delete 표시
-    fn destroy(&self, p_validity: bool) {
-        self.deleted.store(p_validity, Ordering::Release);
+    fn destroy(&self, remover: &mut Remove<T>, pool: &PoolHandle) -> bool {
+        let res = self
+            .deleter
+            .compare_exchange(0, remover.id(pool), Ordering::Release, Ordering::Relaxed)
+            .is_ok();
         persist_obj(self, true);
+        res
     }
 
     /// PNode가 valid한 건지 여부 반환
-    // start, end가 같고 delete는 다르면 valid한 PNode (i.e. 삽입되어있는 PNode)
+    // 삽입은 됐고 삭제는 안됐으면 valid한 PNode
     fn is_valid(&self) -> bool {
-        self.inserter.load(Ordering::SeqCst) != 0 && !self.deleted.load(Ordering::SeqCst)
+        self.inserter.load(Ordering::SeqCst) != 0 && self.deleter.load(Ordering::SeqCst) == 0
     }
 
     /// PNode가 delete된 건지 여부 반환
-    // start, end가 같은데 delete만 다르면, delete된 PNode (i.e. 삽입된 후 제거된 PNode)
+    // TODO: correctness
+    // - inserter, deleter 둘다 0인 것만 재사용 가능한 PNode block으로 취급.
+    // - inserter, deleter 둘다 있는 건 VList엔 없지만 Client가 들고 있는 노드임. allocator가 복구시 미사용중인 PNode로 판별하고 free block으로 가져가면 안됨.
+    // TODO: leak-free
+    //  1  ssmem의 ebr이 collect하여 재사용가능한 block은 zero-initialze 해줘야할 듯 (새로 alloc 받은 것이 zero-initialize 되어있기만 하면 됨)
+    //  2. allocator는 복구시 VList를 재구성하기 전에 (1) inserter, deleter 둘다 찍혀있지만 (2) 이를 가리키는 client가 없는 block들을 찾아서 zero-initialize 부터 해줘야할 듯
     fn is_deleted(&self) -> bool {
-        self.inserter.load(Ordering::SeqCst) != 0 && self.deleted.load(Ordering::SeqCst)
+        self.inserter.load(Ordering::SeqCst) != 0 && !self.deleter.load(Ordering::SeqCst) == 0
     }
 }
 
@@ -612,7 +678,7 @@ mod test {
     };
     use crossbeam_epoch::{self as epoch};
 
-    use super::{thread_ini, Insert, SOFTList};
+    use super::{thread_ini, Insert, Remove, SOFTList};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100000;
@@ -641,6 +707,7 @@ mod test {
     #[derive(Debug, Default)]
     struct InsertContainRemove {
         insert: Insert<usize>,
+        remove: Remove<usize>,
     }
 
     impl Collectable for InsertContainRemove {
@@ -658,13 +725,15 @@ mod test {
 
             // insert, check, remove, check
             let list = &self.obj.list;
-            let insert_client = &mut client.insert;
+            let insert_cli = &mut client.insert;
+            let remove_cli = &mut client.remove;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, insert_client, pool));
+                assert!(list.insert(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
-                assert!(list.remove(tid));
+                assert!(list.remove(tid, remove_cli, pool));
                 assert!(!list.contains(tid));
-                insert_client.reset();
+                insert_cli.reset();
+                remove_cli.reset();
             }
         }
     }
