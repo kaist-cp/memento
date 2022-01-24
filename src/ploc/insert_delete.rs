@@ -188,46 +188,9 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     const PATIENCE: u64 = 40000;
 
     /// Load
+    #[inline]
     pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
-        let mut old = self.inner.load(ord, guard);
-        'out: loop {
-            if old.aux_bit() == 0 {
-                return old;
-            }
-
-            let mut start = rdtsc();
-            loop {
-                let cur = self.inner.load(ord, guard);
-
-                if cur.aux_bit() == 0 {
-                    return cur;
-                }
-
-                if old != cur {
-                    old = cur;
-                    start = rdtsc();
-                    continue;
-                }
-
-                let now = rdtsc();
-                if now > start + Self::PATIENCE {
-                    persist_obj(&self.inner, true);
-                    match self.inner.compare_exchange(
-                        old,
-                        old.with_aux_bit(0),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    ) {
-                        Ok(_) => return old.with_aux_bit(0),
-                        Err(e) => {
-                            old = e.current;
-                            continue 'out;
-                        }
-                    };
-                }
-            }
-        }
+        self.inner.load(ord, guard)
     }
 
     /// Insert
@@ -244,28 +207,19 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
 
         // Normal run
-        self.inner
+        let ret = self
+            .inner
             .compare_exchange(
                 PShared::null(),
-                new.with_aux_bit(1),
+                new,
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
             )
-            .map(|_| {
-                persist_obj(&self.inner, true);
-                let _ = self.inner.compare_exchange(
-                    new.with_aux_bit(1),
-                    new,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            })
-            .map_err(|_| {
-                let cur = self.load(Ordering::SeqCst, guard);
-                InsertError::CASFail(cur)
-            })
+            .map(|_| ())
+            .map_err(|e| InsertError::CASFail(e.current));
+        persist_obj(&self.inner, true);
+        ret
     }
 
     #[inline]

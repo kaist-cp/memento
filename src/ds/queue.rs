@@ -349,6 +349,7 @@ impl<T: Clone> Queue<T> {
         }
 
         loop {
+            enq.try_enq.reset();
             if self
                 .try_enqueue::<false>(node, &mut enq.try_enq, guard, pool)
                 .is_ok()
@@ -409,6 +410,7 @@ impl<T: Clone> Queue<T> {
         }
 
         loop {
+            deq.try_deq.reset();
             if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
                 return ret;
             }
