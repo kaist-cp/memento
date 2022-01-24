@@ -291,6 +291,17 @@ impl<T: Clone> Queue<T> {
         .load(Ordering::Relaxed, guard);
 
         let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
+        let next = tail_ref.next.load(Ordering::SeqCst, guard);
+
+        if !next.is_null() {
+            // tail is stale
+            persist_obj(&tail_ref.next, false);
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+
+            return Err(TryFail);
+        }
 
         tail_ref
             .next

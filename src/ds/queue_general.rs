@@ -52,6 +52,8 @@ impl<T> Collectable for Node<T> {
 /// ComposedQueue의 try push operation
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
+    tail: Checkpoint<PAtomic<Node<T>>>,
+
     /// push를 위해 할당된 node
     insert: Cas<Node<T>>,
 }
@@ -59,6 +61,7 @@ pub struct TryEnqueue<T: Clone> {
 impl<T: Clone> Default for TryEnqueue<T> {
     fn default() -> Self {
         Self {
+            tail: Default::default(),
             insert: Default::default(),
         }
     }
@@ -76,6 +79,7 @@ impl<T: Clone> TryEnqueue<T> {
     /// Reset TryEnqueue memento
     #[inline]
     pub fn reset(&mut self) {
+        self.tail.reset();
         self.insert.reset();
     }
 }
@@ -245,6 +249,13 @@ impl<T: Clone> QueueGeneral<T> {
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
         let tail = self.tail.load(Ordering::SeqCst, guard);
+        let tail = ok_or!(
+            try_enq.tail.checkpoint::<REC>(PAtomic::from(tail)),
+            e,
+            e.current
+        )
+        .load(Ordering::Relaxed, guard);
+
         let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
         let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
 
@@ -306,6 +317,7 @@ impl<T: Clone> QueueGeneral<T> {
         }
 
         loop {
+            enq.try_enq.reset();
             if self
                 .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
                 .is_ok()
@@ -372,6 +384,7 @@ impl<T: Clone> QueueGeneral<T> {
         }
 
         loop {
+            deq.try_deq.reset();
             if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
                 return ret;
             }
