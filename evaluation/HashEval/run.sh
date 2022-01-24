@@ -1,6 +1,8 @@
 #!/bin/bash
 
 export LD_LIBRARY_PATH=./hash/Dash/pmdk/src/nondebug:$LD_LIBRARY_PATH # to evaluate Dash
+version=$(git log -1 --format="%h") # git commit hash
+
 BIN="bin"
 OUT="out"
 OUT_DEBUG=./$OUT/debug.out
@@ -25,7 +27,6 @@ function bench() {
     rm -rf /mnt/pmem0/*
     out_dir=./$OUT/$mode/$dist/$workload
     mkdir -p $out_dir
-    version=$(git log -1 --format="%h")
     out=$out_dir/${target}_${version}.out
     echo "out: $out"
 
@@ -137,7 +138,7 @@ function bench_all() {
     done
 }
 
-dmsg "start run.sh"
+dmsg "start run.sh (version: $version)"
 
 # Fig 4, 5. Throughput
 dmsg "start throughput with uniform distribution."
