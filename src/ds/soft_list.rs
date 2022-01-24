@@ -349,8 +349,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
     fn quick_insert(&self, new_pnode: *mut PNode<T>) {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let new_pnode_ref = unsafe { new_pnode.as_ref() }.unwrap();
-        let key = new_pnode_ref.key.load(Ordering::SeqCst);
-        let value = unsafe { new_pnode_ref.value.load(Ordering::SeqCst, guard).deref() }.clone();
+        let key = new_pnode_ref.key;
+        let value = new_pnode_ref.value.clone();
         let new_node = Owned::new(VNode::new(key, value, new_pnode)).into_shared(guard);
         let new_node_ref = unsafe { new_node.deref() };
 
@@ -503,11 +503,11 @@ pub struct PNode<T> {
     deleted: AtomicBool, // PNode가 delete 도ㅒㅆ는지 여부
 
     // TODO: key, value는 CAS 안쓰는데 왜 Atomic? create시 valid_start, valid_end 사이에 존재하게끔 ordering 보장하려는 목적인가?
-    key: AtomicUsize,
-    value: Atomic<T>,
+    key: usize,
+    value: T,
 }
 
-impl<T: PartialEq> PNode<T> {
+impl<T: Clone + PartialEq> PNode<T> {
     /// PNode에 key, value를 쓰고 valid 표시
     fn create(
         &mut self,
@@ -517,16 +517,14 @@ impl<T: PartialEq> PNode<T> {
         inserter_value: T,        // client가 시도하려던 value
         pool: &PoolHandle,
     ) -> bool {
+        self.key = key;
+        self.value = value.clone();
         self.inserted = true;
         let res = if value == inserter_value {
-            self.key.store(key, Ordering::Relaxed);
-            self.value.store(Owned::new(value), Ordering::Relaxed);
             self.inserter
                 .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
                 .is_ok()
         } else {
-            self.key.store(key, Ordering::Relaxed);
-            self.value.store(Owned::new(value), Ordering::Release);
             false
         };
         persist_obj(self, true);
