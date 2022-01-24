@@ -308,7 +308,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         // clinet가 PNode를 타겟팅
         let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
         client.target = unsafe { pnode.as_pptr(pool) };
-        // TODO: persist_obj(&client.target, true);
+        persist_obj(&client.target, true);
 
         // Mark PNode as delete (durable point)
         let result = pnode.destroy(client, pool);
@@ -512,7 +512,7 @@ impl<T> Remove<T> {
         } else {
             self.target = PPtr::from(ClientState::Failed)
         }
-        // TODO: persist_obj(&self.target, true);
+        persist_obj(&self.target, true);
     }
 
     fn result(&self) -> Option<bool> {
@@ -529,7 +529,7 @@ impl<T> Remove<T> {
     #[inline]
     pub fn reset(&mut self) {
         self.target = PPtr::from(ClientState::NotFinished);
-        // TODO: persist_obj(&self.target, true);
+        persist_obj(&self.target, true);
     }
 }
 
