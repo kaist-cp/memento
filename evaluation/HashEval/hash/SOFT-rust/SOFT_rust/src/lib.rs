@@ -91,9 +91,9 @@ pub extern "C" fn run_delete(
     obj: &SOFTHash<Value>,
     _tid: usize,
     k: Key,
-    pool: &'static PoolHandle,
+    _: &'static PoolHandle,
 ) -> bool {
-    obj.inner.remove(k, pool)
+    obj.inner.remove(k)
 }
 
 #[no_mangle]

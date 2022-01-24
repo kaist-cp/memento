@@ -135,7 +135,6 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         &self,
         key: usize,
         curr_state_ptr: &mut State,
-        pool: &PoolHandle,
     ) -> (Shared<'g, VNode<T>>, Shared<'g, VNode<T>>) {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut prev = self.head.load(Ordering::SeqCst, guard);
@@ -177,7 +176,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         let mut curr_state = State::Dummy;
         'retry: loop {
             // 삽입할 위치를 탐색
-            let (pred, curr) = self.find(key, &mut curr_state, pool);
+            let (pred, curr) = self.find(key, &mut curr_state);
             let curr_ref = unsafe { curr.deref() };
             let pred_state = get_state(curr);
 
@@ -267,11 +266,11 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 
     /// TODO: doc
     // TODO: detectable 버전으로 변경
-    pub fn remove(&self, key: usize, pool: &PoolHandle) -> bool {
+    pub fn remove(&self, key: usize) -> bool {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let mut cas_result = false;
         let mut curr_state = State::Dummy;
-        let (pred, curr) = self.find(key, &mut curr_state, pool);
+        let (pred, curr) = self.find(key, &mut curr_state);
         let curr_ref = unsafe { curr.deref() };
         // let pred_state = getState(curr); // SOFT 본래 구현엔 있지만 오타 인듯. 쓰는 곳 없음
 
@@ -663,7 +662,7 @@ mod test {
             for _ in 0..COUNT {
                 assert!(list.insert(tid, tid, insert_client, pool));
                 assert!(list.contains(tid));
-                assert!(list.remove(tid, pool));
+                assert!(list.remove(tid));
                 assert!(!list.contains(tid));
                 insert_client.reset();
             }

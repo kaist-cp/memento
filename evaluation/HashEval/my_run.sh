@@ -4,7 +4,7 @@
 
 # NOTE: SOFT_rust는 SOFTHash obj가 크기 때문에 stack size를 늘려줘야함. `ulimit -s 8192000`
 
-target="SOFT"    # 측정 대상 (possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel, clevel_rust, SOFT_rust)
+target="SOFT_rust"    # 측정 대상 (possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel, clevel_rust, SOFT_rust)
 HASH_SIZE=16777216      # Initial capacity of hash table
 OP=200000000            # Load, Run phase 각가에서 실행시킬 op 수
 SKIP_LOAD=true          # Load phase를 skip할지 여부
