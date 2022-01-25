@@ -95,43 +95,48 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let tmp_new = new.with_aux_bit(cas_bit).with_tid(tid);
 
         loop {
-            let res = self
-                .inner
-                .compare_exchange(old, tmp_new, Ordering::SeqCst, Ordering::SeqCst, guard)
-                .map(|_| {
-                    // 성공하면 target을 persist
-                    persist_obj(&self.inner, true);
+            let res = self.inner.compare_exchange(
+                old,
+                tmp_new,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            );
 
-                    // 성공했다고 체크포인팅
-                    mmt.checkpoint_succ(cas_bit, tid, &pool.cas_info);
-                    lfence();
-
-                    // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
-                    let _ = self
-                        .inner
-                        .compare_exchange(
-                            tmp_new,
-                            new.with_tid(0),
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                            guard,
-                        )
-                        .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
-                })
-                .map_err(|e| self.help(e.current, &pool.cas_info, guard));
-
-            if let Err(cur) = res {
-                // retry for the property of strong CAS
+            if let Err(e) = res {
+                let cur = self.help(e.current, &pool.cas_info, guard);
                 if cur == old {
+                    // retry for the property of strong CAS
                     continue;
                 }
 
                 LAST_FAILED_CAS.with(|failed| {
                     *failed.borrow_mut() = Some(unsafe { mmt.checkpoint.as_pptr(pool) });
                 });
+
+                return Err(cur);
             }
 
-            return res;
+            // 성공하면 target을 persist
+            persist_obj(&self.inner, true);
+
+            // 성공했다고 체크포인팅
+            mmt.checkpoint_succ(cas_bit, tid, &pool.cas_info);
+            lfence();
+
+            // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
+            let _ = self
+                .inner
+                .compare_exchange(
+                    tmp_new,
+                    new.with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                )
+                .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
+
+            return Ok(());
         }
     }
 
@@ -201,23 +206,23 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         // CAS 성공하고 죽었는지 체크
         let pchk = cas_info.cas_pcheckpoint[next_bit][tid].load(Ordering::SeqCst);
 
-        // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
-        if max_chk < pchk as usize {
-            mmt.checkpoint_succ(next_bit, tid, cas_info);
-            let _ = self
-                .inner
-                .compare_exchange(
-                    new.with_aux_bit(next_bit).with_tid(tid),
-                    new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                )
-                .map_err(|_| sfence);
-            return Ok(());
+        if max_chk >= pchk as usize {
+            return Err(self.help(cur, cas_info, guard));
         }
 
-        Err(self.help(cur, cas_info, guard))
+        // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
+        mmt.checkpoint_succ(next_bit, tid, cas_info);
+        let _ = self
+            .inner
+            .compare_exchange(
+                new.with_aux_bit(next_bit).with_tid(tid),
+                new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            )
+            .map_err(|_| sfence);
+        Ok(())
     }
 
     const PATIENCE: u64 = 40000;
