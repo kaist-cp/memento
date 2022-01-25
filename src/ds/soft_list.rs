@@ -1,6 +1,6 @@
 //! SOFT list
 
-use crate::pmem::*;
+use crate::{pepoch::PShared, pmem::*};
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
 use epoch::unprotected;
 use libc::c_void;
@@ -120,7 +120,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 guard,
             )
             .is_ok();
-        // 이제 client가 들고 있을 수 있으니 free하면 안됨. TODO: delete client가 reset시 자신이 deleter면 free
+        // 이제 client가 들고 있을 수 있으니 여기서 free하면 안됨. 대신 delete client가 reset시 자신이 deleter면 free
         // if result {
         //     ALLOC
         //         .try_with(|a| {
@@ -167,8 +167,15 @@ impl<T: Clone + PartialEq> SOFTList<T> {
     /// TODO: doc
     // TODO: 복구로직
     pub fn insert(&self, key: usize, value: T, client: &mut Insert<T>, pool: &PoolHandle) -> bool {
-        // 이미 수행한 client라면 같은 결과를 반환
+        // 이미 결과 찍힌 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
+            return res;
+        }
+
+        // 수행했던 PNode가 있다면, inserter가 나인지를 확인하여 결과 반환
+        if !client.target.is_null() {
+            let res = unsafe { client.target.deref(pool) }.inserter() == client.id(pool);
+            client.set_result(res);
             return res;
         }
 
@@ -232,7 +239,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 
             // clinet가 PNode를 타겟팅
             let pnode = unsafe { result_node.pptr.as_ref().unwrap() };
-            client.target = unsafe { pnode.as_pptr(pool) };
+            client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
             persist_obj(&client.target, true);
 
             // Mark PNode as inserted (durable point)
@@ -259,8 +266,6 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                     guard,
                 );
             }
-
-            // client.set_result(result); // target을 저장했으니 어차피 다시 실행해도 같은 결과 얻을 수 있을 것임. 단 이러면 normal run에서 PNode가 있다면 PNode를 타겟팅하기까지의 로직은 pass해야(TODO)
             return result;
         }
     }
@@ -270,6 +275,13 @@ impl<T: Clone + PartialEq> SOFTList<T> {
     pub fn remove(&self, key: usize, client: &mut Remove<T>, pool: &PoolHandle) -> bool {
         // 이미 수행한 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
+            return res;
+        }
+
+        // 수행했던 PNode가 있다면, deleter가 나인지를 확인하여 결과 반환
+        if !client.target.is_null() {
+            let res = unsafe { client.target.deref(pool) }.deleter() == client.id(pool);
+            client.set_result(res);
             return res;
         }
 
@@ -308,7 +320,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 
         // clinet가 PNode를 타겟팅
         let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
-        client.target = unsafe { pnode.as_pptr(pool) };
+        client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
         persist_obj(&client.target, true);
 
         // Mark PNode as delete (durable point)
@@ -330,8 +342,6 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         if result {
             let _ = self.trim(pred, curr);
         }
-
-        // client.set_result(result); // target을 저장했으니 어차피 다시 실행해도 같은 결과 얻을 수 있을 것임. 단 이러면 normal run에서 PNode가 있다면 PNode를 타겟팅하기까지의 로직은 pass해야(TODO)
         result
     }
 
@@ -440,17 +450,9 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 }
 
 /// client for insert or remove
-#[derive(Debug)]
-pub struct Insert<T> {
-    target: PPtr<PNode<T>>,
-}
-
-impl<T> Default for Insert<T> {
-    fn default() -> Self {
-        Self {
-            target: PPtr::from(ClientState::NotFinished),
-        }
-    }
+#[derive(Debug, Default)]
+pub struct Insert<T: 'static> {
+    target: PShared<'static, PNode<T>>,
 }
 
 impl<T> Insert<T> {
@@ -460,97 +462,88 @@ impl<T> Insert<T> {
         unsafe { self.as_pptr(pool).into_offset() }
     }
 
-    fn set_result(&mut self, succeed: bool) {
-        if succeed {
-            self.target = PPtr::from(ClientState::Succeed)
-        } else {
-            self.target = PPtr::from(ClientState::Failed)
+    fn result(&self) -> Option<bool> {
+        match self.target.tag() {
+            SUCCEED => Some(true),
+            FAILED => Some(false),
+            _ => None,
         }
-        persist_obj(&self.target, true);
     }
 
-    fn result(&self) -> Option<bool> {
-        if self.target == PPtr::from(ClientState::Failed) {
-            Some(false)
-        } else if self.target == PPtr::from(ClientState::Succeed) {
-            Some(true)
-        } else {
-            None
-        }
+    fn set_result(&mut self, succeed: bool) {
+        self.target = self.target.with_tag(if succeed { SUCCEED } else { FAILED });
+        persist_obj(&self.target, true);
     }
 
     /// TODO: doc
     #[inline]
     pub fn reset(&mut self) {
-        self.target = PPtr::from(ClientState::NotFinished);
+        self.target = PShared::null();
         persist_obj(&self.target, true);
     }
 }
 
 /// TODO: doc
-#[derive(Debug)]
-pub struct Remove<T> {
-    target: PPtr<PNode<T>>,
+#[derive(Debug, Default)]
+pub struct Remove<T: 'static> {
+    target: PShared<'static, PNode<T>>,
 }
 
-impl<T> Default for Remove<T> {
-    fn default() -> Self {
-        Self {
-            target: PPtr::from(ClientState::NotFinished),
-        }
-    }
-}
-
-impl<T> Remove<T> {
+impl<T: PartialEq + Clone> Remove<T> {
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         unsafe { self.as_pptr(pool).into_offset() }
     }
 
-    fn set_result(&mut self, succeed: bool) {
-        if succeed {
-            self.target = PPtr::from(ClientState::Succeed)
-        } else {
-            self.target = PPtr::from(ClientState::Failed)
+    fn result(&self) -> Option<bool> {
+        match self.target.tag() {
+            SUCCEED => Some(true),
+            FAILED => Some(false),
+            _ => None,
         }
-        persist_obj(&self.target, true);
     }
 
-    fn result(&self) -> Option<bool> {
-        if self.target == PPtr::from(ClientState::Failed) {
-            Some(false)
-        } else if self.target == PPtr::from(ClientState::Succeed) {
-            Some(true)
-        } else {
-            None
-        }
+    fn set_result(&mut self, succeed: bool) {
+        self.target = self.target.with_tag(if succeed { SUCCEED } else { FAILED });
+        persist_obj(&self.target, true);
     }
 
     /// TODO: doc
     #[inline]
     pub fn reset(&mut self) {
-        self.target = PPtr::from(ClientState::NotFinished);
+        let target = self.target;
+        self.target = PShared::null();
         persist_obj(&self.target, true);
+
+        // target의 deleter가 나라면, 내가 free
+        if !target.is_null() {
+            let pool = global_pool().unwrap();
+            let pnode_ref = unsafe { target.deref(pool) };
+
+            if pnode_ref.deleter() == self.id(pool) {
+                ALLOC
+                    .try_with(|a| {
+                        ssmem_free(
+                            *a.borrow_mut(),
+                            pnode_ref as *const _ as *mut c_void,
+                            Some(pool),
+                        );
+                    })
+                    .unwrap();
+            }
+        }
     }
 }
 
-enum ClientState {
-    NotFinished,
-    Failed,
-    Succeed,
-}
-
-impl<T> From<ClientState> for PPtr<T> {
-    fn from(state: ClientState) -> Self {
-        PPtr::from(state as usize)
-    }
-}
+// client의 결과를 나타낼 tag
+const SUCCEED: usize = 1;
+const FAILED: usize = 2;
 
 /// persistent node
 #[repr(align(32))]
 #[derive(Debug)]
-pub struct PNode<T> {
+struct PNode<T> {
     /// PNode가 "삽입완료" 됐는지 여부. true면 "삽입완료"를 의미
     inserted: bool,
 
@@ -600,10 +593,9 @@ impl<T: Clone + PartialEq> PNode<T> {
         res
     }
 
-    /// PNode가 valid한 건지 여부 반환
-    // 삽입은 됐고 삭제는 안됐으면 valid한 PNode
+    /// PNode가 valid한 건지(i.e. 삽입되어있는 건지) 여부 반환
     fn is_valid(&self) -> bool {
-        self.inserter.load(Ordering::SeqCst) != 0 && self.deleter.load(Ordering::SeqCst) == 0
+        self.inserter() != 0 && self.deleter() == 0
     }
 
     /// PNode가 delete된 건지 여부 반환
@@ -614,9 +606,20 @@ impl<T: Clone + PartialEq> PNode<T> {
     //  1  ssmem의 ebr이 collect하여 재사용가능한 block은 zero-initialze 해줘야할 듯 (새로 alloc 받은 것이 zero-initialize 되어있기만 하면 됨)
     //  2. allocator는 복구시 VList를 재구성하기 전에 (1) inserter, deleter 둘다 찍혀있지만 (2) 이를 가리키는 client가 없는 block들을 찾아서 zero-initialize 부터 해줘야할 듯
     fn is_deleted(&self) -> bool {
-        self.inserter.load(Ordering::SeqCst) != 0 && !self.deleter.load(Ordering::SeqCst) == 0
+        self.inserter() != 0 && self.deleter() != 0
+    }
+
+    fn inserter(&self) -> usize {
+        self.inserter.load(Ordering::SeqCst)
+    }
+
+    fn deleter(&self) -> usize {
+        self.deleter.load(Ordering::SeqCst)
     }
 }
+
+unsafe impl<T> Sync for PShared<'_, PNode<T>> {}
+unsafe impl<T> Send for PShared<'_, PNode<T>> {}
 
 /// volatile node
 #[derive(Debug)]
@@ -626,9 +629,6 @@ struct VNode<T> {
     pptr: *mut PNode<T>,
     next: Atomic<VNode<T>>,
 }
-
-unsafe impl<T> Sync for VNode<T> {}
-unsafe impl<T> Send for VNode<T> {}
 
 impl<T> VNode<T> {
     fn new(key: usize, value: T, pptr: *mut PNode<T>) -> Self {
@@ -640,6 +640,9 @@ impl<T> VNode<T> {
         }
     }
 }
+
+unsafe impl<T> Sync for VNode<T> {}
+unsafe impl<T> Send for VNode<T> {}
 
 #[derive(PartialEq, Clone, Copy)]
 enum State {

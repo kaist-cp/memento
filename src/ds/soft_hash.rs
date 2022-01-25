@@ -54,7 +54,7 @@ impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
 
 /// TODO: doc
 #[derive(Debug, Default)]
-pub struct HashInsert<T> {
+pub struct HashInsert<T: 'static> {
     insert: Insert<T>,
 }
 
@@ -67,11 +67,11 @@ impl<T> HashInsert<T> {
 
 /// TODO: doc
 #[derive(Debug, Default)]
-pub struct HashRemove<T> {
+pub struct HashRemove<T: 'static> {
     remove: Remove<T>,
 }
 
-impl<T> HashRemove<T> {
+impl<T: PartialEq + Clone> HashRemove<T> {
     /// TODO: doc
     pub fn reset(&mut self) {
         self.remove.reset()
