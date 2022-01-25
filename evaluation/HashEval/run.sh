@@ -1,7 +1,8 @@
 #!/bin/bash
 
 export LD_LIBRARY_PATH=./hash/Dash/pmdk/src/nondebug:$LD_LIBRARY_PATH # to evaluate Dash
-version=$(git log -1 --format="%h") # git commit hash
+git_hash=$(git log -1 --format="%h")
+git_date=$(git log -1 --date=format:'%Y%m%d' --format=%cd)
 
 BIN="bin"
 OUT="out"
@@ -27,7 +28,7 @@ function bench() {
     rm -rf /mnt/pmem0/*
     out_dir=./$OUT/$mode/$dist/$workload
     mkdir -p $out_dir
-    out=$out_dir/${target}_${version}.out
+    out=$out_dir/${target}_${git_hash}_${git_date}.out
     echo "out: $out"
 
     # clevel, clevel-rust 제외한 나머지는 더미 폴더 필요
@@ -138,7 +139,7 @@ function bench_all() {
     done
 }
 
-dmsg "start run.sh (version: $version)"
+dmsg "start run.sh (git hash: $git_hash, date: $git_date)"
 
 # Fig 4, 5. Throughput
 dmsg "start throughput with uniform distribution."

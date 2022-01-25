@@ -1,5 +1,8 @@
 #!/bin/bash
 
+git_hash=$(git log -1 --format="%h")
+git_date=$(git log -1 --date=format:'%Y%m%d' --format=%cd)
+
 function show_cfg() {
     echo "<Configurations>"
     echo "PMEM path: $(realpath ${PMEM_PATH})"
@@ -9,6 +12,8 @@ function show_cfg() {
 
     let total_dur=$TEST_CNT*$TEST_DUR*$MAX_THREADS/60
     echo "테스트 총 소요시간: obj 수 * 약 ${total_dur}m (thread * count * duration)"
+    echo "git hash: $git_hash"
+    echo "git date: $git_date"
     echo ""
 }
 
@@ -17,8 +22,7 @@ function bench() {
     kind=$2
     thread=$3
 
-    version=$(git log -1 --format="%h")
-    outpath=$out_path/${target}_${version}.csv
+    outpath=$out_path/${target}_${git_hash}_${git_date}.csv
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
@@ -61,7 +65,6 @@ MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리
 TEST_CNT=5            # 한 bench당 테스트 횟수
 TEST_DUR=10           # 한 테스트당 지속시간
 
-time=$(date +%Y)$(date +%m)$(date +%d)$(date +%H)$(date +%M)
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
 mkdir -p $PMEM_PATH

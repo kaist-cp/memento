@@ -79,10 +79,11 @@ def get_filepath(bench, dist, workload, target):
     if 'data_id' in objs['hash']['targets'][target]:
         data_id = objs['hash']['targets'][target]['data_id'][workload]
 
-        # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용
+        # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용 {hash}_{date}
         if data_id == '':
-            data_id = git.Repo(
-                search_parent_directories=True).head.object.hexsha[:7]
+            head = git.Repo(search_parent_directories=True).head
+            data_id = "{}_{}".format(
+                head.object.hexsha[:7], head.commit.committed_datetime.strftime('%Y%m%d'))
 
         filepath = "./out/{}/{}/{}/{}_{}.out".format(
             bench.upper(), dist.upper(), workload, target, data_id)

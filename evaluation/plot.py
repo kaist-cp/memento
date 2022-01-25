@@ -62,9 +62,10 @@ for obj in objs:
         # 사용할 데이터 선택
         data_id = objs[obj]['targets'][t]['data_id']
         if data_id == '':
-            # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용
-            data_id = git.Repo(
-                search_parent_directories=True).head.object.hexsha[:7]
+            # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용: {hash}_{date}
+            head = git.Repo(search_parent_directories=True).head
+            data_id = "{}_{}".format(
+                head.object.hexsha[:7], head.commit.committed_datetime.strftime('%Y%m%d'))
 
         data_path = "./out/{}_{}.csv".format(t, data_id)
         print("read {} for target {}".format(data_path, t))
