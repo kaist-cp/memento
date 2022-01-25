@@ -369,10 +369,6 @@ impl<T: Clone> Queue<T> {
                 break (head, next);
             }
 
-            if next.is_null() {
-                break (head, next);
-            }
-
             let _ =
                 self.tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);

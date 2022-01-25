@@ -5,7 +5,7 @@ use crate::ploc::detectable_cas::Cas;
 use crate::ploc::{Checkpoint, Checkpointable, DetectableCASAtomic, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
-use etrace::{ok_or, some_or};
+use etrace::ok_or;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
@@ -248,7 +248,21 @@ impl<T: Clone> QueueGeneral<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let tail = self.tail.load(Ordering::SeqCst, guard);
+        let (tail, tail_ref) = loop {
+            let tail = self.tail.load(Ordering::SeqCst, guard);
+            let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
+            let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
+
+            if next.is_null() {
+                break (tail, tail_ref);
+            }
+
+            // tail is stale
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        };
+
         let tail = ok_or!(
             try_enq.tail.checkpoint::<REC>(PAtomic::from(tail)),
             e,
@@ -256,35 +270,18 @@ impl<T: Clone> QueueGeneral<T> {
         )
         .load(Ordering::Relaxed, guard);
 
-        let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
-        let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
-
-        if !next.is_null() {
-            // tail is stale
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
+        if tail_ref
+            .next
+            .cas::<REC>(PShared::null(), node, &mut try_enq.insert, tid, guard, pool)
+            .is_err()
+        {
             return Err(TryFail);
         }
 
-        tail_ref
-            .next
-            .cas::<REC>(PShared::null(), node, &mut try_enq.insert, tid, guard, pool)
-            .map(|_| {
-                if REC {
-                    return;
-                }
-
-                let _ = self.tail.compare_exchange(
-                    tail,
-                    node,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            })
-            .map_err(|_| TryFail)
+        let _ = self
+            .tail
+            .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+        Ok(())
     }
 
     /// Enqueue
@@ -335,10 +332,20 @@ impl<T: Clone> QueueGeneral<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let head = self.head.load(Ordering::SeqCst, guard, pool);
-        let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard, pool);
-        let tail = self.tail.load(Ordering::SeqCst, guard);
+        let (head, next) = loop {
+            let head = self.head.load(Ordering::SeqCst, guard, pool);
+            let head_ref = unsafe { head.deref(pool) };
+            let next = head_ref.next.load(Ordering::SeqCst, guard, pool);
+            let tail = self.tail.load(Ordering::SeqCst, guard);
+
+            if head.as_ptr() != tail.as_ptr() || next.is_null() {
+                break (head, next);
+            }
+
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        };
 
         let chk = ok_or!(
             try_deq
@@ -347,26 +354,18 @@ impl<T: Clone> QueueGeneral<T> {
             e,
             e.current
         );
-        let head = chk.0.load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+        let head = chk.0.load(Ordering::Relaxed, guard);
         let next = chk.1.load(Ordering::Relaxed, guard);
-        let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
 
-        if head.as_ptr() == tail.as_ptr() {
-            let tail_ref = unsafe { tail.deref(pool) };
-            persist_obj(&tail_ref.next, true);
-
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-            return Err(TryFail);
+        if next.is_null() {
+            return Ok(None);
         }
 
         self.head
             .cas::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
             .map(|()| unsafe {
                 guard.defer_pdestroy(head);
-                Some((*next_ref.data.as_ptr()).clone())
+                Some((*next.deref(pool).data.as_ptr()).clone())
             })
             .map_err(|_| TryFail)
     }
