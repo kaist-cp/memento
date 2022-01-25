@@ -111,7 +111,7 @@ where
 
         // Normal run
         self.saved = CachePadded::new(new.clone());
-        persist_obj(&self.saved, true);
+        persist_obj(&*self.saved, true);
         Ok(new)
     }
 
@@ -119,7 +119,7 @@ where
     #[inline]
     pub fn reset(&mut self) {
         self.saved.invalidate();
-        persist_obj(&self.saved, false);
+        persist_obj(&*self.saved, false);
     }
 }
 
