@@ -168,20 +168,22 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             }
 
             let now = rdtsc();
-            if now > start + Self::PATIENCE {
-                persist_obj(owner, false); // cas soon
-                let ret = match self.inner.compare_exchange(
-                    cur,
-                    next.with_tid(0),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                ) {
-                    Ok(n) => n,
-                    Err(e) => e.current,
-                };
-                return Ok(ret);
+            if now < start + Self::PATIENCE {
+                continue;
             }
+
+            persist_obj(owner, false); // cas soon
+            let ret = match self.inner.compare_exchange(
+                cur,
+                next.with_tid(0),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            ) {
+                Ok(n) => n,
+                Err(e) => e.current,
+            };
+            return Ok(ret);
         }
     }
 
@@ -293,20 +295,19 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        let old_ref = some_or!(unsafe { old.as_ref(pool) }, {
-            let cur = self.load(Ordering::SeqCst, guard);
-            return Err(ok_or!(self.load_helping(cur, guard, pool), e, e));
-        }); // if null, return failure.
+        let old_ref = some_or!(
+            unsafe { old.as_ref(pool) },
+            return Err(ok_or!(self.load_helping(old, guard, pool), e, e)) // if null, return failure.
+        );
 
         // owner가 내가 아니면 실패
         let owner = old_ref.tid_next().load(Ordering::SeqCst, guard);
-        if owner.tid() == tid {
-            unsafe { guard.defer_pdestroy(old) };
-            Ok(old)
-        } else {
-            let cur = self.load(Ordering::SeqCst, guard);
-            Err(ok_or!(self.load_helping(cur, guard, pool), e, e))
+        if owner.tid() != tid {
+            return Err(ok_or!(self.load_helping(old, guard, pool), e, e));
         }
+
+        unsafe { guard.defer_pdestroy(old) };
+        Ok(old)
     }
 }
 
