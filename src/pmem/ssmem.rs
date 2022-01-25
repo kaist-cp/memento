@@ -283,10 +283,16 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
     // free 이후 collect까지 되어 재사용 가능한 obj가 있으면 재사용
     if !cs.is_null() {
         let cs_ref = unsafe { cs.as_mut() }.unwrap();
-        // fs.set[fs.curr-1]에 저장되어있는 collect된 obj 주소를 가져옴 (TODO: rust에선 이렇게 하는 게 맞나 확인)
+
+        // fs.set[fs.curr-1]에 저장되어있는 collect된 obj 주소를 가져옴
         cs_ref.curr -= 1;
         m = unsafe { *(cs_ref.set.offset(cs_ref.curr as isize)) as *mut _ };
         prefetchw(m);
+
+        // zero-initialize
+        unsafe {
+            let _ = libc::memset(m, 0x0, size);
+        }
 
         // collected set에 남은 재사용가능 obj가 없으면,
         // 이를 free set으로 재사용 할 수 있게 available list에 넣음
