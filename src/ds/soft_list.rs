@@ -165,6 +165,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
     }
 
     /// TODO: doc
+    // TODO: 복구로직
     pub fn insert(&self, key: usize, value: T, client: &mut Insert<T>, pool: &PoolHandle) -> bool {
         // 이미 수행한 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
@@ -259,13 +260,13 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 );
             }
 
-            client.set_result(result);
+            // client.set_result(result); // target을 저장했으니 어차피 다시 실행해도 같은 결과 얻을 수 있을 것임. 단 이러면 normal run에서 PNode가 있다면 PNode를 타겟팅하기까지의 로직은 pass해야(TODO)
             return result;
         }
     }
 
     /// TODO: doc
-    // TODO: detectable 버전으로 변경
+    // TODO: 복구로직
     pub fn remove(&self, key: usize, client: &mut Remove<T>, pool: &PoolHandle) -> bool {
         // 이미 수행한 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
@@ -329,7 +330,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         if result {
             let _ = self.trim(pred, curr);
         }
-        client.set_result(result);
+
+        // client.set_result(result); // target을 저장했으니 어차피 다시 실행해도 같은 결과 얻을 수 있을 것임. 단 이러면 normal run에서 PNode가 있다면 PNode를 타겟팅하기까지의 로직은 pass해야(TODO)
         result
     }
 
