@@ -19,6 +19,8 @@ sudo apt install build-essential python3-pip
 pip3 install --user pandas matplotlib gitpython
 
 # Build Rust implementation
+(cd ..; cargo update) # update memento crate
+cargo update # update evaluation crate
 if [ "$feature" == "no_persist" ]; then
     cargo build --release --features $feature
 else

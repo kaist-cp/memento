@@ -15,11 +15,11 @@ SOFT_rust.o:SOFT_rust.cpp
 
 # pmem 버전 컴파일
 do_build:
-	bash -c "cd $(SOFT_rust); cargo build --release"
+	bash -c "cd $(SOFT_rust); cargo update; cargo build --release"
 
 # dram 버전 컴파일
 do_build_dram:
-	bash -c "cd $(SOFT_rust); cargo build --release --features no_persist;"
+	bash -c "cd $(SOFT_rust); cargo update; cargo build --release --features no_persist;"
 
 clean:
 	rm -f *.o *.so lsb msb *.out

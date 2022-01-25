@@ -10,6 +10,7 @@ sudo apt install build-essential python3-pip -y
 pip3 install --user pandas matplotlib
 
 # Compile all
+(cd ../../; cargo update) # update memento crate
 make clean
 make -j
 
