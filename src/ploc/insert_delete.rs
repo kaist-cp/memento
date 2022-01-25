@@ -209,8 +209,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
 
         // Normal run
-        let ret = self
-            .inner
+        self.inner
             .compare_exchange(
                 PShared::null(),
                 new,
@@ -218,10 +217,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 Ordering::SeqCst,
                 guard,
             )
-            .map(|_| ())
-            .map_err(|e| InsertError::CASFail(e.current));
-        persist_obj(&self.inner, true);
-        ret
+            .map(|_| persist_obj(&self.inner, true))
+            .map_err(|e| InsertError::CASFail(e.current))
     }
 
     #[inline]

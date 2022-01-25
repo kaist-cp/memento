@@ -2,10 +2,10 @@
 
 use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::insert_delete::{self, Delete, Insert, SMOAtomic};
-use crate::ploc::{not_deleted, Checkpoint, Checkpointable, InsertError, Traversable};
+use crate::ploc::{not_deleted, Checkpoint, Checkpointable, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
-use etrace::{ok_or, some_or};
+use etrace::ok_or;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
@@ -62,14 +62,12 @@ impl<T> insert_delete::Node for Node<T> {
 /// try push operation for Queue
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone> {
-    tail: Checkpoint<PAtomic<Node<T>>>,
     insert: Insert<Queue<T>, Node<T>>,
 }
 
 impl<T: Clone> Default for TryEnqueue<T> {
     fn default() -> Self {
         Self {
-            tail: Default::default(),
             insert: Default::default(),
         }
     }
@@ -85,7 +83,6 @@ impl<T: Clone> TryEnqueue<T> {
     /// Reset TryEnqueue memento
     #[inline]
     pub fn reset(&mut self) {
-        self.tail.reset();
         self.insert.reset();
     }
 }
@@ -282,53 +279,34 @@ impl<T: Clone> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let tail = self.tail.load(Ordering::SeqCst, guard);
-        let tail = ok_or!(
-            try_enq.tail.checkpoint::<REC>(PAtomic::from(tail)),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
+        let (tail, tail_ref) = loop {
+            let tail = self.tail.load(Ordering::SeqCst, guard);
+            let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
+            let next = tail_ref.next.load(Ordering::SeqCst, guard);
 
-        let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
-        let next = tail_ref.next.load(Ordering::SeqCst, guard);
+            if next.is_null() {
+                break (tail, tail_ref);
+            }
 
-        if !next.is_null() {
             // tail is stale
             persist_obj(&tail_ref.next, false);
             let _ =
                 self.tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        };
 
+        if tail_ref
+            .next
+            .insert::<_, REC>(node, self, &mut try_enq.insert, guard, pool)
+            .is_err()
+        {
             return Err(TryFail);
         }
 
-        tail_ref
-            .next
-            .insert::<_, REC>(node, self, &mut try_enq.insert, guard, pool)
-            .map(|_| {
-                let _ = self.tail.compare_exchange(
-                    tail,
-                    node,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            })
-            .map_err(|e| {
-                if let InsertError::CASFail(next) = e {
-                    // tail is stale
-                    let _ = self.tail.compare_exchange(
-                        tail,
-                        next,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    );
-                }
-
-                TryFail
-            })
+        let _ = self
+            .tail
+            .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+        Ok(())
     }
 
     /// Enqueue
@@ -378,10 +356,24 @@ impl<T: Clone> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let head = self.head.load(Ordering::SeqCst, guard);
-        let head_ref = unsafe { head.deref(pool) };
-        let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
-        let tail = self.tail.load(Ordering::SeqCst, guard);
+        let (head, next) = loop {
+            let head = self.head.load(Ordering::SeqCst, guard);
+            let head_ref = unsafe { head.deref(pool) };
+            let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
+            let tail = self.tail.load(Ordering::SeqCst, guard);
+
+            if head != tail || next.is_null() {
+                break (head, next);
+            }
+
+            if next.is_null() {
+                break (head, next);
+            }
+
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+        };
 
         let chk = ok_or!(
             try_deq
@@ -390,21 +382,19 @@ impl<T: Clone> Queue<T> {
             e,
             e.current
         );
-        let head = chk.0.load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+        let head = chk.0.load(Ordering::Relaxed, guard);
         let next = chk.1.load(Ordering::Relaxed, guard);
-        let next_ref = some_or!(unsafe { next.as_ref(pool) }, return Ok(None));
 
-        if head == tail {
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-
-            return Err(TryFail);
+        if next.is_null() {
+            return Ok(None);
         }
 
         self.head
             .delete::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
-            .map(|_| unsafe { Some((*next_ref.data.as_ptr()).clone()) })
+            .map(|_| unsafe {
+                let next_ref = next.deref(pool);
+                Some((*next_ref.data.as_ptr()).clone())
+            })
             .map_err(|_| TryFail)
     }
 
@@ -441,6 +431,7 @@ impl<T: Clone> Queue<T> {
         }
 
         loop {
+            deq_some.deq.reset();
             if let Some(v) = self.dequeue::<false>(&mut deq_some.deq, tid, guard, pool) {
                 return v;
             }
