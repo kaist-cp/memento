@@ -120,11 +120,15 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 guard,
             )
             .is_ok();
-        // 이제 client가 들고 있을 수 있으니 여기서 free하면 안됨. 대신 delete client가 reset시 자신이 deleter면 free
+        // // 이제 client가 들고 있을 수 있으니 여기서 free하면 안됨. 대신 delete client가 reset시 자신이 deleter면 free
         // if result {
         //     ALLOC
         //         .try_with(|a| {
-        //             ssmem_free(*a.borrow_mut(), curr_ref.pptr as *mut c_void, Some(pool));
+        //             ssmem_free(
+        //                 *a.borrow_mut(),
+        //                 curr_ref.pptr as *mut c_void,
+        //                 Some(global_pool().unwrap()),
+        //             );
         //         })
         //         .unwrap();
         // }
@@ -436,12 +440,16 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             for i in 0..num_nodes {
                 let curr_node = unsafe { curr_chunk.offset(i as isize) };
                 let curr_node_ref = unsafe { curr_node.as_ref() }.unwrap();
-                if !curr_node_ref.is_valid() || curr_node_ref.is_deleted() {
-                    // construct volatile free list of ssmem allocator
-                    ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
-                } else {
+                if curr_node_ref.is_inserted() {
+                    // 삽입되어있는 PNode면 VList에 재구성
                     // construct volatile SOFT list
                     self.quick_insert(curr_node);
+                } else if curr_node_ref.is_deleted() {
+                    // 삭제된 PNode이지만 delete client가 들고있음
+                } else {
+                    // 삭제 후 free까지 되어 zero-initialize된 block만이 재사용가능한 PNode block
+                    // construct volatile free list of ssmem allocator
+                    ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
                 }
             }
             curr = curr_ref.next;
@@ -593,12 +601,12 @@ impl<T: Clone + PartialEq> PNode<T> {
         res
     }
 
-    /// PNode가 valid한 건지(i.e. 삽입되어있는 건지) 여부 반환
-    fn is_valid(&self) -> bool {
+    /// list에 삽입되어있는 PNode인지 여부 반환
+    fn is_inserted(&self) -> bool {
         self.inserter() != 0 && self.deleter() == 0
     }
 
-    /// PNode가 delete된 건지 여부 반환
+    /// list에서 삭제된 PNode인지 여부 반환 (하지만 아직 delete client가 들고있는 상태. 어떤 cliet 들고 있지 않을 때(i.e. PNode가 SMR 통해 free될 경우에) zero-initiailze)
     // TODO: correctness
     // - inserter, deleter 둘다 0인 것만 재사용 가능한 PNode block으로 취급.
     // - inserter, deleter 둘다 있는 건 VList엔 없지만 Client가 들고 있는 노드임. allocator가 복구시 미사용중인 PNode로 판별하고 free block으로 가져가면 안됨.
