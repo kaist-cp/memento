@@ -91,6 +91,7 @@ impl<T: Clone> TryEnqueue<T> {
 #[derive(Debug)]
 pub struct Enqueue<T: Clone> {
     node: Checkpoint<PAtomic<Node<T>>>,
+    to_be_removed_field: CachePadded<usize>, // TODO(must): remove this after padding cache line properly
     try_enq: TryEnqueue<T>,
 }
 
@@ -98,6 +99,7 @@ impl<T: Clone> Default for Enqueue<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
+            to_be_removed_field: Default::default(),
             try_enq: Default::default(),
         }
     }
@@ -303,9 +305,12 @@ impl<T: Clone> Queue<T> {
             return Err(TryFail);
         }
 
-        let _ = self
-            .tail
-            .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+        if !REC {
+            let _ =
+                self.tail
+                    .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+        }
+
         Ok(())
     }
 
