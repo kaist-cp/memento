@@ -10,7 +10,7 @@ use crate::{
     pmem::{persist_obj, AsPPtr, Collectable, GarbageCollection, PoolHandle},
 };
 
-/// TODO(doc)
+/// Try lock memento
 #[derive(Debug, Default)]
 pub struct TryLock {
     target: Checkpoint<CheckpointableUsize>,
@@ -48,7 +48,7 @@ impl TryLock {
     }
 }
 
-/// TODO(doc)
+/// Lock memento
 #[derive(Debug, Default)]
 pub struct Lock {
     try_lock: TryLock,
@@ -70,7 +70,7 @@ impl Lock {
     }
 }
 
-/// TODO(doc)
+/// Spin lock
 #[derive(Debug)]
 pub struct SpinLock {
     inner: AtomicUsize,

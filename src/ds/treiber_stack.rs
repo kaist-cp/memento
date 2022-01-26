@@ -11,14 +11,14 @@ use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
 
-/// TODO(doc)
+/// Treiber stack node
 #[derive(Debug)]
 pub struct Node<T> {
-    /// TODO(doc)
-    pub data: T,
+    /// Data
+    pub(crate) data: T,
 
-    /// TODO(doc)
-    pub next: PAtomic<Self>,
+    /// Next node pointer
+    pub(crate) next: PAtomic<Self>,
 }
 
 impl<T> From<T> for Node<T> {
@@ -236,7 +236,7 @@ impl<T: Clone> TreiberStack<T> {
                 e.current
             }
         )
-        .load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+        .load(Ordering::Relaxed, guard);
 
         if self
             .try_push::<REC>(node, &mut push.try_push, tid, guard, pool)

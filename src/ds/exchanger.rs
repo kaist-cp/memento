@@ -40,7 +40,7 @@ pub enum TryFail {
     Busy,
 }
 
-/// TODO(doc)
+/// Exchanger node
 #[derive(Debug)]
 pub struct Node<T> {
     data: T,
@@ -265,7 +265,7 @@ impl<T: Clone> Exchanger<T> {
             .delete::<REC>(init_slot, mine, &mut try_xchg.update, tid, guard, pool)
             .map_err(|_| {
                 // 실패하면 contention으로 인한 fail 리턴
-                unsafe { guard.defer_pdestroy(node) }; // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
+                unsafe { guard.defer_pdestroy(node) }; // TODO(must): crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
                 TryFail::Busy
             })?;
 

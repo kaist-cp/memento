@@ -31,13 +31,9 @@ fn get_random_elim_index() -> usize {
     thread_rng().gen::<usize>() % ELIM_SIZE
 }
 
-/// TODO(doc)
 #[derive(Debug, Clone)]
-pub enum Request<T> {
-    /// TODO(doc)
+enum Request<T> {
     Push(T),
-
-    /// TODO(doc)
     Pop,
 }
 
@@ -284,7 +280,7 @@ impl<T: Clone> ElimStack<T> {
                 e.current
             }
         )
-        .load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+        .load(Ordering::Relaxed, guard);
 
         if self
             .try_push::<REC>(node, &mut push.try_push, tid, guard, pool)

@@ -13,11 +13,11 @@ use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
 
-/// TODO(doc)
+/// Failure of queue operations
 #[derive(Debug)]
 pub struct TryFail;
 
-/// TODO(doc)
+/// Queue node
 #[derive(Debug)]
 pub struct Node<T> {
     data: MaybeUninit<T>,
@@ -304,7 +304,7 @@ impl<T: Clone> QueueGeneral<T> {
             );
             e.current
         })
-        .load(Ordering::Relaxed, guard); // TODO(opt): usize를 checkpoint 해보기 (using `PShared::from_usize()`)
+        .load(Ordering::Relaxed, guard);
 
         if self
             .try_enqueue::<REC>(node, &mut enq.try_enq, tid, guard, pool)
