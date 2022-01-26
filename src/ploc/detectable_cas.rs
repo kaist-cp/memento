@@ -35,7 +35,7 @@ thread_local! {
 #[derive(Debug)]
 pub struct DetectableCASAtomic<N: Collectable> {
     /// TODO: doc
-    pub inner: CachePadded<PAtomic<N>>,
+    pub inner: PAtomic<N>,
 }
 
 impl<N: Collectable> Collectable for DetectableCASAtomic<N> {
@@ -47,7 +47,7 @@ impl<N: Collectable> Collectable for DetectableCASAtomic<N> {
 impl<N: Collectable> Default for DetectableCASAtomic<N> {
     fn default() -> Self {
         Self {
-            inner: CachePadded::new(PAtomic::null()),
+            inner: PAtomic::null(),
         }
     }
 }
@@ -55,7 +55,7 @@ impl<N: Collectable> Default for DetectableCASAtomic<N> {
 impl<N: Collectable> From<PShared<'_, N>> for DetectableCASAtomic<N> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
-            inner: CachePadded::new(PAtomic::from(node)),
+            inner: PAtomic::from(node),
         }
     }
 }
@@ -79,7 +79,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             let mut failed = c.borrow_mut();
             if let Some(last_chk) = *failed {
                 unsafe {
-                    if last_chk != (*mmt.checkpoint).as_pptr(pool) {
+                    if last_chk != mmt.checkpoint.as_pptr(pool) {
                         let last_chk_ref = last_chk.deref_mut(pool);
                         std::ptr::write(last_chk_ref as *mut _, FAILED);
                         persist_obj(last_chk_ref as &_, true);
@@ -111,14 +111,14 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 }
 
                 LAST_FAILED_CAS.with(|failed| {
-                    *failed.borrow_mut() = Some(unsafe { (*mmt.checkpoint).as_pptr(pool) });
+                    *failed.borrow_mut() = Some(unsafe { mmt.checkpoint.as_pptr(pool) });
                 });
 
                 return Err(cur);
             }
 
             // 성공하면 target을 persist
-            persist_obj(&*self.inner, true);
+            persist_obj(&self.inner, true);
 
             // 성공했다고 체크포인팅
             mmt.checkpoint_succ(cas_bit, tid, &pool.cas_info);
@@ -156,7 +156,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         cas_info: &CasInfo,
         guard: &'g Guard,
     ) -> Result<(), PShared<'g, N>> {
-        if *mmt.checkpoint == FAILED {
+        if mmt.checkpoint == FAILED {
             let cur = self.inner.load(Ordering::SeqCst, guard);
             return Err(self.help(cur, cas_info, guard)); // TODO(opt): RecFail?
         }
@@ -165,8 +165,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let (cur_bit, max_chk) = decompose_aux_bit(vchk as usize);
         let next_bit = 1 - cur_bit;
 
-        if *mmt.checkpoint != NOT_CHECKED {
-            let (_, cli_chk) = decompose_aux_bit(*mmt.checkpoint as usize);
+        if mmt.checkpoint != NOT_CHECKED {
+            let (_, cli_chk) = decompose_aux_bit(mmt.checkpoint as usize);
 
             match cli_chk.cmp(&max_chk) {
                 cmp::Ordering::Less => return Ok(()),
@@ -286,7 +286,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // persist the pointer before CASing winner thread's pcheckpoint
-            persist_obj(&*self.inner, false);
+            persist_obj(&self.inner, false);
 
             // CAS winner thread's pcheckpoint
             if cas_info.cas_pcheckpoint[winner_bit][winner_tid]
@@ -299,7 +299,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // help pointer to be clean.
-            persist_obj(&*cas_info.cas_pcheckpoint[winner_bit][winner_tid], false);
+            persist_obj(&cas_info.cas_pcheckpoint[winner_bit][winner_tid], false);
             match self.inner.compare_exchange(
                 old,
                 old.with_tid(0),
@@ -366,14 +366,14 @@ impl CasInfo {
 /// TODO(doc)
 #[derive(Debug)]
 pub struct Cas<N> {
-    checkpoint: CachePadded<u64>,
+    checkpoint: u64,
     _marker: PhantomData<N>,
 }
 
 impl<N> Default for Cas<N> {
     fn default() -> Self {
         Self {
-            checkpoint: CachePadded::new(NOT_CHECKED),
+            checkpoint: NOT_CHECKED,
             _marker: Default::default(),
         }
     }
@@ -383,11 +383,11 @@ impl<N> Collectable for Cas<N> {
     fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &PoolHandle) {
         // CAS client 중 max checkpoint를 가진 걸로 vcheckpoint에 기록해줌
         let vchk = pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let (_, cur_chk) = decompose_aux_bit(*cas.checkpoint as usize);
+        let (_, cur_chk) = decompose_aux_bit(cas.checkpoint as usize);
         let (_, max_chk) = decompose_aux_bit(vchk as usize);
 
         if cur_chk > max_chk {
-            pool.cas_info.cas_vcheckpoint[tid].store(*cas.checkpoint, Ordering::Relaxed);
+            pool.cas_info.cas_vcheckpoint[tid].store(cas.checkpoint, Ordering::Relaxed);
         }
     }
 }
@@ -396,16 +396,16 @@ impl<N> Cas<N> {
     /// TODO(doc)
     #[inline]
     pub fn reset(&mut self) {
-        *self.checkpoint = NOT_CHECKED;
-        persist_obj(&*self.checkpoint, false);
+        self.checkpoint = NOT_CHECKED;
+        persist_obj(&self.checkpoint, false);
     }
 
     #[inline]
     fn checkpoint_succ(&mut self, cas_bit: usize, tid: usize, cas_info: &CasInfo) {
         let t = calc_checkpoint(rdtscp(), cas_info);
         let new_chk = compose_aux_bit(cas_bit, t as usize) as u64;
-        *self.checkpoint = new_chk;
-        persist_obj(&*self.checkpoint, false); // There is always a CAS after this function
+        self.checkpoint = new_chk;
+        persist_obj(&self.checkpoint, false); // There is always a CAS after this function
         cas_info.cas_vcheckpoint[tid].store(new_chk, Ordering::Relaxed);
     }
 }
