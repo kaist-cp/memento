@@ -312,16 +312,20 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         result
     }
 
-    /// TODO: doc
-    // TODO: 복구로직
-    pub fn remove(&self, key: usize, client: &mut Remove<T>, pool: &PoolHandle) -> bool {
-        // 이미 수행한 client라면 같은 결과를 반환
+    /// remove
+    pub fn remove<const REC: bool>(
+        &self,
+        key: usize,
+        client: &mut Remove<T>,
+        pool: &PoolHandle,
+    ) -> bool {
+        // 이미 결과 찍힌 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
             return res;
         }
 
-        // 수행했던 PNode가 있다면, deleter가 나인지를 확인하여 결과 반환
-        if !client.target.is_null() {
+        // 타겟하는 PNode가 있다면, deleter가 나인지를 확인하여 결과 반환. 복구시에는 여기서 끝내면 안되고 target에 하려던 걸 마무리하고 끝내야함
+        if !REC && !client.target.is_null() {
             let res = unsafe { client.target.deref(pool) }.deleter() == client.id(pool);
             client.set_result(res);
             return res;
@@ -331,8 +335,26 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         let mut cas_result = false;
         let mut curr_state = State::Dummy;
         let (pred, curr) = self.find(key, &mut curr_state);
-        let curr_ref = unsafe { curr.deref() };
 
+        // 복구시 target하던 PNode가 있었다면, crash 이전에 target에 하려던 것만 마무리하고 종료
+        if REC && !client.target.is_null() {
+            let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
+            let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
+            let target = unsafe { client.target.as_ptr().deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+
+            // 이번에 찾은 VNode의 PNode가 내가 target하던 PNode와 다르다면, 내가 target하던건 이미 삭제 마무리된 것.
+            if pnode as *const _ as usize != target as *const _ as usize {
+                // deleter가 나인지 확인하여 결과 반환
+                let res = target.deleter() == client.id(pool);
+                client.set_result(res);
+                return res;
+            }
+
+            // 찾은 VNode의 PNode가 내가 target하던 PNode와 같다면 crash 이전에 하던 "삭제완료" 표시를 재시도하고 마무리
+            return self.finish_remove((pred, curr), client, pool);
+        }
+
+        let curr_ref = unsafe { curr.deref() };
         if curr_ref.key != key {
             client.set_result(false);
             return false;
@@ -343,7 +365,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             return false;
         }
 
-        // Modify state: INSERTED -> INTEND_TO_DELETE
+        // Modify VNode state: Inserted -> IntendToDelete
         while !cas_result
             && get_state(curr_ref.next.load(Ordering::SeqCst, guard)) == State::Inserted
         {
@@ -365,10 +387,25 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
         persist_obj(&client.target, true);
 
-        // Mark PNode as delete (durable point)
+        // 타겟팅한 노드의 삭제를 마무리
+        self.finish_remove((pred, curr), client, pool)
+    }
+
+    // 삭제 마무리: (1) PNode에 "삭제완료" 표시 (2) VNode에 "삭제완료" 표시
+    fn finish_remove<'g>(
+        &self,
+        (v_prev, v_curr): (Shared<'g, VNode<T>>, Shared<'g, VNode<T>>),
+        client: &mut Remove<T>,
+        pool: &PoolHandle,
+    ) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
+        let curr_ref = unsafe { v_curr.deref() };
+
+        // Mark PNode as deleted (durable point)
+        let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
         let result = pnode.destroy(client, pool);
 
-        // Modify state: INTEND_TO_DELETE -> DELETED (logical delete)
+        // Modify VNode state: IntendToDelete -> Deleted (logical delete)
         while get_state(curr_ref.next.load(Ordering::SeqCst, guard)) == State::IntendToDelete {
             let next = curr_ref.next.load(Ordering::SeqCst, guard);
             let _ = curr_ref.next.compare_exchange(
@@ -380,9 +417,9 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             );
         }
 
-        // State를 INSERTED에서 INTEND_TO_DELETE로 바꾼 한 명만 physical delete
+        // Deleter만 physical delete 수행
         if result {
-            let _ = self.trim(pred, curr);
+            let _ = self.trim(v_prev, v_curr);
         }
         result
     }
@@ -785,7 +822,7 @@ mod test {
             for _ in 0..COUNT {
                 assert!(list.insert::<false>(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
-                assert!(list.remove(tid, remove_cli, pool));
+                assert!(list.remove::<false>(tid, remove_cli, pool));
                 assert!(!list.contains(tid));
                 insert_cli.reset();
                 remove_cli.reset();

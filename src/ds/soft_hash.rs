@@ -39,9 +39,14 @@ impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
     }
 
     /// TODO: doc
-    pub fn remove(&self, k: usize, client: &mut HashRemove<T>, pool: &PoolHandle) -> bool {
+    pub fn remove<const REC: bool>(
+        &self,
+        k: usize,
+        client: &mut HashRemove<T>,
+        pool: &PoolHandle,
+    ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.remove(k, &mut client.remove, pool)
+        bucket.remove::<REC>(k, &mut client.remove, pool)
     }
 
     /// TODO: doc
@@ -152,7 +157,7 @@ mod test {
             for _ in 0..COUNT {
                 assert!(list.insert::<false>(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
-                assert!(list.remove(tid, remove_cli, pool));
+                assert!(list.remove::<false>(tid, remove_cli, pool));
                 assert!(!list.contains(tid));
                 insert_cli.reset();
                 remove_cli.reset();
