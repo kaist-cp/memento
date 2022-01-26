@@ -647,7 +647,7 @@ impl<T: Clone + PartialEq> PNode<T> {
     /// PNode에 key, value를 쓰고 valid 표시
     fn create(
         &mut self,
-        key: usize,
+        key: usize,               // PNode에 쓰일 key
         value: T,                 // PNode에 쓰일 value
         inserter: &mut Insert<T>, // client
         inserter_value: T,        // client가 시도하려던 value
