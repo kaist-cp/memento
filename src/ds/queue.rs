@@ -22,7 +22,7 @@ pub struct TryFail;
 pub struct Node<T> {
     data: MaybeUninit<T>,
     next: SMOAtomic<Self>,
-    owner: PAtomic<Self>,
+    owner: CachePadded<PAtomic<Self>>,
 }
 
 impl<T> From<T> for Node<T> {
@@ -30,7 +30,7 @@ impl<T> From<T> for Node<T> {
         Self {
             data: MaybeUninit::new(value),
             next: SMOAtomic::default(),
-            owner: PAtomic::from(not_deleted()),
+            owner: CachePadded::new(PAtomic::from(not_deleted())),
         }
     }
 }
@@ -40,7 +40,7 @@ impl<T> Default for Node<T> {
         Self {
             data: MaybeUninit::uninit(),
             next: SMOAtomic::default(),
-            owner: PAtomic::from(not_deleted()),
+            owner: CachePadded::new(PAtomic::from(not_deleted())),
         }
     }
 }
@@ -54,7 +54,7 @@ impl<T> Collectable for Node<T> {
 
 impl<T> insert_delete::Node for Node<T> {
     #[inline]
-    fn tid_next(&self) -> &PAtomic<Self> {
+    fn tid_next(&self) -> &CachePadded<PAtomic<Self>> {
         &self.owner
     }
 }
@@ -198,7 +198,7 @@ unsafe impl<T: Clone> Send for Dequeue<T> {}
 
 /// Must dequeue a value from Queue
 #[derive(Debug)]
-pub struct DequeueSome<T: 'static + Clone> {
+pub struct DequeueSome<T: Clone> {
     deq: Dequeue<T>,
 }
 

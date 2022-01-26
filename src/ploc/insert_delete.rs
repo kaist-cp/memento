@@ -3,6 +3,7 @@
 use std::{marker::PhantomData, sync::atomic::Ordering};
 
 use crossbeam_epoch::Guard;
+use crossbeam_utils::CachePadded;
 use etrace::*;
 
 use crate::{
@@ -22,7 +23,7 @@ pub trait Node: Sized {
     }
 
     /// Deleter's tid and next pointer for helping
-    fn tid_next(&self) -> &PAtomic<Self>;
+    fn tid_next(&self) -> &CachePadded<PAtomic<Self>>;
 }
 
 /// No owner를 표시하기 위함
@@ -172,7 +173,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 continue;
             }
 
-            persist_obj(owner, false); // cas soon
+            persist_obj(&*owner, false); // cas soon
             let ret = match self.inner.compare_exchange(
                 cur,
                 next.with_tid(0),
@@ -267,7 +268,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             .map_err(|_| self.load_helping(old, guard, pool).unwrap())?;
 
         // Now I own the location. flush the owner.
-        persist_obj(owner, false); // we're doing CAS soon.
+        persist_obj(&*owner, false); // we're doing CAS soon.
 
         // 주인을 정했으니 이제 point를 바꿔줌
         let _ = self
