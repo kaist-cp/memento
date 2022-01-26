@@ -661,7 +661,7 @@ fn new_node<K, V>(
     size: usize,
     pool: &PoolHandle,
 ) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-    let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
+    let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
         let _ = libc::memset(
@@ -1611,7 +1611,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         // After(general)
         let (slot, slot_ptr) = match find_result {
             Some(res) => (
-                PPtr::from(unsafe { res.slot.as_pptr(pool) }),
+                unsafe { res.slot.as_pptr(pool) },
                 PAtomic::from(res.slot_ptr),
             ),
             None => (PPtr::null(), PAtomic::null()),
