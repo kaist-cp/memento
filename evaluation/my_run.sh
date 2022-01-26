@@ -22,7 +22,7 @@ kind="pair"
 duration=5
 
 for target in ${targets[@]}; do
-    for thread in 1 4 12 32; do
+    for thread in 1 4 8 12 32; do
         # echo "$target"
         test_single $target $kind $thread $duration
     done

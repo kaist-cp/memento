@@ -9,7 +9,7 @@ use memento::PDefault;
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-impl<T: 'static + Clone> TestQueue for Queue<T> {
+impl<T: 'static + Clone + Collectable> TestQueue for Queue<T> {
     type EnqInput = (T, &'static mut Enqueue<T>); // value, memento
     type DeqInput = (&'static mut Dequeue<T>, usize); // memento, tid
 

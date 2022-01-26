@@ -2,7 +2,6 @@
 
 use super::{global_pool, PoolHandle};
 use std::{
-    borrow::BorrowMut,
     mem::MaybeUninit,
     os::raw::{c_char, c_int, c_ulong, c_void},
 };
