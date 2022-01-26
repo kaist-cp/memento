@@ -368,15 +368,16 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             && ((curr_state == State::Inserted) || (curr_state == State::IntendToDelete))
     }
 
-    /// recovery용 insert. newPNode에 대한 VNode를 volatile list에 insert함
-    // TODO: 다른 거 detectable 버전으로 변경 완료되면 이 로직 다시 확인
+    /// recovery용 insert
+    ///
+    /// PNode의 shadowing인 VNode를 만들어 volatile list에 insert
     #[allow(unused)]
     fn quick_insert(&self, new_pnode: *mut PNode<T>) {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let new_pnode_ref = unsafe { new_pnode.as_ref() }.unwrap();
         let key = new_pnode_ref.key;
         let value = new_pnode_ref.value.clone();
-        let new_node = Owned::new(VNode::new(key, value, new_pnode)).into_shared(guard);
+        let new_node = self.alloc_new_vnode(key, value, new_pnode);
         let new_node_ref = unsafe { new_node.deref() };
 
         let (mut pred, mut curr, mut succ) = (Shared::null(), Shared::null(), Shared::null());
@@ -427,9 +428,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         }
     }
 
-    // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
-    // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
-    // TODO: 다른 거 detectable 버전으로 변경 완료되면 이 로직 다시 확인
+    // offline recovery: thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
+    // TODO: 이 함수를 실질적으로 동작시키려면 복구시 per-thread로 호출하게 해야함
     #[allow(unused)]
     fn recovery(&self, palloc: &mut SsmemAllocator, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
@@ -445,9 +445,9 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                     // construct volatile SOFT list
                     self.quick_insert(curr_node);
                 } else if curr_node_ref.is_deleted() {
-                    // 삭제된 PNode이지만 delete client가 들고있음
+                    // 삽입 후 삭제됐지만 아직 delete client가 들고있는 PNode.
                 } else {
-                    // 삭제 후 free까지 되어 zero-initialize된 block만이 재사용가능한 PNode block
+                    // delete client의 손까지 떠나 free되며 0으로 초기화된 block만이 free block (free 되는 순간은 deleter client가 reset할 때)
                     // construct volatile free list of ssmem allocator
                     ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
                 }
@@ -525,6 +525,8 @@ impl<T: PartialEq + Clone> Remove<T> {
         persist_obj(&self.target, true);
 
         // target의 deleter가 나라면, 내가 free
+        // Q) free할 PNode의 VNode가 아직 VList에 남아있을 수 있지않나? (e.g. PNode deleter 등록 후 VNode를 VList에서 제거하기 전에 crash. 그리고 되살아나서 reset)
+        // A) reset은 반드시 recovery run까지 마친 후에 실행되어야함. 이러면 위 문제 안생김
         if !target.is_null() {
             let pool = global_pool().unwrap();
             let pnode_ref = unsafe { target.deref(pool) };
@@ -578,8 +580,9 @@ impl<T: Clone + PartialEq> PNode<T> {
     ) -> bool {
         self.key = key;
         self.value = value.clone();
+
+        // inserted, inserter의 persist order는 상관없음. inserted는 persist 안된 채(i.e. inserted=false) inserter만 persist 되었어도 삽입된걸로 구분하면 됨.
         self.inserted = true;
-        // TODO: persist 추가? (i.e. inserted -> inserter order가 중요한가?)
         let res = if value == inserter_value {
             self.inserter
                 .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
@@ -603,7 +606,7 @@ impl<T: Clone + PartialEq> PNode<T> {
 
     /// list에 삽입되어있는 PNode인지 여부 반환
     fn is_inserted(&self) -> bool {
-        self.inserter() != 0 && self.deleter() == 0
+        (self.inserted || self.inserter() != 0) && self.deleter() == 0
     }
 
     /// list에서 삭제된 PNode인지 여부 반환 (하지만 아직 delete client가 들고있는 상태. 어떤 cliet 들고 있지 않을 때(i.e. PNode가 SMR 통해 free될 경우에) zero-initiailze)
@@ -614,7 +617,7 @@ impl<T: Clone + PartialEq> PNode<T> {
     //  1  ssmem의 ebr이 collect하여 재사용가능한 block은 zero-initialze 해줘야할 듯 (새로 alloc 받은 것이 zero-initialize 되어있기만 하면 됨)
     //  2. allocator는 복구시 VList를 재구성하기 전에 (1) inserter, deleter 둘다 찍혀있지만 (2) 이를 가리키는 client가 없는 block들을 찾아서 zero-initialize 부터 해줘야할 듯
     fn is_deleted(&self) -> bool {
-        self.inserter() != 0 && self.deleter() != 0
+        (self.inserted || self.inserter() != 0) && self.deleter() != 0
     }
 
     fn inserter(&self) -> usize {
