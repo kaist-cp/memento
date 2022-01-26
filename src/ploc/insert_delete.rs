@@ -18,11 +18,11 @@ use crate::{
 pub trait Node: Sized {
     /// Indication of acknowledgement for `Insert`
     fn acked(&self, guard: &Guard) -> bool {
-        self.tid_next().load(Ordering::SeqCst, guard) != not_deleted()
+        self.replacement().load(Ordering::SeqCst, guard) != not_deleted()
     }
 
     /// Deleter's tid and next pointer for helping
-    fn tid_next(&self) -> &PAtomic<Self>;
+    fn replacement(&self) -> &PAtomic<Self>;
 }
 
 /// No owner를 표시하기 위함
@@ -148,7 +148,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         let old_ref = some_or!(unsafe { old.as_ref(pool) }, return Ok(old));
 
-        let owner = old_ref.tid_next();
+        let owner = old_ref.replacement();
         let next = owner.load(Ordering::SeqCst, guard);
         if next == not_deleted() {
             return Ok(old);
@@ -255,7 +255,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
 
         // 빼려는 node에 내 이름 새겨넣음
         let target_ref = unsafe { old.deref(pool) };
-        let owner = target_ref.tid_next();
+        let owner = target_ref.replacement();
         let _ = owner
             .compare_exchange(
                 PShared::null(),
@@ -298,7 +298,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         );
 
         // owner가 내가 아니면 실패
-        let owner = old_ref.tid_next().load(Ordering::SeqCst, guard);
+        let owner = old_ref.replacement().load(Ordering::SeqCst, guard);
         if owner.tid() != tid {
             return Err(ok_or!(self.load_helping(old, guard, pool), e, e));
         }

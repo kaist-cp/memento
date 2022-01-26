@@ -19,53 +19,54 @@ pub struct TryFail;
 
 /// Queue node
 #[derive(Debug)]
-pub struct Node<T> {
+pub struct Node<T: Collectable> {
     data: MaybeUninit<T>,
     next: SMOAtomic<Self>,
-    owner: PAtomic<Self>,
+    repl: PAtomic<Self>,
 }
 
-impl<T> From<T> for Node<T> {
+impl<T: Collectable> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: MaybeUninit::new(value),
             next: SMOAtomic::default(),
-            owner: PAtomic::from(not_deleted()),
+            repl: PAtomic::from(not_deleted()),
         }
     }
 }
 
-impl<T> Default for Node<T> {
+impl<T: Collectable> Default for Node<T> {
     fn default() -> Self {
         Self {
             data: MaybeUninit::uninit(),
             next: SMOAtomic::default(),
-            owner: PAtomic::from(not_deleted()),
+            repl: PAtomic::from(not_deleted()),
         }
     }
 }
 
-// TODO(must): T should be collectable
-impl<T> Collectable for Node<T> {
+impl<T: Collectable> Collectable for Node<T> {
     fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        MaybeUninit::filter(&mut node.data, tid, gc, pool);
         SMOAtomic::filter(&mut node.next, tid, gc, pool);
+        PAtomic::filter(&mut node.repl, tid, gc, pool)
     }
 }
 
-impl<T> insert_delete::Node for Node<T> {
+impl<T: Collectable> insert_delete::Node for Node<T> {
     #[inline]
-    fn tid_next(&self) -> &PAtomic<Self> {
-        &self.owner
+    fn replacement(&self) -> &PAtomic<Self> {
+        &self.repl
     }
 }
 
 /// try push operation for Queue
 #[derive(Debug)]
-pub struct TryEnqueue<T: Clone> {
+pub struct TryEnqueue<T: Clone + Collectable> {
     insert: Insert<Queue<T>, Node<T>>,
 }
 
-impl<T: Clone> Default for TryEnqueue<T> {
+impl<T: Clone + Collectable> Default for TryEnqueue<T> {
     fn default() -> Self {
         Self {
             insert: Default::default(),
@@ -73,13 +74,13 @@ impl<T: Clone> Default for TryEnqueue<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for TryEnqueue<T> {}
+unsafe impl<T: Clone + Collectable> Send for TryEnqueue<T> {}
 
-impl<T: Clone> Collectable for TryEnqueue<T> {
+impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
 }
 
-impl<T: Clone> TryEnqueue<T> {
+impl<T: Clone + Collectable> TryEnqueue<T> {
     /// Reset TryEnqueue memento
     #[inline]
     pub fn reset(&mut self) {
@@ -89,12 +90,12 @@ impl<T: Clone> TryEnqueue<T> {
 
 /// Queue의 enqueue
 #[derive(Debug)]
-pub struct Enqueue<T: Clone> {
+pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_enq: TryEnqueue<T>,
 }
 
-impl<T: Clone> Default for Enqueue<T> {
+impl<T: Clone + Collectable> Default for Enqueue<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
@@ -103,14 +104,14 @@ impl<T: Clone> Default for Enqueue<T> {
     }
 }
 
-impl<T: Clone> Collectable for Enqueue<T> {
+impl<T: Clone + Collectable> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Checkpoint::filter(&mut enq.node, tid, gc, pool);
         TryEnqueue::filter(&mut enq.try_enq, tid, gc, pool);
     }
 }
 
-impl<T: Clone> Enqueue<T> {
+impl<T: Clone + Collectable> Enqueue<T> {
     /// Reset Enqueue memento
     #[inline]
     pub fn reset(&mut self) {
@@ -119,9 +120,9 @@ impl<T: Clone> Enqueue<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for Enqueue<T> {}
+unsafe impl<T: Clone + Collectable> Send for Enqueue<T> {}
 
-impl<T: Clone> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
+impl<T: Clone + Collectable> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
     fn invalidate(&mut self) {
         self.1.store(invalid_ptr(), Ordering::Relaxed);
     }
@@ -135,12 +136,12 @@ impl<T: Clone> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
 
 /// Queue의 try dequeue operation
 #[derive(Debug)]
-pub struct TryDequeue<T: Clone> {
+pub struct TryDequeue<T: Clone + Collectable> {
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
     delete: Delete<Node<T>>,
 }
 
-impl<T: Clone> Default for TryDequeue<T> {
+impl<T: Clone + Collectable> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
             head_next: Default::default(),
@@ -149,15 +150,15 @@ impl<T: Clone> Default for TryDequeue<T> {
     }
 }
 
-unsafe impl<T: Clone + Send + Sync> Send for TryDequeue<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 
-impl<T: Clone> Collectable for TryDequeue<T> {
+impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Delete::filter(&mut try_deq.delete, tid, gc, pool);
     }
 }
 
-impl<T: Clone> TryDequeue<T> {
+impl<T: Clone + Collectable> TryDequeue<T> {
     /// Reset TryDequeue memento
     #[inline]
     pub fn reset(&mut self) {
@@ -168,11 +169,11 @@ impl<T: Clone> TryDequeue<T> {
 
 /// Queue의 Dequeue
 #[derive(Debug)]
-pub struct Dequeue<T: Clone> {
+pub struct Dequeue<T: Clone + Collectable> {
     try_deq: TryDequeue<T>,
 }
 
-impl<T: Clone> Default for Dequeue<T> {
+impl<T: Clone + Collectable> Default for Dequeue<T> {
     fn default() -> Self {
         Self {
             try_deq: Default::default(),
@@ -180,13 +181,13 @@ impl<T: Clone> Default for Dequeue<T> {
     }
 }
 
-impl<T: Clone> Collectable for Dequeue<T> {
+impl<T: Clone + Collectable> Collectable for Dequeue<T> {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         TryDequeue::filter(&mut deq.try_deq, tid, gc, pool);
     }
 }
 
-impl<T: Clone> Dequeue<T> {
+impl<T: Clone + Collectable> Dequeue<T> {
     /// Reset Dequeue memento
     #[inline]
     pub fn reset(&mut self) {
@@ -194,15 +195,15 @@ impl<T: Clone> Dequeue<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for Dequeue<T> {}
+unsafe impl<T: Clone + Collectable> Send for Dequeue<T> {}
 
 /// Must dequeue a value from Queue
 #[derive(Debug)]
-pub struct DequeueSome<T: 'static + Clone> {
+pub struct DequeueSome<T: Clone + Collectable> {
     deq: Dequeue<T>,
 }
 
-impl<T: Clone> Default for DequeueSome<T> {
+impl<T: Clone + Collectable> Default for DequeueSome<T> {
     fn default() -> Self {
         Self {
             deq: Default::default(),
@@ -210,13 +211,13 @@ impl<T: Clone> Default for DequeueSome<T> {
     }
 }
 
-impl<T: Clone> Collectable for DequeueSome<T> {
+impl<T: Clone + Collectable> Collectable for DequeueSome<T> {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Dequeue::filter(&mut deq.deq, tid, gc, pool);
     }
 }
 
-impl<T: Clone> DequeueSome<T> {
+impl<T: Clone + Collectable> DequeueSome<T> {
     /// Reset DequeueSome memento
     #[inline]
     pub fn reset(&mut self) {
@@ -224,16 +225,16 @@ impl<T: Clone> DequeueSome<T> {
     }
 }
 
-unsafe impl<T: Clone> Send for DequeueSome<T> {}
+unsafe impl<T: Clone + Collectable> Send for DequeueSome<T> {}
 
 /// Persistent Queue
 #[derive(Debug)]
-pub struct Queue<T: Clone> {
+pub struct Queue<T: Clone + Collectable> {
     head: CachePadded<SMOAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
 }
 
-impl<T: Clone> PDefault for Queue<T> {
+impl<T: Clone + Collectable> PDefault for Queue<T> {
     fn pdefault(pool: &PoolHandle) -> Self {
         let guard = unsafe { epoch::unprotected() };
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
@@ -246,13 +247,13 @@ impl<T: Clone> PDefault for Queue<T> {
     }
 }
 
-impl<T: Clone> Collectable for Queue<T> {
+impl<T: Clone + Collectable> Collectable for Queue<T> {
     fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         SMOAtomic::filter(&mut queue.head, tid, gc, pool);
     }
 }
 
-impl<T: Clone> Traversable<Node<T>> for Queue<T> {
+impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(Ordering::SeqCst, guard);
 
@@ -270,7 +271,7 @@ impl<T: Clone> Traversable<Node<T>> for Queue<T> {
     }
 }
 
-impl<T: Clone> Queue<T> {
+impl<T: Clone + Collectable> Queue<T> {
     /// Try enqueue
     pub fn try_enqueue<const REC: bool>(
         &self,
@@ -445,7 +446,7 @@ impl<T: Clone> Queue<T> {
     }
 }
 
-unsafe impl<T: Clone + Send + Sync> Send for Queue<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for Queue<T> {}
 
 #[cfg(test)]
 mod test {
