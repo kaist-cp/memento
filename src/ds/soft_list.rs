@@ -168,16 +168,21 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         (prev, curr)
     }
 
-    /// TODO: doc
-    // TODO: 복구로직
-    pub fn insert(&self, key: usize, value: T, client: &mut Insert<T>, pool: &PoolHandle) -> bool {
+    /// insert
+    pub fn insert<const REC: bool>(
+        &self,
+        key: usize,
+        value: T,
+        client: &mut Insert<T>,
+        pool: &PoolHandle,
+    ) -> bool {
         // 이미 결과 찍힌 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
             return res;
         }
 
-        // 수행했던 PNode가 있다면, inserter가 나인지를 확인하여 결과 반환
-        if !client.target.is_null() {
+        // 타겟하는 PNode가 있다면, inserter가 나인지 확인하여 결과 반환. 복구시에는 여기서 끝내면 안되고 target에 하려던 걸 마무리하고 끝내야함
+        if !REC && !client.target.is_null() {
             let res = unsafe { client.target.deref(pool) }.inserter() == client.id(pool);
             client.set_result(res);
             return res;
@@ -189,6 +194,25 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         'retry: loop {
             // 삽입할 위치를 탐색
             let (pred, curr) = self.find(key, &mut curr_state);
+
+            // 복구시 target하던 PNode가 있었다면, crash 이전에 target에 하려던 것만 마무리하고 종료
+            if REC && !client.target.is_null() {
+                let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
+                let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
+                let target = unsafe { client.target.as_ptr().deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+
+                // 이번에 찾은 VNode의 PNode가 내가 target하던 PNode와 다르다면, 내가 target하던건 이미 삽입완료된 후 삭제된 것.
+                if pnode as *const _ as usize != target as *const _ as usize {
+                    // 삽입완료 표시는 됐지만 inserter는 아직 결정되지 않았을 수 있으므로 inserter 등록시도
+                    let res = target.create(target.key, target.value.clone(), client, value, pool);
+                    client.set_result(res);
+                    return res;
+                }
+
+                // 찾은 VNode의 PNode가 내가 target하던 PNode와 같다면 crash 이전에 하던 "삽입완료" 표시를 재시도하고 마무리
+                return self.finish_insert(vnode, value, client, pool);
+            }
+
             let curr_ref = unsafe { curr.deref() };
             let pred_state = get_state(curr);
 
@@ -246,32 +270,46 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
             persist_obj(&client.target, true);
 
-            // Mark PNode as inserted (durable point)
-            let pnode = unsafe { result_node.pptr.as_mut().unwrap() };
-            let result = pnode.create(
-                result_node.key,
-                result_node.value.clone(),
-                client,
-                value,
-                pool,
-            );
-
-            // State: IntendToInsert -> Inserted
-            loop {
-                let next = result_node.next.load(Ordering::SeqCst, guard);
-                if get_state(next) != State::IntendToInsert {
-                    break;
-                }
-                let _ = result_node.next.compare_exchange(
-                    next,
-                    next.with_tag(State::Inserted as usize),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            }
-            return result;
+            // 타겟팅한 노드의 삽입을 마무리
+            return self.finish_insert(result_node, value, client, pool);
         }
+    }
+
+    // 삽입 마무리: (1) PNode에 "삽입완료" 표시 (2) VNode에 "삽입완료" 표시
+    fn finish_insert(
+        &self,
+        result_node: &VNode<T>,
+        value: T,
+        client: &mut Insert<T>,
+        pool: &PoolHandle,
+    ) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
+
+        // Mark PNode as inserted (durable point)
+        let pnode = unsafe { result_node.pptr.as_mut().unwrap() };
+        let result = pnode.create(
+            result_node.key,
+            result_node.value.clone(),
+            client,
+            value,
+            pool,
+        );
+
+        // State: IntendToInsert -> Inserted
+        loop {
+            let next = result_node.next.load(Ordering::SeqCst, guard);
+            if get_state(next) != State::IntendToInsert {
+                break;
+            }
+            let _ = result_node.next.compare_exchange(
+                next,
+                next.with_tag(State::Inserted as usize),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            );
+        }
+        result
     }
 
     /// TODO: doc
@@ -745,7 +783,7 @@ mod test {
             let insert_cli = &mut client.insert;
             let remove_cli = &mut client.remove;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, insert_cli, pool));
+                assert!(list.insert::<false>(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
                 assert!(list.remove(tid, remove_cli, pool));
                 assert!(!list.contains(tid));

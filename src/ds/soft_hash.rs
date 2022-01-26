@@ -26,10 +26,16 @@ impl<T: Default> Default for SOFTHashTable<T> {
 }
 
 impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
-    /// TODO: doc
-    pub fn insert(&self, k: usize, item: T, client: &mut HashInsert<T>, pool: &PoolHandle) -> bool {
+    /// insert
+    pub fn insert<const REC: bool>(
+        &self,
+        k: usize,
+        item: T,
+        client: &mut HashInsert<T>,
+        pool: &PoolHandle,
+    ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.insert(k, item, &mut client.insert, pool)
+        bucket.insert::<REC>(k, item, &mut client.insert, pool)
     }
 
     /// TODO: doc
@@ -144,7 +150,7 @@ mod test {
             let insert_cli = &mut m.insert;
             let remove_cli = &mut m.remover;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, insert_cli, pool));
+                assert!(list.insert::<false>(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
                 assert!(list.remove(tid, remove_cli, pool));
                 assert!(!list.contains(tid));
