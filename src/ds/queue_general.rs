@@ -342,6 +342,8 @@ impl<T: Clone> QueueGeneral<T> {
                 break (head, next);
             }
 
+            // tail is stale
+            persist_obj(&unsafe { tail.deref(pool) }.next, false);
             let _ =
                 self.tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
