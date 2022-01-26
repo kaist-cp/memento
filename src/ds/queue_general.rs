@@ -363,13 +363,18 @@ impl<T: Clone> QueueGeneral<T> {
             return Ok(None);
         }
 
-        self.head
+        if self
+            .head
             .cas::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
-            .map(|()| unsafe {
-                guard.defer_pdestroy(head);
-                Some((*next.deref(pool).data.as_ptr()).clone())
-            })
-            .map_err(|_| TryFail)
+            .is_err()
+        {
+            return Err(TryFail);
+        }
+
+        Ok(unsafe {
+            guard.defer_pdestroy(head);
+            Some((*next.deref(pool).data.as_ptr()).clone())
+        })
     }
 
     /// Dequeue

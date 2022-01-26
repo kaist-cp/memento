@@ -390,13 +390,18 @@ impl<T: Clone> Queue<T> {
             return Ok(None);
         }
 
-        self.head
+        if self
+            .head
             .delete::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
-            .map(|_| unsafe {
-                let next_ref = next.deref(pool);
-                Some((*next_ref.data.as_ptr()).clone())
-            })
-            .map_err(|_| TryFail)
+            .is_err()
+        {
+            return Err(TryFail);
+        }
+
+        Ok(unsafe {
+            let next_ref = next.deref(pool);
+            Some((*next_ref.data.as_ptr()).clone())
+        })
     }
 
     /// Dequeue
