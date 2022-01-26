@@ -81,7 +81,7 @@ pub extern "C" fn run_insert(
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    let res = obj.inner.insert(k, v, &mut m.insert, pool);
+    let res = obj.inner.insert::<false>(k, v, &mut m.insert, pool);
     m.insert.reset();
     res
 }
@@ -94,7 +94,7 @@ pub extern "C" fn run_delete(
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
-    let res = obj.inner.remove(k, &mut m.delete, pool);
+    let res = obj.inner.remove::<false>(k, &mut m.delete, pool);
     m.delete.reset();
     res
 }

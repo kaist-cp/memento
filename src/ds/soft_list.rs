@@ -168,16 +168,21 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         (prev, curr)
     }
 
-    /// TODO: doc
-    // TODO: 복구로직
-    pub fn insert(&self, key: usize, value: T, client: &mut Insert<T>, pool: &PoolHandle) -> bool {
+    /// insert
+    pub fn insert<const REC: bool>(
+        &self,
+        key: usize,
+        value: T,
+        client: &mut Insert<T>,
+        pool: &PoolHandle,
+    ) -> bool {
         // 이미 결과 찍힌 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
             return res;
         }
 
-        // 수행했던 PNode가 있다면, inserter가 나인지를 확인하여 결과 반환
-        if !client.target.is_null() {
+        // 타겟하는 PNode가 있다면, inserter가 나인지 확인하여 결과 반환. 복구시에는 여기서 끝내면 안되고 target에 하려던 걸 마무리하고 끝내야함
+        if !REC && !client.target.is_null() {
             let res = unsafe { client.target.deref(pool) }.inserter() == client.id(pool);
             client.set_result(res);
             return res;
@@ -189,6 +194,25 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         'retry: loop {
             // 삽입할 위치를 탐색
             let (pred, curr) = self.find(key, &mut curr_state);
+
+            // 복구시 target하던 PNode가 있었다면, crash 이전에 target에 하려던 것만 마무리하고 종료
+            if REC && !client.target.is_null() {
+                let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
+                let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
+                let target = unsafe { client.target.as_ptr().deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+
+                // 이번에 찾은 VNode의 PNode가 내가 target하던 PNode와 다르다면, 내가 target하던건 이미 삽입완료된 후 삭제된 것.
+                if pnode as *const _ as usize != target as *const _ as usize {
+                    // 삽입완료 표시는 됐지만 inserter는 아직 결정되지 않았을 수 있으므로 inserter 등록시도
+                    let res = target.create(target.key, target.value.clone(), client, value, pool);
+                    client.set_result(res);
+                    return res;
+                }
+
+                // 찾은 VNode의 PNode가 내가 target하던 PNode와 같다면 crash 이전에 하던 "삽입완료" 표시를 재시도하고 마무리
+                return self.finish_insert(vnode, value, client, pool);
+            }
+
             let curr_ref = unsafe { curr.deref() };
             let pred_state = get_state(curr);
 
@@ -246,44 +270,62 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
             persist_obj(&client.target, true);
 
-            // Mark PNode as inserted (durable point)
-            let pnode = unsafe { result_node.pptr.as_mut().unwrap() };
-            let result = pnode.create(
-                result_node.key,
-                result_node.value.clone(),
-                client,
-                value,
-                pool,
-            );
-
-            // State: IntendToInsert -> Inserted
-            loop {
-                let next = result_node.next.load(Ordering::SeqCst, guard);
-                if get_state(next) != State::IntendToInsert {
-                    break;
-                }
-                let _ = result_node.next.compare_exchange(
-                    next,
-                    next.with_tag(State::Inserted as usize),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            }
-            return result;
+            // 타겟팅한 노드의 삽입을 마무리
+            return self.finish_insert(result_node, value, client, pool);
         }
     }
 
-    /// TODO: doc
-    // TODO: 복구로직
-    pub fn remove(&self, key: usize, client: &mut Remove<T>, pool: &PoolHandle) -> bool {
-        // 이미 수행한 client라면 같은 결과를 반환
+    // 삽입 마무리: (1) PNode에 "삽입완료" 표시 (2) VNode에 "삽입완료" 표시
+    fn finish_insert(
+        &self,
+        result_node: &VNode<T>,
+        value: T,
+        client: &mut Insert<T>,
+        pool: &PoolHandle,
+    ) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
+
+        // Mark PNode as inserted (durable point)
+        let pnode = unsafe { result_node.pptr.as_mut().unwrap() };
+        let result = pnode.create(
+            result_node.key,
+            result_node.value.clone(),
+            client,
+            value,
+            pool,
+        );
+
+        // State: IntendToInsert -> Inserted
+        loop {
+            let next = result_node.next.load(Ordering::SeqCst, guard);
+            if get_state(next) != State::IntendToInsert {
+                break;
+            }
+            let _ = result_node.next.compare_exchange(
+                next,
+                next.with_tag(State::Inserted as usize),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            );
+        }
+        result
+    }
+
+    /// remove
+    pub fn remove<const REC: bool>(
+        &self,
+        key: usize,
+        client: &mut Remove<T>,
+        pool: &PoolHandle,
+    ) -> bool {
+        // 이미 결과 찍힌 client라면 같은 결과를 반환
         if let Some(res) = client.result() {
             return res;
         }
 
-        // 수행했던 PNode가 있다면, deleter가 나인지를 확인하여 결과 반환
-        if !client.target.is_null() {
+        // 타겟하는 PNode가 있다면, deleter가 나인지를 확인하여 결과 반환. 복구시에는 여기서 끝내면 안되고 target에 하려던 걸 마무리하고 끝내야함
+        if !REC && !client.target.is_null() {
             let res = unsafe { client.target.deref(pool) }.deleter() == client.id(pool);
             client.set_result(res);
             return res;
@@ -293,8 +335,26 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         let mut cas_result = false;
         let mut curr_state = State::Dummy;
         let (pred, curr) = self.find(key, &mut curr_state);
-        let curr_ref = unsafe { curr.deref() };
 
+        // 복구시 target하던 PNode가 있었다면, crash 이전에 target에 하려던 것만 마무리하고 종료
+        if REC && !client.target.is_null() {
+            let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
+            let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
+            let target = unsafe { client.target.as_ptr().deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+
+            // 이번에 찾은 VNode의 PNode가 내가 target하던 PNode와 다르다면, 내가 target하던건 이미 삭제 마무리된 것.
+            if pnode as *const _ as usize != target as *const _ as usize {
+                // deleter가 나인지 확인하여 결과 반환
+                let res = target.deleter() == client.id(pool);
+                client.set_result(res);
+                return res;
+            }
+
+            // 찾은 VNode의 PNode가 내가 target하던 PNode와 같다면 crash 이전에 하던 "삭제완료" 표시를 재시도하고 마무리
+            return self.finish_remove((pred, curr), client, pool);
+        }
+
+        let curr_ref = unsafe { curr.deref() };
         if curr_ref.key != key {
             client.set_result(false);
             return false;
@@ -305,7 +365,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             return false;
         }
 
-        // Modify state: INSERTED -> INTEND_TO_DELETE
+        // Modify VNode state: Inserted -> IntendToDelete
         while !cas_result
             && get_state(curr_ref.next.load(Ordering::SeqCst, guard)) == State::Inserted
         {
@@ -327,10 +387,25 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
         persist_obj(&client.target, true);
 
-        // Mark PNode as delete (durable point)
+        // 타겟팅한 노드의 삭제를 마무리
+        self.finish_remove((pred, curr), client, pool)
+    }
+
+    // 삭제 마무리: (1) PNode에 "삭제완료" 표시 (2) VNode에 "삭제완료" 표시
+    fn finish_remove<'g>(
+        &self,
+        (v_prev, v_curr): (Shared<'g, VNode<T>>, Shared<'g, VNode<T>>),
+        client: &mut Remove<T>,
+        pool: &PoolHandle,
+    ) -> bool {
+        let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
+        let curr_ref = unsafe { v_curr.deref() };
+
+        // Mark PNode as deleted (durable point)
+        let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
         let result = pnode.destroy(client, pool);
 
-        // Modify state: INTEND_TO_DELETE -> DELETED (logical delete)
+        // Modify VNode state: IntendToDelete -> Deleted (logical delete)
         while get_state(curr_ref.next.load(Ordering::SeqCst, guard)) == State::IntendToDelete {
             let next = curr_ref.next.load(Ordering::SeqCst, guard);
             let _ = curr_ref.next.compare_exchange(
@@ -342,9 +417,9 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             );
         }
 
-        // State를 INSERTED에서 INTEND_TO_DELETE로 바꾼 한 명만 physical delete
+        // Deleter만 physical delete 수행
         if result {
-            let _ = self.trim(pred, curr);
+            let _ = self.trim(v_prev, v_curr);
         }
         result
     }
@@ -368,15 +443,16 @@ impl<T: Clone + PartialEq> SOFTList<T> {
             && ((curr_state == State::Inserted) || (curr_state == State::IntendToDelete))
     }
 
-    /// recovery용 insert. newPNode에 대한 VNode를 volatile list에 insert함
-    // TODO: 다른 거 detectable 버전으로 변경 완료되면 이 로직 다시 확인
+    /// recovery용 insert
+    ///
+    /// PNode의 shadowing인 VNode를 만들어 volatile list에 insert
     #[allow(unused)]
     fn quick_insert(&self, new_pnode: *mut PNode<T>) {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
         let new_pnode_ref = unsafe { new_pnode.as_ref() }.unwrap();
         let key = new_pnode_ref.key;
         let value = new_pnode_ref.value.clone();
-        let new_node = Owned::new(VNode::new(key, value, new_pnode)).into_shared(guard);
+        let new_node = self.alloc_new_vnode(key, value, new_pnode);
         let new_node_ref = unsafe { new_node.deref() };
 
         let (mut pred, mut curr, mut succ) = (Shared::null(), Shared::null(), Shared::null());
@@ -427,9 +503,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         }
     }
 
-    // thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
-    // TODO: volatile list를 reconstruct하려면 복구시 per-thread로 이 함수 호출하게 하거나, 혹은 싱글 스레드가 per-thread durable area를 모두 순회하게 해야함
-    // TODO: 다른 거 detectable 버전으로 변경 완료되면 이 로직 다시 확인
+    // offline recovery: thread가 thread-local durable area를 보고 volatile list에 삽입할 노드를 insert
+    // TODO: 이 함수를 실질적으로 동작시키려면 복구시 per-thread로 호출하게 해야함
     #[allow(unused)]
     fn recovery(&self, palloc: &mut SsmemAllocator, pool: &PoolHandle) {
         let mut curr = palloc.mem_chunks;
@@ -445,9 +520,9 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                     // construct volatile SOFT list
                     self.quick_insert(curr_node);
                 } else if curr_node_ref.is_deleted() {
-                    // 삭제된 PNode이지만 delete client가 들고있음
+                    // 삽입 후 삭제됐지만 아직 delete client가 들고있는 PNode.
                 } else {
-                    // 삭제 후 free까지 되어 zero-initialize된 block만이 재사용가능한 PNode block
+                    // delete client의 손까지 떠나 free되며 0으로 초기화된 block만이 free block (free 되는 순간은 deleter client가 reset할 때)
                     // construct volatile free list of ssmem allocator
                     ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
                 }
@@ -525,6 +600,8 @@ impl<T: PartialEq + Clone> Remove<T> {
         persist_obj(&self.target, true);
 
         // target의 deleter가 나라면, 내가 free
+        // Q) free할 PNode의 VNode가 아직 VList에 남아있을 수 있지않나? (e.g. PNode deleter 등록 후 VNode를 VList에서 제거하기 전에 crash. 그리고 되살아나서 reset)
+        // A) reset은 반드시 recovery run까지 마친 후에 실행되어야함. 이러면 위 문제 안생김
         if !target.is_null() {
             let pool = global_pool().unwrap();
             let pnode_ref = unsafe { target.deref(pool) };
@@ -570,7 +647,7 @@ impl<T: Clone + PartialEq> PNode<T> {
     /// PNode에 key, value를 쓰고 valid 표시
     fn create(
         &mut self,
-        key: usize,
+        key: usize,               // PNode에 쓰일 key
         value: T,                 // PNode에 쓰일 value
         inserter: &mut Insert<T>, // client
         inserter_value: T,        // client가 시도하려던 value
@@ -578,8 +655,9 @@ impl<T: Clone + PartialEq> PNode<T> {
     ) -> bool {
         self.key = key;
         self.value = value.clone();
+
+        // inserted, inserter의 persist order는 상관없음. inserted는 persist 안된 채(i.e. inserted=false) inserter만 persist 되었어도 삽입된걸로 구분하면 됨.
         self.inserted = true;
-        // TODO: persist 추가? (i.e. inserted -> inserter order가 중요한가?)
         let res = if value == inserter_value {
             self.inserter
                 .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
@@ -603,7 +681,7 @@ impl<T: Clone + PartialEq> PNode<T> {
 
     /// list에 삽입되어있는 PNode인지 여부 반환
     fn is_inserted(&self) -> bool {
-        self.inserter() != 0 && self.deleter() == 0
+        (self.inserted || self.inserter() != 0) && self.deleter() == 0
     }
 
     /// list에서 삭제된 PNode인지 여부 반환 (하지만 아직 delete client가 들고있는 상태. 어떤 cliet 들고 있지 않을 때(i.e. PNode가 SMR 통해 free될 경우에) zero-initiailze)
@@ -614,7 +692,7 @@ impl<T: Clone + PartialEq> PNode<T> {
     //  1  ssmem의 ebr이 collect하여 재사용가능한 block은 zero-initialze 해줘야할 듯 (새로 alloc 받은 것이 zero-initialize 되어있기만 하면 됨)
     //  2. allocator는 복구시 VList를 재구성하기 전에 (1) inserter, deleter 둘다 찍혀있지만 (2) 이를 가리키는 client가 없는 block들을 찾아서 zero-initialize 부터 해줘야할 듯
     fn is_deleted(&self) -> bool {
-        self.inserter() != 0 && self.deleter() != 0
+        (self.inserted || self.inserter() != 0) && self.deleter() != 0
     }
 
     fn inserter(&self) -> usize {
@@ -742,9 +820,9 @@ mod test {
             let insert_cli = &mut client.insert;
             let remove_cli = &mut client.remove;
             for _ in 0..COUNT {
-                assert!(list.insert(tid, tid, insert_cli, pool));
+                assert!(list.insert::<false>(tid, tid, insert_cli, pool));
                 assert!(list.contains(tid));
-                assert!(list.remove(tid, remove_cli, pool));
+                assert!(list.remove::<false>(tid, remove_cli, pool));
                 assert!(!list.contains(tid));
                 insert_cli.reset();
                 remove_cli.reset();
