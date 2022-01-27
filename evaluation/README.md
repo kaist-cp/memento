@@ -37,6 +37,11 @@ TODO: 현재 PMDK만 no_persist 구현 안됨. PMDK도 no_persist 같은 옵션 
 ##### To run a single benchmark,
 
 ```
+./target/release/bench --help
+```
+will show you usage:
+
+```bash
 ./target/release/bench -f <poolpath> -a <target> -k <bench kind> -t <threads> -d <test-dur> -o <output>
 ```
 - NUMA node 0에 pinning하려면 커맨드 앞에 `numactl --cpunodebind=0 --membind=0` 를 붙여야함
