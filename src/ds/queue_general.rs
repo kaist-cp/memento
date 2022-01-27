@@ -2,7 +2,7 @@
 
 use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::detectable_cas::Cas;
-use crate::ploc::{Checkpoint, Checkpointable, DetectableCASAtomic, Traversable};
+use crate::ploc::{Checkpoint, Checkpointable, DetectableCASAtomic};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::ok_or;
@@ -214,25 +214,6 @@ impl<T: Clone + Collectable> PDefault for QueueGeneral<T> {
 impl<T: Clone + Collectable> Collectable for QueueGeneral<T> {
     fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         DetectableCASAtomic::filter(&mut queue.head, tid, gc, pool);
-    }
-}
-
-impl<T: Clone + Collectable> Traversable<Node<T>> for QueueGeneral<T> {
-    /// `node`가 Treiber stack 안에 있는지 top부터 bottom까지 순회하며 검색
-    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.head.load(Ordering::SeqCst, guard, pool);
-
-        // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
-        while !curr.is_null() {
-            if curr == target {
-                return true;
-            }
-
-            let curr_ref = unsafe { curr.deref(pool) };
-            curr = curr_ref.next.load(Ordering::SeqCst, guard, pool);
-        }
-
-        false
     }
 }
 

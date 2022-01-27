@@ -255,7 +255,7 @@ impl<T: Clone + Collectable> Collectable for Queue<T> {
 
 impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.head.load(Ordering::SeqCst, guard);
+        let mut curr = self.head.load_lp(Ordering::SeqCst, guard);
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
@@ -264,7 +264,7 @@ impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
             }
 
             let curr_ref = unsafe { curr.deref(pool) };
-            curr = curr_ref.next.load(Ordering::SeqCst, guard);
+            curr = curr_ref.next.load_lp(Ordering::SeqCst, guard);
         }
 
         false
@@ -283,7 +283,7 @@ impl<T: Clone + Collectable> Queue<T> {
         let (tail, tail_ref) = loop {
             let tail = self.tail.load(Ordering::SeqCst, guard);
             let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
-            let next = tail_ref.next.load(Ordering::SeqCst, guard);
+            let next = tail_ref.next.load_lp(Ordering::SeqCst, guard);
 
             if next.is_null() {
                 break (tail, tail_ref);
@@ -361,9 +361,9 @@ impl<T: Clone + Collectable> Queue<T> {
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
         let (head, next) = loop {
-            let head = self.head.load(Ordering::SeqCst, guard);
+            let head = self.head.load_lp(Ordering::SeqCst, guard);
             let head_ref = unsafe { head.deref(pool) };
-            let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
+            let next = head_ref.next.load_lp(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
             let tail = self.tail.load(Ordering::SeqCst, guard);
 
             if head != tail || next.is_null() {

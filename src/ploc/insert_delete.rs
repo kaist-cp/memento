@@ -190,8 +190,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     const PATIENCE: u64 = 40000;
 
     /// Load
-    #[inline]
-    pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
+    pub fn load_lp<'g>(&self, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
         let mut old = self.inner.load(ord, guard);
         'out: loop {
             if old.aux_bit() == 0 {
@@ -234,6 +233,60 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     }
 
     /// Insert
+    pub fn insert_lp<'g, O: Traversable<N>, const REC: bool>(
+        &self,
+        new: PShared<'_, N>,
+        obj: &O,
+        insert: &mut Insert<O, N>,
+        guard: &'g Guard,
+        pool: &PoolHandle,
+    ) -> Result<(), InsertError<'g, N>> {
+        if REC {
+            return Self::insert_result(new, obj, insert, guard, pool);
+        }
+
+        // Normal run
+        while self
+            .inner
+            .compare_exchange(
+                PShared::null(),
+                new.with_aux_bit(1),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            )
+            .is_err()
+        {
+            let cur = self.load_lp(Ordering::SeqCst, guard);
+            if cur != PShared::null() {
+                return Err(InsertError::CASFail(cur));
+            }
+            // retry for the property of strong CAS
+        }
+
+        persist_obj(&self.inner, true);
+        let _ = self.inner.compare_exchange(
+            new.with_aux_bit(1),
+            new,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            guard,
+        );
+
+        return Ok(());
+    }
+
+    /// Load
+    #[inline]
+    pub fn load<'g>(&self, persist: bool, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
+        let cur = self.inner.load(ord, guard);
+        if persist {
+            persist_obj(&self.inner, true);
+        }
+        cur
+    }
+
+    /// Insert
     pub fn insert<'g, O: Traversable<N>, const REC: bool>(
         &self,
         new: PShared<'_, N>,
@@ -249,7 +302,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         // Normal run
         if let Err(e) = self.inner.compare_exchange(
             PShared::null(),
-            new.with_aux_bit(1),
+            new,
             Ordering::SeqCst,
             Ordering::SeqCst,
             guard,
@@ -258,14 +311,6 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
 
         persist_obj(&self.inner, true);
-        let _ = self.inner.compare_exchange(
-            new.with_aux_bit(1),
-            new,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            guard,
-        );
-
         Ok(())
     }
 
