@@ -18,7 +18,7 @@ function test_single() {
     fi
 }
 
-targets=("memento_queue" "memento_queue_general" "durable_queue" "log_queue" "dss_queue")
+targets=("memento_queue" "memento_queue_lp" "memento_queue_general" "durable_queue" "log_queue" "dss_queue" "crndm_queue" "pmdk_queue")
 kind="pair"
 duration=5
 init=10000000 # 초기 노드 수

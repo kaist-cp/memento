@@ -27,8 +27,7 @@ void queue::push(pool_base &pop, uint64_t value)
             {
                 tail->next = n;
                 tail = n;
-            }
-        },
+            } },
         pmutex);
 }
 
@@ -47,8 +46,7 @@ std::optional<int> queue::pop(pool_base &pop)
             delete_persistent<node>(head);
             head = next;
             if (head == nullptr)
-                tail = nullptr;
-        },
+                tail = nullptr; },
         pmutex);
     return value;
 }
@@ -75,7 +73,6 @@ void op_pair(pool<queue> pop, persistent_ptr<queue> q, int tid, optional<int> pr
 // prob{n}: { n% enq; or (100-n)% deq; }
 void op_prob(pool<queue> pop, persistent_ptr<queue> q, int tid, optional<int> prob)
 {
-    std::cout << prob.value() << std::endl;
     if (pick(prob.value()))
     {
         q->push(pop, tid);
