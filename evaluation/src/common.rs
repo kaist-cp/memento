@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use structopt::StructOpt;
 
 /// 테스트시 만들 풀 파일의 크기
-pub const FILE_SIZE: usize = 80 * 1024 * 1024 * 1024;
+pub const FILE_SIZE: usize = 128 * 1024 * 1024 * 1024;
 
 /// Queue 테스트시 초기 노드 수 (basket queue prob50 실험의 초기 노드 수 따라함)
 pub static mut QUEUE_INIT_SIZE: usize = 0;
@@ -73,6 +73,7 @@ pub fn get_total_nops() -> usize {
 #[derive(Debug)]
 pub enum TestTarget {
     MementoQueue(TestKind),
+    MementoQueueLp(TestKind), // link and persist
     MementoQueueGeneral(TestKind),
     MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
@@ -223,6 +224,22 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
+            TestTarget::MementoQueueLp(kind) => {
+                match kind {
+                    TestKind::QueuePair => get_nops::<
+                        TestMementoQueueLp,
+                        TestMementoQueueLpEnqDeq<true>,
+                    >(&opt.filepath, opt.threads),
+                    TestKind::QueueProb(prob) => {
+                        unsafe { PROB = prob };
+                        get_nops::<TestMementoQueueLp, TestMementoQueueLpEnqDeq<false>>(
+                            &opt.filepath,
+                            opt.threads,
+                        )
+                    }
+                    _ => unreachable!("Queue를 위한 테스트만 해야함"),
+                }
+            }
             TestTarget::MementoQueueGeneral(kind) => match kind {
                 TestKind::QueuePair => get_nops::<
                     TestMementoQueueGeneral,
