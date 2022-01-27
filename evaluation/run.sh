@@ -1,7 +1,6 @@
 #!/bin/bash
 
 git_hash=$(git log -1 --format="%h")
-git_date=$(git log -1 --date=format:'%Y%m%d' --format=%cd)
 
 function show_cfg() {
     echo "<Configurations>"
@@ -13,7 +12,6 @@ function show_cfg() {
     let total_dur=$TEST_CNT*$TEST_DUR*$MAX_THREADS/60
     echo "테스트 총 소요시간: obj 수 * 약 ${total_dur}m (thread * count * duration)"
     echo "git hash: $git_hash"
-    echo "git date: $git_date"
     echo ""
 }
 
@@ -22,7 +20,7 @@ function bench() {
     kind=$2
     thread=$3
 
-    outpath=$out_path/${target}_${git_hash}_${git_date}.csv
+    outpath=$out_path/${target}_${git_hash}.csv
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
