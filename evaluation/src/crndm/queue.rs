@@ -1,7 +1,7 @@
 use std::{ops::DerefMut, sync::atomic::Ordering};
 
 use super::P;
-use crate::common::{TestNOps, QUEUE_INIT_SIZE, TOTAL_NOPS};
+use crate::common::{pick, TestNOps, QUEUE_INIT_SIZE, TOTAL_NOPS};
 use corundum::{default::*, ptr::Ptr};
 use crossbeam_utils::thread;
 
@@ -138,7 +138,7 @@ pub struct TestCrndmQueue {
 impl TestNOps for TestCrndmQueue {}
 
 impl TestCrndmQueue {
-    pub fn get_nops_pair(&self, nr_thread: usize, duration: f64) -> usize {
+    pub fn get_nops(&self, nr_thread: usize, duration: f64, prob: Option<u32>) -> usize {
         let q = &self.queue;
 
         // initailize
@@ -151,15 +151,33 @@ impl TestCrndmQueue {
         thread::scope(|scope| {
             for tid in 0..nr_thread {
                 let _ = scope.spawn(move |_| {
-                    let ops = self.test_nops(
-                        &|tid, _| {
-                            q.enqueue(tid);
-                            let _ = q.dequeue();
-                        },
-                        tid,
-                        duration,
-                        unsafe { crossbeam_epoch::unprotected() },
-                    );
+                    let ops = if let Some(prob) = prob {
+                        // prob
+                        self.test_nops(
+                            &|tid, _| {
+                                if pick(prob) {
+                                    q.enqueue(tid);
+                                } else {
+                                    let _ = q.dequeue();
+                                }
+                            },
+                            tid,
+                            duration,
+                            unsafe { crossbeam_epoch::unprotected() },
+                        )
+                    } else {
+                        // pair
+                        self.test_nops(
+                            &|tid, _| {
+                                q.enqueue(tid);
+                                let _ = q.dequeue();
+                            },
+                            tid,
+                            duration,
+                            unsafe { crossbeam_epoch::unprotected() },
+                        )
+                    };
+
                     let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
                 });
             }

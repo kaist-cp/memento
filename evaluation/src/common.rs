@@ -92,7 +92,7 @@ pub enum TestKind {
 }
 
 #[inline]
-fn pick(prob: u32) -> bool {
+pub fn pick(prob: u32) -> bool {
     rand::thread_rng().gen_ratio(prob, 100)
 }
 
@@ -298,17 +298,17 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
-            TestTarget::CrndmQueue(kind) => match kind {
-                TestKind::QueuePair => {
-                    let root = P::open::<TestCrndmQueue>(&opt.filepath, O_64GB | O_CF).unwrap();
-                    root.get_nops_pair(opt.threads, opt.duration)
+            TestTarget::CrndmQueue(kind) => {
+                let root = P::open::<TestCrndmQueue>(&opt.filepath, O_64GB | O_CF).unwrap();
+
+                match kind {
+                    TestKind::QueuePair => root.get_nops(opt.threads, opt.duration, None),
+                    TestKind::QueueProb(prob) => {
+                        root.get_nops(opt.threads, opt.duration, Some(prob))
+                    }
+                    _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
-                TestKind::QueueProb(prob) => {
-                    unsafe { PROB = prob };
-                    todo!()
-                }
-                _ => unreachable!("Queue를 위한 테스트만 해야함"),
-            },
+            }
             _ => {
                 unreachable!("queue만")
             }
