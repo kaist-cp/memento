@@ -306,7 +306,7 @@ impl PDefault for TestLogQueue {
         let guard = epoch::pin();
 
         // 초기 노드 삽입
-        for i in 0..QUEUE_INIT_SIZE {
+        for i in 0..unsafe { QUEUE_INIT_SIZE } {
             queue.enqueue(i, 0, &mut 0, &guard, pool);
         }
         Self { queue }

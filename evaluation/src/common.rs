@@ -12,7 +12,7 @@ use structopt::StructOpt;
 pub const FILE_SIZE: usize = 80 * 1024 * 1024 * 1024;
 
 /// Queue 테스트시 초기 노드 수 (basket queue prob50 실험의 초기 노드 수 따라함)
-pub const QUEUE_INIT_SIZE: usize = 0;
+pub static mut QUEUE_INIT_SIZE: usize = 0;
 
 /// Pipe 테스트시 Queue 1의 초기 노드 수
 // TODO: cpp의 PIPE_INIT_SIZE는 별도로 있음(commons.hpp). 이를 하나의 컨픽 파일로 통일하기
@@ -149,6 +149,10 @@ pub struct Opt {
     /// repin_after 실행주기 (e.g. 1000이면 op 1000번마다 1번 repin_after)
     #[structopt(short, long, default_value = "10000")]
     pub relax: usize,
+
+    /// 초기 노드 수
+    #[structopt(short, long, default_value = "0")]
+    pub init: usize,
 }
 
 /// Abstraction of queue
@@ -159,7 +163,7 @@ pub mod queue {
     use memento::pmem::PoolHandle;
 
     use crate::{
-        common::{get_nops, PROB},
+        common::{get_nops, PROB, QUEUE_INIT_SIZE},
         compositional_pobj::*,
         crndm::*,
         dss::*,
@@ -203,6 +207,7 @@ pub mod queue {
     }
 
     pub fn bench_queue(opt: &Opt, target: TestTarget) -> usize {
+        unsafe { QUEUE_INIT_SIZE = opt.init };
         match target {
             TestTarget::MementoQueue(kind) => match kind {
                 TestKind::QueuePair => get_nops::<TestMementoQueue, TestMementoQueueEnqDeq<true>>(

@@ -142,7 +142,7 @@ impl TestCrndmQueue {
         let q = &self.queue;
 
         // initailize
-        for i in 0..QUEUE_INIT_SIZE {
+        for i in 0..unsafe { QUEUE_INIT_SIZE } {
             q.enqueue(i);
         }
 

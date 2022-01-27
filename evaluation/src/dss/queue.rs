@@ -357,7 +357,7 @@ impl PDefault for TestDSSQueue {
         let guard = epoch::pin();
 
         // 초기 노드 삽입
-        for i in 0..QUEUE_INIT_SIZE {
+        for i in 0..unsafe { QUEUE_INIT_SIZE } {
             queue.prep_enqueue(i, 0, pool);
             queue.exec_enqueue(0, &guard, pool);
         }

@@ -72,6 +72,7 @@ fn setup() -> (Opt, Writer<File>) {
                     "threads",
                     "duration",
                     "relaxed",
+                    "init nodes",
                     "throughput",
                 ])
                 .unwrap();
@@ -125,6 +126,7 @@ fn main() {
             opt.threads.to_string(),
             opt.duration.to_string(),
             opt.relax.to_string(),
+            opt.init.to_string(),
             avg_mops.to_string(),
         ])
         .unwrap();

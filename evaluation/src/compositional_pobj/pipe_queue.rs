@@ -161,7 +161,7 @@ impl PDefault for TestPipeQueue {
 
         // 초기 노드 삽입
         let mut enq_init = EnqueuePipeQ::default();
-        for i in 0..QUEUE_INIT_SIZE {
+        for i in 0..unsafe { QUEUE_INIT_SIZE } {
             let _ = enq_init.run(&pipeq, i, &guard, pool);
             enq_init.reset(false, &guard, pool);
         }
