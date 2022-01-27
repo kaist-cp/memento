@@ -159,7 +159,7 @@ pub struct Opt {
 /// Abstraction of queue
 pub mod queue {
     use corundum::default::*;
-    use corundum::open_flags::{O_64GB, O_CF};
+    use corundum::open_flags::{O_128GB, O_CF};
     use crossbeam_epoch::Guard;
     use memento::pmem::PoolHandle;
 
@@ -299,7 +299,7 @@ pub mod queue {
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
             TestTarget::CrndmQueue(kind) => {
-                let root = P::open::<TestCrndmQueue>(&opt.filepath, O_64GB | O_CF).unwrap();
+                let root = P::open::<TestCrndmQueue>(&opt.filepath, O_128GB | O_CF).unwrap();
 
                 match kind {
                     TestKind::QueuePair => root.get_nops(opt.threads, opt.duration, None),
