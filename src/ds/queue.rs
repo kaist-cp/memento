@@ -6,7 +6,6 @@ use crate::ploc::{not_deleted, Checkpoint, Checkpointable, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::ok_or;
-use lazy_static::lazy_static;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
@@ -232,6 +231,7 @@ unsafe impl<T: Clone + Collectable> Send for DequeueSome<T> {}
 #[derive(Debug)]
 pub struct Queue<T: Clone + Collectable> {
     head: CachePadded<SMOAtomic<Node<T>>>,
+    tail: CachePadded<PAtomic<Node<T>>>,
 }
 
 impl<T: Clone + Collectable> PDefault for Queue<T> {
@@ -240,11 +240,9 @@ impl<T: Clone + Collectable> PDefault for Queue<T> {
         let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
         persist_obj(unsafe { sentinel.deref(pool) }, true);
 
-        let tail = unsafe { &*(&*TAIL as *const _ as *const PAtomic<Node<T>>) };
-        tail.store(sentinel, Ordering::SeqCst);
-
         Self {
             head: CachePadded::new(SMOAtomic::from(sentinel)),
+            tail: CachePadded::new(PAtomic::from(sentinel)),
         }
     }
 }
@@ -273,10 +271,6 @@ impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
     }
 }
 
-lazy_static! {
-    static ref TAIL: PAtomic<Node<usize>> = PAtomic::null();
-}
-
 impl<T: Clone + Collectable> Queue<T> {
     /// Try enqueue
     pub fn try_enqueue<const REC: bool>(
@@ -286,20 +280,20 @@ impl<T: Clone + Collectable> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let tail = unsafe { &*(&*TAIL as *const _ as *const PAtomic<Node<T>>) };
-
-        let (last, tail_ref) = loop {
-            let last = tail.load(Ordering::SeqCst, guard);
-            let tail_ref = unsafe { last.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
+        let (tail, tail_ref) = loop {
+            let tail = self.tail.load(Ordering::SeqCst, guard);
+            let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
             let next = tail_ref.next.load(Ordering::SeqCst, guard);
 
             if next.is_null() {
-                break (last, tail_ref);
+                break (tail, tail_ref);
             }
 
             // tail is stale
             persist_obj(&tail_ref.next, false);
-            let _ = tail.compare_exchange(last, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         };
 
         if tail_ref
@@ -311,7 +305,9 @@ impl<T: Clone + Collectable> Queue<T> {
         }
 
         if !REC {
-            let _ = tail.compare_exchange(last, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+            let _ =
+                self.tail
+                    .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
         }
 
         Ok(())
@@ -364,21 +360,21 @@ impl<T: Clone + Collectable> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let tail = unsafe { &*(&*TAIL as *const _ as *const PAtomic<Node<T>>) };
-
         let (head, next) = loop {
             let head = self.head.load(Ordering::SeqCst, guard);
             let head_ref = unsafe { head.deref(pool) };
             let next = head_ref.next.load(Ordering::SeqCst, guard); // TODO(opt): 여기서 load하지 않고 head_next를 peek해보고 나중에 할 수도 있음
-            let last = tail.load(Ordering::SeqCst, guard);
+            let tail = self.tail.load(Ordering::SeqCst, guard);
 
-            if head != last || next.is_null() {
+            if head != tail || next.is_null() {
                 break (head, next);
             }
 
             // tail is stale
-            persist_obj(&unsafe { last.deref(pool) }.next, false);
-            let _ = tail.compare_exchange(last, next, Ordering::SeqCst, Ordering::SeqCst, guard);
+            persist_obj(&unsafe { tail.deref(pool) }.next, false);
+            let _ =
+                self.tail
+                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         };
 
         let chk = ok_or!(
