@@ -14,11 +14,13 @@ using namespace std;
 
 enum TestTarget
 {
-  PMDK_Queue,
+  PMDK_Queue_Pair,
+  PMDK_Queue_Prob,
   PMDK_Pipe
 };
 
-TestTarget parse_target(string target, string kind)
+TestTarget
+parse_target(string target, string kind)
 {
   if (target == "pmdk_pipe" && kind == "pipe")
   {
@@ -26,7 +28,11 @@ TestTarget parse_target(string target, string kind)
   }
   else if (target == "pmdk_queue" && kind == "pair")
   {
-    return TestTarget::PMDK_Queue;
+    return TestTarget::PMDK_Queue_Pair;
+  }
+  else if (target == "pmdk_queue" && kind.substr(0, 4) == "prob")
+  {
+    return TestTarget::PMDK_Queue_Prob;
   }
   std::cerr << "Invalid target or bench kind: (target: " << target << ", kind: " << kind << ")" << std::endl;
   exit(0);
@@ -53,6 +59,7 @@ Config setup(int argc, char *argv[])
     exit(0);
   }
 
+  srand(time(NULL));
   ifstream f(argv[7]);
   static ofstream of(argv[7], fstream::out | fstream::app);
   if (f.fail())
@@ -86,12 +93,14 @@ double bench(Config cfg)
   case PMDK_Pipe:
     nops = get_pipe_nops(cfg.filepath, cfg.threads, cfg.duration, cfg.init);
     break;
-  case PMDK_Queue:
-    nops = get_queue_pair_nops(cfg.filepath, cfg.threads, cfg.duration, cfg.init);
-    // TODO: prbo50 test?
+  case PMDK_Queue_Pair:
+    nops = get_queue_nops(cfg.filepath, cfg.threads, cfg.duration, cfg.init, std::nullopt);
     break;
-
-    // TODO: other c++ implementations..
+  case PMDK_Queue_Prob:
+    int prob = stoi(cfg.kind.substr(4, 3));
+    nops = get_queue_nops(cfg.filepath, cfg.threads, cfg.duration, cfg.init, prob);
+    break;
+    // TODO: other c++ implementations?
   }
 
   // 처리율 (op/s) 계산하여 반환
