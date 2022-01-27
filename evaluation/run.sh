@@ -28,7 +28,7 @@ function bench() {
         # pinning NUMA node 0
         numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $outpath
     else
-        numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $thread -d $TEST_DUR -o $outpath
+        numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $thread -d $TEST_DUR -i $INIT_NODES -o $outpath
     fi
 }
 
@@ -62,6 +62,7 @@ PMEM_PATH=$1   # PMEM_PATH에 풀 파일을 생성하여 사용
 MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
 TEST_CNT=5            # 한 bench당 테스트 횟수
 TEST_DUR=10           # 한 테스트당 지속시간
+INIT_NODES=10000000
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
@@ -71,8 +72,9 @@ rm -rf ${PMEM_PATH}/*.pool* # 기존 풀 파일 제거
 show_cfg
 
 # 2. Benchmarking queue performance
-for kind in pair prob50; do
+for kind in pair prob20 prob50 prob80; do
     benches memento_queue $kind
+    # benches memento_queue_lp $kind
     benches memento_queue_general $kind
     # benches memento_pipe_queue $kind
     benches durable_queue $kind

@@ -21,7 +21,7 @@ function test_single() {
 targets=("memento_queue" "memento_queue_general" "durable_queue" "log_queue" "dss_queue")
 kind="pair"
 duration=5
-init=0 # 초기 노드 수
+init=10000000 # 초기 노드 수
 
 for target in ${targets[@]}; do
     for thread in 1 4 8 12 32; do
