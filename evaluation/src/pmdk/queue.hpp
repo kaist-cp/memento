@@ -34,5 +34,5 @@ public:
     void show(void) const;
 };
 
-int get_queue_pair_nops(string filepath, int nr_threads, float duration);
+int get_queue_pair_nops(string filepath, int nr_threads, float duration, int init);
 #endif

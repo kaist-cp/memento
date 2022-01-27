@@ -60,14 +60,14 @@ void queue::show(void) const
     std::cout << std::endl;
 }
 
-int get_queue_pair_nops(string filepath, int nr_threads, float duration)
+int get_queue_pair_nops(string filepath, int nr_threads, float duration, int init)
 {
     remove(filepath.c_str());
     auto pop = pool<queue>::create(filepath, "MY_LAYOUT", ((size_t)POOL_SIZE));
     persistent_ptr<queue> q = pop.root();
 
     // Initailize
-    for (int i = 0; i < QUEUE_INIT_SIZE; i++)
+    for (int i = 0; i < init; i++)
     {
         q->push(pop, i);
     }

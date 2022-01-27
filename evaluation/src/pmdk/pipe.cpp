@@ -34,7 +34,7 @@ void pipe(pool<pipe_root> pop, persistent_ptr<queue> q1, persistent_ptr<queue> q
     }
 }
 
-int get_pipe_nops(string filepath, int nr_threads, float duration)
+int get_pipe_nops(string filepath, int nr_threads, float duration, int init)
 {
     remove(filepath.c_str());
     auto pop = pool<pipe_root>::create(filepath, "MY_LAYOUT", ((size_t)POOL_SIZE));
@@ -49,7 +49,7 @@ int get_pipe_nops(string filepath, int nr_threads, float duration)
         });
     persistent_ptr<queue> q1 = q_manager->q1;
     persistent_ptr<queue> q2 = q_manager->q2;
-    for (int i = 0; i < PIPE_INIT_SIZE; i++)
+    for (int i = 0; i < init; i++)
     {
         q1->push(pop, i);
     }

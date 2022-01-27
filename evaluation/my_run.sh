@@ -12,7 +12,7 @@ function test_single() {
     rm -rf /mnt/pmem0/*
     mkdir -p out
     if [ "${target}" == "pmdk_pipe" ] || [ "${target}" == "pmdk_queue" ]; then
-        numactl --cpunodebind=0 --membind=0 ./target/release/bench_cpp /mnt/pmem0/$target $target $kind $thread $duration out/my_run.csv
+        numactl --cpunodebind=0 --membind=0 ./target/release/bench_cpp /mnt/pmem0/$target $target $kind $thread $duration $init out/my_run.csv
     else
         numactl --cpunodebind=0 --membind=0 ./target/release/bench -f /mnt/pmem0/$target -a $target -k $kind -t $thread -d $duration -i $init -o out/my_run.csv
     fi

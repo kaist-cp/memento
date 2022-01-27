@@ -36,24 +36,25 @@ struct Config
 {
   string filepath;
   string target;
-  string kind;
+  string kind; // bench kind
   int threads;
   double duration;
+  int init; // target의 초기 노드 수
   ofstream *output;
 
-  Config(string filepath, string target, string kind, int threads, double duration, ofstream *output) : filepath{filepath}, target{target}, kind{kind}, threads{threads}, duration{duration}, output{output} {}
+  Config(string filepath, string target, string kind, int threads, double duration, int init, ofstream *output) : filepath{filepath}, target{target}, kind{kind}, threads{threads}, duration{duration}, init{init}, output{output} {}
 };
 
 Config setup(int argc, char *argv[])
 {
-  if (argc < 7)
+  if (argc < 8)
   {
     std::cerr << "Argument 부족. plz see usage on readme" << std::endl;
     exit(0);
   }
 
-  ifstream f(argv[6]);
-  static ofstream of(argv[6], fstream::out | fstream::app);
+  ifstream f(argv[7]);
+  static ofstream of(argv[7], fstream::out | fstream::app);
   if (f.fail())
   {
     of << "target,"
@@ -61,12 +62,15 @@ Config setup(int argc, char *argv[])
        << "threads,"
        << "duration,"
        << "relaxed,"
+       << "init nodes,"
        << "throughput" << endl;
   }
 
-  // example: ./bench ./pmem/ pmdk_pipe pipe 16 5
+  // example: ./bench ./pmem/ pmdk_pipe pipe 16 5 0
   // TODO: Rust처럼 arg 받게 하기? ./main -f ./pmem/ -a pmdk_pipe -k pipe -t 16 -d 5
-  Config cfg = Config(argv[1], argv[2], argv[3], atoi(argv[4]), atof(argv[5]), &of);
+
+  //                 filepath, target,  kind,   threads,        duration,      init,          output
+  Config cfg = Config(argv[1], argv[2], argv[3], atoi(argv[4]), atof(argv[5]), atoi(argv[6]), &of);
   return cfg;
 }
 
@@ -80,10 +84,10 @@ double bench(Config cfg)
   switch (target)
   {
   case PMDK_Pipe:
-    nops = get_pipe_nops(cfg.filepath, cfg.threads, cfg.duration);
+    nops = get_pipe_nops(cfg.filepath, cfg.threads, cfg.duration, cfg.init);
     break;
   case PMDK_Queue:
-    nops = get_queue_pair_nops(cfg.filepath, cfg.threads, cfg.duration);
+    nops = get_queue_pair_nops(cfg.filepath, cfg.threads, cfg.duration, cfg.init);
     // TODO: prbo50 test?
     break;
 
@@ -107,6 +111,7 @@ int main(int argc, char *argv[])
       << cfg.kind << ","
       << cfg.threads << ","
       << cfg.duration << ","
-      << "none," // relaxed (TODO: relaxed는 그냥 csv에 안찍는게 좋겠다)
+      << "none" << "," // relaxed (TODO: relaxed는 그냥 csv에 안찍는게 좋겠다)
+      << cfg.init << ","
       << avg_ops << endl;
 }

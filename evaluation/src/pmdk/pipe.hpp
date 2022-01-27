@@ -12,4 +12,4 @@ struct pipe_root {
 
 void pipe(pool<pipe_root> pop, persistent_ptr<queue> q1, persistent_ptr<queue> q2);
 
-int get_pipe_nops(std::string filepath, int nr_thread, float duration);
+int get_pipe_nops(std::string filepath, int nr_thread, float duration, int init);
