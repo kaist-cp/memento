@@ -60,7 +60,33 @@ void queue::show(void) const
     std::cout << std::endl;
 }
 
-int get_queue_pair_nops(string filepath, int nr_threads, float duration, int init)
+bool pick(int prob)
+{
+    return (rand() % 100) < prob;
+}
+
+// pair: {enq; deq;}
+void op_pair(pool<queue> pop, persistent_ptr<queue> q, int tid, optional<int> prob)
+{
+    q->push(pop, tid);
+    q->pop(pop);
+}
+
+// prob{n}: { n% enq; or (100-n)% deq; }
+void op_prob(pool<queue> pop, persistent_ptr<queue> q, int tid, optional<int> prob)
+{
+    std::cout << prob.value() << std::endl;
+    if (pick(prob.value()))
+    {
+        q->push(pop, tid);
+    }
+    else
+    {
+        q->pop(pop);
+    }
+}
+
+int get_queue_nops(string filepath, int nr_threads, float duration, int init, optional<int> prob)
 {
     remove(filepath.c_str());
     auto pop = pool<queue>::create(filepath, "MY_LAYOUT", ((size_t)POOL_SIZE));
@@ -76,14 +102,15 @@ int get_queue_pair_nops(string filepath, int nr_threads, float duration, int ini
     int local_ops[nr_threads];
     int sum_ops = 0;
 
-    // `duration`초 동안 pair {push; pop;} 수행 횟수 카운트
-    // TODO: generic하게 구현 (common.rs의 TestNOps trait처럼)
+    // `duration`초 동안 op 수행 횟수 카운트
     for (int tid = 0; tid < nr_threads; tid++)
     {
         workers[tid] = std::thread(
             [](
-                int tid, float duration, int &local_ops, pool<queue> pop, persistent_ptr<queue> q)
+                int tid, float duration, int &local_ops, pool<queue> pop, persistent_ptr<queue> q, optional<int> prob)
             {
+                auto op = (!prob.has_value()) ? op_pair : op_prob;
+
                 local_ops = 0;
                 struct timespec begin, end;
                 clock_gettime(CLOCK_REALTIME, &begin);
@@ -96,12 +123,11 @@ int get_queue_pair_nops(string filepath, int nr_threads, float duration, int ini
                         break;
                     }
 
-                    q->push(pop, tid);
-                    q->pop(pop);
+                    op(pop, q, tid, prob);
                     local_ops += 1;
                 }
             },
-            tid, duration, std::ref(local_ops[tid]), pop, q);
+            tid, duration, std::ref(local_ops[tid]), pop, q, prob);
     }
 
     for (int tid = 0; tid < nr_threads; ++tid)
