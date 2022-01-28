@@ -145,25 +145,25 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         let mut curr = prev_ref.next.load(Ordering::SeqCst, guard);
         let mut curr_ref = unsafe { curr.deref() };
         let mut prev_state = get_state(curr);
-        let mut _curr_state = State::Dummy; // // warning 때문에 `_` 붙음
+        let mut curr_state;
 
         loop {
             let succ = curr_ref.next.load(Ordering::SeqCst, guard);
             let succ_ref = unsafe { succ.deref() };
-            _curr_state = get_state(succ);
-            if _curr_state != State::Deleted {
+            curr_state = get_state(succ);
+            if curr_state != State::Deleted {
                 if curr_ref.key >= key {
                     break;
                 }
                 prev = curr;
-                prev_state = _curr_state;
+                prev_state = curr_state;
             } else {
                 let _ = self.trim(prev, curr);
             }
             curr = succ.with_tag(prev_state as usize);
             curr_ref = succ_ref;
         }
-        *curr_state_ptr = _curr_state;
+        *curr_state_ptr = curr_state;
         (prev, curr)
     }
 
@@ -188,7 +188,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         }
 
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
-        let mut _result_node = None; // warning 때문에 `_` 붙음
+        let result_node;
         let mut curr_state = State::Dummy;
         'retry: loop {
             // 삽입할 위치를 탐색
@@ -224,7 +224,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                     return false;
                 }
                 // 이 result_node를 helping
-                _result_node = Some(curr);
+                result_node = curr;
             }
             // 중복 키 없으므로 State: IntendToInsert 노드를 만들어 삽입 시도
             else {
@@ -260,9 +260,9 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                         .unwrap();
                     continue 'retry;
                 }
-                _result_node = Some(new_node);
+                result_node = new_node;
             }
-            let result_node = unsafe { _result_node.unwrap().deref() };
+            let result_node = unsafe { result_node.deref() };
 
             // clinet가 PNode를 타겟팅
             let pnode = unsafe { result_node.pptr.as_ref().unwrap() };
