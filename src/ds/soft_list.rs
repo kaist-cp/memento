@@ -1,4 +1,4 @@
-//! SOFT list
+//! Detectable SOFT list
 
 use crate::{pepoch::PShared, pmem::*};
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
@@ -51,7 +51,7 @@ pub fn thread_ini(tid: usize, pool: &PoolHandle) {
     init_volatile_alloc(tid as isize)
 }
 
-/// TODO: doc
+/// Detectable SOFT List
 #[derive(Debug)]
 pub struct SOFTList<T> {
     head: Atomic<VNode<T>>,
@@ -73,7 +73,6 @@ impl<T: Default> Default for SOFTList<T> {
 }
 
 impl<T: Clone + PartialEq> SOFTList<T> {
-    // TODO: PNode는 alloc 받았을 때 zero-initialized 돼있어야함. ssmem 구현보니 free obj를 재사용할때 zero-initialized 추가해야할듯
     fn alloc_new_pnode(&self, pool: &PoolHandle) -> *mut PNode<T> {
         ALLOC
             .try_with(|a| {
@@ -424,7 +423,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         result
     }
 
-    /// TODO: doc
+    /// contain
     // TODO: SOFT 본래 구현은 bool 반환하지만 hashEval에선 찾은 T*를 반환함. 왜지? -> 이게 없으면 value를 가져오는 게 없으니까 그런거 같네
     pub fn contains(&self, key: usize) -> bool {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
@@ -558,7 +557,7 @@ impl<T> Insert<T> {
         persist_obj(&self.target, true);
     }
 
-    /// TODO: doc
+    /// reset
     #[inline]
     pub fn reset(&mut self) {
         self.target = PShared::null();
@@ -566,7 +565,7 @@ impl<T> Insert<T> {
     }
 }
 
-/// TODO: doc
+/// Remove client for SOFT List
 #[derive(Debug, Default)]
 pub struct Remove<T: 'static> {
     target: PShared<'static, PNode<T>>,
@@ -592,7 +591,7 @@ impl<T: PartialEq + Clone> Remove<T> {
         persist_obj(&self.target, true);
     }
 
-    /// TODO: doc
+    /// reset
     #[inline]
     pub fn reset(&mut self) {
         let target = self.target;
@@ -638,7 +637,7 @@ struct PNode<T> {
     // PNode를 삭제한 client(의 상대주소). 0이 아니면 "삭제완료"를 의미
     deleter: AtomicUsize,
 
-    // TODO: key, value는 CAS 안쓰는데 왜 Atomic? create시 valid_start, valid_end 사이에 존재하게끔 ordering 보장하려는 목적인가?
+    // TODO: 원래 구현에서 key, value는 CAS 안쓰는데 왜 Atomic? create시 valid_start, valid_end 사이에 존재하게끔 ordering 보장하려는 목적인가?
     key: usize,
     value: T,
 }
