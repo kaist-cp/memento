@@ -1,5 +1,6 @@
 //! ssmem allocator
 #![allow(warnings)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use libc::c_void;
 use std::{
@@ -131,7 +132,7 @@ struct SsmemTS {
 struct SsmemFreeSet {
     ts_set: *mut usize,
     size: usize,
-    curr: usize,
+    curr: isize,
     set_next: *mut SsmemFreeSet,
 
     /// 이 주소부터 free obj들이 위치함
@@ -285,8 +286,9 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
         let cs_ref = unsafe { cs.as_mut() }.unwrap();
 
         // fs.set[fs.curr-1]에 저장되어있는 collect된 obj 주소를 가져옴
+        // TODO: obj 주소 m이 size를 담을 수 있을 거란 없어보임. 이래서 fixed-size allocator라는 것 같은데, 이럴거면 애초에 size arg를 왜 여기서 받나?
         cs_ref.curr -= 1;
-        m = unsafe { *(cs_ref.set.offset(cs_ref.curr as isize)) as *mut _ };
+        m = unsafe { *(cs_ref.set.offset(cs_ref.curr)) as *mut _ };
         prefetchw(m);
 
         // zero-initialize
@@ -365,13 +367,17 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
 }
 
 /// free some memory using allocator a
-pub fn ssmem_free(a: *mut SsmemAllocator, obj: *mut c_void, pool: Option<&PoolHandle>) {
+///
+/// # Safety
+///
+/// double free 주의
+pub unsafe fn ssmem_free(a: *mut SsmemAllocator, obj: *mut c_void, pool: Option<&PoolHandle>) {
     let a = unsafe { a.as_mut() }.unwrap();
     let mut fs = unsafe { a.free_set_list.as_mut() }.unwrap();
 
     // 현재 쥐고 있는 free set(free set list의 head)이 꽉찼으면 (1) collect 한번 돌리고 (2) 새로운 free set을 추가
     // 이때 추가되는 새로운 free set은 collect 후 재사용되는 free set일 수도 있고, 아예 새로 만들어진 free set일 수도 있음
-    if fs.curr == fs.size {
+    if fs.curr as usize == fs.size {
         fs.ts_set = ssmem_ts_set_collect(fs.ts_set, pool);
         let _ = ssmem_mem_reclaim(a as *mut _, pool);
 
@@ -381,8 +387,8 @@ pub fn ssmem_free(a: *mut SsmemAllocator, obj: *mut c_void, pool: Option<&PoolHa
         fs = unsafe { fs_new.as_mut() }.unwrap();
     }
 
-    // fs.set[fs.curr]에 free된 obj 주소를 저장 (TODO: rust에선 이렇게 하는 게 맞나 확인)
-    unsafe { *(fs.set.offset(fs.curr as isize)) = obj as usize };
+    // fs.set[fs.curr]에 free된 obj 주소를 저장
+    unsafe { *(fs.set.offset(fs.curr)) = obj as usize };
     fs.curr += 1;
 
     // timestamp 증가 전략이 "free할 때"가 포함이면 timestamp 증가

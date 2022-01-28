@@ -251,12 +251,16 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                     // 삽입 실패시 alloc 했던거 free하고 처음부터 재시도
                     VOLATILE_ALLOC
                         .try_with(|a| {
-                            ssmem_free(*a.borrow_mut(), new_node.as_raw() as *mut c_void, None);
+                            unsafe {
+                                ssmem_free(*a.borrow_mut(), new_node.as_raw() as *mut c_void, None)
+                            };
                         })
                         .unwrap();
                     ALLOC
                         .try_with(|a| {
-                            ssmem_free(*a.borrow_mut(), new_pnode as *mut c_void, Some(pool));
+                            unsafe {
+                                ssmem_free(*a.borrow_mut(), new_pnode as *mut c_void, Some(pool))
+                            };
                         })
                         .unwrap();
                     continue 'retry;
@@ -523,7 +527,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 } else {
                     // delete client의 손까지 떠나 free되며 0으로 초기화된 block만이 free block (free 되는 순간은 deleter client가 reset할 때)
                     // construct volatile free list of ssmem allocator
-                    ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
+                    unsafe { ssmem_free(palloc, curr_node as *mut c_void, Some(pool)) };
                 }
             }
             curr = curr_ref.next;
@@ -608,11 +612,13 @@ impl<T: PartialEq + Clone> Remove<T> {
             if pnode_ref.deleter() == self.id(pool) {
                 ALLOC
                     .try_with(|a| {
-                        ssmem_free(
-                            *a.borrow_mut(),
-                            pnode_ref as *const _ as *mut c_void,
-                            Some(pool),
-                        );
+                        unsafe {
+                            ssmem_free(
+                                *a.borrow_mut(),
+                                pnode_ref as *const _ as *mut c_void,
+                                Some(pool),
+                            )
+                        };
                     })
                     .unwrap();
             }
