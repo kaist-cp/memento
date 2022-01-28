@@ -1,4 +1,4 @@
-//! SOFT list
+//! Detectable SOFT list
 
 use crate::{pepoch::PShared, pmem::*};
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
@@ -51,7 +51,7 @@ pub fn thread_ini(tid: usize, pool: &PoolHandle) {
     init_volatile_alloc(tid as isize)
 }
 
-/// TODO: doc
+/// Detectable SOFT List
 #[derive(Debug)]
 pub struct SOFTList<T> {
     head: Atomic<VNode<T>>,
@@ -73,7 +73,6 @@ impl<T: Default> Default for SOFTList<T> {
 }
 
 impl<T: Clone + PartialEq> SOFTList<T> {
-    // TODO: PNode는 alloc 받았을 때 zero-initialized 돼있어야함. ssmem 구현보니 free obj를 재사용할때 zero-initialized 추가해야할듯
     fn alloc_new_pnode(&self, pool: &PoolHandle) -> *mut PNode<T> {
         ALLOC
             .try_with(|a| {
@@ -146,25 +145,25 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         let mut curr = prev_ref.next.load(Ordering::SeqCst, guard);
         let mut curr_ref = unsafe { curr.deref() };
         let mut prev_state = get_state(curr);
-        let mut _curr_state = State::Dummy; // // warning 때문에 `_` 붙음
+        let mut curr_state;
 
         loop {
             let succ = curr_ref.next.load(Ordering::SeqCst, guard);
             let succ_ref = unsafe { succ.deref() };
-            _curr_state = get_state(succ);
-            if _curr_state != State::Deleted {
+            curr_state = get_state(succ);
+            if curr_state != State::Deleted {
                 if curr_ref.key >= key {
                     break;
                 }
                 prev = curr;
-                prev_state = _curr_state;
+                prev_state = curr_state;
             } else {
                 let _ = self.trim(prev, curr);
             }
             curr = succ.with_tag(prev_state as usize);
             curr_ref = succ_ref;
         }
-        *curr_state_ptr = _curr_state;
+        *curr_state_ptr = curr_state;
         (prev, curr)
     }
 
@@ -189,7 +188,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         }
 
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
-        let mut _result_node = None; // warning 때문에 `_` 붙음
+        let result_node;
         let mut curr_state = State::Dummy;
         'retry: loop {
             // 삽입할 위치를 탐색
@@ -204,7 +203,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 // 이번에 찾은 VNode의 PNode가 내가 target하던 PNode와 다르다면, 내가 target하던건 이미 삽입완료된 후 삭제된 것.
                 if pnode as *const _ as usize != target as *const _ as usize {
                     // 삽입완료 표시는 됐지만 inserter는 아직 결정되지 않았을 수 있으므로 inserter 등록시도
-                    let res = target.create(target.key, target.value.clone(), client, value, pool);
+                    let res =
+                        target.create(target.key, (target.value.clone(), value), client, pool);
                     client.set_result(res);
                     return res;
                 }
@@ -225,7 +225,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                     return false;
                 }
                 // 이 result_node를 helping
-                _result_node = Some(curr);
+                result_node = curr;
             }
             // 중복 키 없으므로 State: IntendToInsert 노드를 만들어 삽입 시도
             else {
@@ -251,19 +251,23 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                     // 삽입 실패시 alloc 했던거 free하고 처음부터 재시도
                     VOLATILE_ALLOC
                         .try_with(|a| {
-                            ssmem_free(*a.borrow_mut(), new_node.as_raw() as *mut c_void, None);
+                            unsafe {
+                                ssmem_free(*a.borrow_mut(), new_node.as_raw() as *mut c_void, None)
+                            };
                         })
                         .unwrap();
                     ALLOC
                         .try_with(|a| {
-                            ssmem_free(*a.borrow_mut(), new_pnode as *mut c_void, Some(pool));
+                            unsafe {
+                                ssmem_free(*a.borrow_mut(), new_pnode as *mut c_void, Some(pool))
+                            };
                         })
                         .unwrap();
                     continue 'retry;
                 }
-                _result_node = Some(new_node);
+                result_node = new_node;
             }
-            let result_node = unsafe { _result_node.unwrap().deref() };
+            let result_node = unsafe { result_node.deref() };
 
             // clinet가 PNode를 타겟팅
             let pnode = unsafe { result_node.pptr.as_ref().unwrap() };
@@ -289,9 +293,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         let pnode = unsafe { result_node.pptr.as_mut().unwrap() };
         let result = pnode.create(
             result_node.key,
-            result_node.value.clone(),
+            (result_node.value.clone(), value),
             client,
-            value,
             pool,
         );
 
@@ -424,7 +427,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         result
     }
 
-    /// TODO: doc
+    /// contain
     // TODO: SOFT 본래 구현은 bool 반환하지만 hashEval에선 찾은 T*를 반환함. 왜지? -> 이게 없으면 value를 가져오는 게 없으니까 그런거 같네
     pub fn contains(&self, key: usize) -> bool {
         let guard = unsafe { unprotected() }; // free할 노드는 ssmem의 ebr에 의해 관리되기 때문에 crossbeam ebr의 guard는 필요없음
@@ -524,7 +527,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 } else {
                     // delete client의 손까지 떠나 free되며 0으로 초기화된 block만이 free block (free 되는 순간은 deleter client가 reset할 때)
                     // construct volatile free list of ssmem allocator
-                    ssmem_free(palloc, curr_node as *mut c_void, Some(pool));
+                    unsafe { ssmem_free(palloc, curr_node as *mut c_void, Some(pool)) };
                 }
             }
             curr = curr_ref.next;
@@ -558,7 +561,7 @@ impl<T> Insert<T> {
         persist_obj(&self.target, true);
     }
 
-    /// TODO: doc
+    /// reset
     #[inline]
     pub fn reset(&mut self) {
         self.target = PShared::null();
@@ -566,7 +569,7 @@ impl<T> Insert<T> {
     }
 }
 
-/// TODO: doc
+/// Remove client for SOFT List
 #[derive(Debug, Default)]
 pub struct Remove<T: 'static> {
     target: PShared<'static, PNode<T>>,
@@ -592,7 +595,7 @@ impl<T: PartialEq + Clone> Remove<T> {
         persist_obj(&self.target, true);
     }
 
-    /// TODO: doc
+    /// reset
     #[inline]
     pub fn reset(&mut self) {
         let target = self.target;
@@ -609,11 +612,13 @@ impl<T: PartialEq + Clone> Remove<T> {
             if pnode_ref.deleter() == self.id(pool) {
                 ALLOC
                     .try_with(|a| {
-                        ssmem_free(
-                            *a.borrow_mut(),
-                            pnode_ref as *const _ as *mut c_void,
-                            Some(pool),
-                        );
+                        unsafe {
+                            ssmem_free(
+                                *a.borrow_mut(),
+                                pnode_ref as *const _ as *mut c_void,
+                                Some(pool),
+                            )
+                        };
                     })
                     .unwrap();
             }
@@ -638,29 +643,36 @@ struct PNode<T> {
     // PNode를 삭제한 client(의 상대주소). 0이 아니면 "삭제완료"를 의미
     deleter: AtomicUsize,
 
-    // TODO: key, value는 CAS 안쓰는데 왜 Atomic? create시 valid_start, valid_end 사이에 존재하게끔 ordering 보장하려는 목적인가?
+    // TODO: 원래 구현에서 key, value는 CAS 안쓰는데 왜 Atomic? create시 valid_start, valid_end 사이에 존재하게끔 ordering 보장하려는 목적인가?
     key: usize,
     value: T,
 }
 
 impl<T: Clone + PartialEq> PNode<T> {
+    const NULL: usize = 0;
+
     /// PNode에 key, value를 쓰고 valid 표시
     fn create(
         &mut self,
-        key: usize,               // PNode에 쓰일 key
-        value: T,                 // PNode에 쓰일 value
-        inserter: &mut Insert<T>, // client
-        inserter_value: T,        // client가 시도하려던 value
+        key: usize,                 // PNode에 쓰일 key
+        (value, try_value): (T, T), // PNode에 쓰일 value, client가 시도하려던 value
+        inserter: &mut Insert<T>,   // client
         pool: &PoolHandle,
     ) -> bool {
         self.key = key;
-        self.value = value.clone();
+        self.value = value;
+        // TODO: value에 의해 PNode의 size가 한 cacheline을 넘어서면, 여기서 inserted 표시하기 전에 key, value의 persist를 보장해야함.
 
         // inserted, inserter의 persist order는 상관없음. inserted는 persist 안된 채(i.e. inserted=false) inserter만 persist 되었어도 삽입된걸로 구분하면 됨.
         self.inserted = true;
-        let res = if value == inserter_value {
+        let res = if self.value == try_value {
             self.inserter
-                .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
+                .compare_exchange(
+                    Self::NULL,
+                    inserter.id(pool),
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                )
                 .is_ok()
         } else {
             false
@@ -673,7 +685,12 @@ impl<T: Clone + PartialEq> PNode<T> {
     fn destroy(&self, remover: &mut Remove<T>, pool: &PoolHandle) -> bool {
         let res = self
             .deleter
-            .compare_exchange(0, remover.id(pool), Ordering::Release, Ordering::Relaxed)
+            .compare_exchange(
+                Self::NULL,
+                remover.id(pool),
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
             .is_ok();
         persist_obj(self, true);
         res
@@ -681,7 +698,7 @@ impl<T: Clone + PartialEq> PNode<T> {
 
     /// list에 삽입되어있는 PNode인지 여부 반환
     fn is_inserted(&self) -> bool {
-        (self.inserted || self.inserter() != 0) && self.deleter() == 0
+        (self.inserted || self.inserter() != Self::NULL) && self.deleter() == Self::NULL
     }
 
     /// list에서 삭제된 PNode인지 여부 반환 (하지만 아직 delete client가 들고있는 상태. 어떤 cliet 들고 있지 않을 때(i.e. PNode가 SMR 통해 free될 경우에) zero-initiailze)
@@ -692,7 +709,7 @@ impl<T: Clone + PartialEq> PNode<T> {
     //  1  ssmem의 ebr이 collect하여 재사용가능한 block은 zero-initialze 해줘야할 듯 (새로 alloc 받은 것이 zero-initialize 되어있기만 하면 됨)
     //  2. allocator는 복구시 VList를 재구성하기 전에 (1) inserter, deleter 둘다 찍혀있지만 (2) 이를 가리키는 client가 없는 block들을 찾아서 zero-initialize 부터 해줘야할 듯
     fn is_deleted(&self) -> bool {
-        (self.inserted || self.inserter() != 0) && self.deleter() != 0
+        (self.inserted || self.inserter() != Self::NULL) && self.deleter() != Self::NULL
     }
 
     fn inserter(&self) -> usize {
