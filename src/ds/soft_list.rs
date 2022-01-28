@@ -655,11 +655,12 @@ impl<T: Clone + PartialEq> PNode<T> {
         pool: &PoolHandle,
     ) -> bool {
         self.key = key;
-        self.value = value.clone();
+        self.value = value;
+        // TODO: value에 의해 PNode의 size가 한 cacheline을 넘어서면, 여기서 inserted 표시하기 전에 key, value의 persist를 보장해야함.
 
         // inserted, inserter의 persist order는 상관없음. inserted는 persist 안된 채(i.e. inserted=false) inserter만 persist 되었어도 삽입된걸로 구분하면 됨.
         self.inserted = true;
-        let res = if value == inserter_value {
+        let res = if self.value == inserter_value {
             self.inserter
                 .compare_exchange(
                     Self::NULL,
