@@ -203,7 +203,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 // 이번에 찾은 VNode의 PNode가 내가 target하던 PNode와 다르다면, 내가 target하던건 이미 삽입완료된 후 삭제된 것.
                 if pnode as *const _ as usize != target as *const _ as usize {
                     // 삽입완료 표시는 됐지만 inserter는 아직 결정되지 않았을 수 있으므로 inserter 등록시도
-                    let res = target.create(target.key, target.value.clone(), client, value, pool);
+                    let res =
+                        target.create(target.key, (target.value.clone(), value), client, pool);
                     client.set_result(res);
                     return res;
                 }
@@ -288,9 +289,8 @@ impl<T: Clone + PartialEq> SOFTList<T> {
         let pnode = unsafe { result_node.pptr.as_mut().unwrap() };
         let result = pnode.create(
             result_node.key,
-            result_node.value.clone(),
+            (result_node.value.clone(), value),
             client,
-            value,
             pool,
         );
 
@@ -648,10 +648,9 @@ impl<T: Clone + PartialEq> PNode<T> {
     /// PNode에 key, value를 쓰고 valid 표시
     fn create(
         &mut self,
-        key: usize,               // PNode에 쓰일 key
-        value: T,                 // PNode에 쓰일 value
-        inserter: &mut Insert<T>, // client
-        inserter_value: T,        // client가 시도하려던 value
+        key: usize,                 // PNode에 쓰일 key
+        (value, try_value): (T, T), // PNode에 쓰일 value, client가 시도하려던 value
+        inserter: &mut Insert<T>,   // client
         pool: &PoolHandle,
     ) -> bool {
         self.key = key;
@@ -660,7 +659,7 @@ impl<T: Clone + PartialEq> PNode<T> {
 
         // inserted, inserter의 persist order는 상관없음. inserted는 persist 안된 채(i.e. inserted=false) inserter만 persist 되었어도 삽입된걸로 구분하면 됨.
         self.inserted = true;
-        let res = if self.value == inserter_value {
+        let res = if self.value == try_value {
             self.inserter
                 .compare_exchange(
                     Self::NULL,
