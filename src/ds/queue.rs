@@ -363,15 +363,14 @@ impl<T: Clone + Collectable> Queue<T> {
         let (head, next) = loop {
             let head = self.head.load(false, Ordering::SeqCst, guard);
             let head_ref = unsafe { head.deref(pool) };
-            let next = head_ref.next.load(false, Ordering::SeqCst, guard);
             let tail = self.tail.load(Ordering::SeqCst, guard);
+            let next = head_ref.next.load(head == tail, Ordering::SeqCst, guard);
 
             if head != tail || next.is_null() {
                 break (head, next);
             }
 
             // tail is stale
-            let next = head_ref.next.load(true, Ordering::SeqCst, guard);
             let _ =
                 self.tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
