@@ -643,6 +643,8 @@ struct PNode<T> {
 }
 
 impl<T: Clone + PartialEq> PNode<T> {
+    const NULL: usize = 0;
+
     /// PNode에 key, value를 쓰고 valid 표시
     fn create(
         &mut self,
@@ -659,7 +661,12 @@ impl<T: Clone + PartialEq> PNode<T> {
         self.inserted = true;
         let res = if value == inserter_value {
             self.inserter
-                .compare_exchange(0, inserter.id(pool), Ordering::Release, Ordering::Relaxed)
+                .compare_exchange(
+                    Self::NULL,
+                    inserter.id(pool),
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                )
                 .is_ok()
         } else {
             false
@@ -672,7 +679,12 @@ impl<T: Clone + PartialEq> PNode<T> {
     fn destroy(&self, remover: &mut Remove<T>, pool: &PoolHandle) -> bool {
         let res = self
             .deleter
-            .compare_exchange(0, remover.id(pool), Ordering::Release, Ordering::Relaxed)
+            .compare_exchange(
+                Self::NULL,
+                remover.id(pool),
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
             .is_ok();
         persist_obj(self, true);
         res
@@ -680,7 +692,7 @@ impl<T: Clone + PartialEq> PNode<T> {
 
     /// list에 삽입되어있는 PNode인지 여부 반환
     fn is_inserted(&self) -> bool {
-        (self.inserted || self.inserter() != 0) && self.deleter() == 0
+        (self.inserted || self.inserter() != Self::NULL) && self.deleter() == Self::NULL
     }
 
     /// list에서 삭제된 PNode인지 여부 반환 (하지만 아직 delete client가 들고있는 상태. 어떤 cliet 들고 있지 않을 때(i.e. PNode가 SMR 통해 free될 경우에) zero-initiailze)
@@ -691,7 +703,7 @@ impl<T: Clone + PartialEq> PNode<T> {
     //  1  ssmem의 ebr이 collect하여 재사용가능한 block은 zero-initialze 해줘야할 듯 (새로 alloc 받은 것이 zero-initialize 되어있기만 하면 됨)
     //  2. allocator는 복구시 VList를 재구성하기 전에 (1) inserter, deleter 둘다 찍혀있지만 (2) 이를 가리키는 client가 없는 block들을 찾아서 zero-initialize 부터 해줘야할 듯
     fn is_deleted(&self) -> bool {
-        (self.inserted || self.inserter() != 0) && self.deleter() != 0
+        (self.inserted || self.inserter() != Self::NULL) && self.deleter() != Self::NULL
     }
 
     fn inserter(&self) -> usize {
