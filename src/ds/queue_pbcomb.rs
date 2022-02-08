@@ -77,7 +77,7 @@ static mut E_LOCK: usize = 0; // TODO: AtomicUsize
 static mut D_LOCK: usize = 0; // TODO: AtomicUsize
 
 /// TODO: doc
-// TODO: 내부 필드 전부 cachepadded?
+// TODO: 내부 필드 전부 cachepadded? -> 일단 이렇게 실험하고 성능 이상하다 싶으면 그때 cachepadded 해보기.
 #[derive(Debug)]
 pub struct QueuePBComb {
     /// Shared non-volatile variables
@@ -205,7 +205,9 @@ mod test {
     const COUNT: usize = 100_000;
 
     #[derive(Default)]
-    struct EnqDeq {}
+    struct EnqDeq {
+        seq: usize, // thread-local op seqeuence number. TODO: log queue였나? 구현보고 똑같이 구현
+    }
 
     impl Collectable for EnqDeq {
         fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
