@@ -7,6 +7,7 @@ pub mod clevel;
 pub mod queue;
 pub mod queue_general;
 pub mod queue_lp;
+pub mod queue_pbcomb;
 pub mod soft_hash;
 pub mod soft_list;
 pub mod spin_lock;
