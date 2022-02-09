@@ -3,17 +3,12 @@
 //! NOTE: This is not memento-based yet.
 #![allow(warnings)] // TODO: remove
 
-use std::borrow::BorrowMut;
-use std::marker::PhantomData;
-use std::ptr::null_mut;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-use crate::pepoch::PAtomic;
 use crate::pmem::{persist_obj, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
+use array_init::array_init;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const MAX_THREADS: usize = 32;
-
 type Data = usize; // TODO: generic
 
 /// function type of queue
@@ -36,10 +31,10 @@ pub enum ReturnVal {
     DeqRetVal(Option<PPtr<Node>>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[repr(align(64))]
 struct RequestRec {
-    func: Func,
+    func: Option<Func>,
     arg: usize,
     seq: usize,     // TODO: seq and activate are stored in the same memroy word
     activate: bool, // TODO: bit
@@ -53,6 +48,15 @@ pub struct Node {
     next: PPtr<Node>,
 }
 
+impl Collectable for Node {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        if !s.next.is_null() {
+            let next_ref = unsafe { s.next.deref_mut(pool) };
+            Collectable::mark(next_ref, tid, gc);
+        }
+    }
+}
+
 /// State of Enqueue PBComb
 #[derive(Debug, Clone)]
 struct EStateRec {
@@ -61,12 +65,30 @@ struct EStateRec {
     deactivate: [bool; MAX_THREADS],              // TODO: bit
 }
 
+impl Collectable for EStateRec {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        if !s.tail.is_null() {
+            let tail_ref = unsafe { s.tail.deref_mut(pool) };
+            Collectable::mark(tail_ref, tid, gc);
+        }
+    }
+}
+
 /// State of Dequeue PBComb
 #[derive(Debug, Clone)]
 struct DStateRec {
     head: PPtr<Node>,
     return_val: [Option<ReturnVal>; MAX_THREADS], // TODO: type of return value
     deactivate: [bool; MAX_THREADS],              // TODO: bit
+}
+
+impl Collectable for DStateRec {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        if !s.head.is_null() {
+            let head_ref = unsafe { s.head.deref_mut(pool) };
+            Collectable::mark(head_ref, tid, gc);
+        }
+    }
 }
 
 /// Shared volatile variables
@@ -104,14 +126,45 @@ pub struct QueuePBComb {
 
 impl Collectable for QueuePBComb {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        todo!()
+        assert!(s.dummy.is_null());
+        Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
+
+        for t in 0..MAX_THREADS {
+            Collectable::filter(&mut s.e_state[t], tid, gc, pool);
+            Collectable::filter(&mut s.d_state[t], tid, gc, pool);
+        }
+
+        // initialize global volatile variable manually
+        unsafe { OLD_TAIL = s.dummy };
     }
 }
 
 impl PDefault for QueuePBComb {
     fn pdefault(pool: &PoolHandle) -> Self {
-        // TODO: old_tail = dummy
-        todo!("initialize")
+        let dummy = pool.alloc::<Node>();
+        let dummy_ref = unsafe { dummy.deref_mut(pool) };
+        dummy_ref.data = 0;
+        dummy_ref.next = PPtr::null();
+
+        // initialize global volatile variable manually
+        unsafe { OLD_TAIL = dummy };
+        Self {
+            dummy,
+            e_request: array_init(|_| RequestRec::default()),
+            e_state: array_init(|_| EStateRec {
+                tail: dummy,
+                return_val: array_init(|_| None),
+                deactivate: array_init(|_| false),
+            }),
+            e_index: 0,
+            d_request: array_init(|_| RequestRec::default()),
+            d_state: array_init(|_| DStateRec {
+                head: dummy,
+                return_val: array_init(|_| None),
+                deactivate: array_init(|_| false),
+            }),
+            d_index: 0,
+        }
     }
 }
 
@@ -185,7 +238,7 @@ impl QueuePBComb {
     fn PBQueueEnq(&mut self, arg: Data, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // 요청 등록
         self.e_request[tid] = RequestRec {
-            func: Func::ENQUEUE,
+            func: Some(Func::ENQUEUE),
             arg,
             seq,
             activate: !self.e_request[tid].activate, // TODO: 1-activate?
@@ -265,7 +318,7 @@ impl QueuePBComb {
     fn PBQueueDnq(&mut self, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // 요청 등록
         self.d_request[tid] = RequestRec {
-            func: Func::DEQUEUE,
+            func: Some(Func::DEQUEUE),
             arg: 0,
             seq,
             activate: !self.d_request[tid].activate, // TODO: 1-activate?
@@ -417,6 +470,7 @@ mod test {
         }
     }
 
+    #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "pbcomb_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
