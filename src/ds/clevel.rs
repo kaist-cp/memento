@@ -566,7 +566,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                     find_result
                         .slot
                         .inner
-                        .store(PShared::null().with_tag(1), Ordering::Release); // TODO(must): store도 helping 해야 함
+                        .store(PShared::null().with_tag(1), Ordering::Release);
                 } else {
                     // If the moved item is not found again, retry.
                     return Err(());
@@ -583,7 +583,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
 
-            // Before
             match find_result.slot.inner.compare_exchange(
                 find_result.slot_ptr,
                 PShared::null(),
@@ -603,51 +602,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                     }
                 }
             }
-
-            // After(insdel)
-            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
-            // if find_result
-            //     .slot
-            //     .delete::<false>(
-            //         find_result.slot_ptr,
-            //         PShared::null(),
-            //         DeleteMode::Drop,
-            //         dedup_delete,
-            //         tid,
-            //         guard,
-            //         pool,
-            //     )
-            //     .is_err()
-            // {
-            //     let slot = ok_or!(find_result.slot.load_helping(guard, pool), e, e);
-            //     if slot == find_result.slot_ptr.with_tag(1) {
-            //         // If the item is moved, retry.
-            //         return Err(());
-            //     }
-            // }
-
-            // After(general)
-            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
-            // match find_result.slot.cas::<false>(
-            //     find_result.slot_ptr,
-            //     PShared::null(),
-            //     dedup_delete,
-            //     tid,
-            //     guard,
-            //     pool,
-            // ) {
-            //     Ok(_) => unsafe {
-            //         guard.defer_pdestroy(find_result.slot_ptr);
-            //     },
-            //     Err(e) => {
-            //         if e == find_result.slot_ptr.with_tag(1) {
-            //             // If the item is moved, retry.
-            //             return Err(());
-            //         }
-            //     }
-            // }
         }
 
         if fence {
@@ -670,10 +624,11 @@ fn new_node<K, V>(
             size * std::mem::size_of::<Bucket<K, V>>(),
         );
     }
-    // persist_obj(&data_ref, true);
+    // TODO: persist_obj(&data_ref, true);
 
     // TODO: pallocation maybeuninit 잘 동작하나?
     POwned::new(Node::from(PAtomic::from(data)), pool)
+    // TODO: persist_obj(&above, true);
 }
 
 impl<K, V> Drop for ClevelInner<K, V> {
@@ -763,17 +718,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         (first_level_data.len() * 2 - last_level_data.len()) * SLOTS_IN_BUCKET
     }
 
-    fn add_level<'g, const REC: bool>(
+    fn add_level<'g>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
-        if REC {
-            return (context, false);
-        }
-
         let first_level_data =
             unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
         let next_level_size = level_size_next(first_level_data.len());
@@ -789,7 +740,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 next_level
             } else {
                 let next_node = new_node(next_level_size, pool);
-                // TODO(must): CAS 후 persist가 되어야 함
+                // TODO(must): CAS 후 persist가 되어야 함 (general CAS까진 쓸 거 없이 이쪽+윗쪽에서만 하면 될 듯)
                 first_level
                     .next
                     .compare_exchange(
@@ -871,6 +822,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
+        if REC {
+            // TODO(must): checkpoint된 slot있나보고 CAS
+            // TODO(must): 더럽히는 데에 성공하고 move하는 건 어떻게 checkpoint하고 rec run에서 실패시 어떻게 할 텐가?
+        }
+
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let mut context_ref = unsafe { context.deref(pool) };
@@ -930,28 +886,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                                 //     continue;
                                 // }
 
-                                // After(insdel)
-                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
-                                // if slot
-                                //     .delete::<false>(
-                                //         slot_ptr,
-                                //         slot_ptr.with_tag(1),
-                                //         DeleteMode::Drop,
-                                //         &mut resize.move_delete,
-                                //         tid,
-                                //         guard,
-                                //         pool,
-                                //     )
-                                //     .is_err()
-                                // {
-                                //     slot_ptr = slot.load_helping(guard, pool).unwrap(); // TODO(must): 나중에 태깅할 때 owner가 자기 자신일 수 있음. 그때는 Err일 때를 잘 처리해야함
-                                //     continue;
-                                // }
-
                                 // After(general)
-                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                                // TODO(must): 여기서 slot을 checkpoint!
                                 if let Err(e) = slot.cas::<false>(
                                     slot_ptr,
                                     slot_ptr.with_tag(1),
@@ -1019,27 +955,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                                 //     break;
                                 // }
 
-                                // After(insdel)
-                                // TODO(must): traverse obj를 clevel 전체로 해야할 듯함
-                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
-                                // if slot
-                                //     .insert::<_, false>(
-                                //         slot_ptr,
-                                //         slot,
-                                //         &mut resize.move_insert,
-                                //         guard,
-                                //         pool,
-                                //     )
-                                //     .is_ok()
-                                // {
-                                //     moved = true;
-                                //     break;
-                                // }
-
                                 // After(general)
-                                // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-                                // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                                // TODO(must): 여기서 slot을 checkpoint!
                                 if slot
                                     .cas::<false>(
                                         PShared::null(),
@@ -1067,7 +984,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
-                            self.add_level::<false>(context, first_level_ref, guard, pool); // TODO(must): Use REC for add_level
+                            self.add_level(context, first_level_ref, guard, pool);
                         context = context_new;
                         context_ref = unsafe { context.deref(pool) };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
@@ -1227,6 +1144,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
+        if REC {
+            // TODO(must): checkpoint된 slot있나보고 CAS
+        }
+
         let context_ref = unsafe { context.deref(pool) };
         let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
         for array in context_ref.level_iter(guard) {
@@ -1271,8 +1192,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                     // }
 
                     // After(general)
-                    // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-                    // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+                    // TODO(must): 여기서 slot을 checkpoint!
                     if slot
                         .cas::<false>(PShared::null(), slot_new, insert_cas, tid, guard, pool)
                         .is_ok()
@@ -1290,7 +1210,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         Err(())
     }
 
-    // Memento function
     #[inline]
     fn insert_inner<'g, const REC: bool>(
         &'g self,
@@ -1320,13 +1239,15 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         let context_ref = unsafe { context.deref(pool) };
         let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let first_level_ref = unsafe { first_level.deref(pool) };
-        let (context_new, added) = self.add_level::<REC>(context, first_level_ref, guard, pool);
+        let (context_new, added) = self.add_level(context, first_level_ref, guard, pool);
         if added {
             let _ = sender.send(());
         }
+        // TODO(must): Err 리턴하지말고 loop으로 재시도. context는 checkpoint할 필요 없음
         Err(context_new)
     }
 
+    // TODO(must): 이건 필요 없을 거임. insert_inner에서 다 하면 되므로
     fn insert_inner_helper<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
@@ -1397,6 +1318,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
             // If the context remains the same, it's done.
             let context_new = self.context.load(Ordering::Acquire, guard);
+            // TODO(must): 이미 insert 끝난 memento에 대해 Rec run에서는 여기서 리턴해야하므로 context를 checkpoint해야할 것 같음
             if context == context_new {
                 return;
             }
@@ -1427,8 +1349,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             // }
 
             // After(general)
-            // TODO(must): REC을 써야 함 (지금은 normal run을 가정)
-            // TODO(must): 반복문 어디까지 왔는지 checkpoint도 해야 함
+            // TODO(must): 여기서 checkpoint 하고 위에서 rec run에서 마저하도록 해야할 듯
             if insert_result
                 .slot
                 .cas::<false>(
@@ -1444,6 +1365,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 break;
             }
 
+            // TODO(must): 더럽히는 데에 성공하고 move하는 건 어떻게 checkpoint하고 rec run에서 실패시 어떻게 할 텐가?
             // TODO(must): 상황에 따라 insert_inner 반복 호출되므로 reset 해야 함
             let (context_insert, insert_result_insert) = self.insert_inner_helper::<REC>(
                 context_new,
@@ -1459,7 +1381,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             insert_result
                 .slot
                 .inner
-                .store(PShared::null().with_tag(1), Ordering::Release); // TODO(must): store도 helping 해야 함
+                .store(PShared::null().with_tag(1), Ordering::Release);
             context = context_insert;
             insert_result = insert_result_insert;
         }
@@ -1661,6 +1583,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
 
         loop {
+            // TODO(must): reset
             if let Ok(ret) = self.try_delete::<false>(key, &mut delete.try_delete, tid, guard, pool)
             {
                 return ret;
