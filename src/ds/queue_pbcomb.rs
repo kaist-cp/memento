@@ -182,13 +182,58 @@ impl QueuePBComb {
     }
 
     /// enqueue 요청 실행 (thread-local)
-    fn PerformEnqReq(&self, tid: usize) -> ReturnVal {
-        todo!()
+    fn PerformEnqReq(&mut self, tid: usize) -> ReturnVal {
+        // enq combiner 결정
+        loop {
+            let lval = E_LOCK.load(Ordering::SeqCst);
+
+            // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
+            // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
+            if (lval % 2 == 0)
+                && E_LOCK
+                    .compare_exchange(lval, lval + 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            {
+                break;
+            }
+
+            // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
+            while lval == E_LOCK.load(Ordering::SeqCst) {}
+            if self.e_request[tid].activate == self.e_state[self.e_index].deactivate[tid] {
+                return self.e_state[self.e_index].return_val[tid].clone().unwrap();
+            }
+        }
+
+        // enq combiner는 쌓인 enq 요청들을 수행
+        let ind = 1 - self.e_index;
+        self.e_state[ind] = self.e_state[self.e_index].clone(); // create a copy of current state
+        unsafe { OLD_TAIL = self.e_state[ind].tail };
+
+        for t in 0..MAX_THREADS {
+            // if `t` thread has a request that is not yet applied
+            let t_req = &self.e_request[t];
+            if t_req.activate != self.e_state[ind].deactivate[t] {
+                // TODO: add EState[ind].tail to `toPersist`
+                self.enqueue(&self.e_state[ind].tail, t_req.arg);
+                self.e_state[ind].return_val[t] = Some(ReturnVal::EnqRetVal(()));
+                self.e_state[ind].deactivate[t] = t_req.activate;
+            }
+        }
+        // TODO: add EState[ind].tail to `toPersist`
+        // TODO: persist all in `toPersist`
+        persist_obj(&self.e_request, false);
+        persist_obj(&self.e_state[ind], true); // TODO: 논문에서 얘는 왜 state는 &붙여 pwb하고 위의 request는 &없이 pwb함?
+        self.e_index = ind;
+        persist_obj(&self.e_index, true);
+        unsafe { OLD_TAIL = PPtr::null() };
+        // TODO: make toPersist empty
+        let _ = E_LOCK.fetch_add(1, Ordering::SeqCst);
+        self.e_state[self.e_index].return_val[tid].clone().unwrap()
     }
 
     /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
     // TODO: arg
-    fn enqueue() {
+    fn enqueue(&self, tail: &PPtr<Node>, arg: Data) {
         todo!()
     }
 }
@@ -210,13 +255,58 @@ impl QueuePBComb {
     }
 
     /// dequeue 요청 실행 (thread-local)
-    fn PerformDeqReq(&self, tid: usize) -> ReturnVal {
-        todo!()
+    fn PerformDeqReq(&mut self, tid: usize) -> ReturnVal {
+        // deq combiner 결정
+        loop {
+            let lval = D_LOCK.load(Ordering::SeqCst);
+
+            // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
+            // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
+            if (lval % 2 == 0)
+                && D_LOCK
+                    .compare_exchange(lval, lval + 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            {
+                break;
+            }
+
+            // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
+            while lval == D_LOCK.load(Ordering::SeqCst) {}
+            if self.d_request[tid].activate == self.d_state[self.d_index].deactivate[tid] {
+                return self.d_state[self.d_index].return_val[tid].clone().unwrap();
+            }
+        }
+
+        // deq combiner는 쌓인 deq 요청들을 수행
+        let ind = 1 - self.d_index;
+        self.d_state[ind] = self.d_state[self.d_index].clone(); // create a copy of current state
+
+        for t in 0..MAX_THREADS {
+            // if `t` thread has a request that is not yet applied
+            let t_req = &self.d_request[t];
+            if t_req.activate != self.d_state[ind].deactivate[t] {
+                let ret_val;
+                // 확실히 persist된 노드들만 deq 수행. OLD_TAIL부터는 현재 enq 중인거라 persist 보장되지 않음
+                if unsafe { OLD_TAIL } != self.d_state[ind].head {
+                    let node = self.dequeue(&self.d_state[ind].head);
+                    ret_val = ReturnVal::DeqRetVal(Some(node));
+                } else {
+                    ret_val = ReturnVal::DeqRetVal(None);
+                }
+                self.d_state[ind].return_val[t] = Some(ret_val);
+                self.d_state[ind].deactivate[t] = t_req.activate;
+            }
+        }
+        persist_obj(&self.d_request, false);
+        persist_obj(&self.d_state[ind], true); // TODO: 논문에서 얘는 왜 state는 &붙여 pwb하고 위의 request는 &없이 pwb함?
+        self.d_index = ind;
+        persist_obj(&self.d_index, true);
+        let _ = D_LOCK.fetch_add(1, Ordering::SeqCst);
+        self.d_state[self.d_index].return_val[tid].clone().unwrap()
     }
 
     /// 실질적인 dequeue: head 한 칸 전진하고 old head를 반환
-    // TODO: arg
-    fn dequeue() {
+    fn dequeue(&self, head: &PPtr<Node>) -> PPtr<Node> {
         todo!()
     }
 }
