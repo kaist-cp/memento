@@ -1,11 +1,15 @@
 //! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
 //!
 //! NOTE: This is not memento-based yet.
-
 #![allow(warnings)] // TODO: remove
 
+use std::borrow::BorrowMut;
+use std::marker::PhantomData;
+use std::ptr::null_mut;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::pepoch::PAtomic;
-use crate::pmem::{Collectable, GarbageCollection, PPtr, PoolHandle};
+use crate::pmem::{persist_obj, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 
 const MAX_THREADS: usize = 32;
@@ -26,10 +30,10 @@ pub enum Func {
 #[derive(Debug, Clone)]
 pub enum ReturnVal {
     /// return value of enq
-    EnqRetVal(()),
+    EnqRetVal(()), // TODO: ACK 표현?
 
     /// return value of deq
-    DeqRetVal(PPtr<Node>), // TODO: PPtr 괜찮나? PShared가 더 맞는 표현인가?
+    DeqRetVal(Option<PPtr<Node>>),
 }
 
 #[derive(Debug)]
@@ -46,44 +50,48 @@ struct RequestRec {
 #[derive(Debug)]
 pub struct Node {
     data: Data,
-    next: PAtomic<Node>, // TODO: load, store만 써야함. CAS는 쓸일 없음
+    next: PPtr<Node>,
 }
 
 /// State of Enqueue PBComb
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EStateRec {
-    tail: PAtomic<Node>, // TODO: load, store만 써야함. CAS는 쓸일 없음
+    tail: PPtr<Node>,
     return_val: [Option<ReturnVal>; MAX_THREADS], // TODO: type of return value
-    deactivate: [bool; MAX_THREADS], // TODO: bit
+    deactivate: [bool; MAX_THREADS],              // TODO: bit
 }
 
 /// State of Dequeue PBComb
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DStateRec {
-    head: PAtomic<Node>, // TODO: load, store만 써야함. CAS는 쓸일 없음
+    head: PPtr<Node>,
     return_val: [Option<ReturnVal>; MAX_THREADS], // TODO: type of return value
-    deactivate: [bool; MAX_THREADS], // TODO: bit
+    deactivate: [bool; MAX_THREADS],              // TODO: bit
 }
 
 /// Shared volatile variables
-// TODO: lazy_static?
-// static mut OLD_TAIL: *mut Node = null_mut(); // TODO: initially, &DUMMY
-// static mut TO_PERSIST: Set<*mut Node>;  // TODO: initiallay, empty set
+// TODO: 프로그램 시작시 dummy르 초기화해줘야함. 첫 시작은 pdefault에서 하면 될 것 같고, 이후엔? gc에서?
+static mut OLD_TAIL: PPtr<Node> = PPtr::null(); // TODO: initially, &DUMMY
 
-/// Shared volatile variables used by the PBQueueENQ instance of PBCOMB
-static mut E_LOCK: usize = 0; // TODO: AtomicUsize
+lazy_static::lazy_static! {
+    // static mut TO_PERSIST: Set<*mut Node>;  // TODO: initiallay, empty set
 
-/// Shared volatile variables used by the PBQueueDEQ instance of PBCOMB
-static mut D_LOCK: usize = 0; // TODO: AtomicUsize
+    /// Used PBQueueENQ instance of PBCOMB
+    static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
+
+    /// Used by the PBQueueDEQ instance of PBCOMB
+    static ref D_LOCK: AtomicUsize = AtomicUsize::new(0);
+}
 
 /// TODO: doc
 // TODO: 내부 필드 전부 cachepadded? -> 일단 이렇게 실험하고 성능 이상하다 싶으면 그때 cachepadded 해보기.
 #[derive(Debug)]
 pub struct QueuePBComb {
     /// Shared non-volatile variables
-    dummy: Node, // TODO: initially, ..
+    dummy: PPtr<Node>, // TODO: initially, ..
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
+    // TODO: enq하는데 deq의 variable을 쓰는 실수 주의
     e_request: [RequestRec; MAX_THREADS], // TODO: initially, ...
     e_state: [EStateRec; 2], // TODO: initially, ...
     e_index: usize,          // TODO: bit
@@ -102,6 +110,7 @@ impl Collectable for QueuePBComb {
 
 impl PDefault for QueuePBComb {
     fn pdefault(pool: &PoolHandle) -> Self {
+        // TODO: old_tail = dummy
         todo!("initialize")
     }
 }
