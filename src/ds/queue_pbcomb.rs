@@ -119,7 +119,7 @@ impl QueuePBComb {
     /// normal run
     ///
     /// enq or deq 실행
-    pub fn PBQueue(&self, func: Func, arg: Data, seq: usize, tid: usize) -> ReturnVal {
+    pub fn PBQueue(&mut self, func: Func, arg: Data, seq: usize, tid: usize) -> ReturnVal {
         match func {
             Func::ENQUEUE => self.PBQueueEnq(arg, seq, tid),
             Func::DEQUEUE => self.PBQueueDnq(seq, tid),
@@ -129,7 +129,7 @@ impl QueuePBComb {
     /// recovery run
     ///
     /// 최근 crash난 enq or deq를 재실행 (exactly-once)
-    pub fn recover(&self, func: Func, arg: Data, seq: usize, tid: usize) -> ReturnVal {
+    pub fn recover(&mut self, func: Func, arg: Data, seq: usize, tid: usize) -> ReturnVal {
         match func {
             Func::ENQUEUE => {
                 // 1. check seq number and re-announce if request is not yet announced
@@ -168,8 +168,17 @@ impl QueuePBComb {
 /// Enq
 impl QueuePBComb {
     /// enqueue 요청 등록 후 실행 (thread-local)
-    fn PBQueueEnq(&self, arg: Data, seq: usize, tid: usize) -> ReturnVal {
-        todo!()
+    fn PBQueueEnq(&mut self, arg: Data, seq: usize, tid: usize) -> ReturnVal {
+        // 요청 등록
+        self.e_request[tid] = RequestRec {
+            func: Func::ENQUEUE,
+            arg,
+            seq,
+            activate: !self.e_request[tid].activate, // TODO: 1-activate?
+        };
+
+        // 실행
+        self.PerformEnqReq(tid)
     }
 
     /// enqueue 요청 실행 (thread-local)
@@ -187,8 +196,17 @@ impl QueuePBComb {
 /// Deq
 impl QueuePBComb {
     /// dequeue 요청 등록 후 실행 (thread-local)
-    fn PBQueueDnq(&self, seq: usize, tid: usize) -> ReturnVal {
-        todo!()
+    fn PBQueueDnq(&mut self, seq: usize, tid: usize) -> ReturnVal {
+        // 요청 등록
+        self.d_request[tid] = RequestRec {
+            func: Func::DEQUEUE,
+            arg: 0,
+            seq,
+            activate: !self.d_request[tid].activate, // TODO: 1-activate?
+        };
+
+        // 실행
+        self.PerformDeqReq(tid)
     }
 
     /// dequeue 요청 실행 (thread-local)
