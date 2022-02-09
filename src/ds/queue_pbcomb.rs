@@ -313,9 +313,11 @@ impl QueuePBComb {
 
 #[cfg(test)]
 mod test {
-    use crate::ds::queue_pbcomb::QueuePBComb;
-    use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
-    use crate::test_utils::tests::{run_test, TestRootObj};
+    use std::sync::atomic::Ordering;
+
+    use crate::ds::queue_pbcomb::{Func, QueuePBComb, ReturnVal};
+    use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj};
+    use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
 
     const NR_THREAD: usize = 12;
@@ -323,7 +325,8 @@ mod test {
 
     #[derive(Default)]
     struct EnqDeq {
-        seq: usize, // thread-local op seqeuence number. TODO: log queue였나? 구현보고 똑같이 구현
+        enq_seq: usize, // thread-local op seqeuence number. TODO: log queue였나? 구현보고 똑같이 구현
+        deq_seq: usize, // thread-local op seqeuence number. TODO: log queue였나? 구현보고 똑같이 구현
     }
 
     impl Collectable for EnqDeq {
@@ -334,7 +337,54 @@ mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<QueuePBComb> {
         fn run(&self, mmt: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            todo!()
+            // Get &mut queue
+            let queue =
+                unsafe { (&self.obj as *const QueuePBComb as *mut QueuePBComb).as_mut() }.unwrap();
+
+            match tid {
+                // T0: 다른 스레드들의 실행결과를 확인
+                0 => {
+                    // 다른 스레드들이 다 끝날때까지 기다림
+                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+
+                    // Check queue is empty
+                    let res = queue.PBQueue(Func::DEQUEUE, tid, 0, tid);
+                    if let ReturnVal::DeqRetVal(res) = res {
+                        assert!(res.is_none());
+                    } else {
+                        panic!("func and return value must be of the same type");
+                    }
+
+                    // Check results
+                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
+                    assert!((1..NR_THREAD + 1)
+                        .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
+                }
+                // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
+                _ => {
+                    // enq; deq;
+                    for i in 0..COUNT {
+                        let _ = queue.PBQueue(Func::ENQUEUE, tid, mmt.enq_seq, tid);
+                        mmt.enq_seq += 1;
+                        persist_obj(mmt, true);
+                        let res = queue.PBQueue(Func::DEQUEUE, tid, mmt.deq_seq, tid);
+                        mmt.deq_seq += 1;
+                        persist_obj(mmt, true);
+
+                        if let ReturnVal::DeqRetVal(res) = res {
+                            // deq 결과를 실험결과에 전달
+                            let node = res.unwrap();
+                            let v = unsafe { node.deref(pool) }.data;
+                            let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
+                        } else {
+                            panic!("func and return value must be of the same type");
+                        }
+                    }
+
+                    // "나 끝났다"
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+                }
+            }
         }
     }
 
