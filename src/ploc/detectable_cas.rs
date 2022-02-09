@@ -104,7 +104,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             );
 
             if let Err(e) = res {
-                let cur = self.help(e.current, &pool.cas_info, guard);
+                let cur = self.load_help(e.current, &pool.cas_info, guard);
                 if cur == old {
                     // retry for the property of strong CAS
                     continue;
@@ -144,7 +144,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
     #[inline]
     pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
         let cur = self.inner.load(ord, guard);
-        self.help(cur, &pool.cas_info, guard)
+        self.load_help(cur, &pool.cas_info, guard)
     }
 
     #[inline]
@@ -158,7 +158,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
     ) -> Result<(), PShared<'g, N>> {
         if mmt.checkpoint == FAILED {
             let cur = self.inner.load(Ordering::SeqCst, guard);
-            return Err(self.help(cur, cas_info, guard)); // TODO(opt): RecFail?
+            return Err(self.load_help(cur, cas_info, guard)); // TODO(opt): RecFail?
         }
 
         let vchk = cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
@@ -207,7 +207,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let pchk = cas_info.cas_pcheckpoint[next_bit][tid].load(Ordering::SeqCst);
 
         if max_chk >= pchk as usize {
-            return Err(self.help(cur, cas_info, guard));
+            return Err(self.load_help(cur, cas_info, guard));
         }
 
         // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
@@ -229,7 +229,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
     /// return bool: 계속 진행 가능 여부 (`old`로 CAS를 해도 되는지 여부)
     #[inline]
-    fn help<'g>(
+    fn load_help<'g>(
         &self,
         mut old: PShared<'g, N>,
         cas_info: &CasInfo,
@@ -278,8 +278,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             // check if winner thread's pcheckpoint is stale
             let pchk = cas_info.cas_pcheckpoint[winner_bit][winner_tid].load(Ordering::SeqCst);
-            let pchk_time = decompose_aux_bit(pchk as usize).1;
-            if chk <= pchk_time as u64 {
+            if chk <= pchk {
                 // Someone may already help it. I should retry to load.
                 old = self.inner.load(Ordering::SeqCst, guard);
                 continue;
@@ -349,8 +348,9 @@ impl CasInfo {
     #[inline]
     pub(crate) fn set_runtime_info(&mut self) {
         let max = self.cas_vcheckpoint.iter().fold(0, |m, chk| {
-            let t = chk.load(Ordering::Relaxed);
-            std::cmp::max(m, t)
+            let c = chk.load(Ordering::Relaxed);
+            let (_, t) = decompose_aux_bit(c as usize);
+            std::cmp::max(m, t as u64)
         });
         let max = self.cas_pcheckpoint.iter().fold(max, |m, chk_arr| {
             chk_arr.iter().fold(m, |mm, chk| {
