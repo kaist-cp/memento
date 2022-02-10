@@ -2,7 +2,6 @@
 
 use std::{
     cell::RefCell,
-    cmp,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -168,33 +167,33 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         if mmt.checkpoint != NOT_CHECKED {
             let (_, cli_chk) = decompose_aux_bit(mmt.checkpoint as usize);
 
-            match cli_chk.cmp(&max_chk) {
-                cmp::Ordering::Less => return Ok(()),
-                cmp::Ordering::Equal => {
-                    let _ = self.inner.compare_exchange(
-                        new.with_aux_bit(cur_bit).with_tid(tid),
-                        new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    );
-                    return Ok(());
-                }
-                cmp::Ordering::Greater => {
-                    // Occured when thread crash. Just continue below... (It should return `Ok` finally)
-                }
+            if cli_chk > max_chk {
+                cas_info.cas_vcheckpoint[tid].store(mmt.checkpoint, Ordering::Relaxed);
             }
+
+            if cli_chk >= max_chk {
+                let _ = self.inner.compare_exchange(
+                    new.with_aux_bit(cur_bit).with_tid(tid),
+                    new.with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
+            }
+
+            return Ok(());
         }
 
         let cur = self.inner.load(Ordering::SeqCst, guard);
 
+        // 내가 첫 CAS 성공한 채로 그대로 남아 있는지 확인
         if cur == new.with_aux_bit(next_bit).with_tid(tid) {
             mmt.checkpoint_succ(next_bit, tid, cas_info);
             let _ = self
                 .inner
                 .compare_exchange(
                     cur,
-                    new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
+                    new.with_tid(0),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     guard,
@@ -203,25 +202,17 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return Ok(());
         }
 
-        // CAS 성공하고 죽었는지 체크
+        // CAS 성공한 뒤에 helping 받은 건지 체크
         let pchk = cas_info.cas_pcheckpoint[next_bit][tid].load(Ordering::SeqCst);
-
         if max_chk >= pchk as usize {
             return Err(self.load_help(cur, cas_info, guard));
         }
 
-        // 마지막 CAS보다 helper 쓴 체크포인트가 높아야 하고 && 마지막 홀짝도 다르면 성공한 것
+        // 마지막 CAS보다 helper가 쓴 체크포인트가 높으므로 성공한 것
+        // 이미 location의 값은 바뀌었으므로 내 checkpoint만 마무리
         mmt.checkpoint_succ(next_bit, tid, cas_info);
-        let _ = self
-            .inner
-            .compare_exchange(
-                new.with_aux_bit(next_bit).with_tid(tid),
-                new.with_tid(0), // TODO(opt): 깔끔한 cas_bit?
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            )
-            .map_err(|_| sfence);
+        sfence();
+
         Ok(())
     }
 
