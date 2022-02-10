@@ -292,16 +292,25 @@ impl QueuePBComb {
         for q in 0..MAX_THREADS {
             // if `q` thread has a request that is not yet applied
             if self.e_request[q].activate != self.e_state[ind].deactivate[q] {
-                // let a = TO_PERSIST.lock().unwrap().insert(PPtr::null());
-                // (self.e_state[ind].tail);
-                // TODO: add EState[ind].tail to `toPersist`
+                let _ = TO_PERSIST
+                    .lock()
+                    .unwrap()
+                    .insert(self.e_state[ind].tail.into_offset());
                 Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
                 self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
                 self.e_state[ind].deactivate[q] = self.e_request[q].activate;
             }
         }
-        // TODO: add EState[ind].tail to `toPersist`
-        // TODO: persist all in `toPersist`
+
+        let _ = TO_PERSIST
+            .lock()
+            .unwrap()
+            .insert(self.e_state[ind].tail.into_offset());
+        // persist all in `TO_PERSIST`
+        for i in TO_PERSIST.lock().unwrap().iter() {
+            let node = PPtr::<Node>::from(*i);
+            persist_obj(unsafe { node.deref(pool) }, false);
+        }
         persist_obj(&self.e_request, false);
         persist_obj(&self.e_state[ind], false);
         sfence();
@@ -309,6 +318,7 @@ impl QueuePBComb {
         persist_obj(&self.e_index, false);
         sfence();
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
+        TO_PERSIST.lock().unwrap().clear(); // clear to_persist set
         E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
         self.e_state[self.e_index].return_val[tid].clone().unwrap()
     }
