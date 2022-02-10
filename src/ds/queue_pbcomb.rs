@@ -24,7 +24,6 @@ pub enum Func {
 }
 
 /// return value of queue function
-// TODO: 얘 필요없을 듯. deq는 Option<T>
 #[derive(Debug, Clone)]
 pub enum ReturnVal {
     /// return value of enq
@@ -43,7 +42,6 @@ struct RequestRec {
     activate: bool, // TODO: bit
 }
 
-// TODO: generic data
 /// Node
 #[derive(Debug)]
 pub struct Node {
@@ -95,11 +93,16 @@ impl Collectable for DStateRec {
 }
 
 /// Shared volatile variables
-// 프로그램 시작시 dummy르 초기화됨. (첫 시작은 pdefault에서, 이후엔 gc에서)
-static mut OLD_TAIL: PPtr<Node> = PPtr::null(); // TODO: initially, &DUMMY
 
 lazy_static::lazy_static! {
-    static ref TO_PERSIST: Mutex<HashSet<PPtr<Node>>> = Mutex::new(HashSet::new());  // TODO: initiallay, empty set
+    /// 현재 진행중인 enq combiner가 enq 시작한 지점. 여기서부턴 persist아직 보장되지 않았으니 deq해가면 안됨
+    ///
+    /// - 프로그램 시작시 dummy node를 가리키도록 초기화 (첫 시작은 pdefault에서, 이후엔 gc에서)
+    /// - 노드를 직접 저장하지 않고 노드의 상대주소를 저장 (여기에 Atomic<PPtr<Node>>나 PAtomic<Node>는 이상함)
+    static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
+
+    /// 현재 진행중인 enq combiner가 OLD_TAIL 이후에 enq한 노드들(의 상대주소)을 이 set에 모아뒀다가 나중에 한꺼번에 persist
+    static ref TO_PERSIST: Mutex<HashSet<usize>> = Mutex::new(HashSet::new());
 
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
@@ -107,8 +110,6 @@ lazy_static::lazy_static! {
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: AtomicUsize = AtomicUsize::new(0);
 }
-
-// unsafe impl Send for HashSet<*mut Node> {}
 
 /// TODO: doc
 // TODO: 내부 필드 전부 cachepadded? -> 일단 이렇게 실험하고 성능 이상하다 싶으면 그때 cachepadded 해보기.
@@ -140,7 +141,7 @@ impl Collectable for QueuePBComb {
         }
 
         // initialize global volatile variable manually
-        unsafe { OLD_TAIL = s.dummy };
+        OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
     }
 }
 
@@ -152,7 +153,8 @@ impl PDefault for QueuePBComb {
         dummy_ref.next = PPtr::null();
 
         // initialize global volatile variable manually
-        unsafe { OLD_TAIL = dummy };
+        OLD_TAIL.store(dummy.into_offset(), Ordering::SeqCst);
+
         Self {
             dummy,
             e_request: array_init(|_| RequestRec::default()),
@@ -263,10 +265,15 @@ impl QueuePBComb {
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
             if (lval % 2 == 0)
                 && E_LOCK
-                    .compare_exchange(lval, lval + 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .compare_exchange(
+                        lval,
+                        lval.wrapping_add(1),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
                     .is_ok()
             {
-                break lval;
+                break lval.wrapping_add(1);
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -280,11 +287,10 @@ impl QueuePBComb {
         // enq combiner는 쌓인 enq 요청들을 수행
         let ind = 1 - self.e_index;
         self.e_state[ind] = self.e_state[self.e_index].clone(); // create a copy of current state
-        unsafe { OLD_TAIL = self.e_state[ind].tail };
+        OLD_TAIL.store(self.e_state[ind].tail.into_offset(), Ordering::SeqCst);
 
         for q in 0..MAX_THREADS {
             // if `q` thread has a request that is not yet applied
-            // TODO: deq 쪽도 aliast 쓰지 말기
             if self.e_request[q].activate != self.e_state[ind].deactivate[q] {
                 // let a = TO_PERSIST.lock().unwrap().insert(PPtr::null());
                 // (self.e_state[ind].tail);
@@ -297,14 +303,13 @@ impl QueuePBComb {
         // TODO: add EState[ind].tail to `toPersist`
         // TODO: persist all in `toPersist`
         persist_obj(&self.e_request, false);
-        persist_obj(&self.e_state[ind], false); // TODO: 논문에서 얘는 왜 state는 &붙여 pwb하고 위의 request는 &없이 pwb함?
+        persist_obj(&self.e_state[ind], false);
         sfence();
         self.e_index = ind;
         persist_obj(&self.e_index, false);
-        sfence(); // TODO: deq 쪽도 sfence로 바꾸기
-        unsafe { OLD_TAIL = PPtr::null() };
-        // TODO: make toPersist empty
-        E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst); // TODO: deq쪽도 store로 바꾸기
+        sfence();
+        OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
+        E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
         self.e_state[self.e_index].return_val[tid].clone().unwrap()
     }
 
@@ -347,10 +352,15 @@ impl QueuePBComb {
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
             if (lval % 2 == 0)
                 && D_LOCK
-                    .compare_exchange(lval, lval + 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .compare_exchange(
+                        lval,
+                        lval.wrapping_add(1),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
                     .is_ok()
             {
-                break lval;
+                break lval.wrapping_add(1);
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -369,7 +379,7 @@ impl QueuePBComb {
             if self.d_request[q].activate != self.d_state[ind].deactivate[q] {
                 let ret_val;
                 // 확실히 persist된 노드들만 deq 수행. OLD_TAIL부터는 현재 enq 중인거라 persist 보장되지 않음
-                if unsafe { OLD_TAIL } != self.d_state[ind].head {
+                if OLD_TAIL.load(Ordering::SeqCst) != self.d_state[ind].head.into_offset() {
                     let node = Self::dequeue(&mut self.d_state[ind].head, pool);
                     ret_val = ReturnVal::DeqRetVal(node);
                 } else {
