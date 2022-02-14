@@ -29,7 +29,7 @@ pub enum Func {
 #[derive(Debug, Clone)]
 pub enum ReturnVal {
     /// return value of enq
-    EnqRetVal(()), // TODO: ACK 표현?
+    EnqRetVal(PPtr<Node>), // TODO: ACK 표현?
 
     /// return value of deq
     DeqRetVal(PPtr<Node>),
@@ -345,8 +345,9 @@ impl QueuePBComb {
                         .load(Ordering::SeqCst, unsafe { unprotected() })
                         .into_usize(),
                 );
-                Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
-                self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
+                let new_node =
+                    Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
+                self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(new_node));
                 self.e_state[ind].deactivate[q].store(
                     self.e_request[q].activate.load(Ordering::SeqCst),
                     Ordering::SeqCst,
@@ -380,7 +381,7 @@ impl QueuePBComb {
     }
 
     /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
-    fn enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) {
+    fn enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) -> PPtr<Node> {
         let new_node = POwned::new(
             Node {
                 data: arg,
@@ -395,6 +396,7 @@ impl QueuePBComb {
         };
         tail_ref.next.store(new_node, Ordering::SeqCst); // tail.next = new node
         tail.store(new_node, Ordering::SeqCst); // tail = new node
+        new_node.as_ptr()
     }
 }
 
@@ -460,8 +462,10 @@ impl QueuePBComb {
                 != self.d_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 let ret_val;
+                let old_tail = OLD_TAIL.load(Ordering::SeqCst);
                 // 확실히 persist된 노드들만 deq 수행. OLD_TAIL부터는 현재 enq 중인거라 persist 보장되지 않음
-                if OLD_TAIL.load(Ordering::SeqCst)
+                // let (bit, old_tail) = decompose_aux_bit(old_tail);
+                if old_tail
                     != self.d_state[ind]
                         .head
                         .load(Ordering::SeqCst, unsafe { unprotected() })
@@ -470,6 +474,28 @@ impl QueuePBComb {
                     let node = Self::dequeue(&self.d_state[ind].head, pool);
                     ret_val = ReturnVal::DeqRetVal(node);
                 } else {
+                    println!("{q}: oh no.. It's OLD_TAIL {old_tail}. (deq combiner: {tid})");
+
+                    // println!("\n--- OLD_TAIL_HIST ---");
+                    // let len = old_tail_hist.len();
+                    // for i in 0..5 {
+                    //     let hist = *old_tail_hist.get(len - (5 - i)).unwrap();
+                    //     let (bit, t) = decompose_aux_bit(hist);
+                    //     println!("{t} ({bit} store it) -> ",);
+                    // }
+
+                    println!("\n--- VARIABLES ---\n{:?}", self);
+
+                    println!("\n--- QUEUE state --- \n");
+                    let mut cur = self.d_state[ind]
+                        .head
+                        .load(Ordering::SeqCst, unsafe { unprotected() });
+                    print!("(head: {}) ", cur.into_usize());
+                    while !cur.is_null() {
+                        let node = unsafe { cur.deref(pool) };
+                        println!("{:?} ->", node);
+                        cur = node.next.load(Ordering::SeqCst, unsafe { unprotected() });
+                    }
                     panic!("oh no");
                     ret_val = ReturnVal::DeqRetVal(PPtr::null());
                 }
@@ -586,7 +612,7 @@ mod test {
     #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "pbcomb_enq_deq.pool";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
 
         run_test::<TestRootObj<QueuePBComb>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
