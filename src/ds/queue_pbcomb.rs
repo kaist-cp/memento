@@ -258,22 +258,25 @@ impl QueuePBComb {
     /// enqueue 요청 실행 (thread-local)
     fn PerformEnqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // enq combiner 결정
-        let lval = loop {
-            let lval = E_LOCK.load(Ordering::SeqCst);
+        let mut lval;
+        loop {
+            lval = E_LOCK.load(Ordering::SeqCst);
 
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if (lval % 2 == 0)
-                && E_LOCK
-                    .compare_exchange(
-                        lval,
-                        lval.wrapping_add(1),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
-                    .is_ok()
-            {
-                break lval.wrapping_add(1);
+            if lval % 2 == 0 {
+                match E_LOCK.compare_exchange(
+                    lval,
+                    lval.wrapping_add(1),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {
+                        lval = lval.wrapping_add(1);
+                        break;
+                    }
+                    Err(cur) => lval = cur,
+                }
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -282,7 +285,7 @@ impl QueuePBComb {
             if self.e_request[tid].activate == self.e_state[self.e_index].deactivate[tid] {
                 return self.e_state[self.e_index].return_val[tid].clone().unwrap();
             }
-        };
+        }
 
         // enq combiner는 쌓인 enq 요청들을 수행
         let ind = 1 - self.e_index;
@@ -355,22 +358,25 @@ impl QueuePBComb {
     /// dequeue 요청 실행 (thread-local)
     fn PerformDeqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // deq combiner 결정
-        let lval = loop {
-            let lval = D_LOCK.load(Ordering::SeqCst);
+        let mut lval;
+        loop {
+            lval = D_LOCK.load(Ordering::SeqCst);
 
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if (lval % 2 == 0)
-                && D_LOCK
-                    .compare_exchange(
-                        lval,
-                        lval.wrapping_add(1),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
-                    .is_ok()
-            {
-                break lval.wrapping_add(1);
+            if (lval % 2 == 0) {
+                match D_LOCK.compare_exchange(
+                    lval,
+                    lval.wrapping_add(1),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {
+                        lval = lval.wrapping_add(1);
+                        break;
+                    }
+                    Err(cur) => lval = cur,
+                }
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -378,7 +384,7 @@ impl QueuePBComb {
             if self.d_request[tid].activate == self.d_state[self.d_index].deactivate[tid] {
                 return self.d_state[self.d_index].return_val[tid].clone().unwrap();
             }
-        };
+        }
 
         // deq combiner는 쌓인 deq 요청들을 수행
         let ind = 1 - self.d_index;
