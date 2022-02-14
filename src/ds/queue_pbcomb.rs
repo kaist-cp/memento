@@ -289,17 +289,30 @@ impl QueuePBComb {
     /// enqueue 요청 실행 (thread-local)
     fn PerformEnqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // enq combiner 결정
+        let mut lval;
         loop {
+            lval = E_LOCK.load(Ordering::SeqCst);
+
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if E_LOCK
-                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                break;
+            if lval % 2 == 0 {
+                match E_LOCK.compare_exchange(
+                    lval,
+                    lval.wrapping_add(1),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {
+                        lval = lval.wrapping_add(1);
+                        break;
+                    }
+                    Err(cur) => lval = cur,
+                }
             }
 
-            while E_LOCK.load(Ordering::SeqCst) == 1 {}
+            // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
+            // TODO: backoff
+            while lval == E_LOCK.load(Ordering::SeqCst) {}
             if self.e_request[tid].activate.load(Ordering::SeqCst)
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
@@ -361,7 +374,7 @@ impl QueuePBComb {
         sfence();
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
         TO_PERSIST.lock().unwrap().clear(); // clear to_persist set
-        E_LOCK.store(0, Ordering::SeqCst);
+        E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
         self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
             .clone()
             .unwrap()
@@ -406,17 +419,29 @@ impl QueuePBComb {
     /// dequeue 요청 실행 (thread-local)
     fn PerformDeqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // deq combiner 결정
+        let mut lval;
         loop {
+            lval = D_LOCK.load(Ordering::SeqCst);
+
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if D_LOCK
-                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                break;
+            if (lval % 2 == 0) {
+                match D_LOCK.compare_exchange(
+                    lval,
+                    lval.wrapping_add(1),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {
+                        lval = lval.wrapping_add(1);
+                        break;
+                    }
+                    Err(cur) => lval = cur,
+                }
             }
 
-            while D_LOCK.load(Ordering::SeqCst) == 1 {}
+            // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
+            while lval == D_LOCK.load(Ordering::SeqCst) {}
             if self.d_request[tid].activate.load(Ordering::SeqCst)
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
@@ -487,7 +512,7 @@ impl QueuePBComb {
         self.d_index.store(ind, Ordering::SeqCst);
         persist_obj(&self.d_index, false);
         sfence();
-        D_LOCK.store(0, Ordering::SeqCst);
+        D_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
         self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
             .clone()
             .unwrap()
@@ -518,8 +543,8 @@ mod test {
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
 
-    const NR_THREAD: usize = 8;
-    const COUNT: usize = 100_000;
+    const NR_THREAD: usize = 2;
+    const COUNT: usize = 500_000;
 
     #[derive(Default)]
     struct EnqDeq {
