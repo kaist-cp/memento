@@ -42,6 +42,26 @@ pub(crate) fn decompose_aux_bit(data: usize) -> (usize, usize) {
 }
 
 /// TODO(doc)
+#[derive(Debug, Clone, Copy)]
+pub struct Timestamp(u64);
+
+impl Timestamp {
+    /// TODO(doc)
+    #[inline]
+    pub fn new(aux: bool, t: u64) -> Self {
+        let a = if aux { 1 } else { 0 };
+        Self(compose_aux_bit(a, t as usize) as u64)
+    }
+
+    /// TODO(doc)
+    #[inline]
+    pub fn decompose(&self) -> (bool, u64) {
+        let (aux, t) = decompose_aux_bit(self.0 as usize);
+        (aux == 1, t as u64)
+    }
+}
+
+/// TODO(doc)
 pub trait Checkpointable {
     /// TODO(doc)
     fn invalidate(&mut self);
