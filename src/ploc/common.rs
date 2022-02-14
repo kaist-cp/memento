@@ -5,7 +5,7 @@ use crossbeam_utils::CachePadded;
 use crate::pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
-    PoolHandle,
+    rdtsc, PoolHandle, CACHE_LINE_SHIFT,
 };
 
 /// TODO(doc)
@@ -62,45 +62,27 @@ impl Timestamp {
 }
 
 /// TODO(doc)
-pub trait Checkpointable {
-    /// TODO(doc)
-    fn invalidate(&mut self);
-
-    /// TODO(doc)
-    fn is_invalid(&self) -> bool;
-}
-
-/// TODO(doc)
 /// TODO(must): 두 개 운용하고 0,1을 통해서 valid한 쪽을 나타내게 해야할 듯 (이유: normal run에서 덮어쓰다가 error날 경우)
 ///             혹은 checkpoint는 여러 개 동시에 하지말고 한 큐에 되는 것만 하자 <- 안 된다... 사이즈 큰 거 checkpoint할 경우엔...
 #[derive(Debug)]
-pub struct Checkpoint<T: Checkpointable + Default + Clone + Collectable> {
-    saved: CachePadded<T>,
+pub struct Checkpoint<T: Default + Clone + Collectable> {
+    saved: CachePadded<(T, Timestamp)>,
 }
 
-unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Send
-    for Checkpoint<T>
-{
-}
-unsafe impl<T: Checkpointable + Default + Clone + Collectable + Send + Sync> Sync
-    for Checkpoint<T>
-{
-}
+unsafe impl<T: Default + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
+unsafe impl<T: Default + Clone + Collectable + Send + Sync> Sync for Checkpoint<T> {}
 
-impl<T: Checkpointable + Default + Clone + Collectable> Default for Checkpoint<T> {
+impl<T: Default + Clone + Collectable> Default for Checkpoint<T> {
     fn default() -> Self {
-        let mut t = T::default();
-        t.invalidate();
-
         Self {
-            saved: CachePadded::new(t),
+            saved: (CachePadded::new((T::default(), Timestamp::new(false, 0)))),
         }
     }
 }
 
-impl<T: Checkpointable + Default + Clone + Collectable> Collectable for Checkpoint<T> {
+impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        T::filter(&mut s.saved, tid, gc, pool);
+        T::filter(&mut s.saved.0, tid, gc, pool);
     }
 }
 
@@ -116,69 +98,50 @@ pub struct CheckpointError<T> {
 
 impl<T> Checkpoint<T>
 where
-    T: Checkpointable + Default + Clone + Collectable,
+    T: Default + Clone + Collectable,
 {
     /// TODO(doc)
     pub fn checkpoint<const REC: bool>(&mut self, new: T) -> Result<T, CheckpointError<T>> {
         if REC {
             if let Some(saved) = self.peek() {
                 return Err(CheckpointError {
-                    current: saved.clone(),
+                    current: saved,
                     new,
                 });
             }
         }
 
         // Normal run
-        self.saved = CachePadded::new(new.clone());
+        self.invalidate();
+        if std::mem::size_of::<(T, Timestamp)>() > 1 << CACHE_LINE_SHIFT {
+            persist_obj(&self.saved.1, true);
+        }
+
+        self.saved = CachePadded::new((new.clone(), Timestamp::new(true, rdtsc())));
         persist_obj(&*self.saved, true);
         Ok(new)
     }
 
     /// TODO(doc)
     #[inline]
-    pub fn reset(&mut self) {
-        self.saved.invalidate();
-        persist_obj(&*self.saved, false);
+    fn invalidate(&mut self) {
+        self.saved.1 = Timestamp::new(false, 0);
     }
-}
 
-impl<T: Checkpointable + Default + Clone + Collectable> Checkpoint<T> {
+    /// TODO(doc)
+    #[inline]
+    fn is_valid(&self) -> bool {
+        let (valid, _) = self.saved.1.decompose();
+        valid
+    }
+
     /// TODO(doc)
     #[inline]
     pub fn peek(&self) -> Option<T> {
-        if self.saved.is_invalid() {
-            None
+        if self.is_valid() {
+            Some((self.saved.0).clone())
         } else {
-            Some((*self.saved).clone())
+            None
         }
-    }
-}
-
-/// TODO(doc)
-#[derive(Debug, Clone, Copy)]
-pub struct CheckpointableUsize(pub usize);
-
-impl CheckpointableUsize {
-    const INVALID: usize = usize::MAX - u32::MAX as usize;
-}
-
-impl Default for CheckpointableUsize {
-    fn default() -> Self {
-        Self(Self::INVALID)
-    }
-}
-
-impl Collectable for CheckpointableUsize {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
-}
-
-impl Checkpointable for CheckpointableUsize {
-    fn invalidate(&mut self) {
-        self.0 = CheckpointableUsize::INVALID;
-    }
-
-    fn is_invalid(&self) -> bool {
-        self.0 == CheckpointableUsize::INVALID
     }
 }

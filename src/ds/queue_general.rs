@@ -1,8 +1,7 @@
 //! Persistent queue
 
-use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::detectable_cas::Cas;
-use crate::ploc::{Checkpoint, Checkpointable, DetectableCASAtomic};
+use crate::ploc::{Checkpoint, DetectableCASAtomic};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::ok_or;
@@ -73,15 +72,6 @@ impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
     }
 }
 
-impl<T: Clone + Collectable> TryEnqueue<T> {
-    /// Reset TryEnqueue memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.tail.reset();
-        self.insert.reset();
-    }
-}
-
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: Clone + Collectable> {
@@ -109,24 +99,11 @@ impl<T: Clone + Collectable> Enqueue<T> {
     /// Reset Enqueue memento
     #[inline]
     pub fn reset(&mut self) {
-        self.node.reset();
-        self.try_enq.reset();
+        todo!("Erase reset API")
     }
 }
 
 unsafe impl<T: Clone + Collectable> Send for Enqueue<T> {}
-
-impl<T: Collectable> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
-    fn invalidate(&mut self) {
-        self.1.store(invalid_ptr(), Ordering::Relaxed);
-    }
-
-    fn is_invalid(&self) -> bool {
-        let guard = unsafe { epoch::unprotected() };
-        let cur = self.1.load(Ordering::Relaxed, guard);
-        cur == invalid_ptr()
-    }
-}
 
 /// Queue의 try dequeue operation
 #[derive(Debug)]
@@ -149,15 +126,6 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
         Cas::filter(&mut try_deq.delete, tid, gc, pool);
-    }
-}
-
-impl<T: Clone + Collectable> TryDequeue<T> {
-    /// Reset TryDequeue memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.delete.reset();
-        self.head_next.reset();
     }
 }
 
@@ -185,7 +153,7 @@ impl<T: Clone + Collectable> Dequeue<T> {
     /// Reset Dequeue memento
     #[inline]
     pub fn reset(&mut self) {
-        self.try_deq.reset();
+        todo!("Erase reset API")
     }
 }
 
@@ -293,7 +261,6 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         }
 
         loop {
-            enq.try_enq.reset();
             if self
                 .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
                 .is_ok()
@@ -368,7 +335,6 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         }
 
         loop {
-            deq.try_deq.reset();
             if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
                 return ret;
             }
