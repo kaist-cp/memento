@@ -295,24 +295,23 @@ impl QueuePBComb {
 
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if lval % 2 == 0 {
-                match E_LOCK.compare_exchange(
-                    lval,
-                    lval.wrapping_add(1),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    Ok(_) => {
-                        lval = lval.wrapping_add(1);
-                        break;
-                    }
-                    Err(cur) => lval = cur,
-                }
+            if lval % 2 == 0
+                && E_LOCK
+                    .compare_exchange(
+                        lval,
+                        lval.wrapping_add(1),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+            {
+                lval = lval.wrapping_add(1);
+                break;
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             // TODO: backoff
-            while lval == E_LOCK.load(Ordering::SeqCst) {}
+            while E_LOCK.load(Ordering::SeqCst) % 2 != 0 {}
             if self.e_request[tid].activate.load(Ordering::SeqCst)
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
@@ -425,23 +424,23 @@ impl QueuePBComb {
 
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if (lval % 2 == 0) {
-                match D_LOCK.compare_exchange(
-                    lval,
-                    lval.wrapping_add(1),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    Ok(_) => {
-                        lval = lval.wrapping_add(1);
-                        break;
-                    }
-                    Err(cur) => lval = cur,
-                }
+            if lval % 2 == 0
+                && D_LOCK
+                    .compare_exchange(
+                        lval,
+                        lval.wrapping_add(1),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+            {
+                lval = lval.wrapping_add(1);
+                break;
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
-            while lval == D_LOCK.load(Ordering::SeqCst) {}
+            // TODO: backoff
+            while D_LOCK.load(Ordering::SeqCst) % 2 != 0 {}
             if self.d_request[tid].activate.load(Ordering::SeqCst)
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
