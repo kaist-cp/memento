@@ -1,6 +1,6 @@
 //! Atomic Update Common
 
-use std::sync::atomic::{Ordering, AtomicU64};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_utils::CachePadded;
 
@@ -212,10 +212,10 @@ where
     T: Default + Clone + Collectable,
 {
     /// TODO(doc)
-    pub fn checkpoint<const REC: bool>(&mut self, new: T) -> Result<T, CheckpointError<T>> {
+    pub fn checkpoint<const REC: bool>(&mut self, new: T, tid: usize, exec_info: &ExecInfo) -> Result<T, CheckpointError<T>> {
+        // TODO(must): timestamp를 확인해서 유효한지 확인 (이제 REC은 필요 없을지도?)
         if REC {
             // TODO(must): checkpoint variable이 atomic하게 바뀌도록 해야 함
-            // TODO(must): timestamp를 thread local maximum timestamp에 넣어줘야 함
             if let Some(saved) = self.peek() {
                 return Err(CheckpointError {
                     current: saved,
@@ -233,14 +233,15 @@ where
 
         self.saved = CachePadded::new((new.clone(), Timestamp::new(true, rdtsc())));
         persist_obj(&*self.saved, true);
+
+        // TODO(must): thread local maximum timestamp에 넣어줘야 함
         Ok(new)
     }
 
     /// TODO(doc)
     #[inline]
     fn is_valid(&self) -> bool {
-        let (valid, _) = self.saved.1.decompose();
-        valid
+        self.saved.1.aux()
     }
 
     /// TODO(doc)
