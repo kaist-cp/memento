@@ -79,6 +79,7 @@ pub enum TestTarget {
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
     DSSQueue(TestKind),
+    PBCombQueue(TestKind),
     CrndmQueue(TestKind), // TODO: CrndmQueue -> CorundumQueue
     MementoPipe(TestKind),
     CrndmPipe(TestKind),
@@ -163,6 +164,7 @@ pub mod queue {
     use crossbeam_epoch::Guard;
     use memento::pmem::PoolHandle;
 
+    use crate::pbcomb::{TestPBCombQueue, TestPBCombQueueEnqDeq};
     use crate::{
         common::{get_nops, PROB, QUEUE_INIT_SIZE},
         compositional_pobj::*,
@@ -298,6 +300,20 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
+            TestTarget::PBCombQueue(kind) => match kind {
+                TestKind::QueuePair => get_nops::<TestPBCombQueue, TestPBCombQueueEnqDeq<true>>(
+                    &opt.filepath,
+                    opt.threads,
+                ),
+                TestKind::QueueProb(prob) => {
+                    unsafe { PROB = prob };
+                    get_nops::<TestPBCombQueue, TestPBCombQueueEnqDeq<false>>(
+                        &opt.filepath,
+                        opt.threads,
+                    )
+                }
+                _ => unreachable!("Queue를 위한 테스트만 해야함"),
+            },
             TestTarget::CrndmQueue(kind) => {
                 let root = P::open::<TestCrndmQueue>(&opt.filepath, O_128GB | O_CF).unwrap();
 
@@ -309,7 +325,7 @@ pub mod queue {
                     _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
             }
-            _ => {
+            TestTarget::MementoPipe(_) | TestTarget::CrndmPipe(_) => {
                 unreachable!("queue만")
             }
         }
