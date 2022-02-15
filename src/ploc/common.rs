@@ -42,8 +42,35 @@ pub(crate) fn decompose_aux_bit(data: usize) -> (usize, usize) {
 }
 
 /// TODO(doc)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timestamp(u64);
+
+impl From<u64> for Timestamp {
+    #[inline]
+    fn from(t: u64) -> Self {
+        Self(compose_aux_bit(0, t as usize) as u64)
+    }
+}
+
+impl Into<u64> for Timestamp {
+    fn into(self) -> u64 {
+        self.0
+    }
+}
+
+impl PartialOrd for Timestamp {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Timestamp {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let (_, t1) = self.decompose();
+        let (_, t2) = other.decompose();
+        t1.cmp(&t2)
+    }
+}
 
 impl Timestamp {
     /// TODO(doc)
@@ -58,6 +85,28 @@ impl Timestamp {
     pub fn decompose(&self) -> (bool, u64) {
         let (aux, t) = decompose_aux_bit(self.0 as usize);
         (aux == 1, t as u64)
+    }
+
+    /// TODO(doc)
+    #[inline]
+    pub fn aux(&self) -> bool {
+        self.decompose().0
+    }
+
+    /// TODO(doc)
+    #[inline]
+    pub fn time(&self) -> u64 {
+        self.decompose().1
+    }
+
+    /// TODO(doc)
+    #[inline]
+    pub fn parity_to_bit(parity: bool) -> usize {
+        if parity {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -103,6 +152,8 @@ where
     /// TODO(doc)
     pub fn checkpoint<const REC: bool>(&mut self, new: T) -> Result<T, CheckpointError<T>> {
         if REC {
+            // TODO(must): checkpoint variable이 atomic하게 바뀌도록 해야 함
+            // TODO(must): timestamp를 thread local maximum timestamp에 넣어줘야 함
             if let Some(saved) = self.peek() {
                 return Err(CheckpointError {
                     current: saved,
@@ -112,20 +163,15 @@ where
         }
 
         // Normal run
-        self.invalidate();
+        self.saved.1 = Timestamp::new(false, 0); // First, invalidate existing data.
         if std::mem::size_of::<(T, Timestamp)>() > 1 << CACHE_LINE_SHIFT {
             persist_obj(&self.saved.1, true);
         }
+        // TODO(must): compiler fence
 
         self.saved = CachePadded::new((new.clone(), Timestamp::new(true, rdtsc())));
         persist_obj(&*self.saved, true);
         Ok(new)
-    }
-
-    /// TODO(doc)
-    #[inline]
-    fn invalidate(&mut self) {
-        self.saved.1 = Timestamp::new(false, 0);
     }
 
     /// TODO(doc)
