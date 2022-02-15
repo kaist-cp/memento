@@ -349,12 +349,12 @@ impl QueuePBComb {
                         .into_usize(),
                 );
                 Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
+                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
                 self.e_state[ind].deactivate[q].store(
                     self.e_request[q].activate.load(Ordering::SeqCst),
                     Ordering::SeqCst,
                 );
-                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
             }
         }
 
@@ -478,12 +478,12 @@ impl QueuePBComb {
                     panic!("oh no");
                     ret_val = ReturnVal::DeqRetVal(PPtr::null());
                 }
+                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.d_state[ind].return_val[q] = Some(ret_val);
                 self.d_state[ind].deactivate[q].store(
                     self.d_request[q].activate.load(Ordering::SeqCst),
                     Ordering::SeqCst,
                 );
-                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
             }
         }
         persist_obj(&self.d_request, false);
