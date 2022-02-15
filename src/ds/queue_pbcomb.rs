@@ -29,7 +29,7 @@ pub enum Func {
 #[derive(Debug, Clone)]
 pub enum ReturnVal {
     /// return value of enq
-    EnqRetVal(PPtr<Node>), // TODO: ACK 표현?
+    EnqRetVal(()), // TODO: ACK 표현?
 
     /// return value of deq
     DeqRetVal(PPtr<Node>),
@@ -295,23 +295,24 @@ impl QueuePBComb {
 
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if lval % 2 == 0
-                && E_LOCK
-                    .compare_exchange(
-                        lval,
-                        lval.wrapping_add(1),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
-                    .is_ok()
-            {
-                lval = lval.wrapping_add(1);
-                break;
+            if lval % 2 == 0 {
+                match E_LOCK.compare_exchange(
+                    lval,
+                    lval.wrapping_add(1),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {
+                        lval = lval.wrapping_add(1);
+                        break;
+                    }
+                    Err(cur) => lval = cur,
+                }
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             // TODO: backoff
-            while E_LOCK.load(Ordering::SeqCst) % 2 != 0 {}
+            while lval == E_LOCK.load(Ordering::SeqCst) {}
             if self.e_request[tid].activate.load(Ordering::SeqCst)
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
@@ -344,9 +345,8 @@ impl QueuePBComb {
                         .load(Ordering::SeqCst, unsafe { unprotected() })
                         .into_usize(),
                 );
-                let new_node =
-                    Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
-                self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(new_node));
+                Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
+                self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
                 self.e_state[ind].deactivate[q].store(
                     self.e_request[q].activate.load(Ordering::SeqCst),
                     Ordering::SeqCst,
@@ -380,7 +380,7 @@ impl QueuePBComb {
     }
 
     /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
-    fn enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) -> PPtr<Node> {
+    fn enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) {
         let new_node = POwned::new(
             Node {
                 data: arg,
@@ -395,7 +395,6 @@ impl QueuePBComb {
         };
         tail_ref.next.store(new_node, Ordering::SeqCst); // tail.next = new node
         tail.store(new_node, Ordering::SeqCst); // tail = new node
-        new_node.as_ptr()
     }
 }
 
@@ -424,23 +423,23 @@ impl QueuePBComb {
 
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if lval % 2 == 0
-                && D_LOCK
-                    .compare_exchange(
-                        lval,
-                        lval.wrapping_add(1),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
-                    .is_ok()
-            {
-                lval = lval.wrapping_add(1);
-                break;
+            if (lval % 2 == 0) {
+                match D_LOCK.compare_exchange(
+                    lval,
+                    lval.wrapping_add(1),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {
+                        lval = lval.wrapping_add(1);
+                        break;
+                    }
+                    Err(cur) => lval = cur,
+                }
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
-            // TODO: backoff
-            while D_LOCK.load(Ordering::SeqCst) % 2 != 0 {}
+            while lval == D_LOCK.load(Ordering::SeqCst) {}
             if self.d_request[tid].activate.load(Ordering::SeqCst)
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
@@ -461,10 +460,8 @@ impl QueuePBComb {
                 != self.d_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 let ret_val;
-                let old_tail = OLD_TAIL.load(Ordering::SeqCst);
                 // 확실히 persist된 노드들만 deq 수행. OLD_TAIL부터는 현재 enq 중인거라 persist 보장되지 않음
-                // let (bit, old_tail) = decompose_aux_bit(old_tail);
-                if old_tail
+                if OLD_TAIL.load(Ordering::SeqCst)
                     != self.d_state[ind]
                         .head
                         .load(Ordering::SeqCst, unsafe { unprotected() })
@@ -473,28 +470,6 @@ impl QueuePBComb {
                     let node = Self::dequeue(&self.d_state[ind].head, pool);
                     ret_val = ReturnVal::DeqRetVal(node);
                 } else {
-                    println!("{q}: oh no.. It's OLD_TAIL {old_tail}. (deq combiner: {tid})");
-
-                    // println!("\n--- OLD_TAIL_HIST ---");
-                    // let len = old_tail_hist.len();
-                    // for i in 0..5 {
-                    //     let hist = *old_tail_hist.get(len - (5 - i)).unwrap();
-                    //     let (bit, t) = decompose_aux_bit(hist);
-                    //     println!("{t} ({bit} store it) -> ",);
-                    // }
-
-                    println!("\n--- VARIABLES ---\n{:?}", self);
-
-                    println!("\n--- QUEUE state --- \n");
-                    let mut cur = self.d_state[ind]
-                        .head
-                        .load(Ordering::SeqCst, unsafe { unprotected() });
-                    print!("(head: {}) ", cur.into_usize());
-                    while !cur.is_null() {
-                        let node = unsafe { cur.deref(pool) };
-                        println!("{:?} ->", node);
-                        cur = node.next.load(Ordering::SeqCst, unsafe { unprotected() });
-                    }
                     panic!("oh no");
                     ret_val = ReturnVal::DeqRetVal(PPtr::null());
                 }
@@ -542,8 +517,8 @@ mod test {
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
 
-    const NR_THREAD: usize = 2;
-    const COUNT: usize = 500_000;
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 100_000;
 
     #[derive(Default)]
     struct EnqDeq {
