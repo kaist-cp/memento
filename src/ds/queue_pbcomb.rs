@@ -40,7 +40,7 @@ pub enum ReturnVal {
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
-    seq: usize, // TODO?: 논문에선 "seq and activate are stored in the same memroy word". 왜?
+    seq: usize, // TODO?: 논문에선 "seq and activate are stored in the same memroy word". 왜? seq랑 activate가 atomic하게 update 돼야하나
     activate: AtomicBool,
 }
 
@@ -132,9 +132,11 @@ lazy_static::lazy_static! {
 
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
+    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: AtomicUsize = AtomicUsize::new(0);
+    static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS] = array_init(|_| AtomicUsize::new(0));
 }
 
 /// TODO: doc
@@ -316,6 +318,7 @@ impl QueuePBComb {
             if self.e_request[tid].activate.load(Ordering::SeqCst)
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
+                && E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst) < E_LOCK.load(Ordering::SeqCst)
             {
                 return self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
@@ -351,6 +354,7 @@ impl QueuePBComb {
                     self.e_request[q].activate.load(Ordering::SeqCst),
                     Ordering::SeqCst,
                 );
+                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
             }
         }
 
@@ -443,6 +447,7 @@ impl QueuePBComb {
             if self.d_request[tid].activate.load(Ordering::SeqCst)
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
+                && D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst) < D_LOCK.load(Ordering::SeqCst)
             {
                 return self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
@@ -478,6 +483,7 @@ impl QueuePBComb {
                     self.d_request[q].activate.load(Ordering::SeqCst),
                     Ordering::SeqCst,
                 );
+                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
             }
         }
         persist_obj(&self.d_request, false);
