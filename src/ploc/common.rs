@@ -48,7 +48,7 @@ pub struct Timestamp(u64);
 impl From<u64> for Timestamp {
     #[inline]
     fn from(t: u64) -> Self {
-        Self(compose_aux_bit(0, t as usize) as u64)
+        Self(t)
     }
 }
 
@@ -76,8 +76,7 @@ impl Timestamp {
     /// TODO(doc)
     #[inline]
     pub fn new(aux: bool, t: u64) -> Self {
-        let a = if aux { 1 } else { 0 };
-        Self(compose_aux_bit(a, t as usize) as u64)
+        Self(compose_aux_bit(Self::aux_to_bit(aux), t as usize) as u64)
     }
 
     /// TODO(doc)
@@ -101,8 +100,8 @@ impl Timestamp {
 
     /// TODO(doc)
     #[inline]
-    pub fn parity_to_bit(parity: bool) -> usize {
-        if parity {
+    pub fn aux_to_bit(aux: bool) -> usize {
+        if aux {
             1
         } else {
             0

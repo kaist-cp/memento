@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-use super::{compose_aux_bit, decompose_aux_bit};
+use super::Timestamp;
 
 const NOT_CHECKED: u64 = 0;
 const FAILED: u64 = 1;
@@ -27,7 +27,7 @@ pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS + 1];
 
 thread_local! {
     /// 마지막 실패한 cas의 체크포인트
-    static LAST_FAILED_CAS: RefCell<Option<PPtr<u64>>> = RefCell::new(None)
+    static LAST_FAILED_CAS: RefCell<Option<PPtr<Timestamp>>> = RefCell::new(None)
 }
 
 /// TODO(doc)
@@ -80,8 +80,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 unsafe {
                     if last_chk != mmt.checkpoint.as_pptr(pool) {
                         let last_chk_ref = last_chk.deref_mut(pool);
-                        std::ptr::write(last_chk_ref as *mut _, FAILED);
-                        persist_obj(last_chk_ref as &_, true);
+                        std::ptr::write(last_chk_ref as _, Timestamp::from(FAILED));
+                        persist_obj(last_chk_ref as &Timestamp, true);
                     } else {
                         *failed = None;
                     }
@@ -89,9 +89,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
         });
 
-        let prev_chk = pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let cas_bit = 1 - decompose_aux_bit(prev_chk as usize).0;
-        let tmp_new = new.with_aux_bit(cas_bit).with_tid(tid);
+        let prev_chk = Timestamp::from(pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed));
+        let parity = !prev_chk.aux();
+        let tmp_new = new
+            .with_aux_bit(Timestamp::aux_to_bit(parity))
+            .with_tid(tid);
 
         loop {
             let res = self.inner.compare_exchange(
@@ -120,7 +122,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, true);
 
             // 성공했다고 체크포인팅
-            mmt.checkpoint_succ(cas_bit, tid, &pool.cas_info);
+            mmt.checkpoint_succ(parity, tid, &pool.cas_info);
             lfence();
 
             // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
@@ -155,25 +157,22 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         cas_info: &CasInfo,
         guard: &'g Guard,
     ) -> Result<(), PShared<'g, N>> {
-        if mmt.checkpoint == FAILED {
+        if mmt.checkpoint == Timestamp::from(FAILED) {
             let cur = self.inner.load(Ordering::SeqCst, guard);
             return Err(self.load_help(cur, cas_info, guard)); // TODO(opt): RecFail?
         }
 
-        let vchk = cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let (cur_bit, max_chk) = decompose_aux_bit(vchk as usize);
-        let next_bit = 1 - cur_bit;
+        let vchk = Timestamp::from(cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed));
 
-        if mmt.checkpoint != NOT_CHECKED {
-            let (_, cli_chk) = decompose_aux_bit(mmt.checkpoint as usize);
-
-            if cli_chk > max_chk {
-                cas_info.cas_vcheckpoint[tid].store(mmt.checkpoint, Ordering::Relaxed);
+        if mmt.checkpoint != Timestamp::from(NOT_CHECKED) {
+            if mmt.checkpoint > vchk {
+                cas_info.cas_vcheckpoint[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
             }
 
-            if cli_chk >= max_chk {
+            if mmt.checkpoint >= vchk {
                 let _ = self.inner.compare_exchange(
-                    new.with_aux_bit(cur_bit).with_tid(tid),
+                    new.with_aux_bit(Timestamp::aux_to_bit(vchk.aux()))
+                        .with_tid(tid),
                     new.with_tid(0),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
@@ -185,10 +184,15 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
 
         let cur = self.inner.load(Ordering::SeqCst, guard);
+        let next_par = !vchk.aux();
 
         // 내가 첫 CAS 성공한 채로 그대로 남아 있는지 확인
-        if cur == new.with_aux_bit(next_bit).with_tid(tid) {
-            mmt.checkpoint_succ(next_bit, tid, cas_info);
+        if cur
+            == new
+                .with_aux_bit(Timestamp::aux_to_bit(next_par))
+                .with_tid(tid)
+        {
+            mmt.checkpoint_succ(next_par, tid, cas_info);
             let _ = self
                 .inner
                 .compare_exchange(
@@ -203,14 +207,16 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
 
         // CAS 성공한 뒤에 helping 받은 건지 체크
-        let pchk = cas_info.cas_pcheckpoint[next_bit][tid].load(Ordering::SeqCst);
-        if max_chk >= pchk as usize {
+        let pchk = Timestamp::from(
+            cas_info.cas_pcheckpoint[Timestamp::aux_to_bit(next_par)][tid].load(Ordering::SeqCst),
+        );
+        if vchk >= pchk {
             return Err(self.load_help(cur, cas_info, guard));
         }
 
         // 마지막 CAS보다 helper가 쓴 체크포인트가 높으므로 성공한 것
         // 이미 location의 값은 바뀌었으므로 내 checkpoint만 마무리
-        mmt.checkpoint_succ(next_bit, tid, cas_info);
+        mmt.checkpoint_succ(next_par, tid, cas_info);
         sfence();
 
         Ok(())
@@ -338,33 +344,35 @@ impl From<&'static [CASCheckpointArr; 2]> for CasInfo {
 impl CasInfo {
     #[inline]
     pub(crate) fn set_runtime_info(&mut self) {
-        let max = self.cas_vcheckpoint.iter().fold(0, |m, chk| {
-            let c = chk.load(Ordering::Relaxed);
-            let (_, t) = decompose_aux_bit(c as usize);
-            std::cmp::max(m, t as u64)
-        });
+        let max = self
+            .cas_vcheckpoint
+            .iter()
+            .fold(Timestamp::new(false, 0), |m, chk| {
+                let t = Timestamp::from(chk.load(Ordering::Relaxed));
+                std::cmp::max(m, t)
+            });
         let max = self.cas_pcheckpoint.iter().fold(max, |m, chk_arr| {
             chk_arr.iter().fold(m, |mm, chk| {
-                let t = chk.load(Ordering::Relaxed);
+                let t = Timestamp::from(chk.load(Ordering::Relaxed));
                 std::cmp::max(mm, t)
             })
         });
 
-        self.prev_max_checkpoint = max;
+        self.prev_max_checkpoint = max.time();
     }
 }
 
 /// TODO(doc)
 #[derive(Debug)]
 pub struct Cas<N> {
-    checkpoint: u64,
+    checkpoint: Timestamp,
     _marker: PhantomData<N>,
 }
 
 impl<N> Default for Cas<N> {
     fn default() -> Self {
         Self {
-            checkpoint: NOT_CHECKED,
+            checkpoint: Timestamp::new(false, NOT_CHECKED),
             _marker: Default::default(),
         }
     }
@@ -373,31 +381,22 @@ impl<N> Default for Cas<N> {
 impl<N> Collectable for Cas<N> {
     fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &PoolHandle) {
         // CAS client 중 max checkpoint를 가진 걸로 vcheckpoint에 기록해줌
-        let vchk = pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed);
-        let (_, cur_chk) = decompose_aux_bit(cas.checkpoint as usize);
-        let (_, max_chk) = decompose_aux_bit(vchk as usize);
+        let vchk = Timestamp::from(pool.cas_info.cas_vcheckpoint[tid].load(Ordering::Relaxed));
 
-        if cur_chk > max_chk {
-            pool.cas_info.cas_vcheckpoint[tid].store(cas.checkpoint, Ordering::Relaxed);
+        if cas.checkpoint > vchk {
+            pool.cas_info.cas_vcheckpoint[tid].store(cas.checkpoint.into(), Ordering::Relaxed);
         }
     }
 }
 
 impl<N> Cas<N> {
-    /// TODO(doc)
     #[inline]
-    pub fn reset(&mut self) {
-        self.checkpoint = NOT_CHECKED;
-        persist_obj(&self.checkpoint, false);
-    }
-
-    #[inline]
-    fn checkpoint_succ(&mut self, cas_bit: usize, tid: usize, cas_info: &CasInfo) {
+    fn checkpoint_succ(&mut self, parity: bool, tid: usize, cas_info: &CasInfo) {
         let t = calc_checkpoint(rdtscp(), cas_info);
-        let new_chk = compose_aux_bit(cas_bit, t as usize) as u64;
+        let new_chk = Timestamp::new(parity, t);
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, false); // There is always a CAS after this function
-        cas_info.cas_vcheckpoint[tid].store(new_chk, Ordering::Relaxed);
+        cas_info.cas_vcheckpoint[tid].store(new_chk.into(), Ordering::Relaxed);
     }
 }
 
