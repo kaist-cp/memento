@@ -5,6 +5,7 @@
 
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, POwned};
+use crate::ploc::{compose_aux_bit, decompose_aux_bit};
 use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
@@ -29,7 +30,7 @@ pub enum Func {
 #[derive(Debug, Clone)]
 pub enum ReturnVal {
     /// return value of enq
-    EnqRetVal(()), // TODO: ACK 표현?
+    EnqRetVal(()),
 
     /// return value of deq
     DeqRetVal(PPtr<Node>),
@@ -40,8 +41,28 @@ pub enum ReturnVal {
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
-    seq: usize, // TODO: seq랑 activate가 atomic하게 update 돼야할듯. 논문에선 "seq and activate are stored in the same memroy word"
-    activate: AtomicBool,
+    act_seq: AtomicUsize, // 1: activate, 63: sequence number
+}
+
+impl RequestRec {
+    // helper function to update activate bit and sequence number atomically
+    #[inline]
+    fn store_act_seq(&self, activate: bool, seq: usize) {
+        self.act_seq
+            .store(compose_aux_bit(activate as usize, seq), Ordering::SeqCst)
+    }
+
+    #[inline]
+    fn load_seq(&self) -> usize {
+        let (_, seq) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
+        seq
+    }
+
+    #[inline]
+    fn load_activate(&self) -> bool {
+        let (act, _) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
+        act != 0
+    }
 }
 
 /// Node
@@ -235,16 +256,16 @@ impl QueuePBComb {
         match func {
             Func::ENQUEUE => {
                 // 1. check seq number and re-announce if request is not yet announced
-                if self.e_request[tid].seq != seq {
+                if self.e_request[tid].load_seq() != seq {
                     return self.PBQueue(func, arg, seq, tid, pool);
                 }
 
                 // 2. check activate and re-execute if request is not yet applied
                 let e_state = &self.e_state[self.e_index.load(Ordering::SeqCst)];
-                if self.e_request[tid].activate.load(Ordering::SeqCst)
+                if self.e_request[tid].load_activate()
                     != e_state.deactivate[tid].load(Ordering::SeqCst)
                 {
-                    return self.PerformEnqReq(tid, pool); // TODO: arg
+                    return self.PerformEnqReq(tid, pool);
                 }
 
                 // 3. return value if request is already applied
@@ -252,16 +273,16 @@ impl QueuePBComb {
             }
             Func::DEQUEUE => {
                 // 1. check seq number and re-announce if request is not yet announced
-                if self.d_request[tid].seq != seq {
+                if self.d_request[tid].load_seq() != seq {
                     return self.PBQueue(func, arg, seq, tid, pool);
                 }
 
                 // 2. check activate and re-execute if request is not yet applied
                 let d_state = &self.d_state[self.d_index.load(Ordering::SeqCst)];
-                if self.d_request[tid].activate.load(Ordering::SeqCst)
+                if self.d_request[tid].load_activate()
                     != d_state.deactivate[tid].load(Ordering::SeqCst)
                 {
-                    return self.PerformDeqReq(tid, pool); // TODO: arg
+                    return self.PerformDeqReq(tid, pool);
                 }
 
                 // 3. return value if request is already applied
@@ -278,11 +299,7 @@ impl QueuePBComb {
         // 요청 등록
         self.e_request[tid].func = Some(Func::ENQUEUE);
         self.e_request[tid].arg = arg;
-        self.e_request[tid].seq = seq;
-        self.e_request[tid].activate.store(
-            !self.e_request[tid].activate.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        self.e_request[tid].store_act_seq(!self.e_request[tid].load_activate(), seq);
 
         // 실행
         self.PerformEnqReq(tid, pool)
@@ -315,7 +332,7 @@ impl QueuePBComb {
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             // TODO: backoff
             while lval == E_LOCK.load(Ordering::SeqCst) {}
-            if self.e_request[tid].activate.load(Ordering::SeqCst)
+            if self.e_request[tid].load_activate()
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
@@ -343,7 +360,7 @@ impl QueuePBComb {
 
         for q in 0..MAX_THREADS {
             // if `q` thread has a request that is not yet applied
-            if self.e_request[q].activate.load(Ordering::SeqCst)
+            if self.e_request[q].load_activate()
                 != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 let _ = TO_PERSIST.lock().unwrap().insert(
@@ -355,10 +372,8 @@ impl QueuePBComb {
                 Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
-                self.e_state[ind].deactivate[q].store(
-                    self.e_request[q].activate.load(Ordering::SeqCst),
-                    Ordering::SeqCst,
-                );
+                self.e_state[ind].deactivate[q]
+                    .store(self.e_request[q].load_activate(), Ordering::SeqCst);
             }
         }
 
@@ -412,11 +427,7 @@ impl QueuePBComb {
     fn PBQueueDnq(&mut self, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // 요청 등록
         self.d_request[tid].func = Some(Func::DEQUEUE);
-        self.d_request[tid].seq = seq;
-        self.d_request[tid].activate.store(
-            !self.d_request[tid].activate.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        self.d_request[tid].store_act_seq(!self.d_request[tid].load_activate(), seq);
 
         // 실행
         self.PerformDeqReq(tid, pool)
@@ -449,7 +460,7 @@ impl QueuePBComb {
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             // TODO: backoff
             while lval == D_LOCK.load(Ordering::SeqCst) {}
-            if self.d_request[tid].activate.load(Ordering::SeqCst)
+            if self.d_request[tid].load_activate()
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
@@ -470,7 +481,7 @@ impl QueuePBComb {
 
         for q in 0..MAX_THREADS {
             // if `t` thread has a request that is not yet applied
-            if self.d_request[q].activate.load(Ordering::SeqCst)
+            if self.d_request[q].load_activate()
                 != self.d_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 let ret_val;
@@ -489,10 +500,8 @@ impl QueuePBComb {
                 }
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.d_state[ind].return_val[q] = Some(ret_val);
-                self.d_state[ind].deactivate[q].store(
-                    self.d_request[q].activate.load(Ordering::SeqCst),
-                    Ordering::SeqCst,
-                );
+                self.d_state[ind].deactivate[q]
+                    .store(self.d_request[q].load_activate(), Ordering::SeqCst);
             }
         }
         persist_obj(&self.d_request, false);
