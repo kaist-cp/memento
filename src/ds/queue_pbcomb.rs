@@ -1,17 +1,14 @@
 //! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
 //!
 //! NOTE: This is not memento-based yet.
-#![allow(warnings)] // TODO: remove
-
+#![allow(non_snake_case)]
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, POwned};
 use crate::ploc::{compose_aux_bit, decompose_aux_bit};
 use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
-use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
 use tinyvec::tiny_vec;
 
 const MAX_THREADS: usize = 32;
@@ -88,7 +85,7 @@ impl Collectable for Node {
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
     return_val: [Option<ReturnVal>; MAX_THREADS],
-    deactivate: [AtomicBool; MAX_THREADS], // TODO: bit?
+    deactivate: [AtomicBool; MAX_THREADS],
 }
 
 impl Clone for EStateRec {
@@ -139,8 +136,7 @@ impl Collectable for DStateRec {
     }
 }
 
-/// Shared volatile variables
-
+// Shared volatile variables
 lazy_static::lazy_static! {
     /// 현재 진행중인 enq combiner가 enq 시작한 지점. 여기서부턴 persist아직 보장되지 않았으니 deq해가면 안됨
     ///
@@ -178,7 +174,7 @@ pub struct QueuePBComb {
 
 impl Collectable for QueuePBComb {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        let a = assert!(s.dummy.is_null());
+        assert!(s.dummy.is_null());
         Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
 
         for t in 0..MAX_THREADS {
@@ -417,10 +413,7 @@ impl QueuePBComb {
             pool,
         )
         .into_shared(unsafe { unprotected() });
-        let tail_ref = unsafe {
-            tail.load(Ordering::SeqCst, unsafe { unprotected() })
-                .deref_mut(pool)
-        };
+        let tail_ref = unsafe { tail.load(Ordering::SeqCst, unprotected()).deref_mut(pool) };
         tail_ref.next.store(new_node, Ordering::SeqCst); // tail.next = new node
         tail.store(new_node, Ordering::SeqCst); // tail = new node
     }
@@ -447,7 +440,7 @@ impl QueuePBComb {
 
             // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
             // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if (lval % 2 == 0) {
+            if lval % 2 == 0 {
                 match D_LOCK.compare_exchange(
                     lval,
                     lval.wrapping_add(1),
@@ -500,7 +493,6 @@ impl QueuePBComb {
                     let node = Self::dequeue(&self.d_state[ind].head, pool);
                     ret_val = ReturnVal::DeqRetVal(node);
                 } else {
-                    panic!("oh no");
                     ret_val = ReturnVal::DeqRetVal(PPtr::null());
                 }
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
@@ -542,7 +534,7 @@ mod test {
     use std::sync::atomic::Ordering;
 
     use crate::ds::queue_pbcomb::{Func, QueuePBComb, ReturnVal};
-    use crate::pmem::{persist_obj, Collectable, GarbageCollection, PPtr, PoolHandle, RootObj};
+    use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
 
@@ -551,18 +543,18 @@ mod test {
 
     #[derive(Default)]
     struct EnqDeq {
-        enq_seq: usize, // thread-local op seqeuence number. TODO: log queue였나? 구현보고 똑같이 구현
-        deq_seq: usize, // thread-local op seqeuence number. TODO: log queue였나? 구현보고 똑같이 구현
+        enq_seq: usize,
+        deq_seq: usize,
     }
 
     impl Collectable for EnqDeq {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
             todo!()
         }
     }
 
     impl RootObj<EnqDeq> for TestRootObj<QueuePBComb> {
-        fn run(&self, mmt: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, mmt: &mut EnqDeq, tid: usize, _: &Guard, pool: &PoolHandle) {
             // Get &mut queue
             let queue =
                 unsafe { (&self.obj as *const QueuePBComb as *mut QueuePBComb).as_mut() }.unwrap();
@@ -589,7 +581,7 @@ mod test {
                 // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
                 _ => {
                     // enq; deq;
-                    for i in 0..COUNT {
+                    for _ in 0..COUNT {
                         let _ = queue.PBQueue(Func::ENQUEUE, tid, mmt.enq_seq, tid, pool);
                         mmt.enq_seq += 1;
                         persist_obj(mmt, true);
