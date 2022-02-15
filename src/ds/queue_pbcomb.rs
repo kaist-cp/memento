@@ -40,7 +40,7 @@ pub enum ReturnVal {
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
-    seq: usize, // TODO?: 논문에선 "seq and activate are stored in the same memroy word". 왜? seq랑 activate가 atomic하게 update 돼야하나
+    seq: usize, // TODO: seq랑 activate가 atomic하게 update 돼야할듯. 논문에선 "seq and activate are stored in the same memroy word"
     activate: AtomicBool,
 }
 
@@ -127,7 +127,7 @@ lazy_static::lazy_static! {
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
     /// 현재 진행중인 enq combiner가 OLD_TAIL 이후에 enq한 노드들(의 상대주소)을 이 set에 모아뒀다가 나중에 한꺼번에 persist
-    // TODO: Mutex 제거
+    // TODO: Mutex 제거. tinyVector 및 binary search 쓰기. binary search도 crate 있을듯
     static ref TO_PERSIST: Mutex<HashSet<usize>> = Mutex::new(HashSet::new());
 
     /// Used by the PBQueueENQ instance of PBCOMB
