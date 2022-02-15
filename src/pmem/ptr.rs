@@ -33,7 +33,7 @@ impl<T: ?Sized> Copy for PPtr<T> {}
 
 impl<T: ?Sized> PPtr<T> {
     /// null 포인터 반환
-    pub fn null() -> Self {
+    pub const fn null() -> Self {
         Self {
             offset: NULL_OFFSET,
             _marker: PhantomData,
