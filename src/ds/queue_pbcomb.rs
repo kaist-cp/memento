@@ -12,6 +12,7 @@ use array_init::array_init;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use tinyvec::tiny_vec;
 
 const MAX_THREADS: usize = 32;
 type Data = usize; // TODO: generic
@@ -147,10 +148,6 @@ lazy_static::lazy_static! {
     /// - 노드를 직접 저장하지 않고 노드의 상대주소를 저장 (여기에 Atomic<PPtr<Node>>나 PAtomic<Node>는 이상함)
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
-    /// 현재 진행중인 enq combiner가 OLD_TAIL 이후에 enq한 노드들(의 상대주소)을 이 set에 모아뒀다가 나중에 한꺼번에 persist
-    // TODO: Mutex 제거. tinyVector 및 binary search 쓰기. binary search도 crate 있을듯
-    static ref TO_PERSIST: Mutex<HashSet<usize>> = Mutex::new(HashSet::new());
-
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
     static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
@@ -181,7 +178,7 @@ pub struct QueuePBComb {
 
 impl Collectable for QueuePBComb {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        assert!(s.dummy.is_null());
+        let a = assert!(s.dummy.is_null());
         Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
 
         for t in 0..MAX_THREADS {
@@ -358,17 +355,25 @@ impl QueuePBComb {
             Ordering::SeqCst,
         );
 
+        // enq한 노드들(의 상대주소)을 여기에 모아뒀다가 나중에 한꺼번에 persist
+        let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
+
         for q in 0..MAX_THREADS {
             // if `q` thread has a request that is not yet applied
             if self.e_request[q].load_activate()
                 != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
-                let _ = TO_PERSIST.lock().unwrap().insert(
-                    self.e_state[ind]
-                        .tail
-                        .load(Ordering::SeqCst, unsafe { unprotected() })
-                        .into_usize(),
-                );
+                // 현재 tail의 persist를 예약
+                let tail_addr = self.e_state[ind]
+                    .tail
+                    .load(Ordering::SeqCst, unsafe { unprotected() })
+                    .into_usize();
+                match to_persist.binary_search(&tail_addr) {
+                    Ok(_) => {} // 같은 주소 중복 persist 방지
+                    Err(idx) => to_persist.insert(idx, tail_addr),
+                }
+
+                // enq
                 Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
@@ -376,16 +381,17 @@ impl QueuePBComb {
                     .store(self.e_request[q].load_activate(), Ordering::SeqCst);
             }
         }
-
-        let _ = TO_PERSIST.lock().unwrap().insert(
-            self.e_state[ind]
-                .tail
-                .load(Ordering::SeqCst, unsafe { unprotected() })
-                .into_usize(),
-        );
-        // persist all in `TO_PERSIST`
-        for i in TO_PERSIST.lock().unwrap().iter() {
-            let node = PPtr::<Node>::from(*i);
+        let tail_addr = self.e_state[ind]
+            .tail
+            .load(Ordering::SeqCst, unsafe { unprotected() })
+            .into_usize();
+        match to_persist.binary_search(&tail_addr) {
+            Ok(_) => {} // 같은 주소 중복 persist 방지
+            Err(idx) => to_persist.insert(idx, tail_addr),
+        }
+        // persist all in `to_persist`
+        while !to_persist.is_empty() {
+            let node = PPtr::<Node>::from(to_persist.pop().unwrap());
             persist_obj(unsafe { node.deref(pool) }, false);
         }
         persist_obj(&self.e_request, false);
@@ -395,7 +401,6 @@ impl QueuePBComb {
         persist_obj(&self.e_index, false);
         sfence();
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
-        TO_PERSIST.lock().unwrap().clear(); // clear to_persist set
         E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
         self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
             .clone()
