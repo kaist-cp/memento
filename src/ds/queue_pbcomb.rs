@@ -320,6 +320,7 @@ impl QueuePBComb {
                     .load(Ordering::SeqCst)
             {
                 // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
+                // TODO: backoff
                 let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 while !(deactivate_lval < E_LOCK.load(Ordering::SeqCst)) {}
 
@@ -446,12 +447,14 @@ impl QueuePBComb {
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
+            // TODO: backoff
             while lval == D_LOCK.load(Ordering::SeqCst) {}
             if self.d_request[tid].activate.load(Ordering::SeqCst)
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
                 // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
+                // TODO: backoff
                 let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 while !(deactivate_lval < D_LOCK.load(Ordering::SeqCst)) {}
 
