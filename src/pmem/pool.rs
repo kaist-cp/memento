@@ -13,7 +13,7 @@ use std::sync::{
 };
 use std::{fs, mem};
 
-use crate::ploc::{CASCheckpointArr, CasInfo};
+use crate::ploc::{CASCheckpointArr, ExecInfo};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
@@ -59,8 +59,8 @@ pub struct PoolHandle {
     /// 풀의 길이
     len: usize,
 
-    /// Detectable CAS information per thread
-    pub(crate) cas_info: CasInfo,
+    /// Detectable execution information per thread
+    pub(crate) exec_info: ExecInfo,
 }
 
 impl PoolHandle {
@@ -110,6 +110,8 @@ impl PoolHandle {
                     thread::scope(|scope| {
                         let started = AtomicBool::new(false);
                         loop {
+                            self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
+
                             // memento 실행
                             let handler = scope.spawn(move |_| {
                                 let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
@@ -280,7 +282,7 @@ impl Pool {
             global::init(PoolHandle {
                 start: RP_mmapped_addr(),
                 len: size,
-                cas_info: CasInfo::from(chk_ref),
+                exec_info: ExecInfo::from(chk_ref),
             });
 
             let pool = global_pool().unwrap();
@@ -360,7 +362,7 @@ impl Pool {
         global::init(PoolHandle {
             start: RP_mmapped_addr(),
             len: size,
-            cas_info: CasInfo::from(chk_ref),
+            exec_info: ExecInfo::from(chk_ref),
         });
 
         // GC 수행
@@ -402,9 +404,7 @@ impl Pool {
         }
 
         let pool = global_pool().unwrap();
-
-        // CAS checkpoint offset 계산
-        pool.cas_info.set_runtime_info();
+        pool.exec_info.set_info();
 
         // 글로벌 풀의 핸들러 반환
         Ok(pool)
@@ -467,7 +467,7 @@ mod tests {
     }
 
     impl Collectable for CheckInv {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
             // no-op
         }
     }

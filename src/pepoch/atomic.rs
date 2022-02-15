@@ -1142,7 +1142,7 @@ impl<T> From<PPtr<T>> for PAtomic<T> {
 }
 
 impl<T: Collectable> Collectable for PAtomic<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let guard = unsafe { unprotected() };
 
         let mut ptr = s.load(Ordering::Relaxed, guard);
@@ -1500,7 +1500,7 @@ impl<T: Clone> POwned<T> {
 }
 
 impl<T: Collectable> Collectable for POwned<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let item = unsafe { (*s).deref_mut(pool) };
         T::mark(item, tid, gc);
     }

@@ -1,12 +1,18 @@
 //! Atomic Update Common
 
+use std::sync::atomic::{Ordering, AtomicU64};
+
 use crossbeam_utils::CachePadded;
 
 use crate::pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
-    rdtsc, PoolHandle, CACHE_LINE_SHIFT,
+    rdtsc, rdtscp, PoolHandle, CACHE_LINE_SHIFT,
 };
+
+use super::{CASCheckpointArr, CasInfo};
+
+pub(crate) const NR_MAX_THREADS: usize = 511;
 
 /// TODO(doc)
 #[macro_export]
@@ -109,6 +115,58 @@ impl Timestamp {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct ExecInfo {
+    /// 스레드별로 확인된 최대 체크포인트 시간
+    pub(crate) local_max_time: [AtomicU64; NR_MAX_THREADS + 1],
+
+    /// 지난 실행에서 최대 체크포인트 시간 (not changed after main execution)
+    pub(crate) global_max_time: Timestamp,
+
+    /// CAS 정보
+    pub(crate) cas_info: CasInfo,
+
+    /// Checkpoint 정보 (not changed after main execution)
+    pub(crate) chk_info: Timestamp,
+
+    /// 프로그램 초기 시간 (not changed after main execution)
+    pub(crate) init_time: Timestamp,
+}
+
+impl From<&'static [CASCheckpointArr; 2]> for ExecInfo {
+    fn from(chk_ref: &'static [CASCheckpointArr; 2]) -> Self {
+        Self {
+            local_max_time: array_init::array_init(|_| AtomicU64::default()),
+            global_max_time: Timestamp::from(0),
+            chk_info: Timestamp::from(0),
+            cas_info: CasInfo::from(chk_ref),
+            init_time: Timestamp::from(rdtscp()),
+        }
+    }
+}
+
+impl ExecInfo {
+    pub(crate) fn set_info(&mut self) {
+        let max = self
+            .cas_info
+            .cas_own
+            .iter()
+            .fold(Timestamp::from(0), |m, chk| {
+                let t = Timestamp::from(chk.load(Ordering::Relaxed));
+                std::cmp::max(m, t)
+            });
+        let max = self.cas_info.cas_help.iter().fold(max, |m, chk_arr| {
+            chk_arr.iter().fold(m, |mm, chk| {
+                let t = Timestamp::from(chk.load(Ordering::Relaxed));
+                std::cmp::max(mm, t)
+            })
+        });
+        let max = std::cmp::max(max, self.chk_info);
+
+        self.global_max_time = max;
+    }
+}
+
 /// TODO(doc)
 /// TODO(must): 두 개 운용하고 0,1을 통해서 valid한 쪽을 나타내게 해야할 듯 (이유: normal run에서 덮어쓰다가 error날 경우)
 ///             혹은 checkpoint는 여러 개 동시에 하지말고 한 큐에 되는 것만 하자 <- 안 된다... 사이즈 큰 거 checkpoint할 경우엔...
@@ -129,8 +187,13 @@ impl<T: Default + Clone + Collectable> Default for Checkpoint<T> {
 }
 
 impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
-        T::filter(&mut s.saved.0, tid, gc, pool);
+    fn filter(chk: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        T::filter(&mut chk.saved.0, tid, gc, pool);
+
+        // Checkpoint 중 max timestamp를 가진 걸로 기록해줌
+        if chk.saved.1 > pool.exec_info.chk_info {
+            pool.exec_info.chk_info = chk.saved.1;
+        }
     }
 }
 
