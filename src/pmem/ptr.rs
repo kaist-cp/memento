@@ -26,7 +26,7 @@ impl<T: ?Sized> Clone for PPtr<T> {
 }
 
 impl<T> Collectable for PPtr<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut super::GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut super::GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl<T: ?Sized> Copy for PPtr<T> {}

@@ -28,7 +28,7 @@ use core::sync::atomic::Ordering;
 
 use super::Guard;
 use crate::impl_left_bits;
-use crate::ploc::{aux_bits, compose_aux_bit, Checkpointable, NR_AUX_BITS, POS_AUX_BITS};
+use crate::ploc::{aux_bits, compose_aux_bit, NR_AUX_BITS, POS_AUX_BITS};
 use crate::pmem::{
     global_pool, ll::persist_obj, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection,
 };
@@ -1141,31 +1141,12 @@ impl<T> From<PPtr<T>> for PAtomic<T> {
     }
 }
 
-/// TODO(doc)
-#[inline]
-pub fn invalid_ptr<'g, T>() -> PShared<'g, T> {
-    const INVALID_PTR: usize = usize::MAX - u32::MAX as usize;
-    unsafe { PShared::<T>::from_usize(INVALID_PTR) }
-}
-
-impl<T> Checkpointable for PAtomic<T> {
-    fn invalidate(&mut self) {
-        self.store(invalid_ptr(), Ordering::Relaxed);
-    }
-
-    fn is_invalid(&self) -> bool {
-        let guard = unsafe { unprotected() };
-        let cur = self.load(Ordering::Relaxed, guard);
-        cur == invalid_ptr()
-    }
-}
-
 impl<T: Collectable> Collectable for PAtomic<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let guard = unsafe { unprotected() };
 
         let mut ptr = s.load(Ordering::Relaxed, guard);
-        if !ptr.is_null() && ptr != invalid_ptr() {
+        if !ptr.is_null() {
             let t_ref = unsafe { ptr.deref_mut(pool) };
             T::mark(t_ref, tid, gc);
         }
@@ -1519,7 +1500,7 @@ impl<T: Clone> POwned<T> {
 }
 
 impl<T: Collectable> Collectable for POwned<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let item = unsafe { (*s).deref_mut(pool) };
         T::mark(item, tid, gc);
     }

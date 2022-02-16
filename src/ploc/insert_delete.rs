@@ -55,7 +55,7 @@ impl<O: Traversable<N>, N> Default for Insert<O, N> {
 }
 
 impl<O: Traversable<N>, N> Collectable for Insert<O, N> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl<O: Traversable<N>, N> Insert<O, N> {
@@ -97,7 +97,7 @@ impl<N: Node + Collectable> Default for Delete<N> {
 }
 
 impl<N: Node + Collectable> Collectable for Delete<N> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl<N> Delete<N>
@@ -116,7 +116,7 @@ pub struct SMOAtomic<N: Node + Collectable> {
 }
 
 impl<N: Node + Collectable> Collectable for SMOAtomic<N> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         PAtomic::filter(&mut s.inner, tid, gc, pool);
     }
 }

@@ -74,7 +74,7 @@ pub(crate) mod tests {
     where
         S: Stack<usize>,
     {
-        fn filter(push_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(push_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for push in push_pop.pushes.as_mut() {
                 S::Push::filter(push, tid, gc, pool);
             }

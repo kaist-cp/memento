@@ -32,7 +32,7 @@ impl<T> From<T> for Node<T> {
 
 // TODO(must): T should be collectable
 impl<T> Collectable for Node<T> {
-    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         PAtomic::filter(&mut node.next, tid, gc, pool);
     }
 }
@@ -55,16 +55,8 @@ impl<T: Clone> Default for TryPush<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryPush<T> {}
 
 impl<T: Clone> Collectable for TryPush<T> {
-    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Cas::filter(&mut try_push.insert, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> TryPush<T> {
-    /// Reset TryPush memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.insert.reset();
     }
 }
 
@@ -85,18 +77,9 @@ impl<T: Clone> Default for Push<T> {
 }
 
 impl<T: Clone> Collectable for Push<T> {
-    fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut push.node, tid, gc, pool);
         TryPush::filter(&mut push.try_push, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> Push<T> {
-    /// Reset push memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.node.reset();
-        self.try_push.reset();
     }
 }
 
@@ -121,18 +104,9 @@ impl<T: Clone> Default for TryPop<T> {
 unsafe impl<T: Clone + Send + Sync> Send for TryPop<T> {}
 
 impl<T: Clone> Collectable for TryPop<T> {
-    fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Cas::filter(&mut try_pop.delete, tid, gc, pool);
         Checkpoint::filter(&mut try_pop.top, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> TryPop<T> {
-    /// Reset TryPop memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.delete.reset();
-        self.top.reset();
     }
 }
 
@@ -151,16 +125,8 @@ impl<T: Clone> Default for Pop<T> {
 }
 
 impl<T: Clone> Collectable for Pop<T> {
-    fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryPop::filter(&mut pop.try_pop, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> Pop<T> {
-    /// Reset Pop memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.try_pop.reset();
     }
 }
 
@@ -181,7 +147,7 @@ impl<T: Clone> Default for TreiberStack<T> {
 }
 
 impl<T: Clone> Collectable for TreiberStack<T> {
-    fn filter(stack: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(stack: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         DetectableCASAtomic::filter(&mut stack.top, tid, gc, pool);
     }
 }
@@ -225,7 +191,7 @@ impl<T: Clone> TreiberStack<T> {
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = ok_or!(
-            push.node.checkpoint::<REC>(PAtomic::from(node)),
+            push.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
             e,
             unsafe {
                 drop(
@@ -265,7 +231,7 @@ impl<T: Clone> TreiberStack<T> {
     ) -> Result<Option<T>, TryFail> {
         let top = self.top.load(Ordering::SeqCst, guard, pool);
         let top = ok_or!(
-            try_pop.top.checkpoint::<REC>(PAtomic::from(top)),
+            try_pop.top.checkpoint::<REC>(PAtomic::from(top), tid, pool),
             e,
             e.current
         )
