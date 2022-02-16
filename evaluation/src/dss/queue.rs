@@ -84,7 +84,7 @@ pub struct DSSQueue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for DSSQueue<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -346,7 +346,7 @@ pub struct TestDSSQueue {
 }
 
 impl Collectable for TestDSSQueue {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         // no-op
     }
 }
@@ -371,7 +371,7 @@ impl TestNOps for TestDSSQueue {}
 pub struct TestDSSQueueEnqDeq<const PAIR: bool> {}
 
 impl<const PAIR: bool> Collectable for TestDSSQueueEnqDeq<PAIR> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }

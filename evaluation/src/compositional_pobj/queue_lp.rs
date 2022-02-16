@@ -10,12 +10,12 @@ use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
 impl<T: 'static + Clone + Collectable> TestQueue for Queue<T> {
-    type EnqInput = (T, &'static mut Enqueue<T>); // value, memento
+    type EnqInput = (T, &'static mut Enqueue<T>, usize); // value, memento
     type DeqInput = (&'static mut Dequeue<T>, usize); // memento, tid
 
     fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
-        let (value, enq_memento) = input;
-        self.enqueue::<false>(value, enq_memento, guard, pool);
+        let (value, enq_memento, tid) = input;
+        self.enqueue::<false>(value, enq_memento, tid, guard, pool);
     }
 
     fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
@@ -30,7 +30,7 @@ pub struct TestMementoQueueLp {
 }
 
 impl Collectable for TestMementoQueueLp {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -43,7 +43,7 @@ impl PDefault for TestMementoQueueLp {
         // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            queue.enqueue::<false>(i, &mut push_init, &guard, pool);
+            queue.enqueue::<false>(i, &mut push_init, 0, &guard, pool);
         }
         Self { queue }
     }
@@ -67,7 +67,7 @@ impl<const PAIR: bool> Default for TestMementoQueueLpEnqDeq<PAIR> {
 }
 
 impl<const PAIR: bool> Collectable for TestMementoQueueLpEnqDeq<PAIR> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -91,7 +91,7 @@ impl<const PAIR: bool> RootObj<TestMementoQueueLpEnqDeq<PAIR>> for TestMementoQu
                     unsafe { (&*mmt.enq as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
                 let deq =
                     unsafe { (&*mmt.deq as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
-                let enq_input = (tid, enq); // `tid` 값을 enq. 특별한 이유는 없음
+                let enq_input = (tid, enq, tid); // `tid` 값을 enq. 특별한 이유는 없음
                 let deq_input = (deq, tid);
 
                 if PAIR {

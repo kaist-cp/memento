@@ -40,7 +40,7 @@ pub struct TestPBCombQueue {
 }
 
 impl Collectable for TestPBCombQueue {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -66,7 +66,7 @@ pub struct TestPBCombQueueEnqDeq<const PAIR: bool> {
 }
 
 impl<const PAIR: bool> Collectable for TestPBCombQueueEnqDeq<PAIR> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }

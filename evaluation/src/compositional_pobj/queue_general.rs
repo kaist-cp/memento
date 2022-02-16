@@ -31,7 +31,7 @@ pub struct TestMementoQueueGeneral {
 }
 
 impl Collectable for TestMementoQueueGeneral {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -68,7 +68,7 @@ impl<const PAIR: bool> Default for TestMementoQueueGeneralEnqDeq<PAIR> {
 }
 
 impl<const PAIR: bool> Collectable for TestMementoQueueGeneralEnqDeq<PAIR> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
