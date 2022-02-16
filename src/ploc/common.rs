@@ -1,6 +1,6 @@
 //! Atomic Update Common
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{compiler_fence, AtomicU64, Ordering};
 
 use crossbeam_utils::CachePadded;
 
@@ -59,18 +59,21 @@ impl From<u64> for Timestamp {
 }
 
 impl Into<u64> for Timestamp {
+    #[inline]
     fn into(self) -> u64 {
         self.0
     }
 }
 
 impl PartialOrd for Timestamp {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Timestamp {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let (_, t1) = self.decompose();
         let (_, t2) = other.decompose();
@@ -166,6 +169,11 @@ impl ExecInfo {
 
         self.global_max_time = max;
     }
+
+    #[inline]
+    pub(crate) fn calc_checkpoint(&self, t: u64) -> u64 {
+        t - self.init_time.time() + self.global_max_time.time()
+    }
 }
 
 /// TODO(doc)
@@ -213,13 +221,20 @@ where
     T: Default + Clone + Collectable,
 {
     /// TODO(doc)
-    pub fn checkpoint<const REC: bool>(&mut self, new: T) -> Result<T, CheckpointError<T>> {
-        // TODO(must): timestamp를 확인해서 유효한지 확인 (이제 REC은 필요 없을지도?)  tid: usize, exec_info: &ExecInfo
+    pub fn checkpoint<const REC: bool>(
+        &mut self,
+        new: T,
+        tid: usize,
+        pool: &PoolHandle,
+    ) -> Result<T, CheckpointError<T>> {
         if REC {
             // TODO(must): checkpoint variable이 atomic하게 바뀌도록 해야 함
-            if let Some(saved) = self.peek() {
+            if self.is_valid()
+                && self.saved.1
+                    > Timestamp::from(pool.exec_info.local_max_time[tid].load(Ordering::Relaxed))
+            {
                 return Err(CheckpointError {
-                    current: saved,
+                    current: (self.saved.0).clone(),
                     new,
                 });
             }
@@ -230,12 +245,11 @@ where
         if std::mem::size_of::<(T, Timestamp)>() > 1 << CACHE_LINE_SHIFT {
             persist_obj(&self.saved.1, true);
         }
-        // TODO(must): compiler fence
+        compiler_fence(Ordering::Release);
 
         self.saved = CachePadded::new((new.clone(), Timestamp::new(true, rdtsc())));
+        pool.exec_info.local_max_time[tid].store(self.saved.1.into(), Ordering::Relaxed);
         persist_obj(&*self.saved, true);
-
-        // TODO(must): thread local maximum timestamp에 넣어줘야 함
         Ok(new)
     }
 

@@ -271,7 +271,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 };
 
                 if out {
-                    break calc_checkpoint(start, exec_info);
+                    break exec_info.calc_checkpoint(start);
                 }
             };
 
@@ -368,16 +368,11 @@ impl<N> Collectable for Cas<N> {
 impl<N> Cas<N> {
     #[inline]
     fn checkpoint_succ(&mut self, parity: bool, tid: usize, exec_info: &ExecInfo) {
-        let t = calc_checkpoint(rdtscp(), &exec_info);
+        let t = exec_info.calc_checkpoint(rdtscp());
         let new_chk = Timestamp::new(parity, t);
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, false); // There is always a CAS after this function
         exec_info.cas_info.cas_own[tid].store(new_chk.into(), Ordering::Relaxed);
         exec_info.local_max_time[tid].store(new_chk.into(), Ordering::Relaxed);
     }
-}
-
-#[inline]
-fn calc_checkpoint(t: u64, exec_info: &ExecInfo) -> u64 {
-    t - exec_info.init_time.time() + exec_info.global_max_time.time()
 }

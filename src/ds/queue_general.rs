@@ -211,7 +211,9 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         };
 
         let tail = ok_or!(
-            try_enq.tail.checkpoint::<REC>(PAtomic::from(tail)),
+            try_enq
+                .tail
+                .checkpoint::<REC>(PAtomic::from(tail), tid, pool),
             e,
             e.current
         )
@@ -243,14 +245,18 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         let node = POwned::new(Node::from(value), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
 
-        let node = ok_or!(enq.node.checkpoint::<REC>(PAtomic::from(node)), e, unsafe {
-            drop(
-                e.new
-                    .load(Ordering::Relaxed, epoch::unprotected())
-                    .into_owned(),
-            );
-            e.current
-        })
+        let node = ok_or!(
+            enq.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
+            e,
+            unsafe {
+                drop(
+                    e.new
+                        .load(Ordering::Relaxed, epoch::unprotected())
+                        .into_owned(),
+                );
+                e.current
+            }
+        )
         .load(Ordering::Relaxed, guard);
 
         if self
@@ -295,9 +301,11 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         };
 
         let chk = ok_or!(
-            try_deq
-                .head_next
-                .checkpoint::<REC>((PAtomic::from(head), PAtomic::from(next))),
+            try_deq.head_next.checkpoint::<REC>(
+                (PAtomic::from(head), PAtomic::from(next)),
+                tid,
+                pool
+            ),
             e,
             e.current
         );
