@@ -28,7 +28,7 @@ impl TestQueue for QueuePBComb {
         let queue = unsafe { (self as *const QueuePBComb as *mut QueuePBComb).as_mut() }.unwrap();
 
         // deq
-        let _ = queue.PBQueue(Func::ENQUEUE, 0, *seq, tid, pool);
+        let _ = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, pool);
         *seq += 1;
         persist_obj(seq, true);
     }
