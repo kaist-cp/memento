@@ -61,18 +61,9 @@ impl<T: Clone> Default for TryPush<T> {
 }
 
 impl<T: Clone> Collectable for TryPush<T> {
-    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         treiber_stack::TryPush::filter(&mut try_push.try_push, tid, gc, pool);
         TryExchange::filter(&mut try_push.try_xchg, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> TryPush<T> {
-    /// Reset TryPush memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.try_push.reset();
-        self.try_xchg.reset();
     }
 }
 
@@ -93,18 +84,9 @@ impl<T: Clone> Default for Push<T> {
 }
 
 impl<T: Clone> Collectable for Push<T> {
-    fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut push.node, tid, gc, pool);
         TryPush::filter(&mut push.try_push, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> Push<T> {
-    /// Reset Push memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.node.reset();
-        self.try_push.reset();
     }
 }
 
@@ -138,23 +120,10 @@ impl<T: Clone> Default for TryPop<T> {
 }
 
 impl<T: Clone> Collectable for TryPop<T> {
-    fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         treiber_stack::TryPop::filter(&mut try_pop.try_pop, tid, gc, pool);
         Checkpoint::filter(&mut try_pop.pop_node, tid, gc, pool);
         TryExchange::filter(&mut try_pop.try_xchg, tid, gc, pool);
-    }
-}
-
-impl<T> TryPop<T>
-where
-    T: Clone,
-{
-    /// Reset TryPop memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.try_pop.reset();
-        self.pop_node.reset();
-        self.try_xchg.reset();
     }
 }
 
@@ -173,16 +142,8 @@ impl<T: Clone> Default for Pop<T> {
 }
 
 impl<T: Clone> Collectable for Pop<T> {
-    fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryPop::filter(&mut pop.try_pop, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> Pop<T> {
-    /// Reset Pop memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.try_pop.reset();
     }
 }
 
@@ -206,7 +167,12 @@ impl<T: Clone> Default for ElimStack<T> {
 }
 
 impl<T: Clone> Collectable for ElimStack<T> {
-    fn filter(elim_stack: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(
+        elim_stack: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
         TreiberStack::filter(&mut elim_stack.inner, tid, gc, pool);
         for slot in elim_stack.slots.as_mut() {
             Exchanger::filter(slot, tid, gc, pool);
@@ -225,7 +191,7 @@ unsafe impl<T: Clone> Sync for ElimStack<T> {}
 
 impl<T: Clone> ElimStack<T> {
     /// Try push
-    pub fn try_push<const REC: bool>(
+    fn try_push<const REC: bool>(
         &self,
         node: PShared<'_, Node<Request<T>>>,
         try_push: &mut TryPush<T>,
@@ -269,7 +235,7 @@ impl<T: Clone> ElimStack<T> {
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = ok_or!(
-            push.node.checkpoint::<REC>(PAtomic::from(node)),
+            push.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
             e,
             unsafe {
                 drop(
@@ -300,7 +266,7 @@ impl<T: Clone> ElimStack<T> {
     }
 
     /// Try pop
-    pub fn try_pop<const REC: bool>(
+    fn try_pop<const REC: bool>(
         &self,
         try_pop: &mut TryPop<T>,
         tid: usize,
