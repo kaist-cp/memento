@@ -71,7 +71,7 @@ pub struct Node {
 }
 
 impl Collectable for Node {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let mut next = s.next.load(Ordering::SeqCst, unsafe { unprotected() });
         if !next.is_null() {
             let next_ref = unsafe { next.deref_mut(pool) };
@@ -99,7 +99,7 @@ impl Clone for EStateRec {
 }
 
 impl Collectable for EStateRec {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let mut tail = s.tail.load(Ordering::SeqCst, unsafe { unprotected() });
         if !tail.is_null() {
             let tail_ref = unsafe { tail.deref_mut(pool) };
@@ -127,7 +127,7 @@ impl Clone for DStateRec {
 }
 
 impl Collectable for DStateRec {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let mut head = s.head.load(Ordering::SeqCst, unsafe { unprotected() });
         if !head.is_null() {
             let head_ref = unsafe { head.deref_mut(pool) };
@@ -173,7 +173,7 @@ pub struct QueuePBComb {
 }
 
 impl Collectable for QueuePBComb {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         assert!(s.dummy.is_null());
         Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
 
@@ -548,7 +548,7 @@ mod test {
     }
 
     impl Collectable for EnqDeq {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
             todo!()
         }
     }
