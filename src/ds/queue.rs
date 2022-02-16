@@ -1,8 +1,7 @@
 //! Persistent opt queue
 
-use crate::pepoch::atomic::invalid_ptr;
 use crate::ploc::insert_delete::{self, Delete, Insert, SMOAtomic};
-use crate::ploc::{not_deleted, Checkpoint, Checkpointable, Traversable};
+use crate::ploc::{not_deleted, Checkpoint, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use etrace::ok_or;
@@ -46,7 +45,7 @@ impl<T: Collectable> Default for Node<T> {
 }
 
 impl<T: Collectable> Collectable for Node<T> {
-    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         MaybeUninit::filter(&mut node.data, tid, gc, pool);
         SMOAtomic::filter(&mut node.next, tid, gc, pool);
         PAtomic::filter(&mut node.repl, tid, gc, pool)
@@ -77,7 +76,7 @@ impl<T: Clone + Collectable> Default for TryEnqueue<T> {
 unsafe impl<T: Clone + Collectable> Send for TryEnqueue<T> {}
 
 impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl<T: Clone + Collectable> TryEnqueue<T> {
@@ -105,34 +104,13 @@ impl<T: Clone + Collectable> Default for Enqueue<T> {
 }
 
 impl<T: Clone + Collectable> Collectable for Enqueue<T> {
-    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut enq.node, tid, gc, pool);
         TryEnqueue::filter(&mut enq.try_enq, tid, gc, pool);
     }
 }
 
-impl<T: Clone + Collectable> Enqueue<T> {
-    /// Reset Enqueue memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.node.reset();
-        self.try_enq.reset();
-    }
-}
-
 unsafe impl<T: Clone + Collectable> Send for Enqueue<T> {}
-
-impl<T: Clone + Collectable> Checkpointable for (PAtomic<Node<T>>, PAtomic<Node<T>>) {
-    fn invalidate(&mut self) {
-        self.1.store(invalid_ptr(), Ordering::Relaxed);
-    }
-
-    fn is_invalid(&self) -> bool {
-        let guard = unsafe { epoch::unprotected() };
-        let cur = self.1.load(Ordering::Relaxed, guard);
-        cur == invalid_ptr()
-    }
-}
 
 /// Queue의 try dequeue operation
 #[derive(Debug)]
@@ -153,17 +131,8 @@ impl<T: Clone + Collectable> Default for TryDequeue<T> {
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
-    fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Delete::filter(&mut try_deq.delete, tid, gc, pool);
-    }
-}
-
-impl<T: Clone + Collectable> TryDequeue<T> {
-    /// Reset TryDequeue memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.head_next.reset();
-        self.delete.reset();
     }
 }
 
@@ -182,16 +151,8 @@ impl<T: Clone + Collectable> Default for Dequeue<T> {
 }
 
 impl<T: Clone + Collectable> Collectable for Dequeue<T> {
-    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryDequeue::filter(&mut deq.try_deq, tid, gc, pool);
-    }
-}
-
-impl<T: Clone + Collectable> Dequeue<T> {
-    /// Reset Dequeue memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.try_deq.reset();
     }
 }
 
@@ -212,16 +173,8 @@ impl<T: Clone + Collectable> Default for DequeueSome<T> {
 }
 
 impl<T: Clone + Collectable> Collectable for DequeueSome<T> {
-    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Dequeue::filter(&mut deq.deq, tid, gc, pool);
-    }
-}
-
-impl<T: Clone + Collectable> DequeueSome<T> {
-    /// Reset DequeueSome memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.deq.reset();
     }
 }
 
@@ -248,7 +201,7 @@ impl<T: Clone + Collectable> PDefault for Queue<T> {
 }
 
 impl<T: Clone + Collectable> Collectable for Queue<T> {
-    fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         SMOAtomic::filter(&mut queue.head, tid, gc, pool);
     }
 }
@@ -318,20 +271,25 @@ impl<T: Clone + Collectable> Queue<T> {
         &self,
         value: T,
         enq: &mut Enqueue<T>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) {
         let node = POwned::new(Node::from(value), pool); // TODO(opt): persist_obj를 new 안으로 넣기
         persist_obj(unsafe { node.deref(pool) }, true);
 
-        let node = ok_or!(enq.node.checkpoint::<REC>(PAtomic::from(node)), e, unsafe {
-            drop(
-                e.new
-                    .load(Ordering::Relaxed, epoch::unprotected())
-                    .into_owned(),
-            );
-            e.current
-        })
+        let node = ok_or!(
+            enq.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
+            e,
+            unsafe {
+                drop(
+                    e.new
+                        .load(Ordering::Relaxed, epoch::unprotected())
+                        .into_owned(),
+                );
+                e.current
+            }
+        )
         .load(Ordering::Relaxed, guard);
 
         if self
@@ -377,9 +335,11 @@ impl<T: Clone + Collectable> Queue<T> {
         };
 
         let chk = ok_or!(
-            try_deq
-                .head_next
-                .checkpoint::<REC>((PAtomic::from(head), PAtomic::from(next))),
+            try_deq.head_next.checkpoint::<REC>(
+                (PAtomic::from(head), PAtomic::from(next)),
+                tid,
+                pool
+            ),
             e,
             e.current
         );
@@ -417,7 +377,6 @@ impl<T: Clone + Collectable> Queue<T> {
         }
 
         loop {
-            deq.try_deq.reset();
             if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
                 return ret;
             }
@@ -437,7 +396,6 @@ impl<T: Clone + Collectable> Queue<T> {
         }
 
         loop {
-            deq_some.deq.reset();
             if let Some(v) = self.dequeue::<false>(&mut deq_some.deq, tid, guard, pool) {
                 return v;
             }
@@ -470,7 +428,7 @@ mod test {
     }
 
     impl Collectable for EnqDeq {
-        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..COUNT {
                 Enqueue::filter(&mut m.enqs[i], tid, gc, pool);
                 Dequeue::filter(&mut m.deqs[i], tid, gc, pool);
@@ -500,9 +458,9 @@ mod test {
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ = self
-                            .obj
-                            .enqueue::<true>(tid, &mut enq_deq.enqs[i], guard, pool);
+                        let _ =
+                            self.obj
+                                .enqueue::<true>(tid, &mut enq_deq.enqs[i], tid, guard, pool);
                         let res = self
                             .obj
                             .dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);

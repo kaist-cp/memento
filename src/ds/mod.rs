@@ -4,7 +4,7 @@
 // pub mod clevel;
 // pub mod elim_stack;
 // pub mod exchanger; // TODO(must): ins_del 바뀐 거 적용
-// pub mod queue;
+pub mod queue;
 pub mod queue_general;
 // pub mod queue_lp;
 // pub mod soft_hash;
