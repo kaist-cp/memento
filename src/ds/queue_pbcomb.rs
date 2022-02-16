@@ -14,6 +14,9 @@ use tinyvec::tiny_vec;
 const MAX_THREADS: usize = 32;
 type Data = usize; // TODO: generic
 
+/// 사용할 스레드 수. combining시 이 스레드 수만큼만 op 순회
+pub static mut NR_THREADS: usize = 1;
+
 /// function type of queue
 #[derive(Debug)]
 pub enum Func {
@@ -354,7 +357,7 @@ impl QueuePBComb {
         // enq한 노드들(의 상대주소)을 여기에 모아뒀다가 나중에 한꺼번에 persist
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
 
-        for q in 0..MAX_THREADS {
+        for q in 0..unsafe { NR_THREADS } {
             // if `q` thread has a request that is not yet applied
             if self.e_request[q].load_activate()
                 != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
@@ -477,7 +480,7 @@ impl QueuePBComb {
         let ind = 1 - self.d_index.load(Ordering::SeqCst);
         self.d_state[ind] = self.d_state[self.d_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
 
-        for q in 0..MAX_THREADS {
+        for q in 0..unsafe { NR_THREADS } {
             // if `t` thread has a request that is not yet applied
             if self.d_request[q].load_activate()
                 != self.d_state[ind].deactivate[q].load(Ordering::SeqCst)
@@ -533,6 +536,7 @@ impl QueuePBComb {
 mod test {
     use std::sync::atomic::Ordering;
 
+    use super::NR_THREADS;
     use crate::ds::queue_pbcomb::{Func, QueuePBComb, ReturnVal};
     use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
@@ -609,6 +613,7 @@ mod test {
         const FILE_NAME: &str = "pbcomb_enq_deq.pool";
         const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
 
+        unsafe { NR_THREADS = NR_THREAD + 1 };
         run_test::<TestRootObj<QueuePBComb>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }
