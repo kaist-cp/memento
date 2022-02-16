@@ -32,6 +32,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
+        "pbcomb_queue" => TestTarget::PBCombQueue(kind),
         "crndm_queue" => TestTarget::CrndmQueue(kind),
 
         // Pipe
@@ -100,6 +101,7 @@ fn bench(opt: &Opt) -> f64 {
         | TestTarget::FriedmanDurableQueue(_)
         | TestTarget::FriedmanLogQueue(_)
         | TestTarget::DSSQueue(_)
+        | TestTarget::PBCombQueue(_)
         | TestTarget::CrndmQueue(_) => bench_queue(opt, target),
         TestTarget::MementoPipe(_) => {
             // get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)

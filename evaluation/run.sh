@@ -86,6 +86,7 @@ for kind in pair prob20 prob50 prob80; do
     benches durable_queue $kind $init_nodes
     benches log_queue $kind $init_nodes
     benches dss_queue $kind $init_nodes
+    benches pbcomb_queue $kind $init_nodes
     benches pmdk_queue $kind $init_nodes
     benches crndm_queue $kind $init_nodes
 done
