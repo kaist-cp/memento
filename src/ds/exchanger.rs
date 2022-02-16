@@ -58,12 +58,12 @@ impl<T> From<T> for Node<T> {
 
 // TODO(must): T should be collectable
 impl<T> Collectable for Node<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl<T> SMONode for Node<T> {
     #[inline]
-    fn tid_next(&self) -> &PAtomic<Self> {
+    fn replacement(&self) -> &PAtomic<Self> {
         &self.owner
     }
 }
@@ -94,7 +94,7 @@ impl<T: Clone> Default for TryExchange<T> {
 }
 
 impl<T: Clone> Collectable for TryExchange<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut s.init_slot, tid, gc, pool);
         Checkpoint::filter(&mut s.wait_slot, tid, gc, pool);
         Insert::filter(&mut s.insert, tid, gc, pool);
@@ -104,18 +104,6 @@ impl<T: Clone> Collectable for TryExchange<T> {
 }
 
 type ExchangeCond<T> = fn(&T) -> bool;
-
-impl<T: Clone> TryExchange<T> {
-    /// Reset TryExchange memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.init_slot.reset();
-        self.wait_slot.reset();
-        self.insert.reset();
-        self.update.reset();
-        self.delete.reset();
-    }
-}
 
 /// Exchanger의 exchange operation.
 /// 반드시 exchange에 성공함.
@@ -137,18 +125,9 @@ impl<T: Clone> Default for Exchange<T> {
 unsafe impl<T: Clone + Send + Sync> Send for Exchange<T> {}
 
 impl<T: Clone> Collectable for Exchange<T> {
-    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut xchg.node, tid, gc, pool);
         TryExchange::filter(&mut xchg.try_xchg, tid, gc, pool);
-    }
-}
-
-impl<T: Clone> Exchange<T> {
-    /// Reset Exchange memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.node.reset();
-        self.try_xchg.reset();
     }
 }
 
@@ -175,13 +154,13 @@ impl<T: Clone> PDefault for Exchanger<T> {
 
 impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
-        let slot = self.slot.load(Ordering::SeqCst, guard);
+        let slot = self.slot.load(true, Ordering::SeqCst, guard);
         slot == target
     }
 }
 
 impl<T: Clone> Collectable for Exchanger<T> {
-    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         SMOAtomic::filter(&mut xchg.slot, tid, gc, pool);
     }
 }
@@ -201,7 +180,9 @@ impl<T: Clone> Exchanger<T> {
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = ok_or!(
-            try_xchg.node.checkpoint::<REC>(PAtomic::from(node)),
+            try_xchg
+                .node
+                .checkpoint::<REC>(PAtomic::from(node), tid, pool),
             e,
             unsafe {
                 drop(
@@ -215,11 +196,11 @@ impl<T: Clone> Exchanger<T> {
         .load(Ordering::Relaxed, guard);
 
         // 예전에 읽었던 slot을 불러오거나 새로 읽음
-        let init_slot = self.slot.load(Ordering::SeqCst, guard);
+        let init_slot = self.slot.load(true, Ordering::SeqCst, guard);
         let init_slot = ok_or!(
             try_xchg
                 .init_slot
-                .checkpoint::<REC>(PAtomic::from(init_slot)),
+                .checkpoint::<REC>(PAtomic::from(init_slot), tid, pool),
             e,
             e.current
         )
@@ -326,11 +307,11 @@ impl<T: Clone> Exchanger<T> {
             std::thread::sleep(Duration::from_nanos(100));
         }
 
-        let wait_slot = self.slot.load(Ordering::SeqCst, guard);
+        let wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
         let wait_slot = ok_or!(
             try_xchg
                 .wait_slot
-                .checkpoint::<REC>(PAtomic::from(wait_slot)),
+                .checkpoint::<REC>(PAtomic::from(wait_slot), tid, pool),
             e,
             e.current
         )
@@ -365,7 +346,7 @@ impl<T: Clone> Exchanger<T> {
     fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> T {
         // 내 파트너는 나의 owner()임
         let mine_ref = unsafe { mine.deref(pool) };
-        let partner = mine_ref.tid_next().load(Ordering::SeqCst, guard);
+        let partner = mine_ref.replacement().load(Ordering::SeqCst, guard);
         let partner_ref = unsafe { partner.deref(pool) };
         partner_ref.data.clone()
     }
@@ -390,7 +371,12 @@ mod tests {
     }
 
     impl Collectable for ExchangeOnce {
-        fn filter(xchg_once: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(
+            xchg_once: &mut Self,
+            tid: usize,
+            gc: &mut GarbageCollection,
+            pool: &mut PoolHandle,
+        ) {
             Exchange::filter(&mut xchg_once.xchg, tid, gc, pool);
         }
     }
@@ -399,12 +385,13 @@ mod tests {
         fn run(&self, xchg_once: &mut ExchangeOnce, tid: usize, guard: &Guard, pool: &PoolHandle) {
             assert!(tid == 0 || tid == 1);
 
-            for _ in 0..100 {
+            for i in 0..100 {
                 // `move` for `tid`
                 let ret =
                     self.obj
-                        .exchange::<true>(tid, |_| true, &mut xchg_once.xchg, tid, guard, pool);
-                assert_eq!(ret, 1 - tid);
+                        .exchange::<false>(tid * 1000 + i, |_| true, &mut xchg_once.xchg, tid, guard, pool);
+                let expected = (1 - tid) * 1000 + i;
+                assert_eq!(ret, expected);
             }
         }
     }
@@ -431,14 +418,14 @@ mod tests {
     }
 
     impl Collectable for RotateLeft {
-        fn filter(rleft: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(rleft: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             Exchange::filter(&mut rleft.exchange0, tid, gc, pool);
             Exchange::filter(&mut rleft.exchange2, tid, gc, pool);
         }
     }
 
     impl Collectable for [Exchanger<usize>; 2] {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             Exchanger::filter(&mut s[0], tid, gc, pool);
             Exchanger::filter(&mut s[1], tid, gc, pool);
         }

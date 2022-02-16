@@ -208,7 +208,7 @@ impl<T: Clone + Collectable> Collectable for Queue<T> {
 
 impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
-        let mut curr = self.head.load(false, Ordering::SeqCst, guard);
+        let mut curr = self.head.load(true, Ordering::SeqCst, guard);
 
         // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
@@ -217,7 +217,7 @@ impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
             }
 
             let curr_ref = unsafe { curr.deref(pool) };
-            curr = curr_ref.next.load(false, Ordering::SeqCst, guard);
+            curr = curr_ref.next.load(true, Ordering::SeqCst, guard);
         }
 
         false

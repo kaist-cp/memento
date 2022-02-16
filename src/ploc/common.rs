@@ -7,7 +7,7 @@ use crossbeam_utils::CachePadded;
 use crate::pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
-    rdtsc, rdtscp, PoolHandle, CACHE_LINE_SHIFT,
+    rdtscp, PoolHandle, CACHE_LINE_SHIFT,
 };
 
 use super::{CASCheckpointArr, CasInfo};
@@ -247,7 +247,7 @@ where
         }
         compiler_fence(Ordering::Release);
 
-        self.saved = CachePadded::new((new.clone(), Timestamp::new(true, rdtsc())));
+        self.saved = CachePadded::new((new.clone(), Timestamp::new(true, rdtscp())));
         pool.exec_info.local_max_time[tid].store(self.saved.1.into(), Ordering::Relaxed);
         persist_obj(&*self.saved, true);
         Ok(new)
