@@ -126,7 +126,7 @@ mod test {
     }
 
     impl Collectable for SOFTHashRoot {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
             todo!()
         }
     }
@@ -138,7 +138,7 @@ mod test {
     }
 
     impl Collectable for InsertContainRemove {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
             todo!()
         }
     }

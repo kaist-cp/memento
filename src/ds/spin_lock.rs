@@ -6,20 +6,20 @@ use etrace::some_or;
 
 use crate::{
     pepoch::{atomic::Pointer, PShared},
-    ploc::{Checkpoint, CheckpointableUsize},
+    ploc::Checkpoint,
     pmem::{persist_obj, AsPPtr, Collectable, GarbageCollection, PoolHandle},
 };
 
 /// Try lock memento
 #[derive(Debug, Default)]
 pub struct TryLock {
-    target: Checkpoint<CheckpointableUsize>,
+    target: Checkpoint<usize>,
 }
 
 unsafe impl Send for TryLock {}
 
 impl Collectable for TryLock {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl TryLock {
@@ -28,7 +28,7 @@ impl TryLock {
         let lock_ptr = some_or!(self.target.peek(), return);
         // I acquired lock before.
 
-        let spin_lock = unsafe { PShared::<SpinLock>::from_usize(lock_ptr.0) }; // SAFE: Spin lock can't be dropped before released.
+        let spin_lock = unsafe { PShared::<SpinLock>::from_usize(lock_ptr) }; // SAFE: Spin lock can't be dropped before released.
         let spin_lock_ref = unsafe { spin_lock.deref(pool) };
         let cur = spin_lock_ref.inner.load(Ordering::Relaxed);
         if cur == self.id(pool) {
@@ -57,7 +57,7 @@ pub struct Lock {
 unsafe impl Send for Lock {}
 
 impl Collectable for Lock {
-    fn filter(lock: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+    fn filter(lock: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryLock::filter(&mut lock.try_lock, tid, gc, pool);
     }
 }
@@ -85,7 +85,7 @@ impl Default for SpinLock {
 }
 
 impl Collectable for SpinLock {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {}
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl SpinLock {
@@ -95,13 +95,14 @@ impl SpinLock {
     pub fn try_lock<const REC: bool>(
         &self,
         try_lock: &mut TryLock,
+        tid: usize,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
         if REC {
             let cur = self.inner.load(Ordering::Relaxed);
 
             if cur == try_lock.id(pool) {
-                self.acq_succ::<REC>(try_lock, pool);
+                self.acq_succ::<REC>(try_lock, tid, pool);
                 return Ok(());
             }
 
@@ -119,27 +120,25 @@ impl SpinLock {
             )
             .map(|_| {
                 persist_obj(&self.inner, true);
-                self.acq_succ::<REC>(try_lock, pool);
+                self.acq_succ::<REC>(try_lock, tid, pool);
             })
             .map_err(|_| ())
     }
 
     #[inline]
-    fn acq_succ<const REC: bool>(&self, try_lock: &mut TryLock, pool: &PoolHandle) {
+    fn acq_succ<const REC: bool>(&self, try_lock: &mut TryLock, tid: usize, pool: &PoolHandle) {
         let lock_ptr = unsafe { self.as_pptr(pool) }.into_offset();
-        let _ = try_lock
-            .target
-            .checkpoint::<REC>(CheckpointableUsize(lock_ptr));
+        let _ = try_lock.target.checkpoint::<REC>(lock_ptr, tid, pool);
     }
 
     /// Lock
-    pub fn lock<const REC: bool>(&self, lock: &mut Lock, pool: &PoolHandle) {
-        if self.try_lock::<REC>(&mut lock.try_lock, pool).is_ok() {
+    pub fn lock<const REC: bool>(&self, lock: &mut Lock, tid: usize, pool: &PoolHandle) {
+        if self.try_lock::<REC>(&mut lock.try_lock, tid, pool).is_ok() {
             return;
         }
 
         loop {
-            if self.try_lock::<REC>(&mut lock.try_lock, pool).is_ok() {
+            if self.try_lock::<REC>(&mut lock.try_lock, tid, pool).is_ok() {
                 return;
             }
         }
