@@ -16,13 +16,11 @@ impl<T: 'static + Clone + Collectable> TestQueue for QueueGeneral<T> {
     fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         let (value, enq_memento, tid) = input;
         self.enqueue::<false>(value, enq_memento, tid, guard, pool);
-        enq_memento.reset();
     }
 
     fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         let (deq_memento, tid) = input;
         let _ = self.dequeue::<false>(deq_memento, tid, guard, pool);
-        deq_memento.reset();
     }
 }
 
@@ -47,7 +45,6 @@ impl PDefault for TestMementoQueueGeneral {
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
             queue.enqueue::<false>(i, &mut push_init, 0, &guard, pool);
-            push_init.reset();
         }
         Self { queue }
     }
