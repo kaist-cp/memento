@@ -383,15 +383,15 @@ mod tests {
 
     impl RootObj<ExchangeOnce> for TestRootObj<Exchanger<usize>> {
         fn run(&self, xchg_once: &mut ExchangeOnce, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            assert!(tid == 0 || tid == 1);
+            let tid = tid + 1;
+            assert!(tid == 1 || tid == 2);
 
-            for i in 0..100 {
+            for _ in 0..100 {
                 // `move` for `tid`
                 let ret =
                     self.obj
-                        .exchange::<false>(tid * 1000 + i, |_| true, &mut xchg_once.xchg, tid, guard, pool);
-                let expected = (1 - tid) * 1000 + i;
-                assert_eq!(ret, expected);
+                        .exchange::<true>(tid, |_| true, &mut xchg_once.xchg, tid, guard, pool);
+                assert_eq!(ret, tid ^ 3);
             }
         }
     }
@@ -438,9 +438,11 @@ mod tests {
     }
 
     impl RootObj<RotateLeft> for TestRootObj<[Exchanger<usize>; 2]> {
-        /// Before rotation : [0]  [1]  [2]
-        /// After rotation  : [1]  [2]  [0]
+        /// Before rotation : [1]  [2]  [3]
+        /// After rotation  : [2]  [3]  [1]
         fn run(&self, rotl: &mut RotateLeft, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let tid = tid + 1;
+
             // Alias
             let lxchg = &self.obj[0];
             let rxchg = &self.obj[1];
@@ -449,8 +451,21 @@ mod tests {
             *item = tid;
 
             match tid {
-                // T0: [0] -> [1]    [2]
-                0 => {
+                // T1: [1] -> [2]    [3]
+                1 => {
+                    *item = lxchg.exchange::<true>(
+                        *item,
+                        |_| true,
+                        &mut rotl.exchange0,
+                        tid,
+                        guard,
+                        pool,
+                    );
+                    assert_eq!(*item, 2);
+                }
+                // T2: Composition in the middle
+                2 => {
+                    // Step1: [1] <- [2]    [3]
                     *item = lxchg.exchange::<true>(
                         *item,
                         |_| true,
@@ -460,21 +475,8 @@ mod tests {
                         pool,
                     );
                     assert_eq!(*item, 1);
-                }
-                // T1: Composition in the middle
-                1 => {
-                    // Step1: [0] <- [1]    [2]
-                    *item = lxchg.exchange::<true>(
-                        *item,
-                        |_| true,
-                        &mut rotl.exchange0,
-                        tid,
-                        guard,
-                        pool,
-                    );
-                    assert_eq!(*item, 0);
 
-                    // Step2: [1]    [0] -> [2]
+                    // Step2: [2]    [1] -> [3]
                     *item = rxchg.exchange::<true>(
                         *item,
                         |_| true,
@@ -483,10 +485,10 @@ mod tests {
                         guard,
                         pool,
                     );
-                    assert_eq!(*item, 2);
+                    assert_eq!(*item, 3);
                 }
-                // T2: [0]    [1] <- [2]
-                2 => {
+                // T3: [1]    [2] <- [3]
+                3 => {
                     *item = rxchg.exchange::<true>(
                         *item,
                         |_| true,
@@ -495,7 +497,7 @@ mod tests {
                         guard,
                         pool,
                     );
-                    assert_eq!(*item, 0);
+                    assert_eq!(*item, 1);
                 }
                 _ => unreachable!("The maximum number of threads is 3"),
             }
