@@ -118,6 +118,7 @@ impl Timestamp {
 #[derive(Debug)]
 pub(crate) struct ExecInfo {
     /// 스레드별로 확인된 최대 체크포인트 시간
+    // TODO(opt): AtomicTimestamp로 wrapping 하는 게 나을지도? u64로 바꾸다가 사고날 수도..
     pub(crate) local_max_time: [AtomicU64; NR_MAX_THREADS + 1],
 
     /// 지난 실행에서 최대 체크포인트 시간 (not changed after main execution)
@@ -212,8 +213,8 @@ where
     T: Default + Clone + Collectable,
 {
     /// TODO(doc)
-    pub fn checkpoint<const REC: bool>(&mut self, new: T, tid: usize, exec_info: &ExecInfo) -> Result<T, CheckpointError<T>> {
-        // TODO(must): timestamp를 확인해서 유효한지 확인 (이제 REC은 필요 없을지도?)
+    pub fn checkpoint<const REC: bool>(&mut self, new: T) -> Result<T, CheckpointError<T>> {
+        // TODO(must): timestamp를 확인해서 유효한지 확인 (이제 REC은 필요 없을지도?)  tid: usize, exec_info: &ExecInfo
         if REC {
             // TODO(must): checkpoint variable이 atomic하게 바뀌도록 해야 함
             if let Some(saved) = self.peek() {

@@ -141,13 +141,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
     }
 
-    /// TODO(doc)
-    #[inline]
-    pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
-        let cur = self.inner.load(ord, guard);
-        self.load_help(cur, &pool.exec_info, guard)
-    }
-
     #[inline]
     fn cas_result<'g>(
         &self,
@@ -164,7 +157,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         let vchk = Timestamp::from(exec_info.cas_info.cas_own[tid].load(Ordering::Relaxed));
 
-        if mmt.checkpoint != Timestamp::from(NOT_CHECKED) {
+        if mmt.checkpoint != Timestamp::from(NOT_CHECKED)
+            && mmt.checkpoint
+                > Timestamp::from(exec_info.local_max_time[tid].load(Ordering::Relaxed))
+        {
             if mmt.checkpoint > vchk {
                 exec_info.cas_info.cas_own[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
             }
@@ -180,6 +176,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 );
             }
 
+            exec_info.local_max_time[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
             return Ok(());
         }
 
@@ -221,6 +218,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         sfence();
 
         Ok(())
+    }
+
+    /// TODO(doc)
+    #[inline]
+    pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
+        let cur = self.inner.load(ord, guard);
+        self.load_help(cur, &pool.exec_info, guard)
     }
 
     const PATIENCE: u64 = 40000;
@@ -369,6 +373,7 @@ impl<N> Cas<N> {
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, false); // There is always a CAS after this function
         exec_info.cas_info.cas_own[tid].store(new_chk.into(), Ordering::Relaxed);
+        exec_info.local_max_time[tid].store(new_chk.into(), Ordering::Relaxed);
     }
 }
 
