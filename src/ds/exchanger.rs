@@ -383,7 +383,6 @@ mod tests {
 
     impl RootObj<ExchangeOnce> for TestRootObj<Exchanger<usize>> {
         fn run(&self, xchg_once: &mut ExchangeOnce, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let tid = tid + 1;
             assert!(tid == 1 || tid == 2);
 
             for _ in 0..100 {
@@ -441,8 +440,6 @@ mod tests {
         /// Before rotation : [1]  [2]  [3]
         /// After rotation  : [2]  [3]  [1]
         fn run(&self, rotl: &mut RotateLeft, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let tid = tid + 1;
-
             // Alias
             let lxchg = &self.obj[0];
             let rxchg = &self.obj[1];

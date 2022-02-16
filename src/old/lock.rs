@@ -9,11 +9,11 @@ use std::{
 use crossbeam_epoch::{self as epoch, Guard};
 
 use crate::{
-    *,
     pmem::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
+    *,
 };
 
 /// Persistent raw lock
@@ -363,7 +363,7 @@ pub(crate) mod tests {
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error> {
             match tid {
-                0 => {
+                1 => {
                     // 다른 스레드들이 다 끝날때까지 기다림
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 

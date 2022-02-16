@@ -386,8 +386,8 @@ mod test {
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<usize>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
-                // T0: 다른 스레드들의 실행결과를 확인
-                0 => {
+                // T1: 다른 스레드들의 실행결과를 확인
+                1 => {
                     // 다른 스레드들이 다 끝날때까지 기다림
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
@@ -397,11 +397,11 @@ mod test {
                     assert!(must_none.is_none());
 
                     // Check results
-                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
-                    assert!((1..NR_THREAD + 1)
+                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
+                    assert!((2..NR_THREAD + 2)
                         .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
-                // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
+                // T1이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {

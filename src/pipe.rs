@@ -164,20 +164,20 @@ mod tests {
             let (q1, q2) = (&q_arr[0], &q_arr[1]);
 
             match tid {
-                // T0: Supply q1
-                0 => {
+                // T1: Supply q1
+                1 => {
                     for (i, enq) in self.suppliers.iter_mut().enumerate() {
                         let _ = enq.run(q1, i, tid, rec, guard, pool);
                     }
                 }
-                // T1: Transfer q1->q2
-                1 => {
+                // T2: Transfer q1->q2
+                2 => {
                     for pipe in self.pipes.iter_mut() {
                         let _ = pipe.run((q1, q2), (), tid, rec, guard, pool);
                     }
                 }
-                // T2: Consume q2
-                2 => {
+                // T3: Consume q2
+                3 => {
                     for (i, deq) in self.consumers.iter_mut().enumerate() {
                         let v = deq.run(&q2, (), tid, rec, guard, pool).unwrap();
                         assert_eq!(v, i);

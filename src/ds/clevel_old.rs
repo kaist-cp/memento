@@ -1829,7 +1829,7 @@ mod tests {
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             match tid {
-                0 => {
+                1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let _ = self.resize.run(object, recv, rec, guard, pool);
                     println!("{tid}(resize) insert search done");
@@ -1918,7 +1918,7 @@ mod tests {
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             match tid {
-                0 => {
+                1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
 
                     let _ = self.resize.run(object, &recv, rec, guard, pool);

@@ -1,6 +1,6 @@
 //! Persistent queue using link-persist
 
-use crate::ploc::smo::{self, InsertErr, Traversable, InsertLinkPersist, DeleteLinkPesist};
+use crate::ploc::smo::{self, DeleteLinkPesist, InsertErr, InsertLinkPersist, Traversable};
 use crate::stack::DeallocNode;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_utils::CachePadded;
@@ -8,9 +8,9 @@ use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicBool;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
-use crate::*;
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
+use crate::*;
 
 /// TODO(doc)
 // TODO: T가 포인터일 수 있으니 T도 Collectable이여야함
@@ -555,8 +555,8 @@ mod test {
             pool: &'static PoolHandle,
         ) -> Result<Self::Output<'o>, Self::Error<'o>> {
             match tid {
-                // T0: 다른 스레드들의 실행결과를 확인
-                0 => {
+                // T1: 다른 스레드들의 실행결과를 확인
+                1 => {
                     // 다른 스레드들이 다 끝날때까지 기다림
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
@@ -567,11 +567,11 @@ mod test {
                     tmp_deq.reset(false, guard, pool);
 
                     // Check results
-                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
-                    assert!((1..NR_THREAD + 1)
+                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
+                    assert!((2..NR_THREAD + 2)
                         .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
-                // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
+                // T1이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {

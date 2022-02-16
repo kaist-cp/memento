@@ -72,14 +72,14 @@ public:
         c = reinterpret_cast<Clevel *>(get_root(RootObj, pool));
         m = (ClevelMemento **)malloc(sizeof(ClevelMemento *) * tnum);
 
-        // `0~tnum-1` thread for insert, delete, search
-        for (int tid = 0; tid < tnum; ++tid)
+        // `1~tnum` thread for insert, delete, search
+        for (int tid = 1; tid <= tnum; ++tid)
         {
             m[tid] = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tid, pool));
         }
 
-        // `tnum` thread is only for resize loop
-        ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tnum, pool));
+        // `tnum+1` thread is only for resize loop
+        ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tnum + 1, pool));
         std::thread{run_resize_loop, m_resize, c, tnum, pool}.detach();
     }
     ~CLevelMemento(){

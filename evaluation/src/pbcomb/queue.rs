@@ -51,7 +51,7 @@ impl PDefault for TestPBCombQueue {
 
         // 초기 노드 삽입
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            let _ = queue.PBQueue(Func::ENQUEUE, i, 0, 0, pool);
+            let _ = queue.PBQueue(Func::ENQUEUE, i, 0, 1, pool); // tid 1
         }
         Self { queue }
     }

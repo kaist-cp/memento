@@ -74,7 +74,12 @@ pub(crate) mod tests {
     where
         S: Stack<usize>,
     {
-        fn filter(push_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        fn filter(
+            push_pop: &mut Self,
+            tid: usize,
+            gc: &mut GarbageCollection,
+            pool: &mut PoolHandle,
+        ) {
             for push in push_pop.pushes.as_mut() {
                 S::Push::filter(push, tid, gc, pool);
             }
@@ -102,8 +107,8 @@ pub(crate) mod tests {
             pool: &PoolHandle,
         ) {
             match tid {
-                // T0: 다른 스레드들의 실행결과를 확인
-                0 => {
+                // T1: 다른 스레드들의 실행결과를 확인
+                1 => {
                     // 다른 스레드들이 다 끝날때까지 기다림
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
@@ -113,11 +118,11 @@ pub(crate) mod tests {
                     assert!(must_none.is_none());
 
                     // Check results
-                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
-                    assert!((1..NR_THREAD + 1)
+                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
+                    assert!((2..NR_THREAD + 2)
                         .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
-                // T0이 아닌 다른 스레드들은 stack에 { push; pop; } 수행
+                // T1이 아닌 다른 스레드들은 stack에 { push; pop; } 수행
                 _ => {
                     // push; pop;
                     for i in 0..COUNT {

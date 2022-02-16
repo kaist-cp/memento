@@ -67,7 +67,7 @@ public:
         pool = pool_create(path, size, tnum);
         c = reinterpret_cast<SOFT *>(get_root(RootObj, pool));
         m = (SOFTMemento **)malloc(sizeof(SOFTMemento *) * tnum);
-        for (int tid = 0; tid < tnum; ++tid)
+        for (int tid = 1; tid <= tnum; ++tid)
         {
             m[tid] = reinterpret_cast<SOFTMemento *>(get_root(MementoStart + tid, pool));
         }

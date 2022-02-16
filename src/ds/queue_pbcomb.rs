@@ -15,7 +15,7 @@ const MAX_THREADS: usize = 32;
 type Data = usize; // TODO: generic
 
 /// 사용할 스레드 수. combining시 이 스레드 수만큼만 op 순회
-pub static mut NR_THREADS: usize = 1;
+pub static mut NR_THREADS: usize = MAX_THREADS;
 
 /// function type of queue
 #[derive(Debug)]
@@ -87,8 +87,8 @@ impl Collectable for Node {
 #[derive(Debug)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
-    return_val: [Option<ReturnVal>; MAX_THREADS],
-    deactivate: [AtomicBool; MAX_THREADS],
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
+    deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
 impl Clone for EStateRec {
@@ -115,8 +115,8 @@ impl Collectable for EStateRec {
 #[derive(Debug)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
-    return_val: [Option<ReturnVal>; MAX_THREADS],
-    deactivate: [AtomicBool; MAX_THREADS],
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
+    deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
 impl Clone for DStateRec {
@@ -149,11 +149,11 @@ lazy_static::lazy_static! {
 
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
-    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
+    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: AtomicUsize = AtomicUsize::new(0);
-    static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS] = array_init(|_| AtomicUsize::new(0));
+    static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
 }
 
 /// TODO: doc
@@ -165,12 +165,12 @@ pub struct QueuePBComb {
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     // NOTE: enq하는데 deq의 variable을 쓰는 실수 주의
-    e_request: [RequestRec; MAX_THREADS],
+    e_request: [RequestRec; MAX_THREADS + 1],
     e_state: [EStateRec; 2],
     e_index: AtomicUsize,
 
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
-    d_request: [RequestRec; MAX_THREADS],
+    d_request: [RequestRec; MAX_THREADS + 1],
     d_state: [DStateRec; 2],
     d_index: AtomicUsize,
 }
@@ -357,7 +357,7 @@ impl QueuePBComb {
         // enq한 노드들(의 상대주소)을 여기에 모아뒀다가 나중에 한꺼번에 persist
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
 
-        for q in 0..unsafe { NR_THREADS } {
+        for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
             if self.e_request[q].load_activate()
                 != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
@@ -480,7 +480,7 @@ impl QueuePBComb {
         let ind = 1 - self.d_index.load(Ordering::SeqCst);
         self.d_state[ind] = self.d_state[self.d_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
 
-        for q in 0..unsafe { NR_THREADS } {
+        for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
             if self.d_request[q].load_activate()
                 != self.d_state[ind].deactivate[q].load(Ordering::SeqCst)
@@ -536,7 +536,6 @@ impl QueuePBComb {
 mod test {
     use std::sync::atomic::Ordering;
 
-    use super::NR_THREADS;
     use crate::ds::queue_pbcomb::{Func, QueuePBComb, ReturnVal};
     use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
@@ -564,8 +563,8 @@ mod test {
                 unsafe { (&self.obj as *const QueuePBComb as *mut QueuePBComb).as_mut() }.unwrap();
 
             match tid {
-                // T0: 다른 스레드들의 실행결과를 확인
-                0 => {
+                // T1: 다른 스레드들의 실행결과를 확인
+                1 => {
                     // 다른 스레드들이 다 끝날때까지 기다림
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
@@ -578,11 +577,11 @@ mod test {
                     }
 
                     // Check results
-                    assert!(RESULTS[0].load(Ordering::SeqCst) == 0);
-                    assert!((1..NR_THREAD + 1)
+                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
+                    assert!((2..NR_THREAD + 2)
                         .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
-                // T0이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
+                // T1이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
                 _ => {
                     // enq; deq;
                     for _ in 0..COUNT {
@@ -613,7 +612,6 @@ mod test {
         const FILE_NAME: &str = "pbcomb_enq_deq.pool";
         const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
 
-        unsafe { NR_THREADS = NR_THREAD + 1 };
         run_test::<TestRootObj<QueuePBComb>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }

@@ -1639,12 +1639,12 @@ mod tests {
             let kv = &self.obj;
 
             match tid {
-                0 => {
+                1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
                     let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);
                 }
-                1 => {
+                2 => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
 
                     for i in 0..SMOKE_CNT {
@@ -1726,7 +1726,7 @@ mod tests {
             let kv = &self.obj;
 
             match tid {
-                0 => {
+                1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
                     let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);

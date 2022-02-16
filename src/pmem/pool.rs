@@ -100,7 +100,7 @@ impl PoolHandle {
             // tid번째 스레드가 tid번째 memento를 성공할때까지 반복
             let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
 
-            for tid in 0..nr_memento {
+            for tid in 1..nr_memento + 1 {
                 // tid번째 root memento 얻기
                 let m_addr =
                     unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
@@ -300,12 +300,15 @@ impl Pool {
             persist_obj(nr_memento_ptr.as_mut().unwrap(), true);
             let _prev = RP_set_root(nr_memento_ptr as *mut c_void, RootIdx::NrMemento as u64);
 
-            // root memento(들) 세팅
-            for i in 0..nr_memento as u64 {
+            // root memento(들) 세팅: 1 ~ nr_memento
+            for i in 1..nr_memento + 1 {
                 let root_ptr = RP_malloc(mem::size_of::<M>() as u64) as *mut M;
                 root_ptr.write(M::default());
                 persist_obj(root_ptr.as_mut().unwrap(), true);
-                let _prev = RP_set_root(root_ptr as *mut c_void, RootIdx::MementoStart as u64 + i);
+                let _prev = RP_set_root(
+                    root_ptr as *mut c_void,
+                    RootIdx::MementoStart as u64 + i as u64,
+                );
             }
 
             Ok(pool)
