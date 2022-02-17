@@ -177,6 +177,10 @@ impl Collectable for usize {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
+impl Collectable for bool {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
 impl<T: Collectable> Collectable for MaybeUninit<T> {
     fn filter(mu: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         T::filter(unsafe { mu.assume_init_mut() }, tid, gc, pool);

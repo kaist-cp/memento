@@ -23,7 +23,7 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::{Cas, Checkpoint, Checkpointable, CheckpointableUsize, DetectableCASAtomic};
+use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
 use crate::pmem::{
     global_pool, persist_obj, sfence, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle,
 };
@@ -34,9 +34,8 @@ const TINY_VEC_CAPACITY: usize = 8;
 /// Insert client
 #[derive(Debug)]
 pub struct Insert<K, V> {
-    occupied: CachePadded<Checkpoint<CheckpointableUsize>>,
+    occupied: CachePadded<Checkpoint<bool>>,
     first_insert_inner: InsertInner<K, V>,
-    first_context: CachePadded<Checkpoint<PAtomic<Context<K, V>>>>,
     second_context: CachePadded<Checkpoint<PAtomic<Context<K, V>>>>,
     move_if_resized: MoveIfResized<K, V>,
 }
@@ -46,7 +45,6 @@ impl<K, V> Default for Insert<K, V> {
         Self {
             occupied: Default::default(),
             first_insert_inner: Default::default(),
-            first_context: Default::default(),
             second_context: Default::default(),
             move_if_resized: Default::default(),
         }
@@ -54,19 +52,8 @@ impl<K, V> Default for Insert<K, V> {
 }
 
 impl<K, V> Collectable for Insert<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
-    }
-}
-
-impl<K, V> Insert<K, V> {
-    /// Reset Insert client
-    pub fn reset(&mut self) {
-        self.occupied.reset();
-        self.first_insert_inner.reset();
-        self.first_context.reset();
-        self.second_context.reset();
-        self.move_if_resized.reset();
     }
 }
 
@@ -85,15 +72,8 @@ impl<K, V> Default for InsertInner<K, V> {
 }
 
 impl<K, V> Collectable for InsertInner<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
-    }
-}
-
-impl<K, V> InsertInner<K, V> {
-    /// Reset InsertInner client
-    pub fn reset(&mut self) {
-        self.insert_cas.reset();
     }
 }
 
@@ -102,7 +82,6 @@ impl<K, V> InsertInner<K, V> {
 pub struct MoveIfResized<K, V> {
     tag_cas: CachePadded<Cas<Slot<K, V>>>,
     insert_inner: InsertInner<K, V>,
-    insert_context: CachePadded<Checkpoint<PAtomic<Context<K, V>>>>,
 }
 
 impl<K, V> Default for MoveIfResized<K, V> {
@@ -110,23 +89,13 @@ impl<K, V> Default for MoveIfResized<K, V> {
         Self {
             tag_cas: Default::default(),
             insert_inner: Default::default(),
-            insert_context: Default::default(),
         }
     }
 }
 
 impl<K, V> Collectable for MoveIfResized<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
-    }
-}
-
-impl<K, V> MoveIfResized<K, V> {
-    /// Reset MoveIfResized client
-    pub fn reset(&mut self) {
-        self.tag_cas.reset();
-        self.insert_inner.reset();
-        self.insert_context.reset();
     }
 }
 
@@ -147,7 +116,7 @@ impl<K, V> Default for Resize<K, V> {
 }
 
 impl<K, V> Collectable for Resize<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
 }
@@ -170,25 +139,8 @@ impl<K, V> Default for TryDelete<K, V> {
 }
 
 impl<K, V> Collectable for TryDelete<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
-    }
-}
-
-impl<K, V> Checkpointable for (PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>) {
-    fn invalidate(&mut self) {
-        self.1.invalidate();
-    }
-
-    fn is_invalid(&self) -> bool {
-        self.1.is_invalid()
-    }
-}
-
-impl<K, V> TryDelete<K, V> {
-    fn reset(&mut self) {
-        self.delete_delete.reset();
-        self.find_result_chk.reset();
     }
 }
 
@@ -207,15 +159,8 @@ impl<K, V> Default for Delete<K, V> {
 }
 
 impl<K, V> Collectable for Delete<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
-    }
-}
-
-impl<K, V> Delete<K, V> {
-    /// Reset Delete memento
-    pub fn reset(&mut self) {
-        self.try_delete.reset();
     }
 }
 
@@ -280,7 +225,7 @@ impl<K, V> From<(K, V)> for Slot<K, V> {
 
 // TODO(must): V도 collectable 해야 함
 impl<K, V> Collectable for Slot<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
 }
@@ -325,7 +270,7 @@ struct Context<K, V> {
 }
 
 impl<K, V> Collectable for Context<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
 }
@@ -341,7 +286,7 @@ pub struct ClevelInner<K, V> {
 }
 
 impl<K, V> Collectable for ClevelInner<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
+    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
 }
@@ -1211,7 +1156,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     }
 
     #[inline]
-    fn insert_inner<'g, const REC: bool>(
+    fn insert_inner_inner<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
@@ -1243,31 +1188,23 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         if added {
             let _ = sender.send(());
         }
-        // TODO(must): Err 리턴하지말고 loop으로 재시도. context는 checkpoint할 필요 없음
+
         Err(context_new)
     }
 
     // TODO(must): 이건 필요 없을 거임. insert_inner에서 다 하면 되므로
-    fn insert_inner_helper<'g, const REC: bool>(
+    fn insert_inner<'g, const REC: bool>(
         &'g self,
-        mut context: PShared<'g, Context<K, V>>,
+        context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        context_chk: &mut Checkpoint<PAtomic<Context<K, V>>>,
         insert_inner: &mut InsertInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        context = ok_or!(
-            context_chk.checkpoint::<REC>(PAtomic::from(context)),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
-
-        let mut res = self.insert_inner::<REC>(
+        let mut res = self.insert_inner_inner::<REC>(
             context,
             slot,
             key_hashes,
@@ -1279,14 +1216,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         );
 
         while let Err(context_new) = res {
-            context = ok_or!(
-                context_chk.checkpoint::<false>(PAtomic::from(context)),
-                e,
-                e.current
-            )
-            .load(Ordering::Relaxed, guard);
-
-            res = self.insert_inner::<false>(
+            res = self.insert_inner_inner::<false>(
                 context_new,
                 slot,
                 key_hashes,
@@ -1367,12 +1297,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
             // TODO(must): 더럽히는 데에 성공하고 move하는 건 어떻게 checkpoint하고 rec run에서 실패시 어떻게 할 텐가?
             // TODO(must): 상황에 따라 insert_inner 반복 호출되므로 reset 해야 함
-            let (context_insert, insert_result_insert) = self.insert_inner_helper::<REC>(
+            let (context_insert, insert_result_insert) = self.insert_inner::<REC>(
                 context_new,
                 insert_result.slot_ptr,
                 key_hashes,
                 sender,
-                &mut client.insert_context,
                 &mut client.insert_inner,
                 tid,
                 guard,
@@ -1403,13 +1332,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
 
-        let occupied = match find_result {
-            Some(_) => CheckpointableUsize(1),
-            None => CheckpointableUsize(0),
-        };
-        let occupied = ok_or!(client.occupied.checkpoint::<REC>(occupied), e, e.current);
-        if occupied.0 == 1 {
-            // occupied is `1` if `find_result` is `Some`
+        let occupied = find_result.is_some();
+        let occupied = ok_or!(
+            client.occupied.checkpoint::<REC>(occupied, tid, pool),
+            e,
+            e.current
+        );
+        if occupied {
+            // occupied is true if `find_result` is `Some`
             return Err(InsertError::Occupied);
         }
 
@@ -1417,12 +1347,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
 
-        let (context_new, insert_result) = self.insert_inner_helper::<REC>(
+        let (context_new, insert_result) = self.insert_inner::<REC>(
             context,
             slot,
             key_hashes,
             sender,
-            &mut client.first_context,
             &mut client.first_insert_inner,
             tid,
             guard,
@@ -1432,7 +1361,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         let context = ok_or!(
             client
                 .second_context
-                .checkpoint::<REC>(PAtomic::from(context_new)),
+                .checkpoint::<REC>(PAtomic::from(context_new), tid, pool),
             e,
             e.current
         )
@@ -1542,7 +1471,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         let chk = ok_or!(
             try_delete
                 .find_result_chk
-                .checkpoint::<REC>((slot, slot_ptr)),
+                .checkpoint::<REC>((slot, slot_ptr), tid, pool),
             e,
             e.current
         );
@@ -1625,7 +1554,7 @@ mod tests {
     }
 
     impl Collectable for Smoke {
-        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..SMOKE_CNT {
                 // TODO(must): filter resize
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
@@ -1713,7 +1642,7 @@ mod tests {
     }
 
     impl Collectable for InsertSearch {
-        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &PoolHandle) {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..INSERT_SEARCH_CNT {
                 // TODO(must): filter resize
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
