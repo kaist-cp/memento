@@ -42,35 +42,37 @@ pub enum TryFail {
 
 /// Exchanger node
 #[derive(Debug)]
-pub struct Node<T> {
+pub struct Node<T: Collectable> {
     data: T,
-    owner: PAtomic<Self>,
+    replacement: PAtomic<Self>,
 }
 
-impl<T> From<T> for Node<T> {
+impl<T: Collectable> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: value,
-            owner: PAtomic::from(not_deleted()),
+            replacement: PAtomic::from(not_deleted()),
         }
     }
 }
 
-// TODO(must): T should be collectable
-impl<T> Collectable for Node<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+impl<T: Collectable> Collectable for Node<T> {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        T::filter(&mut node.data, tid, gc, pool);
+        // TODO(must): filter replacement..
+    }
 }
 
-impl<T> SMONode for Node<T> {
+impl<T: Collectable> SMONode for Node<T> {
     #[inline]
     fn replacement(&self) -> &PAtomic<Self> {
-        &self.owner
+        &self.replacement
     }
 }
 
 /// Exchanger의 try exchange
 #[derive(Debug)]
-pub struct TryExchange<T: Clone> {
+pub struct TryExchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     init_slot: Checkpoint<PAtomic<Node<T>>>,
     wait_slot: Checkpoint<PAtomic<Node<T>>>,
@@ -80,7 +82,7 @@ pub struct TryExchange<T: Clone> {
     delete: Delete<Node<T>>,
 }
 
-impl<T: Clone> Default for TryExchange<T> {
+impl<T: Clone + Collectable> Default for TryExchange<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
@@ -93,7 +95,7 @@ impl<T: Clone> Default for TryExchange<T> {
     }
 }
 
-impl<T: Clone> Collectable for TryExchange<T> {
+impl<T: Clone + Collectable> Collectable for TryExchange<T> {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut s.init_slot, tid, gc, pool);
         Checkpoint::filter(&mut s.wait_slot, tid, gc, pool);
@@ -108,12 +110,12 @@ type ExchangeCond<T> = fn(&T) -> bool;
 /// Exchanger의 exchange operation.
 /// 반드시 exchange에 성공함.
 #[derive(Debug)]
-pub struct Exchange<T: 'static + Clone> {
+pub struct Exchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_xchg: TryExchange<T>,
 }
 
-impl<T: Clone> Default for Exchange<T> {
+impl<T: Clone + Collectable> Default for Exchange<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
@@ -122,9 +124,9 @@ impl<T: Clone> Default for Exchange<T> {
     }
 }
 
-unsafe impl<T: Clone + Send + Sync> Send for Exchange<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for Exchange<T> {}
 
-impl<T: Clone> Collectable for Exchange<T> {
+impl<T: Clone + Collectable> Collectable for Exchange<T> {
     fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut xchg.node, tid, gc, pool);
         TryExchange::filter(&mut xchg.try_xchg, tid, gc, pool);
@@ -134,11 +136,11 @@ impl<T: Clone> Collectable for Exchange<T> {
 /// 스레드 간의 exchanger
 /// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
 #[derive(Debug)]
-pub struct Exchanger<T: Clone> {
+pub struct Exchanger<T: Clone + Collectable> {
     slot: SMOAtomic<Node<T>>,
 }
 
-impl<T: Clone> Default for Exchanger<T> {
+impl<T: Clone + Collectable> Default for Exchanger<T> {
     fn default() -> Self {
         Self {
             slot: SMOAtomic::default(),
@@ -146,26 +148,26 @@ impl<T: Clone> Default for Exchanger<T> {
     }
 }
 
-impl<T: Clone> PDefault for Exchanger<T> {
+impl<T: Clone + Collectable> PDefault for Exchanger<T> {
     fn pdefault(_: &PoolHandle) -> Self {
         Default::default()
     }
 }
 
-impl<T: Clone> Traversable<Node<T>> for Exchanger<T> {
+impl<T: Clone + Collectable> Traversable<Node<T>> for Exchanger<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
         let slot = self.slot.load(true, Ordering::SeqCst, guard);
         slot == target
     }
 }
 
-impl<T: Clone> Collectable for Exchanger<T> {
+impl<T: Clone + Collectable> Collectable for Exchanger<T> {
     fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         SMOAtomic::filter(&mut xchg.slot, tid, gc, pool);
     }
 }
 
-impl<T: Clone> Exchanger<T> {
+impl<T: Clone + Collectable> Exchanger<T> {
     /// Try Exchange
     pub fn try_exchange<const REC: bool>(
         &self,

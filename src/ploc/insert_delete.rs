@@ -58,12 +58,6 @@ impl<O: Traversable<N>, N> Collectable for Insert<O, N> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
-impl<O: Traversable<N>, N> Insert<O, N> {
-    /// Reset Insert memento
-    #[inline]
-    pub fn reset(&mut self) {}
-}
-
 /// Insert Error
 #[derive(Debug)]
 pub enum InsertError<'g, T> {
@@ -98,15 +92,6 @@ impl<N: Node + Collectable> Default for Delete<N> {
 
 impl<N: Node + Collectable> Collectable for Delete<N> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
-}
-
-impl<N> Delete<N>
-where
-    N: Node + Collectable,
-{
-    /// Reset Delete memento
-    #[inline]
-    pub fn reset(&mut self) {}
 }
 
 /// Atomic pointer for use of `Insert'/`Delete`
@@ -396,6 +381,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             return Err(ok_or!(self.load_helping(old, guard, pool), e, e));
         }
 
+        // TODO(must): location cas 마저 해줘야 함
         unsafe { guard.defer_pdestroy(old) };
         Ok(old)
     }

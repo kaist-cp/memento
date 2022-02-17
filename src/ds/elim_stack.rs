@@ -37,9 +37,17 @@ enum Request<T> {
     Pop,
 }
 
+impl<T: Collectable> Collectable for Request<T> {
+    fn filter(req: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        if let Self::Push(v) = req {
+            T::filter(v, tid, gc, pool);
+        }
+    }
+}
+
 /// ElimStack의 push operation
 #[derive(Debug)]
-pub struct TryPush<T: Clone> {
+pub struct TryPush<T: Clone + Collectable> {
     /// inner stack의 push op
     try_push: treiber_stack::TryPush<Request<T>>,
 
@@ -50,7 +58,7 @@ pub struct TryPush<T: Clone> {
     try_xchg: TryExchange<Request<T>>,
 }
 
-impl<T: Clone> Default for TryPush<T> {
+impl<T: Clone + Collectable> Default for TryPush<T> {
     fn default() -> Self {
         Self {
             try_push: Default::default(),
@@ -60,7 +68,7 @@ impl<T: Clone> Default for TryPush<T> {
     }
 }
 
-impl<T: Clone> Collectable for TryPush<T> {
+impl<T: Clone + Collectable> Collectable for TryPush<T> {
     fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         treiber_stack::TryPush::filter(&mut try_push.try_push, tid, gc, pool);
         TryExchange::filter(&mut try_push.try_xchg, tid, gc, pool);
@@ -69,12 +77,12 @@ impl<T: Clone> Collectable for TryPush<T> {
 
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
-pub struct Push<T: Clone> {
+pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<Request<T>>>>,
     try_push: TryPush<T>,
 }
 
-impl<T: Clone> Default for Push<T> {
+impl<T: Clone + Collectable> Default for Push<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
@@ -83,18 +91,18 @@ impl<T: Clone> Default for Push<T> {
     }
 }
 
-impl<T: Clone> Collectable for Push<T> {
+impl<T: Clone + Collectable> Collectable for Push<T> {
     fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut push.node, tid, gc, pool);
         TryPush::filter(&mut push.try_push, tid, gc, pool);
     }
 }
 
-unsafe impl<T: Clone> Send for Push<T> {}
+unsafe impl<T: Clone + Collectable> Send for Push<T> {}
 
 /// `ElimStack::pop()`를 호출할 때 쓰일 client
 #[derive(Debug)]
-pub struct TryPop<T: Clone> {
+pub struct TryPop<T: Clone + Collectable> {
     /// inner stack의 pop client
     try_pop: treiber_stack::TryPop<Request<T>>,
 
@@ -108,7 +116,7 @@ pub struct TryPop<T: Clone> {
     try_xchg: TryExchange<Request<T>>,
 }
 
-impl<T: Clone> Default for TryPop<T> {
+impl<T: Clone + Collectable> Default for TryPop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
@@ -119,7 +127,7 @@ impl<T: Clone> Default for TryPop<T> {
     }
 }
 
-impl<T: Clone> Collectable for TryPop<T> {
+impl<T: Clone + Collectable> Collectable for TryPop<T> {
     fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         treiber_stack::TryPop::filter(&mut try_pop.try_pop, tid, gc, pool);
         Checkpoint::filter(&mut try_pop.pop_node, tid, gc, pool);
@@ -129,11 +137,11 @@ impl<T: Clone> Collectable for TryPop<T> {
 
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
-pub struct Pop<T: Clone> {
+pub struct Pop<T: Clone + Collectable> {
     try_pop: TryPop<T>,
 }
 
-impl<T: Clone> Default for Pop<T> {
+impl<T: Clone + Collectable> Default for Pop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
@@ -141,23 +149,23 @@ impl<T: Clone> Default for Pop<T> {
     }
 }
 
-impl<T: Clone> Collectable for Pop<T> {
+impl<T: Clone + Collectable> Collectable for Pop<T> {
     fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryPop::filter(&mut pop.try_pop, tid, gc, pool);
     }
 }
 
-unsafe impl<T: Clone> Send for Pop<T> {}
+unsafe impl<T: Clone + Collectable> Send for Pop<T> {}
 
 /// Persistent Elimination backoff stack
 /// - ELIM_SIZE: size of elimination array
 #[derive(Debug)]
-pub struct ElimStack<T: Clone> {
+pub struct ElimStack<T: Clone + Collectable> {
     inner: TreiberStack<Request<T>>,
     slots: [Exchanger<Request<T>>; ELIM_SIZE],
 }
 
-impl<T: Clone> Default for ElimStack<T> {
+impl<T: Clone + Collectable> Default for ElimStack<T> {
     fn default() -> Self {
         Self {
             inner: Default::default(),
@@ -166,7 +174,7 @@ impl<T: Clone> Default for ElimStack<T> {
     }
 }
 
-impl<T: Clone> Collectable for ElimStack<T> {
+impl<T: Clone + Collectable> Collectable for ElimStack<T> {
     fn filter(
         elim_stack: &mut Self,
         tid: usize,
@@ -180,16 +188,16 @@ impl<T: Clone> Collectable for ElimStack<T> {
     }
 }
 
-impl<T: Clone> PDefault for ElimStack<T> {
+impl<T: Clone + Collectable> PDefault for ElimStack<T> {
     fn pdefault(_: &PoolHandle) -> Self {
         Self::default()
     }
 }
 
-unsafe impl<T: Clone + Send + Sync> Send for ElimStack<T> {}
-unsafe impl<T: Clone> Sync for ElimStack<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for ElimStack<T> {}
+unsafe impl<T: Clone + Collectable> Sync for ElimStack<T> {}
 
-impl<T: Clone> ElimStack<T> {
+impl<T: Clone + Collectable> ElimStack<T> {
     /// Try push
     fn try_push<const REC: bool>(
         &self,
@@ -325,7 +333,7 @@ impl<T: Clone> ElimStack<T> {
     }
 }
 
-impl<T: Clone> Stack<T> for ElimStack<T> {
+impl<T: Clone + Collectable> Stack<T> for ElimStack<T> {
     type Push = Push<T>;
     type Pop = Pop<T>;
 

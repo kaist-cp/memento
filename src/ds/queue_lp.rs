@@ -79,14 +79,6 @@ impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
-impl<T: Clone + Collectable> TryEnqueue<T> {
-    /// Reset TryEnqueue memento
-    #[inline]
-    pub fn reset(&mut self) {
-        self.insert.reset();
-    }
-}
-
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: Clone + Collectable> {
@@ -300,7 +292,6 @@ impl<T: Clone + Collectable> Queue<T> {
         }
 
         loop {
-            enq.try_enq.reset();
             if self
                 .try_enqueue::<false>(node, &mut enq.try_enq, guard, pool)
                 .is_ok()
