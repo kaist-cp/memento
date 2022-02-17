@@ -34,19 +34,19 @@ const TINY_VEC_CAPACITY: usize = 8;
 /// Insert client
 #[derive(Debug)]
 pub struct Insert<K, V> {
-    occupied: CachePadded<Checkpoint<bool>>,
-    first_insert_inner: InsertInner<K, V>,
-    second_context: CachePadded<Checkpoint<PAtomic<Context<K, V>>>>,
-    move_if_resized: MoveIfResized<K, V>,
+    occupied: Checkpoint<bool>,
+    insert_inner: InsertInner<K, V>,
+    move_done: Checkpoint<()>,
+    tag_cas: CachePadded<Cas<Slot<K, V>>>,
 }
 
 impl<K, V> Default for Insert<K, V> {
     fn default() -> Self {
         Self {
             occupied: Default::default(),
-            first_insert_inner: Default::default(),
-            second_context: Default::default(),
-            move_if_resized: Default::default(),
+            insert_inner: Default::default(),
+            move_done: Default::default(),
+            tag_cas: Default::default(),
         }
     }
 }
@@ -74,28 +74,6 @@ impl<K, V> Default for InsertInner<K, V> {
 }
 
 impl<K, V> Collectable for InsertInner<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
-    }
-}
-
-/// Move if resized client
-#[derive(Debug)]
-pub struct MoveIfResized<K, V> {
-    tag_cas: CachePadded<Cas<Slot<K, V>>>,
-    insert_inner: InsertInner<K, V>,
-}
-
-impl<K, V> Default for MoveIfResized<K, V> {
-    fn default() -> Self {
-        Self {
-            tag_cas: Default::default(),
-            insert_inner: Default::default(),
-        }
-    }
-}
-
-impl<K, V> Collectable for MoveIfResized<K, V> {
     fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
@@ -1268,19 +1246,28 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        client: &mut MoveIfResized<K, V>,
+        move_done: &mut Checkpoint<()>,
+        tag_cas: &mut Cas<Slot<K, V>>,
+        insert_inner: &mut InsertInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
+        if REC {
+            if move_done.peek(tid, pool).is_some() {
+                return;
+            }
+        }
+
         loop {
             // If the inserted slot is being resized, try again.
             fence(Ordering::SeqCst);
 
             // If the context remains the same, it's done.
             let context_new = self.context.load(Ordering::Acquire, guard);
-            // TODO(must): 이미 insert 끝난 memento에 대해 Rec run에서는 여기서 리턴해야하므로 context를 checkpoint해야할 것 같음
+
             if context == context_new {
+                let _ = move_done.checkpoint::<false>((), tid, pool);
                 return;
             }
 
@@ -1316,7 +1303,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 .cas::<false>(
                     insert_result.slot_ptr,
                     insert_result.slot_ptr.with_tag(1),
-                    &mut client.tag_cas,
+                    tag_cas,
                     tid,
                     guard,
                     pool,
@@ -1333,7 +1320,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 insert_result.slot_ptr,
                 key_hashes,
                 sender,
-                &mut client.insert_inner,
+                insert_inner,
                 tid,
                 guard,
                 pool,
@@ -1383,27 +1370,20 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             slot,
             key_hashes,
             sender,
-            &mut client.first_insert_inner,
+            &mut client.insert_inner,
             tid,
             guard,
             pool,
         );
 
-        let context = ok_or!(
-            client
-                .second_context
-                .checkpoint::<REC>(PAtomic::from(context_new), tid, pool),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
-
         self.move_if_resized::<REC>(
-            context,
+            context_new,
             insert_result,
             key_hashes,
             sender,
-            &mut client.move_if_resized,
+            &mut client.move_done,
+            &mut client.tag_cas,
+            &mut client.insert_inner,
             tid,
             guard,
             pool,

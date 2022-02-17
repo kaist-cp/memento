@@ -173,6 +173,10 @@ impl<T: Collectable, U: Collectable> Collectable for (T, U) {
     }
 }
 
+impl Collectable for () {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
 impl Collectable for usize {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
