@@ -229,14 +229,8 @@ where
     ) -> Result<T, CheckpointError<T>> {
         if REC {
             // TODO(must): checkpoint variable이 atomic하게 바뀌도록 해야 함
-            if self.is_valid()
-                && self.saved.1
-                    > Timestamp::from(pool.exec_info.local_max_time[tid].load(Ordering::Relaxed))
-            {
-                return Err(CheckpointError {
-                    current: (self.saved.0).clone(),
-                    new,
-                });
+            if let Some(v) = self.peek(tid, pool) {
+                return Err(CheckpointError { current: v, new });
             }
         }
 
@@ -261,8 +255,12 @@ where
 
     /// TODO(doc)
     #[inline]
-    pub fn peek(&self) -> Option<T> {
-        if self.is_valid() {
+    pub fn peek(&self, tid: usize, pool: &PoolHandle) -> Option<T> {
+        if self.is_valid()
+            && self.saved.1
+                > Timestamp::from(pool.exec_info.local_max_time[tid].load(Ordering::Relaxed))
+        {
+            pool.exec_info.local_max_time[tid].store(self.saved.1.into(), Ordering::Relaxed);
             Some((self.saved.0).clone())
         } else {
             None

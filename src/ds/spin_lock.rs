@@ -24,8 +24,8 @@ impl Collectable for TryLock {
 
 impl TryLock {
     /// Reset TryLock memento
-    pub fn reset(&mut self, pool: &PoolHandle) {
-        let lock_ptr = some_or!(self.target.peek(), return);
+    pub fn reset(&mut self, tid: usize, pool: &PoolHandle) {
+        let lock_ptr = some_or!(self.target.peek(tid, pool), return);
         // I acquired lock before.
 
         let spin_lock = unsafe { PShared::<SpinLock>::from_usize(lock_ptr) }; // SAFE: Spin lock can't be dropped before released.
@@ -65,8 +65,8 @@ impl Collectable for Lock {
 impl Lock {
     /// Reset Lock memento
     #[inline]
-    pub fn reset(&mut self, pool: &PoolHandle) {
-        self.try_lock.reset(pool);
+    pub fn reset(&mut self, tid: usize, pool: &PoolHandle) {
+        self.try_lock.reset(tid, pool);
     }
 }
 

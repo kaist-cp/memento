@@ -60,12 +60,14 @@ impl<K, V> Collectable for Insert<K, V> {
 /// Insert inner client
 #[derive(Debug)]
 pub struct InsertInner<K, V> {
+    insert_chk: CachePadded<Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>>,
     insert_cas: CachePadded<Cas<Slot<K, V>>>,
 }
 
 impl<K, V> Default for InsertInner<K, V> {
     fn default() -> Self {
         Self {
+            insert_chk: Default::default(),
             insert_cas: Default::default(),
         }
     }
@@ -1084,13 +1086,32 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        insert_cas: &mut Cas<Slot<K, V>>,
+        client: &mut InsertInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
         if REC {
-            // TODO(must): checkpoint된 slot있나보고 CAS
+            if let Some((size, slot_p)) = client.insert_chk.peek(tid, pool) {
+                let slot = unsafe { slot_p.deref(pool) };
+                if slot
+                    .cas::<REC>(
+                        PShared::null(),
+                        slot_new,
+                        &mut client.insert_cas,
+                        tid,
+                        guard,
+                        pool,
+                    )
+                    .is_ok()
+                {
+                    return Ok(FindResult {
+                        size,
+                        slot,
+                        slot_ptr: slot_new,
+                    });
+                }
+            }
         }
 
         let context_ref = unsafe { context.deref(pool) };
@@ -1137,9 +1158,25 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                     // }
 
                     // After(general)
-                    // TODO(must): 여기서 slot을 checkpoint!
+                    let (size, slot_p) = client
+                        .insert_chk
+                        .checkpoint::<false>(
+                            (size, PPtr::from(unsafe { slot.as_pptr(pool) })),
+                            tid,
+                            pool,
+                        )
+                        .unwrap();
+
+                    let slot = unsafe { slot_p.deref(pool) };
                     if slot
-                        .cas::<false>(PShared::null(), slot_new, insert_cas, tid, guard, pool)
+                        .cas::<false>(
+                            PShared::null(),
+                            slot_new,
+                            &mut client.insert_cas,
+                            tid,
+                            guard,
+                            pool,
+                        )
                         .is_ok()
                     {
                         return Ok(FindResult {
@@ -1168,15 +1205,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
     {
-        if let Ok(result) = self.try_slot_insert::<REC>(
-            context,
-            slot,
-            key_hashes,
-            &mut client.insert_cas,
-            tid,
-            guard,
-            pool,
-        ) {
+        if let Ok(result) =
+            self.try_slot_insert::<REC>(context, slot, key_hashes, client, tid, guard, pool)
+        {
             return Ok((context, result));
         }
 
