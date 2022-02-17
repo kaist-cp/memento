@@ -8,6 +8,7 @@ use crate::ploc::{compose_aux_bit, decompose_aux_bit};
 use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
+use crossbeam_utils::CachePadded;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tinyvec::tiny_vec;
 
@@ -157,7 +158,6 @@ lazy_static::lazy_static! {
 }
 
 /// TODO: doc
-// TODO: 내부 필드 전부 cachepadded? -> 일단 이렇게 실험하고 성능 이상하다 싶으면 그때 cachepadded 해보기.
 #[derive(Debug)]
 pub struct QueuePBComb {
     /// Shared non-volatile variables
@@ -166,12 +166,12 @@ pub struct QueuePBComb {
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     // NOTE: enq하는데 deq의 variable을 쓰는 실수 주의
     e_request: [RequestRec; MAX_THREADS + 1],
-    e_state: [EStateRec; 2],
+    e_state: [CachePadded<EStateRec>; 2],
     e_index: AtomicUsize,
 
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
     d_request: [RequestRec; MAX_THREADS + 1],
-    d_state: [DStateRec; 2],
+    d_state: [CachePadded<DStateRec>; 2],
     d_index: AtomicUsize,
 }
 
@@ -181,8 +181,8 @@ impl Collectable for QueuePBComb {
         Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
 
         for t in 0..MAX_THREADS {
-            Collectable::filter(&mut s.e_state[t], tid, gc, pool);
-            Collectable::filter(&mut s.d_state[t], tid, gc, pool);
+            Collectable::filter(&mut *s.e_state[t], tid, gc, pool);
+            Collectable::filter(&mut *s.d_state[t], tid, gc, pool);
         }
 
         // initialize global volatile variable manually
@@ -203,17 +203,21 @@ impl PDefault for QueuePBComb {
         Self {
             dummy,
             e_request: array_init(|_| Default::default()),
-            e_state: array_init(|_| EStateRec {
-                tail: PAtomic::from(dummy),
-                return_val: array_init(|_| None),
-                deactivate: array_init(|_| AtomicBool::new(false)),
+            e_state: array_init(|_| {
+                CachePadded::new(EStateRec {
+                    tail: PAtomic::from(dummy),
+                    return_val: array_init(|_| None),
+                    deactivate: array_init(|_| AtomicBool::new(false)),
+                })
             }),
             e_index: Default::default(),
             d_request: array_init(|_| Default::default()),
-            d_state: array_init(|_| DStateRec {
-                head: PAtomic::from(dummy),
-                return_val: array_init(|_| None),
-                deactivate: array_init(|_| AtomicBool::new(false)),
+            d_state: array_init(|_| {
+                CachePadded::new(DStateRec {
+                    head: PAtomic::from(dummy),
+                    return_val: array_init(|_| None),
+                    deactivate: array_init(|_| AtomicBool::new(false)),
+                })
             }),
             d_index: Default::default(),
         }
@@ -394,7 +398,7 @@ impl QueuePBComb {
             persist_obj(unsafe { node.deref(pool) }, false);
         }
         persist_obj(&self.e_request, false);
-        persist_obj(&self.e_state[ind], false);
+        persist_obj(&*self.e_state[ind], false);
         sfence();
         self.e_index.store(ind, Ordering::SeqCst);
         persist_obj(&self.e_index, false);
@@ -505,7 +509,7 @@ impl QueuePBComb {
             }
         }
         persist_obj(&self.d_request, false);
-        persist_obj(&self.d_state[ind], false);
+        persist_obj(&*self.d_state[ind], false);
         sfence();
         self.d_index.store(ind, Ordering::SeqCst);
         persist_obj(&self.d_index, false);
