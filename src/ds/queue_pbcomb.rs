@@ -8,7 +8,7 @@ use crate::ploc::{compose_aux_bit, decompose_aux_bit};
 use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
-use crossbeam_utils::CachePadded;
+use crossbeam_utils::{Backoff, CachePadded};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tinyvec::tiny_vec;
 
@@ -330,16 +330,20 @@ impl QueuePBComb {
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
-            // TODO: backoff
-            while lval == E_LOCK.load(Ordering::SeqCst) {}
+            let backoff = Backoff::new();
+            while lval == E_LOCK.load(Ordering::SeqCst) {
+                backoff.snooze();
+            }
             if self.e_request[tid].load_activate()
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
                 // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
-                // TODO: backoff
                 let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
-                while !(deactivate_lval < E_LOCK.load(Ordering::SeqCst)) {}
+                backoff.reset();
+                while !(deactivate_lval < E_LOCK.load(Ordering::SeqCst)) {
+                    backoff.snooze();
+                }
 
                 return self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
@@ -463,16 +467,20 @@ impl QueuePBComb {
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
-            // TODO: backoff
-            while lval == D_LOCK.load(Ordering::SeqCst) {}
+            let backoff = Backoff::new();
+            while lval == D_LOCK.load(Ordering::SeqCst) {
+                backoff.snooze();
+            }
             if self.d_request[tid].load_activate()
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
                 // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
-                // TODO: backoff
                 let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
-                while !(deactivate_lval < D_LOCK.load(Ordering::SeqCst)) {}
+                backoff.reset();
+                while !(deactivate_lval < D_LOCK.load(Ordering::SeqCst)) {
+                    backoff.snooze();
+                }
 
                 return self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
