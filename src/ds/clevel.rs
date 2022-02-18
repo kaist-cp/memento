@@ -35,6 +35,7 @@ const TINY_VEC_CAPACITY: usize = 8;
 #[derive(Debug)]
 pub struct Insert<K, V> {
     occupied: Checkpoint<bool>,
+    node: Checkpoint<PAtomic<Slot<K, V>>>,
     insert_inner: InsertInner<K, V>,
     move_done: Checkpoint<()>,
     tag_cas: CachePadded<Cas<Slot<K, V>>>,
@@ -44,6 +45,7 @@ impl<K, V> Default for Insert<K, V> {
     fn default() -> Self {
         Self {
             occupied: Default::default(),
+            node: Default::default(),
             insert_inner: Default::default(),
             move_done: Default::default(),
             tag_cas: Default::default(),
@@ -1240,10 +1242,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         res.unwrap()
     }
 
-    fn move_if_resized<'g, const REC: bool>(
+    fn insert_loop<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
-        mut insert_result: FindResult<'g, K, V>,
+        slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
         move_done: &mut Checkpoint<()>,
@@ -1259,50 +1261,100 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             }
         }
 
+        // TODO(must): 여기랑 밑에 CAS는 REC이 false로도 되어야 함
+        let (_, result) = self.insert_inner::<REC>(
+            context,
+            slot,
+            key_hashes,
+            sender,
+            insert_inner,
+            tid,
+            guard,
+            pool,
+        );
+
+        // If the inserted slot is being resized, try again.
+        fence(Ordering::SeqCst);
+
+        // If the context remains the same, it's done.
+        context = self.context.load(Ordering::Acquire, guard);
+
+        // If the inserted array is not being resized, it's done.
+        let context_ref = unsafe { context.deref(pool) };
+        if context_ref.resize_size < result.size {
+            let _ = move_done.checkpoint::<false>((), tid, pool);
+            return;
+        }
+
+        // Move the slot if the slot is not already (being) moved.
+        //
+        // the resize thread may already have passed the slot. I need to move it.
+
+        // TODO(must): REC Fail이면 성공할 때까지 하기
+        if result
+            .slot
+            .cas::<REC>(
+                result.slot_ptr,
+                result.slot_ptr.with_tag(1),
+                tag_cas,
+                tid,
+                guard,
+                pool,
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        let mut prev_result = result;
         loop {
+            // TODO(must): 여기랑 밑에 CAS는 REC이 false로도 되어야 함
+            let (_, result) = self.insert_inner::<false>(
+                context,
+                slot,
+                key_hashes,
+                sender,
+                insert_inner,
+                tid,
+                guard,
+                pool,
+            );
+
+            prev_result
+                .slot
+                .inner
+                .store(PShared::null().with_tag(1), Ordering::Release);
+
             // If the inserted slot is being resized, try again.
             fence(Ordering::SeqCst);
 
             // If the context remains the same, it's done.
-            let context_new = self.context.load(Ordering::Acquire, guard);
+            context = self.context.load(Ordering::Acquire, guard);
 
-            if context == context_new {
-                let _ = move_done.checkpoint::<false>((), tid, pool);
-                return;
-            }
+            // TODO(must): 어차피 size 비교하므로 context 비교는 필요없다고 생각했음. 코드 지우기 전에 다시 생각해보기
+            // if context == context_new {
+            //     let _ = move_done.checkpoint::<false>((), tid, pool);
+            //     return;
+            // }
+            // context = context_new;
 
             // If the inserted array is not being resized, it's done.
-            let context_new_ref = unsafe { context_new.deref(pool) };
-            if context_new_ref.resize_size < insert_result.size {
-                break;
+            let context_ref = unsafe { context.deref(pool) };
+            if context_ref.resize_size < result.size {
+                let _ = move_done.checkpoint::<false>((), tid, pool);
+                return;
             }
 
             // Move the slot if the slot is not already (being) moved.
             //
             // the resize thread may already have passed the slot. I need to move it.
 
-            // Before
-            // if insert_result
-            //     .slot
-            //     .compare_exchange(
-            //         insert_result.slot_ptr,
-            //         insert_result.slot_ptr.with_tag(1),
-            //         Ordering::AcqRel,
-            //         Ordering::Acquire,
-            //         guard,
-            //     )
-            //     .is_err()
-            // {
-            //     break;
-            // }
-
-            // After(general)
             // TODO(must): 여기서 checkpoint 하고 위에서 rec run에서 마저하도록 해야할 듯
-            if insert_result
+            if result
                 .slot
                 .cas::<false>(
-                    insert_result.slot_ptr,
-                    insert_result.slot_ptr.with_tag(1),
+                    result.slot_ptr,
+                    result.slot_ptr.with_tag(1),
                     tag_cas,
                     tid,
                     guard,
@@ -1313,24 +1365,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 break;
             }
 
-            // TODO(must): 더럽히는 데에 성공하고 move하는 건 어떻게 checkpoint하고 rec run에서 실패시 어떻게 할 텐가?
-            // TODO(must): 상황에 따라 insert_inner 반복 호출되므로 reset 해야 함
-            let (context_insert, insert_result_insert) = self.insert_inner::<REC>(
-                context_new,
-                insert_result.slot_ptr,
-                key_hashes,
-                sender,
-                insert_inner,
-                tid,
-                guard,
-                pool,
-            );
-            insert_result
-                .slot
-                .inner
-                .store(PShared::null().with_tag(1), Ordering::Release);
-            context = context_insert;
-            insert_result = insert_result_insert;
+            prev_result = result;
         }
     }
 
@@ -1364,21 +1399,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         let slot = POwned::new(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
+        let slot = ok_or!(
+            client
+                .node
+                .checkpoint::<REC>(PAtomic::from(slot), tid, pool),
+            e,
+            e.current
+        )
+        .load(Ordering::Relaxed, guard);
 
-        let (context_new, insert_result) = self.insert_inner::<REC>(
+        self.insert_loop::<REC>(
             context,
             slot,
-            key_hashes,
-            sender,
-            &mut client.insert_inner,
-            tid,
-            guard,
-            pool,
-        );
-
-        self.move_if_resized::<REC>(
-            context_new,
-            insert_result,
             key_hashes,
             sender,
             &mut client.move_done,
