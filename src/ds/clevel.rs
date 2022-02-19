@@ -750,6 +750,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &PoolHandle,
     ) {
         if REC {
+            // TODO(must): 자연스럽지 않음
             // TODO(must): checkpoint된 slot있나보고 CAS
             // TODO(must): 더럽히는 데에 성공하고 move하는 건 어떻게 checkpoint하고 rec run에서 실패시 어떻게 할 텐가?
         }
@@ -1072,6 +1073,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
         if REC {
+            // TODO(must): 자연스럽지 않음
             if let Some((size, slot_p)) = client.insert_chk.peek(tid, pool) {
                 let slot = unsafe { slot_p.deref(pool) };
                 if slot
@@ -1256,6 +1258,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &'g PoolHandle,
     ) {
         if REC {
+            // TODO(must): 자연스럽지 않음
             if move_done.peek(tid, pool).is_some() {
                 return;
             }
@@ -1302,6 +1305,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             .is_err()
         {
             // Rec fail인지 예전에 진짜 생겼던 fail인지 구분이 안 되므로 한 번 더 해보기
+            // TODO(must): 자연스럽지 않음
             if result
                 .slot
                 .cas::<false>(
