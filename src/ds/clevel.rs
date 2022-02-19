@@ -1261,7 +1261,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             }
         }
 
-        // TODO(must): 여기랑 밑에 CAS는 REC이 false로도 되어야 함
         let (_, result) = self.insert_inner::<REC>(
             context,
             slot,
@@ -1290,7 +1289,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         //
         // the resize thread may already have passed the slot. I need to move it.
 
-        // TODO(must): REC Fail이면 성공할 때까지 하기
         if result
             .slot
             .cas::<REC>(
@@ -1303,12 +1301,25 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             )
             .is_err()
         {
-            return;
+            // Rec fail인지 예전에 진짜 생겼던 fail인지 구분이 안 되므로 한 번 더 해보기
+            if result
+                .slot
+                .cas::<false>(
+                    result.slot_ptr,
+                    result.slot_ptr.with_tag(1),
+                    tag_cas,
+                    tid,
+                    guard,
+                    pool,
+                )
+                .is_err()
+            {
+                return;
+            }
         }
 
         let mut prev_result = result;
         loop {
-            // TODO(must): 여기랑 밑에 CAS는 REC이 false로도 되어야 함
             let (_, result) = self.insert_inner::<false>(
                 context,
                 slot,
@@ -1320,6 +1331,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 pool,
             );
 
+            // TODO(must): 이거 rec에서도 해줘야 함. 안 그러면 resize가 한없이 기다릴 수 있음
             prev_result
                 .slot
                 .inner
@@ -1349,7 +1361,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             //
             // the resize thread may already have passed the slot. I need to move it.
 
-            // TODO(must): 여기서 checkpoint 하고 위에서 rec run에서 마저하도록 해야할 듯
             if result
                 .slot
                 .cas::<false>(
