@@ -177,11 +177,9 @@ impl ExecInfo {
 }
 
 /// TODO(doc)
-/// TODO(must): 두 개 운용하고 0,1을 통해서 valid한 쪽을 나타내게 해야할 듯 (이유: normal run에서 덮어쓰다가 error날 경우)
-///             혹은 checkpoint는 여러 개 동시에 하지말고 한 큐에 되는 것만 하자 <- 안 된다... 사이즈 큰 거 checkpoint할 경우엔...
 #[derive(Debug)]
 pub struct Checkpoint<T: Default + Clone + Collectable> {
-    saved: CachePadded<(T, Timestamp)>,
+    saved: [CachePadded<(T, Timestamp)>; 2],
 }
 
 unsafe impl<T: Default + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
@@ -190,18 +188,25 @@ unsafe impl<T: Default + Clone + Collectable + Send + Sync> Sync for Checkpoint<
 impl<T: Default + Clone + Collectable> Default for Checkpoint<T> {
     fn default() -> Self {
         Self {
-            saved: (CachePadded::new((T::default(), Timestamp::new(false, 0)))),
+            saved: [
+                CachePadded::new((T::default(), Timestamp::new(false, 0))),
+                CachePadded::new((T::default(), Timestamp::new(false, 0))),
+            ],
         }
     }
 }
 
 impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
     fn filter(chk: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        T::filter(&mut chk.saved.0, tid, gc, pool);
+        let idx = chk.max_idx();
 
         // Checkpoint 중 max timestamp를 가진 걸로 기록해줌
-        if chk.saved.1 > pool.exec_info.chk_info {
-            pool.exec_info.chk_info = chk.saved.1;
+        if chk.saved[idx].1 > pool.exec_info.chk_info {
+            pool.exec_info.chk_info = chk.saved[idx].1;
+        }
+
+        if chk.saved[idx].1.aux() {
+            T::filter(&mut chk.saved[idx].0, tid, gc, pool);
         }
     }
 }
@@ -228,40 +233,59 @@ where
         pool: &PoolHandle,
     ) -> Result<T, CheckpointError<T>> {
         if REC {
-            // TODO(must): checkpoint variable이 atomic하게 바뀌도록 해야 함
             if let Some(v) = self.peek(tid, pool) {
                 return Err(CheckpointError { current: v, new });
             }
         }
 
+        let idx = self.min_idx();
+
         // Normal run
-        self.saved.1 = Timestamp::new(false, 0); // First, invalidate existing data.
+        self.saved[idx].1 = Timestamp::new(false, 0); // First, invalidate existing data.
         if std::mem::size_of::<(T, Timestamp)>() > 1 << CACHE_LINE_SHIFT {
-            persist_obj(&self.saved.1, true);
+            persist_obj(&self.saved[idx].1, true);
         }
         compiler_fence(Ordering::Release);
 
-        self.saved = CachePadded::new((new.clone(), Timestamp::new(true, rdtscp())));
-        pool.exec_info.local_max_time[tid].store(self.saved.1.into(), Ordering::Relaxed);
-        persist_obj(&*self.saved, true);
+        self.saved[idx] = CachePadded::new((new.clone(), Timestamp::new(true, rdtscp())));
+        pool.exec_info.local_max_time[tid].store(self.saved[idx].1.into(), Ordering::Relaxed);
+        persist_obj(&*self.saved[idx], true);
         Ok(new)
     }
 
     /// TODO(doc)
     #[inline]
-    fn is_valid(&self) -> bool {
-        self.saved.1.aux()
+    fn is_valid(&self, idx: usize, tid: usize, pool: &PoolHandle) -> bool {
+        self.saved[idx].1.aux()
+            && self.saved[idx].1
+                > Timestamp::from(pool.exec_info.local_max_time[tid].load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    fn min_idx(&self) -> usize {
+        if self.saved[0].1 <= self.saved[1].1 {
+            0
+        } else {
+            1
+        }
+    }
+
+    #[inline]
+    fn max_idx(&self) -> usize {
+        if self.saved[0].1 > self.saved[1].1 {
+            0
+        } else {
+            1
+        }
     }
 
     /// TODO(doc)
-    #[inline]
     pub fn peek(&self, tid: usize, pool: &PoolHandle) -> Option<T> {
-        if self.is_valid()
-            && self.saved.1
-                > Timestamp::from(pool.exec_info.local_max_time[tid].load(Ordering::Relaxed))
-        {
-            pool.exec_info.local_max_time[tid].store(self.saved.1.into(), Ordering::Relaxed);
-            Some((self.saved.0).clone())
+        let idx = self.max_idx();
+
+        if self.is_valid(idx, tid, pool) {
+            pool.exec_info.local_max_time[tid].store(self.saved[idx].1.into(), Ordering::Relaxed);
+            Some((self.saved[idx].0).clone())
         } else {
             None
         }
