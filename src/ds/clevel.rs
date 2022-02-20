@@ -12,7 +12,6 @@ use std::sync::mpsc;
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{unprotected, Guard};
-use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use etrace::*;
 use fasthash::Murmur3HasherExt;
@@ -38,7 +37,7 @@ pub struct Insert<K, V> {
     node: Checkpoint<PAtomic<Slot<K, V>>>,
     insert_inner: InsertInner<K, V>,
     move_done: Checkpoint<()>,
-    tag_cas: CachePadded<Cas<Slot<K, V>>>,
+    tag_cas: Cas<Slot<K, V>>,
 }
 
 impl<K, V> Default for Insert<K, V> {
@@ -62,8 +61,8 @@ impl<K, V> Collectable for Insert<K, V> {
 /// Insert inner client
 #[derive(Debug)]
 pub struct InsertInner<K, V> {
-    insert_chk: CachePadded<Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>>,
-    insert_cas: CachePadded<Cas<Slot<K, V>>>,
+    insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
+    insert_cas: Cas<Slot<K, V>>,
 }
 
 impl<K, V> Default for InsertInner<K, V> {
@@ -84,15 +83,19 @@ impl<K, V> Collectable for InsertInner<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V> {
-    move_delete: Cas<Slot<K, V>>,
-    move_insert: Cas<Slot<K, V>>,
+    delete_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    delete_cas: Cas<Slot<K, V>>,
+    insert_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
+    insert_cas: Cas<Slot<K, V>>,
 }
 
 impl<K, V> Default for Resize<K, V> {
     fn default() -> Self {
         Self {
-            move_delete: Default::default(),
-            move_insert: Default::default(),
+            delete_chk: Default::default(),
+            delete_cas: Default::default(),
+            insert_chk: Default::default(),
+            insert_cas: Default::default(),
         }
     }
 }
@@ -106,16 +109,15 @@ impl<K, V> Collectable for Resize<K, V> {
 /// Delete client
 #[derive(Debug)]
 pub struct TryDelete<K, V> {
-    delete_delete: CachePadded<Cas<Slot<K, V>>>,
-    find_result_chk:
-        CachePadded<Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
+    delete_cas: Cas<Slot<K, V>>,
+    find_result_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
 }
 
 impl<K, V> Default for TryDelete<K, V> {
     fn default() -> Self {
         Self {
-            delete_delete: CachePadded::new(Default::default()),
-            find_result_chk: CachePadded::new(Default::default()),
+            delete_cas: Default::default(),
+            find_result_chk: Default::default(),
         }
     }
 }
@@ -742,17 +744,62 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         (context, true)
     }
 
+    pub fn resize_rec(
+        &self,
+        client: &mut Resize<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
+        // checkpoint된 slot 있나 보고 CAS
+        let (del_slot, slot_ptr) = some_or!(client.delete_chk.peek(tid, pool), return);
+        let del_slot = unsafe { del_slot.deref(pool) };
+        let slot_ptr = slot_ptr.load(Ordering::Relaxed, guard);
+
+        if del_slot
+            .cas::<true>(
+                slot_ptr,
+                slot_ptr.with_tag(1),
+                &mut client.delete_cas,
+                tid,
+                guard,
+                pool,
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        if let Some(ins_slot) = client.insert_chk.peek(tid, pool) {
+            let ins_slot = unsafe { ins_slot.deref(pool) };
+            if ins_slot
+                .cas::<true>(
+                    PShared::null(),
+                    slot_ptr,
+                    &mut client.insert_cas,
+                    tid,
+                    guard,
+                    pool,
+                )
+                .is_ok()
+            {
+                return;
+            }
+        }
+
+        // TODO(must): 넣을 곳 찾고 넣기
+    }
+
     pub fn resize<const REC: bool>(
         &self,
-        resize: &mut Resize<K, V>,
+        client: &mut Resize<K, V>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) {
         if REC {
             // TODO(must): 자연스럽지 않음
-            // TODO(must): checkpoint된 slot있나보고 CAS
-            // TODO(must): 더럽히는 데에 성공하고 move하는 건 어떻게 checkpoint하고 rec run에서 실패시 어떻게 할 텐가?
+            // self.resize_rec(client, tid, guard, pool); // TODO(must): 주석 제거
         }
 
         let mut context = self.context.load(Ordering::Acquire, guard);
@@ -815,11 +862,19 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                                 // }
 
                                 // After(general)
-                                // TODO(must): 여기서 slot을 checkpoint!
+                                let _ = client.delete_chk.checkpoint::<false>(
+                                    (
+                                        PPtr::from(unsafe { slot.as_pptr(pool) }),
+                                        PAtomic::from(slot_ptr),
+                                    ),
+                                    tid,
+                                    pool,
+                                );
+
                                 if let Err(e) = slot.cas::<false>(
                                     slot_ptr,
                                     slot_ptr.with_tag(1),
-                                    &mut resize.move_delete,
+                                    &mut client.delete_cas,
                                     tid,
                                     guard,
                                     pool,
@@ -884,12 +939,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                                 // }
 
                                 // After(general)
-                                // TODO(must): 여기서 slot을 checkpoint!
+                                let _ = client.insert_chk.checkpoint::<false>(
+                                    PPtr::from(unsafe { slot.as_pptr(pool) }),
+                                    tid,
+                                    pool,
+                                );
+
                                 if slot
                                     .cas::<false>(
                                         PShared::null(),
                                         slot_ptr,
-                                        &mut resize.move_insert,
+                                        &mut client.insert_cas,
                                         tid,
                                         guard,
                                         pool,
@@ -1545,7 +1605,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         slot.cas::<REC>(
             slot_ptr,
             PShared::null(),
-            &mut try_delete.delete_delete,
+            &mut try_delete.delete_cas,
             tid,
             guard,
             pool,
@@ -1570,7 +1630,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         }
 
         loop {
-            // TODO(must): reset
             if let Ok(ret) = self.try_delete::<false>(key, &mut delete.try_delete, tid, guard, pool)
             {
                 return ret;
