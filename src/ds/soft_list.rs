@@ -560,6 +560,13 @@ pub struct Insert<T: Default> {
     result: Checkpoint<bool>,
 }
 
+impl<T: Default> Collectable for Insert<T> {
+    fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut insert.target, tid, gc, pool);
+        Collectable::filter(&mut insert.result, tid, gc, pool);
+    }
+}
+
 impl<T: Default> Insert<T> {
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
@@ -581,6 +588,13 @@ impl<T: Default> Insert<T> {
 pub struct Remove<T: Default> {
     target: Checkpoint<PPtr<PNode<T>>>,
     result: Checkpoint<bool>,
+}
+
+impl<T: Default> Collectable for Remove<T> {
+    fn filter(remove: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut remove.target, tid, gc, pool);
+        Collectable::filter(&mut remove.result, tid, gc, pool);
+    }
 }
 
 impl<T: Default + PartialEq + Clone> Remove<T> {
@@ -615,12 +629,6 @@ struct PNode<T: Default> {
     // TODO: 원래 구현에서 key, value는 CAS 안쓰는데 왜 Atomic? create시 valid_start, valid_end 사이에 존재하게끔 ordering 보장하려는 목적인가?
     key: usize,
     value: T,
-}
-
-impl<T: Default> Collectable for PNode<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // no-op
-    }
 }
 
 impl<T: Default + Clone + PartialEq> PNode<T> {

@@ -41,8 +41,9 @@ pub struct SOFTMemento {
 }
 
 impl Collectable for SOFTMemento {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+    fn filter(root_mmt: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut *root_mmt.insert, tid, gc, pool);
+        Collectable::filter(&mut *root_mmt.delete, tid, gc, pool);
     }
 }
 

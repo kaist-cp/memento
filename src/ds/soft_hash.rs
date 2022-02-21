@@ -1,6 +1,6 @@
 //! TODO doc
 use super::soft_list::{thread_ini, Insert, Remove, SOFTList};
-use crate::pmem::PoolHandle;
+use crate::pmem::{Collectable, PoolHandle};
 use core::hash::{Hash, Hasher};
 use crossbeam_epoch::Guard;
 use fasthash::Murmur3Hasher;
@@ -81,6 +81,17 @@ impl<T: Default> HashInsert<T> {
     }
 }
 
+impl<T: Default> Collectable for HashInsert<T> {
+    fn filter(
+        s: &mut Self,
+        tid: usize,
+        gc: &mut crate::pmem::GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Collectable::filter(&mut s.insert, tid, gc, pool);
+    }
+}
+
 /// TODO: doc
 #[derive(Debug, Default)]
 pub struct HashRemove<T: Default + 'static> {
@@ -91,6 +102,17 @@ impl<T: Default + PartialEq + Clone> HashRemove<T> {
     /// clear
     pub fn clear(&mut self) {
         self.remove.clear()
+    }
+}
+
+impl<T: Default> Collectable for HashRemove<T> {
+    fn filter(
+        s: &mut Self,
+        tid: usize,
+        gc: &mut crate::pmem::GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Collectable::filter(&mut s.remove, tid, gc, pool);
     }
 }
 
