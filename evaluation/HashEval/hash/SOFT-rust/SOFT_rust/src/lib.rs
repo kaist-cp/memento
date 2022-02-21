@@ -15,7 +15,7 @@ type Value = u64;
 
 /// Persistent root for SOFT hash
 #[derive(Debug)]
-pub struct SOFTHash<T> {
+pub struct SOFTHash<T: Default> {
     inner: Box<SOFTHashTable<T>>,
 }
 
@@ -28,7 +28,7 @@ impl<T: Default> PDefault for SOFTHash<T> {
     }
 }
 
-impl<T> Collectable for SOFTHash<T> {
+impl<T: Default> Collectable for SOFTHash<T> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }

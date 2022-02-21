@@ -1,6 +1,10 @@
 //! Detectable SOFT list
 
-use crate::{pepoch::PShared, pmem::*};
+use crate::{
+    pepoch::{PAtomic, PShared},
+    ploc::Checkpoint,
+    pmem::*,
+};
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
 use epoch::{unprotected, Guard};
 use libc::c_void;
@@ -53,7 +57,7 @@ pub fn thread_ini(tid: usize, pool: &PoolHandle) {
 
 /// Detectable SOFT List
 #[derive(Debug)]
-pub struct SOFTList<T> {
+pub struct SOFTList<T: Default> {
     head: Atomic<VNode<T>>,
 }
 
@@ -72,7 +76,7 @@ impl<T: Default> Default for SOFTList<T> {
     }
 }
 
-impl<T: Clone + PartialEq> SOFTList<T> {
+impl<T: Default + Clone + PartialEq> SOFTList<T> {
     fn alloc_new_pnode(&self, pool: &PoolHandle) -> *mut PNode<T> {
         ALLOC
             .try_with(|a| {
@@ -196,7 +200,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 let (_, curr) = self.find(key, &mut curr_state, pguard);
                 let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
                 let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
-                let target = unsafe { client.target.as_ptr().deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+                let target = unsafe { client.target.deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
 
                 // target에 대응되는 VNode가 없다면, target에 대응되는 VNode는 이미 삽입완료된 후 삭제까지 된 것
                 if pnode as *const _ as usize != target as *const _ as usize {
@@ -281,7 +285,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 
             // clinet가 PNode를 타겟팅
             let pnode = unsafe { result_node.pptr.as_ref().unwrap() };
-            client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
+            client.target = unsafe { pnode.as_pptr(pool) };
             persist_obj(&client.target, true);
 
             // 타겟팅한 노드의 삽입을 마무리
@@ -342,7 +346,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
                 let (pred, curr) = self.find(key, &mut curr_state, pguard);
                 let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
                 let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
-                let target = unsafe { client.target.as_ptr().deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+                let target = unsafe { client.target.deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
 
                 // target에 대응되는 VNode가 없다면, target에 대응되는 VNode는 이미 삭제 마무리된 것
                 if pnode as *const _ as usize != target as *const _ as usize {
@@ -397,7 +401,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 
         // clinet가 PNode를 타겟팅
         let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
-        client.target = PShared::from(unsafe { pnode.as_pptr(pool) });
+        client.target = unsafe { pnode.as_pptr(pool) };
         persist_obj(&client.target, true);
 
         // 타겟팅한 노드의 삭제를 마무리
@@ -548,12 +552,12 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 
 /// client for insert or remove
 #[derive(Debug, Default)]
-pub struct Insert<T: 'static> {
-    target: PShared<'static, PNode<T>>, // TODO(opt): PPtr로 해도 될듯. (다만 checkpoint하기 전에 이걸 PPtr로 바꾸니까 전혀 관련없는 search 성능이 떨어졌었음. 왜 그랬는지 모르겠는데 PPtr로 바꾸려면 이거 이어서 확인해봐야함)
-    failed: bool,
+pub struct Insert<T: Default> {
+    target: PPtr<PNode<T>>, // TODO(must): checkpoint
+    failed: bool,           // TODO(must): checkpoint
 }
 
-impl<T> Insert<T> {
+impl<T: Default> Insert<T> {
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
@@ -574,7 +578,7 @@ impl<T> Insert<T> {
     /// clear
     #[inline]
     pub fn clear(&mut self) {
-        self.target = PShared::null();
+        self.target = PPtr::null();
         self.failed = false;
         persist_obj(self, true);
     }
@@ -582,12 +586,12 @@ impl<T> Insert<T> {
 
 /// Remove client for SOFT List
 #[derive(Debug, Default)]
-pub struct Remove<T: 'static> {
-    target: PShared<'static, PNode<T>>, // TODO(opt): PPtr로 해도 될듯. (다만 checkpoint하기 전에 이걸 PPtr로 바꾸니까 전혀 관련없는 search 성능이 떨어졌었음. 왜 그랬는지 모르겠는데 PPtr로 바꾸려면 이거 이어서 확인해봐야함)
-    failed: bool,
+pub struct Remove<T: Default> {
+    target: PPtr<PNode<T>>, // TODO(must): checkpoint
+    failed: bool,           // TODO(must): checkpoint
 }
 
-impl<T: PartialEq + Clone> Remove<T> {
+impl<T: Default + PartialEq + Clone> Remove<T> {
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
         // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
@@ -608,7 +612,7 @@ impl<T: PartialEq + Clone> Remove<T> {
     /// clear
     #[inline]
     pub fn clear(&mut self) {
-        self.target = PShared::null();
+        self.target = PPtr::null();
         self.failed = false;
         persist_obj(&self.target, true);
     }
@@ -616,8 +620,8 @@ impl<T: PartialEq + Clone> Remove<T> {
 
 /// persistent node
 #[repr(align(32))]
-#[derive(Debug)]
-struct PNode<T> {
+#[derive(Debug, Default)]
+struct PNode<T: Default> {
     /// PNode가 "삽입완료" 됐는지 여부. true면 "삽입완료"를 의미
     inserted: bool,
 
@@ -632,7 +636,13 @@ struct PNode<T> {
     value: T,
 }
 
-impl<T: Clone + PartialEq> PNode<T> {
+impl<T: Default> Collectable for PNode<T> {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        // no-op
+    }
+}
+
+impl<T: Default + Clone + PartialEq> PNode<T> {
     const NULL: usize = 0;
 
     /// PNode에 key, value를 쓰고 valid 표시
@@ -698,19 +708,19 @@ impl<T: Clone + PartialEq> PNode<T> {
     }
 }
 
-unsafe impl<T> Sync for PShared<'_, PNode<T>> {}
-unsafe impl<T> Send for PShared<'_, PNode<T>> {}
+unsafe impl<T: Default> Sync for PShared<'_, PNode<T>> {}
+unsafe impl<T: Default> Send for PShared<'_, PNode<T>> {}
 
 /// volatile node
 #[derive(Debug)]
-struct VNode<T> {
+struct VNode<T: Default> {
     key: usize,
     value: T,
     pptr: *mut PNode<T>,
     next: Atomic<VNode<T>>,
 }
 
-impl<T> VNode<T> {
+impl<T: Default> VNode<T> {
     fn new(key: usize, value: T, pptr: *mut PNode<T>) -> Self {
         Self {
             key,
@@ -721,8 +731,8 @@ impl<T> VNode<T> {
     }
 }
 
-unsafe impl<T> Sync for VNode<T> {}
-unsafe impl<T> Send for VNode<T> {}
+unsafe impl<T: Default> Sync for VNode<T> {}
+unsafe impl<T: Default> Send for VNode<T> {}
 
 #[derive(PartialEq, Clone, Copy)]
 enum State {
@@ -747,7 +757,7 @@ impl From<usize> for State {
 
 /// 노드의 state 태그를 반환 (helper function)
 #[inline]
-fn get_state<T>(p: Shared<'_, VNode<T>>) -> State {
+fn get_state<T: Default>(p: Shared<'_, VNode<T>>) -> State {
     State::from(p.tag())
 }
 #[cfg(test)]

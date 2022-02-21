@@ -14,7 +14,7 @@ pub fn hash_thread_ini(tid: usize, pool: &PoolHandle) {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct SOFTHashTable<T> {
+pub struct SOFTHashTable<T: Default> {
     table: [SOFTList<T>; BUCKET_NUM],
 }
 
@@ -26,7 +26,7 @@ impl<T: Default> Default for SOFTHashTable<T> {
     }
 }
 
-impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
+impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
     /// insert
     pub fn insert<const REC: bool>(
         &self,
@@ -68,11 +68,11 @@ impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
 
 /// TODO: doc
 #[derive(Debug, Default)]
-pub struct HashInsert<T: 'static> {
+pub struct HashInsert<T: Default + 'static> {
     insert: Insert<T>,
 }
 
-impl<T> HashInsert<T> {
+impl<T: Default> HashInsert<T> {
     /// TODO: doc
     pub fn clear(&mut self) {
         self.insert.clear()
@@ -81,11 +81,11 @@ impl<T> HashInsert<T> {
 
 /// TODO: doc
 #[derive(Debug, Default)]
-pub struct HashRemove<T: 'static> {
+pub struct HashRemove<T: Default + 'static> {
     remove: Remove<T>,
 }
 
-impl<T: PartialEq + Clone> HashRemove<T> {
+impl<T: Default + PartialEq + Clone> HashRemove<T> {
     /// clear
     pub fn clear(&mut self) {
         self.remove.clear()
