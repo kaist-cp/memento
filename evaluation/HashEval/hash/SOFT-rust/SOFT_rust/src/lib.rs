@@ -2,7 +2,7 @@
 #![deny(warnings)]
 #![allow(non_snake_case)]
 
-use crossbeam_epoch::Guard;
+use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::ds::soft_hash::*;
 use memento::pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj};
@@ -52,8 +52,27 @@ impl RootObj<SOFTMemento> for SOFTHash<Value> {
     }
 }
 
+const MAX_THREAD: usize = 256;
+static mut GUARD: Option<[Option<Guard>; MAX_THREAD]> = None;
+static mut CNT: [usize; MAX_THREAD] = [0; MAX_THREAD];
+
+#[inline]
+fn get_guard(tid: usize) -> &'static mut Guard {
+    let guard = unsafe { GUARD.as_mut().unwrap()[tid].as_mut().unwrap() };
+    unsafe {
+        CNT[tid] += 1;
+        if CNT[tid] % 1024 == 0 {
+            // TODO: repin_after하기 전에 memento들을 clear 해줘야함
+            guard.repin_after(|| {});
+        }
+    }
+    guard
+}
+
 #[no_mangle]
 pub extern "C" fn thread_init(tid: usize, pool: &PoolHandle) {
+    let guards = unsafe { GUARD.get_or_insert(array_init::array_init(|_| None)) };
+    guards[tid] = Some(epoch::pin());
     hash_thread_ini(tid, pool);
 }
 
@@ -76,27 +95,25 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 pub extern "C" fn run_insert(
     m: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
-    _tid: usize,
+    tid: usize,
     k: Key,
     v: Value,
     pool: &'static PoolHandle,
 ) -> bool {
-    let res = obj.inner.insert::<false>(k, v, &mut m.insert, pool);
-    m.insert.reset(); // TODO: reset 없애기
-    res
+    let guard = get_guard(tid);
+    obj.inner.insert::<false>(k, v, &mut m.insert, guard, pool)
 }
 
 #[no_mangle]
 pub extern "C" fn run_delete(
     m: &mut SOFTMemento,
     obj: &SOFTHash<Value>,
-    _tid: usize,
+    tid: usize,
     k: Key,
     pool: &'static PoolHandle,
 ) -> bool {
-    let res = obj.inner.remove::<false>(k, &mut m.delete, pool);
-    m.delete.reset(); // TODO: reset 없애기
-    res
+    let guard = get_guard(tid);
+    obj.inner.remove::<false>(k, &mut m.delete, guard, pool)
 }
 
 #[no_mangle]

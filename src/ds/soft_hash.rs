@@ -2,6 +2,7 @@
 use super::soft_list::{thread_ini, Insert, Remove, SOFTList};
 use crate::pmem::PoolHandle;
 use core::hash::{Hash, Hasher};
+use crossbeam_epoch::Guard;
 use fasthash::Murmur3Hasher;
 
 const BUCKET_NUM: usize = 16777216;
@@ -32,10 +33,11 @@ impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
         k: usize,
         item: T,
         client: &mut HashInsert<T>,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.insert::<REC>(k, item, &mut client.insert, pool)
+        bucket.insert::<REC>(k, item, &mut client.insert, guard, pool)
     }
 
     /// TODO: doc
@@ -43,10 +45,11 @@ impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
         &self,
         k: usize,
         client: &mut HashRemove<T>,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.remove::<REC>(k, &mut client.remove, pool)
+        bucket.remove::<REC>(k, &mut client.remove, guard, pool)
     }
 
     /// TODO: doc
@@ -71,8 +74,8 @@ pub struct HashInsert<T: 'static> {
 
 impl<T> HashInsert<T> {
     /// TODO: doc
-    pub fn reset(&mut self) {
-        self.insert.reset()
+    pub fn clear(&mut self) {
+        self.insert.clear()
     }
 }
 
@@ -83,9 +86,9 @@ pub struct HashRemove<T: 'static> {
 }
 
 impl<T: PartialEq + Clone> HashRemove<T> {
-    /// TODO: doc
-    pub fn reset(&mut self) {
-        self.remove.reset()
+    /// clear
+    pub fn clear(&mut self) {
+        self.remove.clear()
     }
 }
 
@@ -144,7 +147,7 @@ mod test {
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
-        fn run(&self, m: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
+        fn run(&self, m: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             hash_thread_ini(tid, pool);
@@ -155,12 +158,10 @@ mod test {
             let insert_cli = &mut m.insert;
             let remove_cli = &mut m.remover;
             for _ in 0..COUNT {
-                assert!(list.insert::<false>(tid, tid, insert_cli, pool));
+                assert!(list.insert::<false>(tid, tid, insert_cli, guard, pool));
                 assert!(list.contains(tid));
-                assert!(list.remove::<false>(tid, remove_cli, pool));
+                assert!(list.remove::<false>(tid, remove_cli, guard, pool));
                 assert!(!list.contains(tid));
-                insert_cli.reset();
-                remove_cli.reset();
             }
         }
     }

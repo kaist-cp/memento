@@ -38,11 +38,13 @@ static mut RECV: Option<Receiver<()>> = None;
 static mut GUARD: Option<[Option<Guard>; MAX_THREAD]> = None;
 static mut CNT: [usize; MAX_THREAD] = [0; MAX_THREAD];
 
+#[inline]
 fn get_guard(tid: usize) -> &'static mut Guard {
     let guard = unsafe { GUARD.as_mut().unwrap()[tid].as_mut().unwrap() };
     unsafe {
         CNT[tid] += 1;
         if CNT[tid] % 1024 == 0 {
+            // TODO: repin_after하기 전에 memento들을 clear 해줘야함
             guard.repin_after(|| {});
         }
     }
