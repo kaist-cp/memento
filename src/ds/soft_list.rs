@@ -562,6 +562,8 @@ impl<T> Insert<T> {
     }
 
     /// reset
+    // TODO: reset 없애고 set_result(), result() 대신 checkpoint 사용하기
+    //       고려해야할 사항: 기존엔 node의 하위 남는 bit를 쓰고 있었는데, checkpoint는 64bit 온전히 다 필요함. 어떻게 하지?
     #[inline]
     pub fn reset(&mut self) {
         self.target = PShared::null();
