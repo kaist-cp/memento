@@ -99,12 +99,14 @@ public:
         h.load_factor = (float)inserted / get_capacity(c, pool);
         return h;
     }
-    void thread_ini(int id)
+    void thread_ini(int tid)
     {
-        thread_init(id);
+        tid = tid+1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
+        thread_init(tid);
     }
     bool find(const char *key, size_t key_sz, char *value_out, unsigned tid)
     {
+        tid = tid+1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
         auto k = *reinterpret_cast<const Key *>(key);
         return search(c, tid, k, pool);
     }
@@ -112,6 +114,7 @@ public:
     bool insert(const char *key, size_t key_sz, const char *value,
                 size_t value_sz, unsigned tid, unsigned t)
     {
+        tid = tid+1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
 
@@ -125,6 +128,7 @@ public:
     bool insertResize(const char *key, size_t key_sz, const char *value,
                       size_t value_sz, unsigned tid, unsigned t)
     {
+        tid = tid+1;// pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
         return run_insert(m[tid], c, tid, k, v, pool);
@@ -138,6 +142,7 @@ public:
 
     bool remove(const char *key, size_t key_sz, unsigned tid)
     {
+        tid = tid+1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
         auto k = *reinterpret_cast<const Key *>(key);
         return run_delete(m[tid], c, tid, k, pool);
     }
