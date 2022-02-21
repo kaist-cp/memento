@@ -21,7 +21,7 @@ pub struct ClevelMemento {
 }
 
 impl Collectable for ClevelMemento {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -99,7 +99,6 @@ pub extern "C" fn run_insert(
     let res = obj
         .insert::<false>(k, v, get_send(tid), &mut m.insert, tid, &guard, pool)
         .is_ok();
-    m.insert.reset();
     res
 }
 
@@ -114,7 +113,6 @@ pub extern "C" fn run_update(
 ) -> bool {
     // let guard = get_guard(tid);
     // obj.update(tid, k, v, get_send(tid), &guard, pool).is_ok()
-    // m.update.reset()
     todo!()
 }
 
@@ -128,7 +126,6 @@ pub extern "C" fn run_delete(
 ) -> bool {
     let guard = get_guard(tid);
     let res = obj.delete::<false>(&k, &mut m.delete, tid, &guard, pool);
-    m.delete.reset();
     res
 }
 #[no_mangle]
@@ -141,7 +138,6 @@ pub extern "C" fn run_resize_loop(
     let mut guard = epoch::pin();
     let recv = unsafe { RECV.as_ref().unwrap() };
     resize_loop::<_, _, false>(obj, recv, &mut m.resize, tid, &mut guard, pool);
-    // TODO: m.resize.reset()?
 }
 
 #[no_mangle]

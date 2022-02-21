@@ -29,7 +29,7 @@ impl<T: Default> PDefault for SOFTHash<T> {
 }
 
 impl<T> Collectable for SOFTHash<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -41,7 +41,7 @@ pub struct SOFTMemento {
 }
 
 impl Collectable for SOFTMemento {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &PoolHandle) {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
@@ -82,7 +82,7 @@ pub extern "C" fn run_insert(
     pool: &'static PoolHandle,
 ) -> bool {
     let res = obj.inner.insert::<false>(k, v, &mut m.insert, pool);
-    m.insert.reset();
+    m.insert.reset(); // TODO: reset 없애기
     res
 }
 
@@ -95,7 +95,7 @@ pub extern "C" fn run_delete(
     pool: &'static PoolHandle,
 ) -> bool {
     let res = obj.inner.remove::<false>(k, &mut m.delete, pool);
-    m.delete.reset();
+    m.delete.reset(); // TODO: reset 없애기
     res
 }
 
