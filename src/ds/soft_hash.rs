@@ -33,11 +33,12 @@ impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
         k: usize,
         item: T,
         client: &mut HashInsert<T>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.insert::<REC>(k, item, &mut client.insert, guard, pool)
+        bucket.insert::<REC>(k, item, &mut client.insert, tid, guard, pool)
     }
 
     /// TODO: doc
@@ -45,11 +46,12 @@ impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
         &self,
         k: usize,
         client: &mut HashRemove<T>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.remove::<REC>(k, &mut client.remove, guard, pool)
+        bucket.remove::<REC>(k, &mut client.remove, tid, guard, pool)
     }
 
     /// TODO: doc
@@ -158,10 +160,11 @@ mod test {
             let insert_cli = &mut m.insert;
             let remove_cli = &mut m.remover;
             for _ in 0..COUNT {
-                assert!(list.insert::<false>(tid, tid, insert_cli, guard, pool));
-                assert!(list.contains(tid));
-                assert!(list.remove::<false>(tid, remove_cli, guard, pool));
-                assert!(!list.contains(tid));
+                let (k, v) = (tid, tid);
+                assert!(list.insert::<false>(k, v, insert_cli, tid, guard, pool));
+                assert!(list.contains(k));
+                assert!(list.remove::<false>(k, remove_cli, tid, guard, pool));
+                assert!(!list.contains(k));
             }
         }
     }

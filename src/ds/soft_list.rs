@@ -187,20 +187,25 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
         key: usize,
         value: T,
         client: &mut Insert<T>,
+        tid: usize,
         pguard: &Guard, // PNode를 위한 guard
         pool: &PoolHandle,
     ) -> bool {
         let vguard = unsafe { unprotected() }; // vnode는 ssmem의 ebr에 의해 관리되기 때문에 pguard 필요없음
         if REC {
-            // target하던 PNode가 있다면 crash 이전에 target에 하려던 것(PNode에 "삽입완료", 대응되는 VNode에 "삽입완료" 표시)을 마무리하고 종료
-            if !client.target.is_null() {
+            // 결과가 찍혀있다면 같은 결과 반환
+            if let Some(result) = client.result.peek(tid, pool) {
+                return result;
+            }
+            // 결과는 찍혀있지 않지만 target하던 PNode가 있다면 crash 이전에 target에 하려던 것(PNode에 "삽입완료", 대응되는 VNode에 "삽입완료" 표시)을 마무리하고 종료
+            else if let Some(target) = client.target.peek(tid, pool) {
                 let mut curr_state = State::Dummy;
 
                 // target에 대응되는 VNode 탐색
                 let (_, curr) = self.find(key, &mut curr_state, pguard);
                 let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
                 let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
-                let target = unsafe { client.target.deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+                let target = unsafe { target.deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
 
                 // target에 대응되는 VNode가 없다면, target에 대응되는 VNode는 이미 삽입완료된 후 삭제까지 된 것
                 if pnode as *const _ as usize != target as *const _ as usize {
@@ -213,12 +218,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                 // 결과: target.inserter == me
                 return self.finish_insert(vnode, value, client, pool);
             }
-            // target하던 PNode는 없고 실패로 끝났었다면 같은 결과 반환
-            else if client.is_failed() {
-                return false;
-            }
-
-            // target하는 PNode도 없고 실패로 끝난 적도 없다면 normal run을 재개
+            // 결과도 찍혀있지 않고 target하는 PNode도 없다면 normal run을 재개
         }
 
         let result_node;
@@ -233,7 +233,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             if curr_ref.key == key {
                 // 이미 삽입 완료된 것
                 if curr_state != State::IntendToInsert {
-                    client.set_failed(); // "실패"로 끝났음을 표시
+                    let _ = client.result.checkpoint::<REC>(false, tid, pool); // "실패"로 끝났음을 표시
                     return false;
                 }
                 // 삽입 중이므로 이 result_node의 삽입완료를 helping
@@ -285,8 +285,9 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
 
             // clinet가 PNode를 타겟팅
             let pnode = unsafe { result_node.pptr.as_ref().unwrap() };
-            client.target = unsafe { pnode.as_pptr(pool) };
-            persist_obj(&client.target, true);
+            let _ = client
+                .target
+                .checkpoint::<REC>(unsafe { pnode.as_pptr(pool) }, tid, pool);
 
             // 타겟팅한 노드의 삽입을 마무리
             return self.finish_insert(result_node, value, client, pool);
@@ -334,19 +335,24 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
         &self,
         key: usize,
         client: &mut Remove<T>,
+        tid: usize,
         pguard: &Guard, // PNode의 SMR을 위한 guard
         pool: &PoolHandle,
     ) -> bool {
         let vguard = unsafe { unprotected() }; // vnode는 ssmem의 ebr에 의해 관리되기 때문에 pguard 필요없음
         if REC {
-            // target하던 PNode가 있다면 crash 이전에 target에 하려던 것(PNode에 "삭제완료", 대응되는 VNode에 "삭제완료" 표시)을 마무리하고 종료
-            if !client.target.is_null() {
+            // 결과가 찍혀있다면 같은 결과 반환
+            if let Some(result) = client.result.peek(tid, pool) {
+                return result;
+            }
+            // 결과는 찍혀있지 않지만 target하던 PNode가 있다면 crash 이전에 target에 하려던 것(PNode에 "삭제완료", 대응되는 VNode에 "삭제완료" 표시)을 마무리하고 종료
+            else if let Some(target) = client.target.peek(tid, pool) {
                 // target에 대응되는 VNode 탐색
                 let mut curr_state = State::Dummy;
                 let (pred, curr) = self.find(key, &mut curr_state, pguard);
                 let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
                 let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
-                let target = unsafe { client.target.deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+                let target = unsafe { target.deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
 
                 // target에 대응되는 VNode가 없다면, target에 대응되는 VNode는 이미 삭제 마무리된 것
                 if pnode as *const _ as usize != target as *const _ as usize {
@@ -358,12 +364,8 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                 // 결과: target.deleter == me
                 return self.finish_remove((pred, curr), client, pguard, pool);
             }
-            // target하던 PNode는 없고 실패로 끝났었다면 같은 결과 반환
-            else if client.is_failed() {
-                return false;
-            }
 
-            // target하는 PNode도 없고 실패로 끝난 적도 없다면 normal run을 재개
+            // 결과도 찍혀있지 않고 target하는 PNode도 없다면 normal run을 재개
         }
 
         let mut cas_result = false;
@@ -372,13 +374,13 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
         let curr_ref = unsafe { curr.deref() };
         // 중복 키가 없으면 실패로 끝냄
         if curr_ref.key != key {
-            client.set_failed();
+            let _ = client.result.checkpoint::<REC>(false, tid, pool); // "실패"로 끝났음을 표시
             return false;
         }
 
         // 중복 키는 있지만 삽입된게 아니라면 실패로 끝냄
         if curr_state == State::IntendToInsert || curr_state == State::Deleted {
-            client.set_failed();
+            let _ = client.result.checkpoint::<REC>(false, tid, pool); // "실패"로 끝났음을 표시
             return false;
         }
 
@@ -401,8 +403,9 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
 
         // clinet가 PNode를 타겟팅
         let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
-        client.target = unsafe { pnode.as_pptr(pool) };
-        persist_obj(&client.target, true);
+        let _ = client
+            .target
+            .checkpoint::<REC>(unsafe { pnode.as_pptr(pool) }, tid, pool);
 
         // 타겟팅한 노드의 삭제를 마무리
         self.finish_remove((pred, curr), client, pguard, pool)
@@ -553,8 +556,8 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
 /// client for insert or remove
 #[derive(Debug, Default)]
 pub struct Insert<T: Default> {
-    target: PPtr<PNode<T>>, // TODO(must): checkpoint
-    failed: bool,           // TODO(must): checkpoint
+    target: Checkpoint<PPtr<PNode<T>>>,
+    result: Checkpoint<bool>,
 }
 
 impl<T: Default> Insert<T> {
@@ -564,22 +567,11 @@ impl<T: Default> Insert<T> {
         unsafe { self.as_pptr(pool).into_offset() }
     }
 
-    #[inline]
-    fn set_failed(&mut self) {
-        self.failed = true;
-        persist_obj(&self.failed, true);
-    }
-
-    #[inline]
-    fn is_failed(&self) -> bool {
-        self.failed
-    }
-
     /// clear
     #[inline]
     pub fn clear(&mut self) {
-        self.target = PPtr::null();
-        self.failed = false;
+        self.target = Default::default();
+        self.result = Default::default();
         persist_obj(self, true);
     }
 }
@@ -587,8 +579,8 @@ impl<T: Default> Insert<T> {
 /// Remove client for SOFT List
 #[derive(Debug, Default)]
 pub struct Remove<T: Default> {
-    target: PPtr<PNode<T>>, // TODO(must): checkpoint
-    failed: bool,           // TODO(must): checkpoint
+    target: Checkpoint<PPtr<PNode<T>>>,
+    result: Checkpoint<bool>,
 }
 
 impl<T: Default + PartialEq + Clone> Remove<T> {
@@ -598,22 +590,11 @@ impl<T: Default + PartialEq + Clone> Remove<T> {
         unsafe { self.as_pptr(pool).into_offset() }
     }
 
-    #[inline]
-    fn is_failed(&self) -> bool {
-        self.failed
-    }
-
-    #[inline]
-    fn set_failed(&mut self) {
-        self.failed = true;
-        persist_obj(&self.failed, true);
-    }
-
     /// clear
     #[inline]
     pub fn clear(&mut self) {
-        self.target = PPtr::null();
-        self.failed = false;
+        self.target = Default::default();
+        self.result = Default::default();
         persist_obj(&self.target, true);
     }
 }
@@ -830,10 +811,11 @@ mod test {
             let insert_cli = &mut client.insert;
             let remove_cli = &mut client.remove;
             for _ in 0..COUNT {
-                assert!(list.insert::<false>(tid, tid, insert_cli, guard, pool));
-                assert!(list.contains(tid));
-                assert!(list.remove::<false>(tid, remove_cli, guard, pool));
-                assert!(!list.contains(tid));
+                let (k, v) = (tid, tid);
+                assert!(list.insert::<false>(k, v, insert_cli, tid, guard, pool));
+                assert!(list.contains(k));
+                assert!(list.remove::<false>(k, remove_cli, tid, guard, pool));
+                assert!(!list.contains(k));
             }
         }
     }

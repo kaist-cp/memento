@@ -101,7 +101,8 @@ pub extern "C" fn run_insert(
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.inner.insert::<false>(k, v, &mut m.insert, guard, pool)
+    obj.inner
+        .insert::<false>(k, v, &mut m.insert, tid, guard, pool)
 }
 
 #[no_mangle]
@@ -113,7 +114,8 @@ pub extern "C" fn run_delete(
     pool: &'static PoolHandle,
 ) -> bool {
     let guard = get_guard(tid);
-    obj.inner.remove::<false>(k, &mut m.delete, guard, pool)
+    obj.inner
+        .remove::<false>(k, &mut m.delete, tid, guard, pool)
 }
 
 #[no_mangle]
