@@ -787,7 +787,86 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             }
         }
 
-        // TODO(must): 넣을 곳 찾고 넣기
+        // 넣을 곳 찾고 넣기
+        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context_ref = unsafe { context.deref(pool) };
+
+        let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+        let mut first_level_ref = unsafe { first_level.deref(pool) };
+        let mut first_level_data = unsafe {
+            first_level_ref
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+        };
+        let mut first_level_size = first_level_data.len();
+
+        loop {
+            let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
+            let key_hashes = key_hashes
+                .into_iter()
+                .map(|key_hash| key_hash as usize % first_level_size)
+                .sorted()
+                .dedup();
+            for i in 0..SLOTS_IN_BUCKET {
+                for key_hash in key_hashes.clone() {
+                    let slot = unsafe {
+                        first_level_data[key_hash]
+                            .assume_init_ref()
+                            .slots
+                            .get_unchecked(i)
+                    };
+
+                    let slot_first_level = slot.load(Ordering::Acquire, guard, pool);
+                    if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
+                        // 2-byte tag checking
+                        if slot_first_level.high_tag() != key_tag as usize {
+                            continue;
+                        }
+
+                        if slot.key != unsafe { slot_ptr.deref(pool) }.key {
+                            continue;
+                        }
+
+                        return;
+                    }
+
+                    let _ = client.insert_chk.checkpoint::<false>(
+                        PPtr::from(unsafe { slot.as_pptr(pool) }),
+                        tid,
+                        pool,
+                    );
+
+                    if slot
+                        .cas::<false>(
+                            PShared::null(),
+                            slot_ptr,
+                            &mut client.insert_cas,
+                            tid,
+                            guard,
+                            pool,
+                        )
+                        .is_ok()
+                    {
+                        return;
+                    }
+                }
+            }
+
+            // The first level is full. Resize and retry.
+            let (context_new, _) = self.add_level(context, first_level_ref, guard, pool);
+            context = context_new;
+            context_ref = unsafe { context.deref(pool) };
+            first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+            first_level_ref = unsafe { first_level.deref(pool) };
+            first_level_data = unsafe {
+                first_level_ref
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            };
+            first_level_size = first_level_data.len();
+        }
     }
 
     pub fn resize<const REC: bool>(
@@ -799,7 +878,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     ) {
         if REC {
             // TODO(must): 자연스럽지 않음
-            // self.resize_rec(client, tid, guard, pool); // TODO(must): 주석 제거
+            self.resize_rec(client, tid, guard, pool);
         }
 
         let mut context = self.context.load(Ordering::Acquire, guard);
