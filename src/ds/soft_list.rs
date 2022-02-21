@@ -549,7 +549,7 @@ impl<T: Clone + PartialEq> SOFTList<T> {
 /// client for insert or remove
 #[derive(Debug, Default)]
 pub struct Insert<T: 'static> {
-    target: PShared<'static, PNode<T>>, // TODO(opt): PPtr로 해도 될듯
+    target: PShared<'static, PNode<T>>, // TODO(opt): PPtr로 해도 될듯. (다만 checkpoint하기 전에 이걸 PPtr로 바꾸니까 전혀 관련없는 search 성능이 떨어졌었음. 왜 그랬는지 모르겠는데 PPtr로 바꾸려면 이거 이어서 확인해봐야함)
     failed: bool,
 }
 
@@ -583,7 +583,7 @@ impl<T> Insert<T> {
 /// Remove client for SOFT List
 #[derive(Debug, Default)]
 pub struct Remove<T: 'static> {
-    target: PShared<'static, PNode<T>>,
+    target: PShared<'static, PNode<T>>, // TODO(opt): PPtr로 해도 될듯. (다만 checkpoint하기 전에 이걸 PPtr로 바꾸니까 전혀 관련없는 search 성능이 떨어졌었음. 왜 그랬는지 모르겠는데 PPtr로 바꾸려면 이거 이어서 확인해봐야함)
     failed: bool,
 }
 
