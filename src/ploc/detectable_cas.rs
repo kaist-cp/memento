@@ -1,7 +1,6 @@
 //! General SMO
 
 use std::{
-    cell::RefCell,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -11,10 +10,7 @@ use crossbeam_utils::CachePadded;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{
-        lfence, ll::persist_obj, rdtscp, sfence, AsPPtr, Collectable, GarbageCollection, PPtr,
-        PoolHandle,
-    },
+    pmem::{lfence, ll::persist_obj, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle},
 };
 
 use super::{ExecInfo, Timestamp, NR_MAX_THREADS};
@@ -23,11 +19,6 @@ const NOT_CHECKED: u64 = 0;
 const FAILED: u64 = 1;
 
 pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS + 1];
-
-thread_local! {
-    /// 마지막 실패한 cas의 체크포인트
-    static LAST_FAILED_CAS: RefCell<Option<PPtr<Timestamp>>> = RefCell::new(None)
-}
 
 /// TODO(doc)
 #[derive(Debug)]
@@ -73,21 +64,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return self.cas_result(new, mmt, tid, &pool.exec_info, guard);
         }
 
-        LAST_FAILED_CAS.with(|c| {
-            let mut failed = c.borrow_mut();
-            if let Some(last_chk) = *failed {
-                unsafe {
-                    if last_chk != mmt.checkpoint.as_pptr(pool) {
-                        let last_chk_ref = last_chk.deref_mut(pool);
-                        std::ptr::write(last_chk_ref as _, Timestamp::from(FAILED));
-                        persist_obj(last_chk_ref as &Timestamp, true);
-                    } else {
-                        *failed = None;
-                    }
-                }
-            }
-        });
-
         let prev_chk =
             Timestamp::from(pool.exec_info.cas_info.cas_own[tid].load(Ordering::Relaxed));
         let parity = !prev_chk.aux();
@@ -111,9 +87,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     continue;
                 }
 
-                LAST_FAILED_CAS.with(|failed| {
-                    *failed.borrow_mut() = Some(unsafe { mmt.checkpoint.as_pptr(pool) });
-                });
+                // TODO(must): FAILED도 timestamp가 기록되어야 함
+                if mmt.checkpoint != Timestamp::from(FAILED) {
+                    mmt.checkpoint = Timestamp::from(FAILED);
+                    persist_obj(&mmt.checkpoint, true);
+                }
 
                 return Err(cur);
             }
@@ -150,7 +128,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         exec_info: &ExecInfo,
         guard: &'g Guard,
     ) -> Result<(), PShared<'g, N>> {
-        if mmt.checkpoint == Timestamp::from(FAILED) {
+        if mmt.checkpoint == Timestamp::from(FAILED) { // TODO(must): FAILED도 timestamp 확인해야 함
             let cur = self.inner.load(Ordering::SeqCst, guard);
             return Err(self.load_help(cur, exec_info, guard)); // TODO(opt): RecFail?
         }

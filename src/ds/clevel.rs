@@ -877,7 +877,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &PoolHandle,
     ) {
         if REC {
-            // TODO(must): 자연스럽지 않음
+            // TODO(must): 자연스럽지 않음 -> dedup을 잘해서 함수로 빼자
             self.resize_rec(client, tid, guard, pool);
         }
 
@@ -1214,6 +1214,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         if REC {
             // TODO(must): 자연스럽지 않음
             if let Some((size, slot_p)) = client.insert_chk.peek(tid, pool) {
+                // TODO(must): 함수로 빼기
                 let slot = unsafe { slot_p.deref(pool) };
                 if slot
                     .cas::<REC>(
@@ -1344,7 +1345,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         Err(context_new)
     }
 
-    // TODO(must): 이건 필요 없을 거임. insert_inner에서 다 하면 되므로
     fn insert_inner<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
@@ -1422,7 +1422,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
         // If the inserted array is not being resized, it's done.
         let context_ref = unsafe { context.deref(pool) };
-        if context_ref.resize_size < result.size {
+        if context_ref.resize_size < result.size { // TODO(must): move_done 쓰지 말고 이 컨디션을 체크포인트
             let _ = move_done.checkpoint::<false>((), tid, pool);
             return;
         }
@@ -1487,6 +1487,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             context = self.context.load(Ordering::Acquire, guard);
 
             // TODO(must): 어차피 size 비교하므로 context 비교는 필요없다고 생각했음. 코드 지우기 전에 다시 생각해보기
+            // 버리자
             // if context == context_new {
             //     let _ = move_done.checkpoint::<false>((), tid, pool);
             //     return;

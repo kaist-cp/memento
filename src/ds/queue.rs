@@ -249,6 +249,7 @@ impl<T: Clone + Collectable> Queue<T> {
             return Err(TryFail);
         }
 
+        // TODO(must): 이 패턴은 난해하다. insert가 rec 성공인지를 구분해서 리턴하는 건 어떤지...?
         if !REC {
             let _ =
                 self.tail
