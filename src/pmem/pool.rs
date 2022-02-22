@@ -388,7 +388,7 @@ impl Pool {
 
             // root memento(들)의 filter func 등록
             let nr_memento = *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize);
-            for tid in 0..nr_memento {
+            for tid in 1..nr_memento + 1 {
                 // root memento들은 Ralloc의 2번째 root부터 위치
                 RP_set_root_filter(
                     Some(root_filter::<M>),
