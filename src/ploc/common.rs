@@ -1,5 +1,6 @@
 //! Atomic Update Common
 
+use core::fmt;
 use std::sync::atomic::{compiler_fence, AtomicU64, Ordering};
 
 use crossbeam_utils::CachePadded;
@@ -48,7 +49,7 @@ pub(crate) fn decompose_aux_bit(data: usize) -> (usize, usize) {
 }
 
 /// TODO(doc)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Timestamp(u64);
 
 impl From<u64> for Timestamp {
@@ -78,6 +79,17 @@ impl Ord for Timestamp {
         let (_, t1) = self.decompose();
         let (_, t2) = other.decompose();
         t1.cmp(&t2)
+    }
+}
+
+impl fmt::Debug for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (aux_bit, time) = self.decompose();
+
+        f.debug_struct("Timestamp")
+            .field("aux bit", &aux_bit)
+            .field("timestamp", &time)
+            .finish()
     }
 }
 
@@ -171,8 +183,8 @@ impl ExecInfo {
     }
 
     #[inline]
-    pub(crate) fn calc_checkpoint(&self, t: u64) -> u64 {
-        t - self.init_time.time() + self.global_max_time.time()
+    pub(crate) fn exec_time(&self) -> u64 {
+        rdtscp() - self.init_time.time() + self.global_max_time.time()
     }
 }
 
@@ -247,7 +259,8 @@ where
         }
         compiler_fence(Ordering::Release);
 
-        self.saved[idx] = CachePadded::new((new.clone(), Timestamp::new(true, rdtscp())));
+        let t = pool.exec_info.exec_time();
+        self.saved[idx] = CachePadded::new((new.clone(), Timestamp::new(true, t)));
         pool.exec_info.local_max_time[tid].store(self.saved[idx].1.into(), Ordering::Relaxed);
         persist_obj(&*self.saved[idx], true);
         Ok(new)

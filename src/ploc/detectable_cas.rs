@@ -10,7 +10,7 @@ use crossbeam_utils::CachePadded;
 
 use crate::{
     pepoch::{PAtomic, PShared},
-    pmem::{lfence, ll::persist_obj, rdtscp, sfence, Collectable, GarbageCollection, PoolHandle},
+    pmem::{lfence, ll::persist_obj, sfence, Collectable, GarbageCollection, PoolHandle},
 };
 
 use super::{ExecInfo, Timestamp, NR_MAX_THREADS};
@@ -130,6 +130,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         exec_info: &ExecInfo,
         guard: &'g Guard,
     ) -> Option<Result<(), PShared<'g, N>>> {
+        let local_max_time = Timestamp::from(exec_info.local_max_time[tid].load(Ordering::Relaxed));
+
         if mmt.checkpoint == Timestamp::from(FAILED) {
             // TODO(must): FAILED도 timestamp 확인해야 함
             let cur = self.inner.load(Ordering::SeqCst, guard);
@@ -138,10 +140,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         let vchk = Timestamp::from(exec_info.cas_info.cas_own[tid].load(Ordering::Relaxed));
 
-        if mmt.checkpoint != Timestamp::from(NOT_CHECKED)
-            && mmt.checkpoint
-                > Timestamp::from(exec_info.local_max_time[tid].load(Ordering::Relaxed))
-        {
+        if mmt.checkpoint != Timestamp::from(NOT_CHECKED) && mmt.checkpoint > local_max_time {
             if mmt.checkpoint > vchk {
                 exec_info.cas_info.cas_own[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
             }
@@ -226,7 +225,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             let chk = loop {
                 // get checkpoint timestamp
-                let start = rdtscp();
+                let start = exec_info.exec_time();
                 lfence();
 
                 // start spin loop
@@ -245,14 +244,14 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     }
 
                     // if patience is over, I have to help it.
-                    let now = rdtscp();
+                    let now = exec_info.exec_time();
                     if now > start + Self::PATIENCE {
                         break true;
                     }
                 };
 
                 if out {
-                    break exec_info.calc_checkpoint(start);
+                    break start;
                 }
             };
 
@@ -349,7 +348,7 @@ impl<N> Collectable for Cas<N> {
 impl<N> Cas<N> {
     #[inline]
     fn checkpoint_succ(&mut self, parity: bool, tid: usize, exec_info: &ExecInfo) {
-        let t = exec_info.calc_checkpoint(rdtscp());
+        let t = exec_info.exec_time();
         let new_chk = Timestamp::new(parity, t);
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, false); // There is always a CAS after this function

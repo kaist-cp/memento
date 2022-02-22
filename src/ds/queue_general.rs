@@ -195,13 +195,13 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let (tail, tail_ref) = loop {
+        let tail = loop {
             let tail = self.tail.load(Ordering::SeqCst, guard);
             let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
             let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
 
             if next.is_null() {
-                break (tail, tail_ref);
+                break tail;
             }
 
             // tail is stale
@@ -218,6 +218,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
             e.current
         )
         .load(Ordering::Relaxed, guard);
+        let tail_ref = unsafe { tail.deref(pool) };
 
         if tail_ref
             .next
