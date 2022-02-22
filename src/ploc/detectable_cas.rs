@@ -61,7 +61,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         pool: &PoolHandle,
     ) -> Result<(), PShared<'g, N>> {
         if REC {
-            return self.cas_result(new, mmt, tid, &pool.exec_info, guard);
+            if let Some(ret) = self.cas_result(new, mmt, tid, &pool.exec_info, guard) {
+                return ret;
+            }
         }
 
         let prev_chk =
@@ -127,10 +129,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         tid: usize,
         exec_info: &ExecInfo,
         guard: &'g Guard,
-    ) -> Result<(), PShared<'g, N>> {
-        if mmt.checkpoint == Timestamp::from(FAILED) { // TODO(must): FAILED도 timestamp 확인해야 함
+    ) -> Option<Result<(), PShared<'g, N>>> {
+        if mmt.checkpoint == Timestamp::from(FAILED) {
+            // TODO(must): FAILED도 timestamp 확인해야 함
             let cur = self.inner.load(Ordering::SeqCst, guard);
-            return Err(self.load_help(cur, exec_info, guard)); // TODO(opt): RecFail?
+            return Some(Err(self.load_help(cur, exec_info, guard))); // TODO(opt): RecFail?
         }
 
         let vchk = Timestamp::from(exec_info.cas_info.cas_own[tid].load(Ordering::Relaxed));
@@ -155,7 +158,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             exec_info.local_max_time[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
-            return Ok(());
+            return Some(Ok(()));
         }
 
         let cur = self.inner.load(Ordering::SeqCst, guard);
@@ -178,7 +181,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     guard,
                 )
                 .map_err(|_| sfence);
-            return Ok(());
+            return Some(Ok(()));
         }
 
         // CAS 성공한 뒤에 helping 받은 건지 체크
@@ -187,7 +190,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 .load(Ordering::SeqCst),
         );
         if vchk >= pchk {
-            return Err(self.load_help(cur, exec_info, guard));
+            return None;
         }
 
         // 마지막 CAS보다 helper가 쓴 체크포인트가 높으므로 성공한 것
@@ -195,7 +198,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         mmt.checkpoint_succ(next_par, tid, exec_info);
         sfence();
 
-        Ok(())
+        Some(Ok(()))
     }
 
     /// TODO(doc)
