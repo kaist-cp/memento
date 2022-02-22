@@ -1,10 +1,6 @@
 //! Detectable SOFT list
 
-use crate::{
-    pepoch::{PAtomic, PShared},
-    ploc::Checkpoint,
-    pmem::*,
-};
+use crate::{pepoch::PShared, ploc::Checkpoint, pmem::*};
 use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
 use epoch::{unprotected, Guard};
 use libc::c_void;
@@ -193,15 +189,16 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
     ) -> bool {
         let vguard = unsafe { unprotected() }; // vnode는 ssmem의 ebr에 의해 관리되기 때문에 pguard 필요없음
         if REC {
-            // 결과가 찍혀있다면 같은 결과 반환
-            if let Some(result) = client.result.peek(tid, pool) {
-                return result;
-            }
-            // 결과는 찍혀있지 않지만 target하던 PNode가 있다면 crash 이전에 target에 하려던 것(PNode에 "삽입완료", 대응되는 VNode에 "삽입완료" 표시)을 마무리하고 종료
-            else if let Some(target) = client.target.peek(tid, pool) {
-                let mut curr_state = State::Dummy;
+            if let Some(target) = client.target.peek(tid, pool) {
+                // 1. 실패로 끝났었다면 같은 결과 반환
+                if target == failed() {
+                    return false;
+                }
 
+                // 2. 실패로 끝나진 않았지만 target하던 PNode가 있다면 crash 이전에 target에 하려던 것을 마무리하고 종료
+                //    crash이전에 하려던 것: PNode에 "삽입완료" 표시, 대응되는 VNode에 "삽입완료" 표시
                 // target에 대응되는 VNode 탐색
+                let mut curr_state = State::Dummy;
                 let (_, curr) = self.find(key, &mut curr_state, pguard);
                 let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
                 let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
@@ -218,7 +215,8 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                 // 결과: target.inserter == me
                 return self.finish_insert(vnode, value, client, pool);
             }
-            // 결과도 찍혀있지 않고 target하는 PNode도 없다면 normal run을 재개
+
+            // 기록된 게 없으면 normal run을 재개
         }
 
         let result_node;
@@ -233,7 +231,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             if curr_ref.key == key {
                 // 이미 삽입 완료된 것
                 if curr_state != State::IntendToInsert {
-                    let _ = client.result.checkpoint::<REC>(false, tid, pool); // "실패"로 끝났음을 표시
+                    let _ = client.target.checkpoint::<REC>(failed(), tid, pool); // "실패"로 끝났음을 표시
                     return false;
                 }
                 // 삽입 중이므로 이 result_node의 삽입완료를 helping
@@ -341,12 +339,14 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
     ) -> bool {
         let vguard = unsafe { unprotected() }; // vnode는 ssmem의 ebr에 의해 관리되기 때문에 pguard 필요없음
         if REC {
-            // 결과가 찍혀있다면 같은 결과 반환
-            if let Some(result) = client.result.peek(tid, pool) {
-                return result;
-            }
-            // 결과는 찍혀있지 않지만 target하던 PNode가 있다면 crash 이전에 target에 하려던 것(PNode에 "삭제완료", 대응되는 VNode에 "삭제완료" 표시)을 마무리하고 종료
-            else if let Some(target) = client.target.peek(tid, pool) {
+            if let Some(target) = client.target.peek(tid, pool) {
+                // 1. 실패로 끝났었다면 같은 결과 반환
+                if target == failed() {
+                    return false;
+                }
+
+                // 2. 실패로 끝나진 않았지만 target하던 PNode가 있다면 crash 이전에 target에 하려던 것을 마무리하고 종료
+                //    crash이전에 하려던 것: PNode에 "삭제완료", 대응되는 VNode에 "삭제완료" 표시(logical delete) 후 VList에서 제거(physical delete)
                 // target에 대응되는 VNode 탐색
                 let mut curr_state = State::Dummy;
                 let (pred, curr) = self.find(key, &mut curr_state, pguard);
@@ -365,7 +365,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                 return self.finish_remove((pred, curr), client, pguard, pool);
             }
 
-            // 결과도 찍혀있지 않고 target하는 PNode도 없다면 normal run을 재개
+            // 기록된 게 없으면 normal run을 재개
         }
 
         let mut cas_result = false;
@@ -374,13 +374,13 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
         let curr_ref = unsafe { curr.deref() };
         // 중복 키가 없으면 실패로 끝냄
         if curr_ref.key != key {
-            let _ = client.result.checkpoint::<REC>(false, tid, pool); // "실패"로 끝났음을 표시
+            let _ = client.target.checkpoint::<REC>(failed(), tid, pool); // "실패"로 끝났음을 표시
             return false;
         }
 
         // 중복 키는 있지만 삽입된게 아니라면 실패로 끝냄
         if curr_state == State::IntendToInsert || curr_state == State::Deleted {
-            let _ = client.result.checkpoint::<REC>(false, tid, pool); // "실패"로 끝났음을 표시
+            let _ = client.target.checkpoint::<REC>(failed(), tid, pool); // "실패"로 끝났음을 표시
             return false;
         }
 
@@ -553,17 +553,21 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
     }
 }
 
+const FAILED: usize = 1;
+fn failed<T: Default>() -> PPtr<PNode<T>> {
+    PPtr::from(FAILED)
+}
+
 /// client for insert or remove
 #[derive(Debug, Default)]
 pub struct Insert<T: Default> {
     target: Checkpoint<PPtr<PNode<T>>>,
-    result: Checkpoint<bool>,
 }
 
 impl<T: Default> Collectable for Insert<T> {
     fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Collectable::filter(&mut insert.target, tid, gc, pool);
-        Collectable::filter(&mut insert.result, tid, gc, pool);
+        // Collectable::filter(&mut insert.result, tid, gc, pool);
     }
 }
 
@@ -578,7 +582,7 @@ impl<T: Default> Insert<T> {
     #[inline]
     pub fn clear(&mut self) {
         self.target = Default::default();
-        self.result = Default::default();
+        // self.result = Default::default();
         persist_obj(self, true);
     }
 }
@@ -587,13 +591,11 @@ impl<T: Default> Insert<T> {
 #[derive(Debug, Default)]
 pub struct Remove<T: Default> {
     target: Checkpoint<PPtr<PNode<T>>>,
-    result: Checkpoint<bool>,
 }
 
 impl<T: Default> Collectable for Remove<T> {
     fn filter(remove: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Collectable::filter(&mut remove.target, tid, gc, pool);
-        Collectable::filter(&mut remove.result, tid, gc, pool);
     }
 }
 
@@ -608,7 +610,6 @@ impl<T: Default + PartialEq + Clone> Remove<T> {
     #[inline]
     pub fn clear(&mut self) {
         self.target = Default::default();
-        self.result = Default::default();
         persist_obj(&self.target, true);
     }
 }
