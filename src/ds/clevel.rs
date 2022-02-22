@@ -744,20 +744,42 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         (context, true)
     }
 
-    pub fn resize_rec(
-        &self,
+    fn invalidate_and_move<'g, const REC: bool>(
+        &'g self,
+        mut context: PShared<'g, Context<K, V>>,
+        mut first_level: PShared<'g, Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+        slot_slot_ptr: Option<(&DetectableCASAtomic<Slot<K, V>>, PShared<'_, Slot<K, V>>)>,
         client: &mut Resize<K, V>,
         tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> (
+        PShared<'g, Context<K, V>>,
+        PShared<'g, Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
     ) {
-        // checkpoint된 slot 있나 보고 CAS
-        let (del_slot, slot_ptr) = some_or!(client.delete_chk.peek(tid, pool), return);
-        let del_slot = unsafe { del_slot.deref(pool) };
+        let (slot, slot_ptr) = if REC {
+            some_or!(
+                client.delete_chk.peek(tid, pool),
+                return (context, first_level)
+            )
+        } else {
+            let s = slot_slot_ptr.unwrap();
+            ok_or!(
+                client.delete_chk.checkpoint::<REC>(
+                    (PPtr::from(unsafe { s.0.as_pptr(pool) }), PAtomic::from(s.1),),
+                    tid,
+                    pool,
+                ),
+                e,
+                e.current
+            )
+        };
+
+        let slot = unsafe { slot.deref(pool) };
         let slot_ptr = slot_ptr.load(Ordering::Relaxed, guard);
 
-        if del_slot
-            .cas::<true>(
+        if slot
+            .cas::<REC>(
                 slot_ptr,
                 slot_ptr.with_tag(1),
                 &mut client.delete_cas,
@@ -767,41 +789,42 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             )
             .is_err()
         {
-            return;
+            return (context, first_level);
         }
 
-        if let Some(ins_slot) = client.insert_chk.peek(tid, pool) {
-            let ins_slot = unsafe { ins_slot.deref(pool) };
-            if ins_slot
-                .cas::<true>(
-                    PShared::null(),
-                    slot_ptr,
-                    &mut client.insert_cas,
-                    tid,
-                    guard,
-                    pool,
-                )
-                .is_ok()
-            {
-                return;
+        if REC {
+            // TODO(opt): normal run에서 timestamp 증가로 인해 `REC` 분기 안 따도 되긴 함.
+            if let Some(ins_slot) = client.insert_chk.peek(tid, pool) {
+                let ins_slot = unsafe { ins_slot.deref(pool) };
+                if ins_slot
+                    .cas::<REC>(
+                        PShared::null(),
+                        slot_ptr,
+                        &mut client.insert_cas,
+                        tid,
+                        guard,
+                        pool,
+                    )
+                    .is_ok()
+                {
+                    return (context, first_level);
+                }
             }
         }
 
         // 넣을 곳 찾고 넣기
-        let mut context = self.context.load(Ordering::Acquire, guard);
-        let mut context_ref = unsafe { context.deref(pool) };
-
-        let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-        let mut first_level_ref = unsafe { first_level.deref(pool) };
-        let mut first_level_data = unsafe {
-            first_level_ref
-                .data
-                .load(Ordering::Relaxed, guard)
-                .deref(pool)
-        };
-        let mut first_level_size = first_level_data.len();
-
         loop {
+            let context_ref = unsafe { context.deref(pool) };
+            first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+            let first_level_ref = unsafe { first_level.deref(pool) };
+            let first_level_data = unsafe {
+                first_level_ref
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            };
+            let first_level_size = first_level_data.len();
+
             let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
             let key_hashes = key_hashes
                 .into_iter()
@@ -828,17 +851,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                             continue;
                         }
 
-                        return;
+                        return (context, first_level);
                     }
 
-                    let _ = client.insert_chk.checkpoint::<false>(
+                    let _ = client.insert_chk.checkpoint::<REC>(
                         PPtr::from(unsafe { slot.as_pptr(pool) }),
                         tid,
                         pool,
                     );
 
                     if slot
-                        .cas::<false>(
+                        .cas::<REC>(
                             PShared::null(),
                             slot_ptr,
                             &mut client.insert_cas,
@@ -848,7 +871,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                         )
                         .is_ok()
                     {
-                        return;
+                        return (context, first_level);
                     }
                 }
             }
@@ -856,16 +879,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             // The first level is full. Resize and retry.
             let (context_new, _) = self.add_level(context, first_level_ref, guard, pool);
             context = context_new;
-            context_ref = unsafe { context.deref(pool) };
-            first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-            first_level_ref = unsafe { first_level.deref(pool) };
-            first_level_data = unsafe {
-                first_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            first_level_size = first_level_data.len();
         }
     }
 
@@ -876,15 +889,27 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
+        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context_ref = unsafe { context.deref(pool) };
+        let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+
         if REC {
-            // TODO(must): 자연스럽지 않음 -> dedup을 잘해서 함수로 빼자
-            self.resize_rec(client, tid, guard, pool);
+            let res = self.invalidate_and_move::<REC>(
+                context,
+                first_level,
+                None,
+                client,
+                tid,
+                guard,
+                pool,
+            );
+
+            context = res.0;
+            first_level = res.1;
         }
 
-        let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
-            let mut context_ref = unsafe { context.deref(pool) };
-
+            context_ref = unsafe { context.deref(pool) };
             let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
             let last_level_ref = unsafe { last_level.deref(pool) };
             let last_level_data = unsafe {
@@ -900,173 +925,40 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                 break;
             }
 
-            let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-            let mut first_level_ref = unsafe { first_level.deref(pool) };
-            let mut first_level_data = unsafe {
-                first_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            let mut first_level_size = first_level_data.len();
-
             for (_bid, bucket) in last_level_data.iter().enumerate() {
                 for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
-                    let slot_ptr = some_or!(
-                        {
-                            let mut slot_ptr = slot.load(Ordering::Acquire, guard, pool);
-                            loop {
-                                if slot_ptr.is_null() {
-                                    break None;
-                                }
-
-                                // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
-                                // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                                // TODO: should we do it...?
-                                if slot_ptr.tag() == 1 {
-                                    slot_ptr = slot.load(Ordering::Acquire, guard, pool);
-                                    continue;
-                                }
-
-                                // Before
-                                // if let Err(e) = slot.compare_exchange(
-                                //     slot_ptr,
-                                //     slot_ptr.with_tag(1),
-                                //     Ordering::AcqRel,
-                                //     Ordering::Acquire,
-                                //     guard,
-                                // ) {
-                                //     slot_ptr = e.current;
-                                //     continue;
-                                // }
-
-                                // After(general)
-                                let _ = client.delete_chk.checkpoint::<false>(
-                                    (
-                                        PPtr::from(unsafe { slot.as_pptr(pool) }),
-                                        PAtomic::from(slot_ptr),
-                                    ),
-                                    tid,
-                                    pool,
-                                );
-
-                                if let Err(e) = slot.cas::<false>(
-                                    slot_ptr,
-                                    slot_ptr.with_tag(1),
-                                    &mut client.delete_cas,
-                                    tid,
-                                    guard,
-                                    pool,
-                                ) {
-                                    slot_ptr = e;
-                                    continue;
-                                }
-
-                                break Some(slot_ptr);
-                            }
-                        },
-                        continue
-                    );
-
-                    // println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
-
-                    let mut moved = false;
+                    let mut slot_ptr = slot.load(Ordering::Acquire, guard, pool);
                     loop {
-                        let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
-                        let key_hashes = key_hashes
-                            .into_iter()
-                            .map(|key_hash| key_hash as usize % first_level_size)
-                            .sorted()
-                            .dedup();
-                        for i in 0..SLOTS_IN_BUCKET {
-                            for key_hash in key_hashes.clone() {
-                                let slot = unsafe {
-                                    first_level_data[key_hash]
-                                        .assume_init_ref()
-                                        .slots
-                                        .get_unchecked(i)
-                                };
-
-                                let slot_first_level = slot.load(Ordering::Acquire, guard, pool);
-                                if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
-                                    // 2-byte tag checking
-                                    if slot_first_level.high_tag() != key_tag as usize {
-                                        continue;
-                                    }
-
-                                    if slot.key != unsafe { slot_ptr.deref(pool) }.key {
-                                        continue;
-                                    }
-
-                                    moved = true;
-                                    break;
-                                }
-
-                                // Before
-                                // if slot
-                                //     .compare_exchange(
-                                //         PShared::null(),
-                                //         slot_ptr,
-                                //         Ordering::AcqRel,
-                                //         Ordering::Relaxed,
-                                //         guard,
-                                //     )
-                                //     .is_ok()
-                                // {
-                                //     moved = true;
-                                //     break;
-                                // }
-
-                                // After(general)
-                                let _ = client.insert_chk.checkpoint::<false>(
-                                    PPtr::from(unsafe { slot.as_pptr(pool) }),
-                                    tid,
-                                    pool,
-                                );
-
-                                if slot
-                                    .cas::<false>(
-                                        PShared::null(),
-                                        slot_ptr,
-                                        &mut client.insert_cas,
-                                        tid,
-                                        guard,
-                                        pool,
-                                    )
-                                    .is_ok()
-                                {
-                                    moved = true;
-                                    break;
-                                }
-                            }
-
-                            if moved {
-                                break;
-                            }
-                        }
-
-                        if moved {
+                        if slot_ptr.is_null() {
                             break;
                         }
 
-                        // The first level is full. Resize and retry.
-                        let (context_new, _) =
-                            self.add_level(context, first_level_ref, guard, pool);
-                        context = context_new;
-                        context_ref = unsafe { context.deref(pool) };
-                        first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-                        first_level_ref = unsafe { first_level.deref(pool) };
-                        first_level_data = unsafe {
-                            first_level_ref
-                                .data
-                                .load(Ordering::Relaxed, guard)
-                                .deref(pool)
-                        };
-                        first_level_size = first_level_data.len();
+                        // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
+                        // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
+                        // TODO: should we do it...?
+                        if slot_ptr.tag() == 1 {
+                            slot_ptr = slot.load(Ordering::Acquire, guard, pool);
+                            continue;
+                        }
+
+                        let res = self.invalidate_and_move::<false>(
+                            context,
+                            first_level,
+                            Some((slot, slot_ptr)),
+                            client,
+                            tid,
+                            guard,
+                            pool,
+                        );
+
+                        context = res.0;
+                        first_level = res.1;
+                        break;
                     }
                 }
             }
 
+            context_ref = unsafe { context.deref(pool) };
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
             let mut context_new = POwned::new(
                 Context {
