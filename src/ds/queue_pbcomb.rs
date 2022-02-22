@@ -55,7 +55,8 @@ pub struct Dequeue {
 
 impl Collectable for Dequeue {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Collectable::filter(&mut deq.req, tid, gc, pool);
+        Checkpoint::filter(&mut deq.req, tid, gc, pool);
+        Checkpoint::filter(&mut deq.result, tid, gc, pool);
     }
 }
 
@@ -74,9 +75,7 @@ struct EnqRequestRec {
 }
 
 impl Collectable for EnqRequestRec {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // no-op
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 #[derive(Debug, Default)]
@@ -84,9 +83,7 @@ impl Collectable for EnqRequestRec {
 struct DeqRequestRec {}
 
 impl Collectable for DeqRequestRec {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // no-op
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 /// Node
@@ -98,11 +95,7 @@ pub struct Node {
 
 impl Collectable for Node {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut next = s.next.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !next.is_null() {
-            let next_ref = unsafe { next.deref_mut(pool) };
-            Collectable::mark(next_ref, tid, gc);
-        }
+        PAtomic::filter(&mut s.next, tid, gc, pool);
     }
 }
 
@@ -116,10 +109,9 @@ struct EStateRec {
 
 impl Collectable for EStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut tail = s.tail.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !tail.is_null() {
-            let tail_ref = unsafe { tail.deref_mut(pool) };
-            Collectable::mark(tail_ref, tid, gc);
+        PAtomic::filter(&mut s.tail, tid, gc, pool);
+        for tid in 1..MAX_THREADS + 1 {
+            PAtomic::filter(&mut s.deactivate[tid], tid, gc, pool);
         }
     }
 }
@@ -134,10 +126,12 @@ struct DStateRec {
 
 impl Collectable for DStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut head = s.head.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !head.is_null() {
-            let head_ref = unsafe { head.deref_mut(pool) };
-            Collectable::mark(head_ref, tid, gc);
+        PAtomic::filter(&mut s.head, tid, gc, pool);
+        for tid in 1..MAX_THREADS + 1 {
+            if let Some(mut ret) = s.return_val[tid] {
+                PPtr::filter(&mut ret, tid, gc, pool);
+            }
+            PAtomic::filter(&mut s.deactivate[tid], tid, gc, pool);
         }
     }
 }
@@ -177,25 +171,15 @@ pub struct QueuePBComb {
 
 impl Collectable for QueuePBComb {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        assert!(s.dummy.is_null());
-        Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
-
+        PPtr::filter(&mut s.dummy, tid, gc, pool);
         for tid in 1..MAX_THREADS + 1 {
             PAtomic::filter(&mut *s.e_request[tid], tid, gc, pool);
             PAtomic::filter(&mut *s.d_request[tid], tid, gc, pool);
         }
-        EStateRec::filter(
-            &mut *s.e_state[s.e_index.load(Ordering::SeqCst)],
-            tid,
-            gc,
-            pool,
-        );
-        DStateRec::filter(
-            &mut *s.d_state[s.d_index.load(Ordering::SeqCst)],
-            tid,
-            gc,
-            pool,
-        );
+        EStateRec::filter(&mut *s.e_state[0], tid, gc, pool);
+        EStateRec::filter(&mut *s.e_state[1], tid, gc, pool);
+        DStateRec::filter(&mut *s.d_state[0], tid, gc, pool);
+        DStateRec::filter(&mut *s.d_state[1], tid, gc, pool);
 
         // initialize global volatile variable manually
         OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
@@ -295,14 +279,6 @@ impl QueuePBComb {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> EnqRetVal {
-        // assert_eq!(
-        //     enq.req
-        //         .peek(tid, pool)
-        //         .unwrap()
-        //         .load(Ordering::SeqCst, guard),
-        //     self.e_request[tid].load(Ordering::SeqCst, guard)
-        // ); // TODO(opt) 성능손해 일으키면 제거
-
         // enq combiner 결정
         loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
@@ -376,7 +352,6 @@ impl QueuePBComb {
                     unsafe { q_req.deref(pool) }.arg,
                     pool,
                 );
-                // E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = Some(());
                 self.e_state[ind].deactivate[q].store(q_req, Ordering::SeqCst);
             }
@@ -437,11 +412,11 @@ impl QueuePBComb {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> DeqRetVal {
-        self.mmt_PBQueueDeq::<REC>(deq, tid, guard, pool)
+        self.PBQueueDeq::<REC>(deq, tid, guard, pool)
     }
 
     /// 요청 등록
-    fn mmt_PBQueueDeq<const REC: bool>(
+    fn PBQueueDeq<const REC: bool>(
         &mut self,
         deq: &mut Dequeue,
         tid: usize,
@@ -484,14 +459,6 @@ impl QueuePBComb {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> DeqRetVal {
-        // assert_eq!(
-        //     deq.req
-        //         .peek(tid, pool)
-        //         .unwrap()
-        //         .load(Ordering::SeqCst, guard),
-        //     self.d_request[tid].load(Ordering::SeqCst, guard)
-        // ); // TODO(opt) 성능손해 일으키면 제거
-
         // deq combiner 결정
         loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
@@ -576,7 +543,7 @@ impl QueuePBComb {
     }
 
     /// 실질적인 dequeue: head 한 칸 전진하고 old head를 반환
-    fn raw_dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> PPtr<Node> {
+    fn raw_dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> DeqRetVal {
         let head_ref = unsafe { head.load(Ordering::SeqCst, unprotected()).deref(pool) };
 
         // NOTE: 얘네 구현은 데이터를 반환하질 않고 노드를 반환.
