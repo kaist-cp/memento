@@ -1396,13 +1396,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
-        if REC {
-            // TODO(must): 자연스럽지 않음
-            if move_done.peek(tid, pool).is_some() {
-                return;
-            }
-        }
-
         let (_, result) = self.insert_inner::<REC>(
             context,
             slot,
@@ -1448,22 +1441,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             )
             .is_err()
         {
-            // Rec fail인지 예전에 진짜 생겼던 fail인지 구분이 안 되므로 한 번 더 해보기
-            // TODO(must): 자연스럽지 않음
-            if result
-                .slot
-                .cas::<false>(
-                    result.slot_ptr,
-                    result.slot_ptr.with_tag(1),
-                    tag_cas,
-                    tid,
-                    guard,
-                    pool,
-                )
-                .is_err()
-            {
-                return;
-            }
+            return;
         }
 
         let mut prev_result = result;
