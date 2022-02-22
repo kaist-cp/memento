@@ -28,11 +28,13 @@ type DeqRetVal = PPtr<Node>;
 #[repr(align(64))] // TODO(opt) align으로 정의하지 말고 사용하는 곳에서 cachepadded?
 pub struct Enqueue {
     req: Checkpoint<PAtomic<EnqRequestRec>>,
+    result: Checkpoint<EnqRetVal>,
 }
 
 impl Collectable for Enqueue {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Collectable::filter(&mut enq.req, tid, gc, pool);
+        Checkpoint::filter(&mut enq.req, tid, gc, pool);
+        Checkpoint::filter(&mut enq.result, tid, gc, pool);
     }
 }
 
@@ -46,9 +48,9 @@ impl Enqueue {
 
 /// client for dequeue
 #[derive(Debug, Default)]
-#[repr(align(64))] // TODO(opt) align으로 정의하지 말고 사용하는 곳에서 cachepadded?
 pub struct Dequeue {
     req: Checkpoint<PAtomic<DeqRequestRec>>,
+    result: Checkpoint<DeqRetVal>,
 }
 
 impl Collectable for Dequeue {
@@ -271,6 +273,13 @@ impl QueuePBComb {
         )
         .load(Ordering::Relaxed, guard);
 
+        // 이전에 끝난 client라면 같은 결과 반환
+        if REC {
+            if let Some(res) = enq.result.peek(tid, pool) {
+                return res;
+            }
+        }
+
         // 요청 저장소에 등록
         self.e_request[tid].store(req, Ordering::SeqCst);
 
@@ -323,9 +332,12 @@ impl QueuePBComb {
                     }
                 }
 
-                return self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
+                // 결과 저장하고 반환
+                let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
                     .unwrap();
+                let _ = enq.result.checkpoint::<REC>(res, tid, pool);
+                return res;
             }
         }
 
@@ -391,9 +403,12 @@ impl QueuePBComb {
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
         E_LOCK.store(0, Ordering::SeqCst);
 
-        return self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
+        // 결과 저장하고 반환
+        let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
             .clone()
             .unwrap();
+        let _ = enq.result.checkpoint::<REC>(res, tid, pool);
+        return res;
     }
 
     /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
@@ -447,6 +462,13 @@ impl QueuePBComb {
         )
         .load(Ordering::Relaxed, guard);
 
+        // 이전에 끝난 client라면 같은 결과 반환
+        if REC {
+            if let Some(res) = deq.result.peek(tid, pool) {
+                return res;
+            }
+        }
+
         // 요청 저장소에 등록
         self.d_request[tid].store(req, Ordering::SeqCst);
 
@@ -499,9 +521,12 @@ impl QueuePBComb {
                     }
                 }
 
-                return self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
+                // 결과 저장하고 반환
+                let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
                     .unwrap();
+                let _ = deq.result.checkpoint::<REC>(res, tid, pool);
+                return res;
             }
         }
 
@@ -542,9 +567,12 @@ impl QueuePBComb {
         sfence();
         D_LOCK.store(0, Ordering::SeqCst);
 
-        self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
+        // 결과 저장하고 반환
+        let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
             .clone()
-            .unwrap()
+            .unwrap();
+        let _ = deq.result.checkpoint::<REC>(res, tid, pool);
+        return res;
     }
 
     /// 실질적인 dequeue: head 한 칸 전진하고 old head를 반환
