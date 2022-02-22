@@ -1201,6 +1201,28 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     }
 
     #[inline]
+    fn try_slot_insert_inner<'g, const REC: bool>(
+        &self,
+        slot_p: PPtr<DetectableCASAtomic<Slot<K, V>>>,
+        slot_new: PShared<'g, Slot<K, V>>,
+        size: usize,
+        cas: &mut Cas<Slot<K, V>>,
+        tid: usize,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<FindResult<'g, K, V>, ()> {
+        let slot = unsafe { slot_p.deref(pool) };
+        let _ = slot
+            .cas::<REC>(PShared::null(), slot_new, cas, tid, guard, pool)
+            .map_err(|_| ())?;
+
+        Ok(FindResult {
+            size,
+            slot,
+            slot_ptr: slot_new,
+        })
+    }
+
     fn try_slot_insert<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
@@ -1212,26 +1234,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
         if REC {
-            // TODO(must): 자연스럽지 않음
             if let Some((size, slot_p)) = client.insert_chk.peek(tid, pool) {
-                // TODO(must): 함수로 빼기
-                let slot = unsafe { slot_p.deref(pool) };
-                if slot
-                    .cas::<REC>(
-                        PShared::null(),
-                        slot_new,
-                        &mut client.insert_cas,
-                        tid,
-                        guard,
-                        pool,
-                    )
-                    .is_ok()
-                {
-                    return Ok(FindResult {
-                        size,
-                        slot,
-                        slot_ptr: slot_new,
-                    });
+                let res = self.try_slot_insert_inner::<REC>(
+                    slot_p,
+                    slot_new,
+                    size,
+                    &mut client.insert_cas,
+                    tid,
+                    guard,
+                    pool,
+                );
+                if res.is_ok() {
+                    return res;
                 }
             }
         }
@@ -1289,23 +1303,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                         )
                         .unwrap();
 
-                    let slot = unsafe { slot_p.deref(pool) };
-                    if slot
-                        .cas::<false>(
-                            PShared::null(),
-                            slot_new,
-                            &mut client.insert_cas,
-                            tid,
-                            guard,
-                            pool,
-                        )
-                        .is_ok()
-                    {
-                        return Ok(FindResult {
-                            size,
-                            slot,
-                            slot_ptr: slot_new,
-                        });
+                    let res = self.try_slot_insert_inner::<false>(
+                        slot_p,
+                        slot_new,
+                        size,
+                        &mut client.insert_cas,
+                        tid,
+                        guard,
+                        pool,
+                    );
+                    if res.is_ok() {
+                        return res;
                     }
                 }
             }
