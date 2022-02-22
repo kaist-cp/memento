@@ -36,7 +36,7 @@ pub struct Insert<K, V> {
     occupied: Checkpoint<bool>,
     node: Checkpoint<PAtomic<Slot<K, V>>>,
     insert_inner: InsertInner<K, V>,
-    move_done: Checkpoint<()>,
+    move_done: Checkpoint<bool>,
     tag_cas: Cas<Slot<K, V>>,
 }
 
@@ -1389,7 +1389,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        move_done: &mut Checkpoint<()>,
+        move_done: &mut Checkpoint<bool>,
         tag_cas: &mut Cas<Slot<K, V>>,
         insert_inner: &mut InsertInner<K, V>,
         tid: usize,
@@ -1422,8 +1422,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
         // If the inserted array is not being resized, it's done.
         let context_ref = unsafe { context.deref(pool) };
-        if context_ref.resize_size < result.size { // TODO(must): move_done 쓰지 말고 이 컨디션을 체크포인트
-            let _ = move_done.checkpoint::<false>((), tid, pool);
+
+        let done = ok_or!(
+            move_done.checkpoint::<REC>(context_ref.resize_size < result.size, tid, pool),
+            e,
+            e.current
+        );
+        if done {
             return;
         }
 
@@ -1486,18 +1491,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             // If the context remains the same, it's done.
             context = self.context.load(Ordering::Acquire, guard);
 
-            // TODO(must): 어차피 size 비교하므로 context 비교는 필요없다고 생각했음. 코드 지우기 전에 다시 생각해보기
-            // 버리자
-            // if context == context_new {
-            //     let _ = move_done.checkpoint::<false>((), tid, pool);
-            //     return;
-            // }
-            // context = context_new;
-
             // If the inserted array is not being resized, it's done.
             let context_ref = unsafe { context.deref(pool) };
-            if context_ref.resize_size < result.size {
-                let _ = move_done.checkpoint::<false>((), tid, pool);
+
+            let done = move_done
+                .checkpoint::<false>(context_ref.resize_size < result.size, tid, pool)
+                .unwrap();
+            if done {
                 return;
             }
 
