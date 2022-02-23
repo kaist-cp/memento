@@ -664,28 +664,25 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             next_level
         } else {
             self.add_level_lock.lock(); // TODO(must): volatile lock을 쓴다해도 여기에 도달했을 때 다시 lock을 얻어야 함
-            let next_level = first_level.next.load(Ordering::Acquire, guard);
-            let next_level = if !next_level.is_null() {
-                next_level
-            } else {
-                let next_node = new_node(next_level_size, pool);
-                // TODO(must): CAS 후 persist가 되어야 함 (general CAS까진 쓸 거 없이 이쪽+윗쪽에서만 하면 될 듯)
-                first_level
-                    .next
-                    .compare_exchange(
-                        PShared::null(),
-                        next_node,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                        guard,
-                    )
-                    .unwrap_or_else(|err| err.current)
-            };
+                                        // TODO(opt): try lock
+            let next_node = new_node(next_level_size, pool);
+            // TODO(must): CAS 후 persist가 되어야 함 (general CAS까진 쓸 거 없이 이쪽+윗쪽에서만 하면 될 듯)
+            let res = first_level
+                .next
+                .compare_exchange(
+                    PShared::null(),
+                    next_node,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    guard,
+                )
+                .unwrap_or_else(|err| err.current);
             unsafe {
                 self.add_level_lock.unlock();
             }
-            next_level
+            res
         };
+        persist_obj(&first_level.next, true); // TODO(opt): Use insert_lp
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
