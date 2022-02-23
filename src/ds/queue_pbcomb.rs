@@ -1,5 +1,6 @@
 //! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
 #![allow(non_snake_case)]
+use crate::ds::spin_lock_volatile::VSpinLock;
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, POwned};
 use crate::ploc::Checkpoint;
@@ -140,10 +141,10 @@ lazy_static::lazy_static! {
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
     /// Used by the PBQueueENQ instance of PBCOMB
-    static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
+    static ref E_LOCK: VSpinLock = VSpinLock::default();
 
     /// Used by the PBQueueDEQ instance of PBCOMB
-    static ref D_LOCK: AtomicUsize = AtomicUsize::new(0);
+    static ref D_LOCK: VSpinLock = VSpinLock::default();
 }
 
 /// TODO: doc
@@ -261,18 +262,16 @@ impl Queue {
         pool: &PoolHandle,
     ) -> EnqRetVal {
         // enq combiner 결정
-        loop {
+        let lockguard = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
-            // TODO(must): volatile lock 따로 빼기
-            let _ = E_LOCK.compare_exchange(0, enq.id(pool), Ordering::SeqCst, Ordering::SeqCst);
-            let lval = E_LOCK.load(Ordering::SeqCst);
-            if lval == enq.id(pool) {
-                break;
-            }
+            let lval = match E_LOCK.try_lock::<REC>(enq.id(pool)) {
+                Ok(g) => break g,
+                Err(lval) => lval,
+            };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == E_LOCK.load(Ordering::SeqCst) {
+            while lval == E_LOCK.peek() {
                 backoff.snooze();
             }
 
@@ -281,11 +280,11 @@ impl Queue {
                     .load(Ordering::SeqCst, unsafe { unprotected() })
             {
                 // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
-                let lval = E_LOCK.load(Ordering::SeqCst);
+                let lval = E_LOCK.peek();
                 if lval != 0 {
                     // NOTE: 같은 client가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
                     backoff.reset();
-                    while lval == E_LOCK.load(Ordering::SeqCst) {
+                    while lval == E_LOCK.peek() {
                         backoff.snooze();
                     }
                 }
@@ -297,7 +296,7 @@ impl Queue {
                 let _ = enq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
-        }
+        };
 
         // enq combiner는 쌓인 enq 요청들을 수행
         let ind = 1 - self.e_index.load(Ordering::SeqCst);
@@ -358,7 +357,7 @@ impl Queue {
         persist_obj(&self.e_index, false);
         sfence();
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
-        E_LOCK.store(0, Ordering::SeqCst);
+        drop(lockguard); // release E_LOCK
 
         // 결과 저장하고 반환
         let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
@@ -429,17 +428,16 @@ impl Queue {
         pool: &PoolHandle,
     ) -> DeqRetVal {
         // deq combiner 결정
-        loop {
+        let lockguard = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
-            let _ = D_LOCK.compare_exchange(0, deq.id(pool), Ordering::SeqCst, Ordering::SeqCst);
-            let lval = D_LOCK.load(Ordering::SeqCst);
-            if lval == deq.id(pool) {
-                break;
-            }
+            let lval = match D_LOCK.try_lock::<REC>(deq.id(pool)) {
+                Ok(g) => break g,
+                Err(lval) => lval,
+            };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == D_LOCK.load(Ordering::SeqCst) {
+            while lval == D_LOCK.peek() {
                 backoff.snooze();
             }
 
@@ -448,11 +446,11 @@ impl Queue {
                     .load(Ordering::SeqCst, unsafe { unprotected() })
             {
                 // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
-                let lval = D_LOCK.load(Ordering::SeqCst);
+                let lval = D_LOCK.peek();
                 if lval != 0 {
                     // NOTE: 같은 client가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
                     backoff.reset();
-                    while lval == D_LOCK.load(Ordering::SeqCst) {
+                    while lval == D_LOCK.peek() {
                         backoff.snooze();
                     }
                 }
@@ -464,7 +462,7 @@ impl Queue {
                 let _ = deq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
-        }
+        };
 
         // deq combiner는 쌓인 deq 요청들을 수행
         let ind = 1 - self.d_index.load(Ordering::SeqCst);
@@ -501,7 +499,7 @@ impl Queue {
         self.d_index.store(ind, Ordering::SeqCst);
         persist_obj(&self.d_index, false);
         sfence();
-        D_LOCK.store(0, Ordering::SeqCst);
+        drop(lockguard); // release D_LOCK
 
         // 결과 저장하고 반환
         let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
@@ -549,8 +547,8 @@ mod test {
 
     use super::{Dequeue, Enqueue};
 
-    const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
+    const NR_THREAD: usize = 4;
+    const COUNT: usize = 1000;
 
     struct EnqDeq {
         enqs: [Enqueue; COUNT],
