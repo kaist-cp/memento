@@ -66,7 +66,7 @@ enum Operation {
 struct LogQueue<T: Clone> {
     head: CachePadded<PAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
-    logs: [CachePadded<PAtomic<LogEntry<T>>>; MAX_THREADS],
+    logs: [CachePadded<PAtomic<LogEntry<T>>>; MAX_THREADS + 1],
 }
 
 impl<T: Clone> Collectable for LogQueue<T> {
