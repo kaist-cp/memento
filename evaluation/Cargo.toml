@@ -20,6 +20,8 @@ structopt = "0.3"
 csv = "1.1.6"
 # corundum = "0.4.0" # 2021 edition에선 컴파일 안됨
 corundum = { git = "https://github.com/NVSL/Corundum.git", rev = "17c9aa6" }  # 17c9aa6: 2022/01/07일자 main branch의 최신 commit
+tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
+lazy_static = "1.4.0"
 
 [features]
 no_persist = ["memento/no_persist", "corundum/no_persist"]

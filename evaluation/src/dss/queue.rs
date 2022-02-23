@@ -80,7 +80,7 @@ enum _OpResolved {
 pub struct DSSQueue<T: Clone> {
     head: CachePadded<PAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
-    x: [CachePadded<PAtomic<Node<T>>>; MAX_THREADS],
+    x: [CachePadded<PAtomic<Node<T>>>; MAX_THREADS + 1],
 }
 
 impl<T: Clone> Collectable for DSSQueue<T> {

@@ -36,13 +36,15 @@ pub(crate) const POS_AUX_BITS: u32 = 0;
 pub(crate) const NR_AUX_BITS: u32 = 1;
 impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
 
+/// TODO doc
 #[inline]
-pub(crate) fn compose_aux_bit(aux_bit: usize, data: usize) -> usize {
-    (aux_bits() & (aux_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
+pub fn compose_aux_bit(cas_bit: usize, data: usize) -> usize {
+    (aux_bits() & (cas_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
 }
 
+/// TODO doc
 #[inline]
-pub(crate) fn decompose_aux_bit(data: usize) -> (usize, usize) {
+pub fn decompose_aux_bit(data: usize) -> (usize, usize) {
     (
         (data & aux_bits()).rotate_left(POS_AUX_BITS + NR_AUX_BITS),
         !aux_bits() & data,

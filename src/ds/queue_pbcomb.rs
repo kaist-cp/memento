@@ -1,15 +1,15 @@
 //! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
-//!
-//! NOTE: This is not memento-based yet.
 #![allow(non_snake_case)]
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, POwned};
-use crate::ploc::{compose_aux_bit, decompose_aux_bit};
-use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
+use crate::ploc::Checkpoint;
+use crate::pmem::{persist_obj, sfence, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
+use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use etrace::ok_or;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tinyvec::tiny_vec;
 
 const MAX_THREADS: usize = 32;
@@ -18,57 +18,71 @@ type Data = usize; // TODO: generic
 /// 사용할 스레드 수. combining시 이 스레드 수만큼만 op 순회
 pub static mut NR_THREADS: usize = MAX_THREADS;
 
-/// function type of queue
-#[derive(Debug)]
-pub enum Func {
-    /// enq
-    ENQUEUE,
+type EnqRetVal = ();
+type DeqRetVal = PPtr<Node>;
 
-    /// deq
-    DEQUEUE,
+/// client for enqueue
+#[derive(Debug, Default)]
+pub struct Enqueue {
+    req: Checkpoint<PAtomic<EnqRequestRec>>,
+    result: Checkpoint<EnqRetVal>,
 }
 
-/// return value of queue function
-#[derive(Debug, Clone)]
-pub enum ReturnVal {
-    /// return value of enq
-    EnqRetVal(()),
+impl Collectable for Enqueue {
+    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut enq.req, tid, gc, pool);
+        Checkpoint::filter(&mut enq.result, tid, gc, pool);
+    }
+}
 
-    /// return value of deq
-    DeqRetVal(PPtr<Node>),
+impl Enqueue {
+    #[inline]
+    fn id(&self, pool: &PoolHandle) -> usize {
+        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
+        unsafe { self.as_pptr(pool).into_offset() }
+    }
+}
+
+/// client for dequeue
+#[derive(Debug, Default)]
+pub struct Dequeue {
+    req: Checkpoint<PAtomic<DeqRequestRec>>,
+    result: Checkpoint<DeqRetVal>,
+}
+
+impl Collectable for Dequeue {
+    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut deq.req, tid, gc, pool);
+        Checkpoint::filter(&mut deq.result, tid, gc, pool);
+    }
+}
+
+impl Dequeue {
+    #[inline]
+    fn id(&self, pool: &PoolHandle) -> usize {
+        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
+        unsafe { self.as_pptr(pool).into_offset() }
+    }
 }
 
 #[derive(Debug, Default)]
-#[repr(align(64))]
-struct RequestRec {
-    func: Option<Func>,
+struct EnqRequestRec {
     arg: usize,
-    act_seq: AtomicUsize, // 1: activate, 63: sequence number
 }
 
-impl RequestRec {
-    // helper function to update activate bit and sequence number atomically
-    #[inline]
-    fn store_act_seq(&self, activate: bool, seq: usize) {
-        self.act_seq
-            .store(compose_aux_bit(activate as usize, seq), Ordering::SeqCst)
-    }
+impl Collectable for EnqRequestRec {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
 
-    #[inline]
-    fn load_seq(&self) -> usize {
-        let (_, seq) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
-        seq
-    }
+#[derive(Debug, Default)]
+struct DeqRequestRec {}
 
-    #[inline]
-    fn load_activate(&self) -> bool {
-        let (act, _) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
-        act != 0
-    }
+impl Collectable for DeqRequestRec {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 /// Node
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Node {
     data: Data,
     next: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
@@ -76,66 +90,43 @@ pub struct Node {
 
 impl Collectable for Node {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut next = s.next.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !next.is_null() {
-            let next_ref = unsafe { next.deref_mut(pool) };
-            Collectable::mark(next_ref, tid, gc);
-        }
+        PAtomic::filter(&mut s.next, tid, gc, pool);
     }
 }
 
 /// State of Enqueue PBComb
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
-}
-
-impl Clone for EStateRec {
-    fn clone(&self) -> Self {
-        Self {
-            tail: self.tail.clone(),
-            return_val: self.return_val.clone(),
-            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
-        }
-    }
+    return_val: [Option<EnqRetVal>; MAX_THREADS + 1],
+    deactivate: [PAtomic<EnqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴 (TODO(opt) AtomicUsize로 할까?)
 }
 
 impl Collectable for EStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut tail = s.tail.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !tail.is_null() {
-            let tail_ref = unsafe { tail.deref_mut(pool) };
-            Collectable::mark(tail_ref, tid, gc);
+        PAtomic::filter(&mut s.tail, tid, gc, pool);
+        for tid in 0..MAX_THREADS + 1 {
+            PAtomic::filter(&mut s.deactivate[tid], tid, gc, pool);
         }
     }
 }
 
 /// State of Dequeue PBComb
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
-}
-
-impl Clone for DStateRec {
-    fn clone(&self) -> Self {
-        Self {
-            head: self.head.clone(),
-            return_val: self.return_val.clone(),
-            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
-        }
-    }
+    return_val: [Option<DeqRetVal>; MAX_THREADS + 1],
+    deactivate: [PAtomic<DeqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴 (TODO(opt) AtomicUsize로 할까?)
 }
 
 impl Collectable for DStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut head = s.head.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !head.is_null() {
-            let head_ref = unsafe { head.deref_mut(pool) };
-            Collectable::mark(head_ref, tid, gc);
+        PAtomic::filter(&mut s.head, tid, gc, pool);
+        for tid in 0..MAX_THREADS + 1 {
+            if let Some(mut ret) = s.return_val[tid] {
+                PPtr::filter(&mut ret, tid, gc, pool);
+            }
+            PAtomic::filter(&mut s.deactivate[tid], tid, gc, pool);
         }
     }
 }
@@ -150,47 +141,47 @@ lazy_static::lazy_static! {
 
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
-    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: AtomicUsize = AtomicUsize::new(0);
-    static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
 }
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct QueuePBComb {
+pub struct Queue {
     /// Shared non-volatile variables
     dummy: PPtr<Node>,
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     // NOTE: enq하는데 deq의 variable을 쓰는 실수 주의
-    e_request: [RequestRec; MAX_THREADS + 1],
+    e_request: [CachePadded<PAtomic<EnqRequestRec>>; MAX_THREADS + 1],
     e_state: [CachePadded<EStateRec>; 2],
     e_index: AtomicUsize,
 
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
-    d_request: [RequestRec; MAX_THREADS + 1],
+    d_request: [CachePadded<PAtomic<DeqRequestRec>>; MAX_THREADS + 1],
     d_state: [CachePadded<DStateRec>; 2],
     d_index: AtomicUsize,
 }
 
-impl Collectable for QueuePBComb {
+impl Collectable for Queue {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        assert!(s.dummy.is_null());
-        Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
-
-        for t in 0..MAX_THREADS {
-            Collectable::filter(&mut *s.e_state[t], tid, gc, pool);
-            Collectable::filter(&mut *s.d_state[t], tid, gc, pool);
+        PPtr::filter(&mut s.dummy, tid, gc, pool);
+        for tid in 0..MAX_THREADS + 1 {
+            PAtomic::filter(&mut *s.e_request[tid], tid, gc, pool);
+            PAtomic::filter(&mut *s.d_request[tid], tid, gc, pool);
         }
+        EStateRec::filter(&mut *s.e_state[0], tid, gc, pool);
+        EStateRec::filter(&mut *s.e_state[1], tid, gc, pool);
+        DStateRec::filter(&mut *s.d_state[0], tid, gc, pool);
+        DStateRec::filter(&mut *s.d_state[1], tid, gc, pool);
 
         // initialize global volatile variable manually
         OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
     }
 }
 
-impl PDefault for QueuePBComb {
+impl PDefault for Queue {
     fn pdefault(pool: &PoolHandle) -> Self {
         let dummy = pool.alloc::<Node>();
         let dummy_ref = unsafe { dummy.deref_mut(pool) };
@@ -207,7 +198,7 @@ impl PDefault for QueuePBComb {
                 CachePadded::new(EStateRec {
                     tail: PAtomic::from(dummy),
                     return_val: array_init(|_| None),
-                    deactivate: array_init(|_| AtomicBool::new(false)),
+                    deactivate: array_init(|_| PAtomic::null()),
                 })
             }),
             e_index: Default::default(),
@@ -216,7 +207,7 @@ impl PDefault for QueuePBComb {
                 CachePadded::new(DStateRec {
                     head: PAtomic::from(dummy),
                     return_val: array_init(|_| None),
-                    deactivate: array_init(|_| AtomicBool::new(false)),
+                    deactivate: array_init(|_| PAtomic::null()),
                 })
             }),
             d_index: Default::default(),
@@ -224,109 +215,59 @@ impl PDefault for QueuePBComb {
     }
 }
 
-impl QueuePBComb {
-    /// normal run
-    ///
-    /// enq or deq 실행
-    pub fn PBQueue(
-        &mut self,
-        func: Func,
-        arg: Data,
-        seq: usize,
-        tid: usize,
-        pool: &PoolHandle,
-    ) -> ReturnVal {
-        match func {
-            Func::ENQUEUE => self.PBQueueEnq(arg, seq, tid, pool),
-            Func::DEQUEUE => self.PBQueueDnq(seq, tid, pool),
-        }
-    }
-
-    /// recovery run
-    ///
-    /// 최근 crash난 enq or deq를 재실행 (exactly-once)
-    pub fn recover(
-        &mut self,
-        func: Func,
-        arg: Data,
-        seq: usize,
-        tid: usize,
-        pool: &PoolHandle,
-    ) -> ReturnVal {
-        match func {
-            Func::ENQUEUE => {
-                // 1. check seq number and re-announce if request is not yet announced
-                if self.e_request[tid].load_seq() != seq {
-                    return self.PBQueue(func, arg, seq, tid, pool);
-                }
-
-                // 2. check activate and re-execute if request is not yet applied
-                let e_state = &self.e_state[self.e_index.load(Ordering::SeqCst)];
-                if self.e_request[tid].load_activate()
-                    != e_state.deactivate[tid].load(Ordering::SeqCst)
-                {
-                    return self.PerformEnqReq(tid, pool);
-                }
-
-                // 3. return value if request is already applied
-                return e_state.return_val[tid].clone().unwrap();
-            }
-            Func::DEQUEUE => {
-                // 1. check seq number and re-announce if request is not yet announced
-                if self.d_request[tid].load_seq() != seq {
-                    return self.PBQueue(func, arg, seq, tid, pool);
-                }
-
-                // 2. check activate and re-execute if request is not yet applied
-                let d_state = &self.d_state[self.d_index.load(Ordering::SeqCst)];
-                if self.d_request[tid].load_activate()
-                    != d_state.deactivate[tid].load(Ordering::SeqCst)
-                {
-                    return self.PerformDeqReq(tid, pool);
-                }
-
-                // 3. return value if request is already applied
-                return d_state.return_val[tid].clone().unwrap();
-            }
-        }
-    }
-}
-
 /// Enq
-impl QueuePBComb {
-    /// enqueue 요청 등록 후 실행 (thread-local)
-    fn PBQueueEnq(&mut self, arg: Data, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
-        // 요청 등록
-        self.e_request[tid].func = Some(Func::ENQUEUE);
-        self.e_request[tid].arg = arg;
-        self.e_request[tid].store_act_seq(!self.e_request[tid].load_activate(), seq);
+impl Queue {
+    /// enq 요청 등록 후 수행
+    pub fn PBQueueEnq<const REC: bool>(
+        &mut self,
+        arg: Data,
+        enq: &mut Enqueue,
+        tid: usize,
+        pool: &PoolHandle,
+    ) -> EnqRetVal {
+        // 새로운 요청 생성
+        let req = POwned::new(EnqRequestRec { arg }, pool);
+        persist_obj(unsafe { req.deref(pool) }, true);
 
-        // 실행
-        self.PerformEnqReq(tid, pool)
+        let req = ok_or!(
+            enq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
+            e,
+            unsafe {
+                drop(e.new.load(Ordering::Relaxed, unprotected()).into_owned());
+                e.current
+            }
+        )
+        .load(Ordering::Relaxed, unsafe { unprotected() });
+
+        // 이전에 끝난 client라면 같은 결과 반환
+        if REC {
+            if let Some(res) = enq.result.peek(tid, pool) {
+                return res;
+            }
+        }
+
+        // 요청 저장소에 등록
+        self.e_request[tid].store(req, Ordering::SeqCst);
+
+        // 등록한 요청 수행
+        self.PerformEnqReq::<REC>(enq, tid, pool)
     }
 
-    /// enqueue 요청 실행 (thread-local)
-    fn PerformEnqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    /// 요청 수행
+    fn PerformEnqReq<const REC: bool>(
+        &mut self,
+        enq: &mut Enqueue,
+        tid: usize,
+        pool: &PoolHandle,
+    ) -> EnqRetVal {
         // enq combiner 결정
-        let mut lval;
         loop {
-            lval = E_LOCK.load(Ordering::SeqCst);
-
-            // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
-            // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if lval % 2 == 0 {
-                match E_LOCK.compare_exchange(
-                    lval,
-                    lval.wrapping_add(1),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    Ok(_) => {
-                        lval = lval.wrapping_add(1);
-                        break;
-                    }
-                    Err(cur) => lval = cur,
-                }
+            // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
+            // TODO(must): volatile lock 따로 빼기
+            let _ = E_LOCK.compare_exchange(0, enq.id(pool), Ordering::SeqCst, Ordering::SeqCst);
+            let lval = E_LOCK.load(Ordering::SeqCst);
+            if lval == enq.id(pool) {
+                break;
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -334,20 +275,27 @@ impl QueuePBComb {
             while lval == E_LOCK.load(Ordering::SeqCst) {
                 backoff.snooze();
             }
-            if self.e_request[tid].load_activate()
+
+            if self.e_request[tid].load(Ordering::SeqCst, unsafe { unprotected() })
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
-                    .load(Ordering::SeqCst)
+                    .load(Ordering::SeqCst, unsafe { unprotected() })
             {
-                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
-                let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
-                backoff.reset();
-                while !(deactivate_lval < E_LOCK.load(Ordering::SeqCst)) {
-                    backoff.snooze();
+                // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
+                let lval = E_LOCK.load(Ordering::SeqCst);
+                if lval != 0 {
+                    // NOTE: 같은 client가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
+                    backoff.reset();
+                    while lval == E_LOCK.load(Ordering::SeqCst) {
+                        backoff.snooze();
+                    }
                 }
 
-                return self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
+                // 결과 저장하고 반환
+                let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
                     .unwrap();
+                let _ = enq.result.checkpoint::<REC>(res, tid, pool);
+                return res;
             }
         }
 
@@ -362,13 +310,12 @@ impl QueuePBComb {
             Ordering::SeqCst,
         );
 
-        // enq한 노드들(의 상대주소)을 여기에 모아뒀다가 나중에 한꺼번에 persist
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
 
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
-            if self.e_request[q].load_activate()
-                != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
+            if self.e_request[q].load(Ordering::SeqCst, unsafe { unprotected() })
+                != self.e_state[ind].deactivate[q].load(Ordering::SeqCst, unsafe { unprotected() })
             {
                 // 현재 tail의 persist를 예약
                 let tail_addr = self.e_state[ind]
@@ -381,11 +328,14 @@ impl QueuePBComb {
                 }
 
                 // enq
-                Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
-                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
-                self.e_state[ind].deactivate[q]
-                    .store(self.e_request[q].load_activate(), Ordering::SeqCst);
+                let q_req = self.e_request[q].load(Ordering::SeqCst, unsafe { unprotected() });
+                Self::raw_enqueue(
+                    &mut self.e_state[ind].tail,
+                    unsafe { q_req.deref(pool) }.arg,
+                    pool,
+                );
+                self.e_state[ind].return_val[q] = Some(());
+                self.e_state[ind].deactivate[q].store(q_req, Ordering::SeqCst);
             }
         }
         let tail_addr = self.e_state[ind]
@@ -408,14 +358,18 @@ impl QueuePBComb {
         persist_obj(&self.e_index, false);
         sfence();
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
-        E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
-        self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
+        E_LOCK.store(0, Ordering::SeqCst);
+
+        // 결과 저장하고 반환
+        let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
             .clone()
-            .unwrap()
+            .unwrap();
+        let _ = enq.result.checkpoint::<REC>(res, tid, pool);
+        return res;
     }
 
     /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
-    fn enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) {
+    fn raw_enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) {
         let new_node = POwned::new(
             Node {
                 data: arg,
@@ -431,39 +385,56 @@ impl QueuePBComb {
 }
 
 /// Deq
-impl QueuePBComb {
-    /// dequeue 요청 등록 후 실행 (thread-local)
-    fn PBQueueDnq(&mut self, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
-        // 요청 등록
-        self.d_request[tid].func = Some(Func::DEQUEUE);
-        self.d_request[tid].store_act_seq(!self.d_request[tid].load_activate(), seq);
+impl Queue {
+    /// deq 요청 등록 후 수행
+    pub fn PBQueueDeq<const REC: bool>(
+        &mut self,
+        deq: &mut Dequeue,
+        tid: usize,
+        pool: &PoolHandle,
+    ) -> DeqRetVal {
+        // 새로운 요청 생성
+        let req = POwned::new(DeqRequestRec {}, pool);
+        persist_obj(unsafe { req.deref(pool) }, true);
 
-        // 실행
-        self.PerformDeqReq(tid, pool)
+        let req = ok_or!(
+            deq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
+            e,
+            unsafe {
+                drop(e.new.load(Ordering::Relaxed, unprotected()).into_owned());
+                e.current
+            }
+        )
+        .load(Ordering::Relaxed, unsafe { unprotected() });
+
+        // 이전에 끝난 client라면 같은 결과 반환
+        if REC {
+            if let Some(res) = deq.result.peek(tid, pool) {
+                return res;
+            }
+        }
+
+        // 요청 저장소에 등록
+        self.d_request[tid].store(req, Ordering::SeqCst);
+
+        // 등록한 요청 수행
+        self.PerformDeqReq::<REC>(deq, tid, pool)
     }
 
-    /// dequeue 요청 실행 (thread-local)
-    fn PerformDeqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    /// 요청 수행
+    fn PerformDeqReq<const REC: bool>(
+        &mut self,
+        deq: &mut Dequeue,
+        tid: usize,
+        pool: &PoolHandle,
+    ) -> DeqRetVal {
         // deq combiner 결정
-        let mut lval;
         loop {
-            lval = D_LOCK.load(Ordering::SeqCst);
-
-            // lval이 홀수라면 이미 누가 lock잡고 combine 수행하고 있는 것.
-            // lval이 짝수라면 내가 lock잡고 combiner 되기를 시도
-            if lval % 2 == 0 {
-                match D_LOCK.compare_exchange(
-                    lval,
-                    lval.wrapping_add(1),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    Ok(_) => {
-                        lval = lval.wrapping_add(1);
-                        break;
-                    }
-                    Err(cur) => lval = cur,
-                }
+            // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
+            let _ = D_LOCK.compare_exchange(0, deq.id(pool), Ordering::SeqCst, Ordering::SeqCst);
+            let lval = D_LOCK.load(Ordering::SeqCst);
+            if lval == deq.id(pool) {
+                break;
             }
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -471,20 +442,27 @@ impl QueuePBComb {
             while lval == D_LOCK.load(Ordering::SeqCst) {
                 backoff.snooze();
             }
-            if self.d_request[tid].load_activate()
+
+            if self.d_request[tid].load(Ordering::SeqCst, unsafe { unprotected() })
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
-                    .load(Ordering::SeqCst)
+                    .load(Ordering::SeqCst, unsafe { unprotected() })
             {
-                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
-                let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
-                backoff.reset();
-                while !(deactivate_lval < D_LOCK.load(Ordering::SeqCst)) {
-                    backoff.snooze();
+                // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
+                let lval = D_LOCK.load(Ordering::SeqCst);
+                if lval != 0 {
+                    // NOTE: 같은 client가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
+                    backoff.reset();
+                    while lval == D_LOCK.load(Ordering::SeqCst) {
+                        backoff.snooze();
+                    }
                 }
 
-                return self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
+                // 결과 저장하고 반환
+                let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
                     .clone()
                     .unwrap();
+                let _ = deq.result.checkpoint::<REC>(res, tid, pool);
+                return res;
             }
         }
 
@@ -494,8 +472,8 @@ impl QueuePBComb {
 
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
-            if self.d_request[q].load_activate()
-                != self.d_state[ind].deactivate[q].load(Ordering::SeqCst)
+            if self.d_request[q].load(Ordering::SeqCst, unsafe { unprotected() })
+                != self.d_state[ind].deactivate[q].load(Ordering::SeqCst, unsafe { unprotected() })
             {
                 let ret_val;
                 // 확실히 persist된 노드들만 deq 수행. OLD_TAIL부터는 현재 enq 중인거라 persist 보장되지 않음
@@ -505,15 +483,16 @@ impl QueuePBComb {
                         .load(Ordering::SeqCst, unsafe { unprotected() })
                         .into_usize()
                 {
-                    let node = Self::dequeue(&self.d_state[ind].head, pool);
-                    ret_val = ReturnVal::DeqRetVal(node);
+                    let node = Self::raw_dequeue(&self.d_state[ind].head, pool);
+                    ret_val = Some(node);
                 } else {
-                    ret_val = ReturnVal::DeqRetVal(PPtr::null());
+                    ret_val = Some(PPtr::null());
                 }
-                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                self.d_state[ind].return_val[q] = Some(ret_val);
-                self.d_state[ind].deactivate[q]
-                    .store(self.d_request[q].load_activate(), Ordering::SeqCst);
+                self.d_state[ind].return_val[q] = ret_val;
+                self.d_state[ind].deactivate[q].store(
+                    self.d_request[q].load(Ordering::SeqCst, unsafe { unprotected() }),
+                    Ordering::SeqCst,
+                )
             }
         }
         persist_obj(&self.d_request, false);
@@ -522,14 +501,18 @@ impl QueuePBComb {
         self.d_index.store(ind, Ordering::SeqCst);
         persist_obj(&self.d_index, false);
         sfence();
-        D_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
-        self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
+        D_LOCK.store(0, Ordering::SeqCst);
+
+        // 결과 저장하고 반환
+        let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
             .clone()
-            .unwrap()
+            .unwrap();
+        let _ = deq.result.checkpoint::<REC>(res, tid, pool);
+        return res;
     }
 
     /// 실질적인 dequeue: head 한 칸 전진하고 old head를 반환
-    fn dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> PPtr<Node> {
+    fn raw_dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> DeqRetVal {
         let head_ref = unsafe { head.load(Ordering::SeqCst, unprotected()).deref(pool) };
 
         // NOTE: 얘네 구현은 데이터를 반환하질 않고 노드를 반환.
@@ -542,37 +525,60 @@ impl QueuePBComb {
         }
         PPtr::from(ret.into_usize())
     }
+
+    fn is_empty(&self, guard: &Guard, pool: &PoolHandle) -> bool {
+        let head_ref = unsafe {
+            self.d_state[self.d_index.load(Ordering::SeqCst)]
+                .head
+                .load(Ordering::SeqCst, guard)
+                .deref(pool)
+        };
+        let next = head_ref.next.load(Ordering::SeqCst, guard);
+        next.is_null()
+    }
 }
 
 #[cfg(test)]
 mod test {
     use std::sync::atomic::Ordering;
 
-    use crate::ds::queue_pbcomb::{Func, QueuePBComb, ReturnVal};
-    use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj};
+    use crate::ds::queue_pbcomb::Queue;
+    use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
+
+    use super::{Dequeue, Enqueue};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
 
-    #[derive(Default)]
     struct EnqDeq {
-        enq_seq: usize,
-        deq_seq: usize,
+        enqs: [Enqueue; COUNT],
+        deqs: [Dequeue; COUNT],
     }
 
-    impl Collectable for EnqDeq {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-            todo!()
+    impl Default for EnqDeq {
+        fn default() -> Self {
+            Self {
+                enqs: array_init::array_init(|_| Enqueue::default()),
+                deqs: array_init::array_init(|_| Dequeue::default()),
+            }
         }
     }
 
-    impl RootObj<EnqDeq> for TestRootObj<QueuePBComb> {
-        fn run(&self, mmt: &mut EnqDeq, tid: usize, _: &Guard, pool: &PoolHandle) {
+    impl Collectable for EnqDeq {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..COUNT {
+                Enqueue::filter(&mut m.enqs[i], tid, gc, pool);
+                Dequeue::filter(&mut m.deqs[i], tid, gc, pool);
+            }
+        }
+    }
+
+    impl RootObj<EnqDeq> for TestRootObj<Queue> {
+        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // Get &mut queue
-            let queue =
-                unsafe { (&self.obj as *const QueuePBComb as *mut QueuePBComb).as_mut() }.unwrap();
+            let queue = unsafe { (&self.obj as *const _ as *mut Queue).as_mut() }.unwrap();
 
             match tid {
                 // T1: 다른 스레드들의 실행결과를 확인
@@ -581,12 +587,9 @@ mod test {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check queue is empty
-                    let res = queue.PBQueue(Func::DEQUEUE, tid, 0, tid, pool);
-                    if let ReturnVal::DeqRetVal(res) = res {
-                        assert!(res.is_null());
-                    } else {
-                        panic!("func and return value must be of the same type");
-                    }
+                    let mut tmp_deq = Dequeue::default();
+                    let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, pool);
+                    assert!(res.is_null());
 
                     // Check results
                     assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
@@ -596,20 +599,16 @@ mod test {
                 // T1이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
                 _ => {
                     // enq; deq;
-                    for _ in 0..COUNT {
-                        let _ = queue.PBQueue(Func::ENQUEUE, tid, mmt.enq_seq, tid, pool);
-                        mmt.enq_seq += 1;
-                        persist_obj(mmt, true);
+                    for i in 0..COUNT {
+                        let val = tid;
+                        queue.PBQueueEnq::<true>(val, &mut enq_deq.enqs[i], tid, pool);
 
-                        let res = queue.PBQueue(Func::DEQUEUE, tid, mmt.deq_seq, tid, pool);
-                        mmt.deq_seq += 1;
-                        persist_obj(mmt, true);
+                        let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, pool);
+                        assert!(!res.is_null());
 
-                        if let ReturnVal::DeqRetVal(res) = res {
-                            // deq 결과를 실험결과에 전달
-                            let v = unsafe { res.deref(pool) }.data;
-                            let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
-                        }
+                        // deq 결과를 실험결과에 전달
+                        let v = unsafe { res.deref(pool) }.data;
+                        let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
                     }
 
                     // "나 끝났다"
@@ -622,8 +621,8 @@ mod test {
     #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "pbcomb_enq_deq.pool";
-        const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<QueuePBComb>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<TestRootObj<Queue>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 }

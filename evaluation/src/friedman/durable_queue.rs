@@ -40,7 +40,7 @@ impl<T: Clone> Node<T> {
 struct DurableQueue<T: Clone> {
     head: CachePadded<PAtomic<Node<T>>>,
     tail: CachePadded<PAtomic<Node<T>>>,
-    ret_val: [CachePadded<PAtomic<Option<T>>>; MAX_THREADS], // None: "EMPTY"
+    ret_val: [CachePadded<PAtomic<Option<T>>>; MAX_THREADS + 1], // None: "EMPTY"
 }
 
 impl<T: Clone> Collectable for DurableQueue<T> {

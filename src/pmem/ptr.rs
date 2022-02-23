@@ -1,5 +1,5 @@
 //! Persistent Pointer
-use super::{pool::PoolHandle, Collectable};
+use super::{pool::PoolHandle, Collectable, GarbageCollection};
 use std::marker::PhantomData;
 
 /// 상대주소의 NULL 식별자
@@ -25,8 +25,13 @@ impl<T: ?Sized> Clone for PPtr<T> {
     }
 }
 
-impl<T> Collectable for PPtr<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut super::GarbageCollection, _: &mut PoolHandle) {}
+impl<T: Collectable> Collectable for PPtr<T> {
+    fn filter(ptr: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        if !ptr.is_null() {
+            let t_ref = unsafe { ptr.deref_mut(pool) };
+            T::mark(t_ref, tid, gc);
+        }
+    }
 }
 
 impl<T: ?Sized> Copy for PPtr<T> {}
