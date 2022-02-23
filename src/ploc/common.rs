@@ -18,10 +18,10 @@ pub(crate) const NR_MAX_THREADS: usize = 511;
 /// TODO(doc)
 #[macro_export]
 macro_rules! impl_left_bits {
-    ($func:ident, $pos:expr, $nr:expr) => {
+    ($func:ident, $pos:expr, $nr:expr, $type:ty) => {
         #[inline]
-        pub(crate) fn $func() -> usize {
-            ((usize::MAX >> $pos) ^ (usize::MAX >> ($pos + $nr)))
+        pub(crate) fn $func() -> $type {
+            ((<$type>::MAX >> $pos) ^ (<$type>::MAX >> ($pos + $nr)))
         }
     };
 }
@@ -29,15 +29,16 @@ macro_rules! impl_left_bits {
 // Auxiliary Bit
 // aux bit: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
 // Used for:
+// - PAtomic: Aux bit
 // - Detectable CAS: Indicating CAS parity (Odd/Even)
 // - Insert: Indicating if the pointer is persisted
 pub(crate) const POS_AUX_BITS: u32 = 0;
 pub(crate) const NR_AUX_BITS: u32 = 1;
-impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS);
+impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
 
 #[inline]
-pub(crate) fn compose_aux_bit(cas_bit: usize, data: usize) -> usize {
-    (aux_bits() & (cas_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
+pub(crate) fn compose_aux_bit(aux_bit: usize, data: usize) -> usize {
+    (aux_bits() & (aux_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
 }
 
 #[inline]
@@ -84,10 +85,10 @@ impl Ord for Timestamp {
 
 impl fmt::Debug for Timestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (aux_bit, time) = self.decompose();
+        let (aux, time) = self.decompose();
 
         f.debug_struct("Timestamp")
-            .field("aux bit", &aux_bit)
+            .field("aux", &aux)
             .field("timestamp", &time)
             .finish()
     }
@@ -95,21 +96,40 @@ impl fmt::Debug for Timestamp {
 
 impl Timestamp {
     /// TODO(doc)
+    /// 62-bit timestamp with 2-bit high tag
     #[inline]
-    pub fn new(aux: bool, t: u64) -> Self {
-        Self(compose_aux_bit(Self::aux_to_bit(aux), t as usize) as u64)
+    pub fn new(high_tag: u64, t: u64) -> Self {
+        Self(Self::compose_high_tag(high_tag, t))
+    }
+
+    const POS_HIGH_BITS: u32 = 0;
+    const NR_HIGH_BITS: u32 = 2;
+    impl_left_bits!(high_bits, 0, 2, u64);
+
+    #[inline]
+    fn compose_high_tag(high_tag: u64, data: u64) -> u64 {
+        (Self::high_bits() & (high_tag.rotate_right(Self::POS_HIGH_BITS + Self::NR_HIGH_BITS)))
+            | (!Self::high_bits() & data)
+    }
+
+    #[inline]
+    fn decompose_high_tag(data: u64) -> (u64, u64) {
+        (
+            (data & Self::high_bits()).rotate_left(Self::POS_HIGH_BITS + Self::NR_HIGH_BITS),
+            !Self::high_bits() & data,
+        )
     }
 
     /// TODO(doc)
     #[inline]
-    pub fn decompose(&self) -> (bool, u64) {
-        let (aux, t) = decompose_aux_bit(self.0 as usize);
-        (aux == 1, t as u64)
+    pub fn decompose(&self) -> (u64, u64) {
+        let (htag, t) = Self::decompose_high_tag(self.0);
+        (htag, t)
     }
 
     /// TODO(doc)
     #[inline]
-    pub fn aux(&self) -> bool {
+    pub fn high_tag(&self) -> u64 {
         self.decompose().0
     }
 
@@ -117,16 +137,6 @@ impl Timestamp {
     #[inline]
     pub fn time(&self) -> u64 {
         self.decompose().1
-    }
-
-    /// TODO(doc)
-    #[inline]
-    pub fn aux_to_bit(aux: bool) -> usize {
-        if aux {
-            1
-        } else {
-            0
-        }
     }
 }
 
@@ -152,7 +162,7 @@ pub(crate) struct ExecInfo {
 impl From<&'static [CASCheckpointArr; 2]> for ExecInfo {
     fn from(chk_ref: &'static [CASCheckpointArr; 2]) -> Self {
         Self {
-            local_max_time: array_init::array_init(|_| AtomicU64::default()),
+            local_max_time: array_init::array_init(|_| AtomicU64::new(0)),
             global_max_time: Timestamp::from(0),
             chk_info: Timestamp::from(0),
             cas_info: CasInfo::from(chk_ref),
@@ -201,8 +211,8 @@ impl<T: Default + Clone + Collectable> Default for Checkpoint<T> {
     fn default() -> Self {
         Self {
             saved: [
-                CachePadded::new((T::default(), Timestamp::new(false, 0))),
-                CachePadded::new((T::default(), Timestamp::new(false, 0))),
+                CachePadded::new((T::default(), Timestamp::from(0))),
+                CachePadded::new((T::default(), Timestamp::from(0))),
             ],
         }
     }
@@ -217,7 +227,7 @@ impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
             pool.exec_info.chk_info = chk.saved[idx].1;
         }
 
-        if chk.saved[idx].1.aux() {
+        if chk.saved[idx].1.time() > 0 {
             T::filter(&mut chk.saved[idx].0, tid, gc, pool);
         }
     }
@@ -253,14 +263,14 @@ where
         let idx = self.min_idx();
 
         // Normal run
-        self.saved[idx].1 = Timestamp::new(false, 0); // First, invalidate existing data.
+        self.saved[idx].1 = Timestamp::from(0); // First, invalidate existing data.
         if std::mem::size_of::<(T, Timestamp)>() > 1 << CACHE_LINE_SHIFT {
             persist_obj(&self.saved[idx].1, true);
         }
         compiler_fence(Ordering::Release);
 
         let t = pool.exec_info.exec_time();
-        self.saved[idx] = CachePadded::new((new.clone(), Timestamp::new(true, t)));
+        self.saved[idx] = CachePadded::new((new.clone(), Timestamp::from(t)));
         pool.exec_info.local_max_time[tid].store(self.saved[idx].1.into(), Ordering::Relaxed);
         persist_obj(&*self.saved[idx], true);
         Ok(new)
@@ -269,7 +279,7 @@ where
     /// TODO(doc)
     #[inline]
     fn is_valid(&self, idx: usize, tid: usize, pool: &PoolHandle) -> bool {
-        self.saved[idx].1.aux()
+        self.saved[idx].1.time() > 0
             && self.saved[idx].1
                 > Timestamp::from(pool.exec_info.local_max_time[tid].load(Ordering::Relaxed))
     }
