@@ -46,7 +46,7 @@ impl VSpinLock {
     }
 }
 
-/// Token
+/// SpinLock Guard
 #[derive(Debug)]
 pub struct SpinLockGuard<'a> {
     lock: &'a VSpinLock,
