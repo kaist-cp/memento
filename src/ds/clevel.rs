@@ -53,8 +53,12 @@ impl<K, V> Default for Insert<K, V> {
 }
 
 impl<K, V> Collectable for Insert<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
+    fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut insert.occupied, tid, gc, pool);
+        Checkpoint::filter(&mut insert.node, tid, gc, pool);
+        InsertInner::filter(&mut insert.insert_inner, tid, gc, pool);
+        Checkpoint::filter(&mut insert.move_done, tid, gc, pool);
+        Cas::filter(&mut insert.tag_cas, tid, gc, pool);
     }
 }
 
@@ -75,8 +79,14 @@ impl<K, V> Default for InsertInner<K, V> {
 }
 
 impl<K, V> Collectable for InsertInner<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
+    fn filter(
+        insert_inner: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut insert_inner.insert_chk, tid, gc, pool);
+        Cas::filter(&mut insert_inner.insert_cas, tid, gc, pool);
     }
 }
 
@@ -101,8 +111,11 @@ impl<K, V> Default for Resize<K, V> {
 }
 
 impl<K, V> Collectable for Resize<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
+    fn filter(resize: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut resize.delete_chk, tid, gc, pool);
+        Cas::filter(&mut resize.delete_cas, tid, gc, pool);
+        Checkpoint::filter(&mut resize.insert_chk, tid, gc, pool);
+        Cas::filter(&mut resize.insert_cas, tid, gc, pool);
     }
 }
 
@@ -123,8 +136,14 @@ impl<K, V> Default for TryDelete<K, V> {
 }
 
 impl<K, V> Collectable for TryDelete<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
+    fn filter(
+        try_delete: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Cas::filter(&mut try_delete.delete_cas, tid, gc, pool);
+        Checkpoint::filter(&mut try_delete.find_result_chk, tid, gc, pool);
     }
 }
 
@@ -143,8 +162,8 @@ impl<K, V> Default for Delete<K, V> {
 }
 
 impl<K, V> Collectable for Delete<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
+    fn filter(delete: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        TryDelete::filter(&mut delete.try_delete, tid, gc, pool);
     }
 }
 
@@ -254,6 +273,7 @@ struct Context<K, V> {
 }
 
 impl<K, V> Collectable for Context<K, V> {
+    // TODO(must): 아마 volatile이어야 할 거임
     fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
@@ -666,7 +686,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
             self.add_level_lock.lock(); // TODO(must): volatile lock을 쓴다해도 여기에 도달했을 때 다시 lock을 얻어야 함
                                         // TODO(opt): try lock
             let next_node = new_node(next_level_size, pool);
-            // TODO(must): CAS 후 persist가 되어야 함 (general CAS까진 쓸 거 없이 이쪽+윗쪽에서만 하면 될 듯)
             let res = first_level
                 .next
                 .compare_exchange(
