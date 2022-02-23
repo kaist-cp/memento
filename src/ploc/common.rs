@@ -177,13 +177,13 @@ impl ExecInfo {
     pub(crate) fn set_info(&mut self) {
         let max = self
             .cas_info
-            .cas_own
+            .own
             .iter()
             .fold(Timestamp::from(0), |m, chk| {
                 let t = Timestamp::from(chk.load(Ordering::Relaxed));
                 std::cmp::max(m, t)
             });
-        let max = self.cas_info.cas_help.iter().fold(max, |m, chk_arr| {
+        let max = self.cas_info.help.iter().fold(max, |m, chk_arr| {
             chk_arr.iter().fold(m, |mm, chk| {
                 let t = Timestamp::from(chk.load(Ordering::Relaxed));
                 std::cmp::max(mm, t)

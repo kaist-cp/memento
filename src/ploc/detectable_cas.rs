@@ -64,7 +64,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
 
         let prev_chk =
-            Timestamp::from(pool.exec_info.cas_info.cas_own[tid].load(Ordering::Relaxed));
+            Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
         let parity = !cas_parity_from_timestamp(prev_chk);
         let tmp_new = new.with_aux_bit(cas_parity_to_bit(parity)).with_tid(tid);
 
@@ -130,13 +130,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return Some(Err(self.load_help(cur, exec_info, guard)));
         }
 
-        let vchk = Timestamp::from(exec_info.cas_info.cas_own[tid].load(Ordering::Relaxed));
+        let vchk = Timestamp::from(exec_info.cas_info.own[tid].load(Ordering::Relaxed));
         let vchk_par = cas_parity_from_timestamp(vchk);
 
         if let CasState::Success = cas_state {
             // TODO(must): local timestamp와 겹쳐서 잉여정보가 아닌지 생각해봐야 함
             if mmt.checkpoint > vchk {
-                exec_info.cas_info.cas_own[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
+                exec_info.cas_info.own[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
             }
 
             if mmt.checkpoint >= vchk {
@@ -174,7 +174,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         // CAS 성공한 뒤에 helping 받은 건지 체크
         let pchk = Timestamp::from(
-            exec_info.cas_info.cas_help[cas_parity_to_bit(next_par)][tid].load(Ordering::SeqCst),
+            exec_info.cas_info.help[cas_parity_to_bit(next_par)][tid].load(Ordering::SeqCst),
         );
         if vchk >= pchk {
             return None;
@@ -247,7 +247,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             let winner_bit = old.aux_bit();
 
             // check if winner thread's pcheckpoint is stale
-            let pchk = exec_info.cas_info.cas_help[winner_bit][winner_tid].load(Ordering::SeqCst);
+            let pchk = exec_info.cas_info.help[winner_bit][winner_tid].load(Ordering::SeqCst);
             if chk <= pchk {
                 // Someone may already help it. I should retry to load.
                 old = self.inner.load(Ordering::SeqCst, guard);
@@ -258,7 +258,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, false);
 
             // CAS winner thread's pcheckpoint
-            if exec_info.cas_info.cas_help[winner_bit][winner_tid]
+            if exec_info.cas_info.help[winner_bit][winner_tid]
                 .compare_exchange(pchk, chk, Ordering::SeqCst, Ordering::SeqCst)
                 .is_err()
             {
@@ -268,7 +268,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // help pointer to be clean.
-            persist_obj(&exec_info.cas_info.cas_help[winner_bit][winner_tid], false);
+            persist_obj(&exec_info.cas_info.help[winner_bit][winner_tid], false);
             match self.inner.compare_exchange(
                 old,
                 old.with_tid(0),
@@ -291,17 +291,17 @@ unsafe impl<N: Collectable> Sync for DetectableCASAtomic<N> {}
 #[derive(Debug)]
 pub(crate) struct CasInfo {
     /// tid별 스스로 cas 성공한 시간
-    pub(crate) cas_own: CASCheckpointArr,
+    pub(crate) own: CASCheckpointArr,
 
     /// tid별 helping 받은 시간
-    pub(crate) cas_help: &'static [CASCheckpointArr; 2],
+    pub(crate) help: &'static [CASCheckpointArr; 2],
 }
 
 impl From<&'static [CASCheckpointArr; 2]> for CasInfo {
     fn from(chk_ref: &'static [CASCheckpointArr; 2]) -> Self {
         Self {
-            cas_own: array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
-            cas_help: chk_ref,
+            own: array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
+            help: chk_ref,
         }
     }
 }
@@ -325,10 +325,10 @@ impl<N> Default for Cas<N> {
 impl<N> Collectable for Cas<N> {
     fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
         // CAS client 중 max checkpoint를 가진 걸로 vcheckpoint에 기록해줌
-        let vchk = Timestamp::from(pool.exec_info.cas_info.cas_own[tid].load(Ordering::Relaxed));
+        let vchk = Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
 
         if cas.checkpoint > vchk {
-            pool.exec_info.cas_info.cas_own[tid].store(cas.checkpoint.into(), Ordering::Relaxed);
+            pool.exec_info.cas_info.own[tid].store(cas.checkpoint.into(), Ordering::Relaxed);
         }
     }
 }
@@ -346,7 +346,7 @@ impl<N> Cas<N> {
         let new_chk = Timestamp::new(if parity { PARITY } else { 0 }, t);
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, false); // There is always a CAS after this function
-        exec_info.cas_info.cas_own[tid].store(new_chk.into(), Ordering::Relaxed);
+        exec_info.cas_info.own[tid].store(new_chk.into(), Ordering::Relaxed);
         exec_info.local_max_time[tid].store(new_chk.into(), Ordering::Relaxed);
     }
 
