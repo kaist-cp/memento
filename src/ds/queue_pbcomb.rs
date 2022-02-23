@@ -1,6 +1,4 @@
 //! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
-//!
-//! NOTE: This is not memento-based yet.
 #![allow(non_snake_case)]
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, POwned};
@@ -25,7 +23,6 @@ type DeqRetVal = PPtr<Node>;
 
 /// client for enqueue
 #[derive(Debug, Default)]
-#[repr(align(64))] // TODO(opt) align으로 정의하지 말고 사용하는 곳에서 cachepadded?
 pub struct Enqueue {
     req: Checkpoint<PAtomic<EnqRequestRec>>,
     result: Checkpoint<EnqRetVal>,
@@ -266,6 +263,7 @@ impl Queue {
         // enq combiner 결정
         loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
+            // TODO(must): volatile lock 따로 빼기
             let _ = E_LOCK.compare_exchange(0, enq.id(pool), Ordering::SeqCst, Ordering::SeqCst);
             let lval = E_LOCK.load(Ordering::SeqCst);
             if lval == enq.id(pool) {
