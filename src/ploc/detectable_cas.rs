@@ -84,10 +84,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     continue;
                 }
 
-                // TODO(must): FAILED도 timestamp가 기록되어야 함
                 if !mmt.is_failed() {
-                    mmt.checkpoint = Timestamp::from(FAILED);
-                    persist_obj(&mmt.checkpoint, true);
+                    mmt.check_as_failure(&pool.exec_info);
                 }
 
                 return Err(cur);
@@ -128,7 +126,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let cas_state = mmt.state(tid, exec_info);
 
         if let CasState::Failure = cas_state {
-            // TODO(must): FAILED도 timestamp 확인해야 함
             let cur = self.inner.load(Ordering::SeqCst, guard);
             return Some(Err(self.load_help(cur, exec_info, guard)));
         }
@@ -354,11 +351,9 @@ impl<N> Cas<N> {
     }
 
     fn state(&self, tid: usize, exec_info: &ExecInfo) -> CasState {
-        if self.checkpoint == Timestamp::from(0) {
-            return CasState::NotChecked;
-        }
-
-        if self.checkpoint < Timestamp::from(exec_info.local_max_time[tid].load(Ordering::Relaxed))
+        if self.checkpoint == Timestamp::from(0)
+            || self.checkpoint
+                < Timestamp::from(exec_info.local_max_time[tid].load(Ordering::Relaxed))
         {
             return CasState::NotChecked;
         }
@@ -368,6 +363,13 @@ impl<N> Cas<N> {
         }
 
         CasState::Success
+    }
+
+    #[inline]
+    fn check_as_failure(&mut self, exec_info: &ExecInfo) {
+        let t = exec_info.exec_time();
+        self.checkpoint = Timestamp::new(FAILED, t);
+        persist_obj(&self.checkpoint, true);
     }
 
     #[inline]
