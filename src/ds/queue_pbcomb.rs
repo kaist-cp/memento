@@ -4,10 +4,9 @@ use crate::ds::spin_lock_volatile::VSpinLock;
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, POwned};
 use crate::ploc::Checkpoint;
-use crate::pmem::{persist_obj, sfence, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle};
+use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
-use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
 use etrace::ok_or;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,14 +35,6 @@ impl Collectable for Enqueue {
     }
 }
 
-impl Enqueue {
-    #[inline]
-    fn id(&self, pool: &PoolHandle) -> usize {
-        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
-        unsafe { self.as_pptr(pool).into_offset() }
-    }
-}
-
 /// client for dequeue
 #[derive(Debug, Default)]
 pub struct Dequeue {
@@ -55,14 +46,6 @@ impl Collectable for Dequeue {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut deq.req, tid, gc, pool);
         Checkpoint::filter(&mut deq.result, tid, gc, pool);
-    }
-}
-
-impl Dequeue {
-    #[inline]
-    fn id(&self, pool: &PoolHandle) -> usize {
-        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
-        unsafe { self.as_pptr(pool).into_offset() }
     }
 }
 
@@ -523,17 +506,6 @@ impl Queue {
         }
         PPtr::from(ret.into_usize())
     }
-
-    fn is_empty(&self, guard: &Guard, pool: &PoolHandle) -> bool {
-        let head_ref = unsafe {
-            self.d_state[self.d_index.load(Ordering::SeqCst)]
-                .head
-                .load(Ordering::SeqCst, guard)
-                .deref(pool)
-        };
-        let next = head_ref.next.load(Ordering::SeqCst, guard);
-        next.is_null()
-    }
 }
 
 #[cfg(test)]
@@ -547,8 +519,8 @@ mod test {
 
     use super::{Dequeue, Enqueue};
 
-    const NR_THREAD: usize = 4;
-    const COUNT: usize = 1000;
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 100_000;
 
     struct EnqDeq {
         enqs: [Enqueue; COUNT],
