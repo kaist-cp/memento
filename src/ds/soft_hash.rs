@@ -1,7 +1,8 @@
 //! TODO doc
 use super::soft_list::{thread_ini, Insert, Remove, SOFTList};
-use crate::pmem::PoolHandle;
+use crate::pmem::{Collectable, PoolHandle};
 use core::hash::{Hash, Hasher};
+use crossbeam_epoch::Guard;
 use fasthash::Murmur3Hasher;
 
 const BUCKET_NUM: usize = 16777216;
@@ -13,7 +14,7 @@ pub fn hash_thread_ini(tid: usize, pool: &PoolHandle) {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct SOFTHashTable<T> {
+pub struct SOFTHashTable<T: Default> {
     table: [SOFTList<T>; BUCKET_NUM],
 }
 
@@ -25,17 +26,19 @@ impl<T: Default> Default for SOFTHashTable<T> {
     }
 }
 
-impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
+impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
     /// insert
     pub fn insert<const REC: bool>(
         &self,
         k: usize,
         item: T,
         client: &mut HashInsert<T>,
+        tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.insert::<REC>(k, item, &mut client.insert, pool)
+        bucket.insert::<REC>(k, item, &mut client.insert, tid, guard, pool)
     }
 
     /// TODO: doc
@@ -43,10 +46,12 @@ impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
         &self,
         k: usize,
         client: &mut HashRemove<T>,
+        tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
         let bucket = self.get_bucket(k);
-        bucket.remove::<REC>(k, &mut client.remove, pool)
+        bucket.remove::<REC>(k, &mut client.remove, tid, guard, pool)
     }
 
     /// TODO: doc
@@ -65,27 +70,49 @@ impl<T: 'static + Clone + PartialEq> SOFTHashTable<T> {
 
 /// TODO: doc
 #[derive(Debug, Default)]
-pub struct HashInsert<T: 'static> {
+pub struct HashInsert<T: Default + 'static> {
     insert: Insert<T>,
 }
 
-impl<T> HashInsert<T> {
+impl<T: Default> HashInsert<T> {
     /// TODO: doc
-    pub fn reset(&mut self) {
-        self.insert.reset()
+    pub fn clear(&mut self) {
+        self.insert.clear()
+    }
+}
+
+impl<T: Default> Collectable for HashInsert<T> {
+    fn filter(
+        s: &mut Self,
+        tid: usize,
+        gc: &mut crate::pmem::GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Collectable::filter(&mut s.insert, tid, gc, pool);
     }
 }
 
 /// TODO: doc
 #[derive(Debug, Default)]
-pub struct HashRemove<T: 'static> {
+pub struct HashRemove<T: Default + 'static> {
     remove: Remove<T>,
 }
 
-impl<T: PartialEq + Clone> HashRemove<T> {
-    /// TODO: doc
-    pub fn reset(&mut self) {
-        self.remove.reset()
+impl<T: Default + PartialEq + Clone> HashRemove<T> {
+    /// clear
+    pub fn clear(&mut self) {
+        self.remove.clear()
+    }
+}
+
+impl<T: Default> Collectable for HashRemove<T> {
+    fn filter(
+        s: &mut Self,
+        tid: usize,
+        gc: &mut crate::pmem::GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Collectable::filter(&mut s.remove, tid, gc, pool);
     }
 }
 
@@ -144,7 +171,7 @@ mod test {
     }
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
-        fn run(&self, m: &mut InsertContainRemove, tid: usize, _: &Guard, pool: &PoolHandle) {
+        fn run(&self, m: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // per-thread init
             let barrier = BARRIER.clone();
             hash_thread_ini(tid, pool);
@@ -155,12 +182,11 @@ mod test {
             let insert_cli = &mut m.insert;
             let remove_cli = &mut m.remover;
             for _ in 0..COUNT {
-                assert!(list.insert::<false>(tid, tid, insert_cli, pool));
-                assert!(list.contains(tid));
-                assert!(list.remove::<false>(tid, remove_cli, pool));
-                assert!(!list.contains(tid));
-                insert_cli.reset();
-                remove_cli.reset();
+                let (k, v) = (tid, tid);
+                assert!(list.insert::<false>(k, v, insert_cli, tid, guard, pool));
+                assert!(list.contains(k));
+                assert!(list.remove::<false>(k, remove_cli, tid, guard, pool));
+                assert!(!list.contains(k));
             }
         }
     }
