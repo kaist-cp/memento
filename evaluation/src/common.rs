@@ -21,7 +21,7 @@ pub const PIPE_INIT_SIZE: usize = 10_000_000;
 /// 테스트할 수 있는 최대 스레드 수
 // - 우리 큐, 로그 큐 등에서 사물함을 MAX_THREAD만큼 정적할당해야하니 필요
 // - TODO: 이 상수 없앨 수 있는지 고민 (e.g. MAX_THREAD=32 ./run.sh처럼 가능한가?)
-pub const MAX_THREADS: usize = 32;
+pub const MAX_THREADS: usize = 256;
 
 // ``` thread-local하게 사용하는 변수
 // TODO: 더 좋은 방법? 현재는 인자로 tid 밖에 전달해줄 수 없으니 이렇게 해둠
@@ -75,6 +75,7 @@ pub enum TestTarget {
     MementoQueue(TestKind),
     MementoQueueLp(TestKind), // link and persist
     MementoQueueGeneral(TestKind),
+    MementoQueuePBComb(TestKind), // combining
     MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
@@ -256,6 +257,23 @@ pub mod queue {
                 }
                 _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
+            TestTarget::MementoQueuePBComb(kind) => {
+                unsafe { MementoPBComb_NR_THREAD = opt.threads }; // combining시 이만큼만 순회
+                match kind {
+                    TestKind::QueuePair => get_nops::<
+                        TestMementoQueuePBComb,
+                        TestMementoQueuePBCombEnqDeq<true>,
+                    >(&opt.filepath, opt.threads),
+                    TestKind::QueueProb(prob) => {
+                        unsafe { PROB = prob };
+                        get_nops::<TestMementoQueuePBComb, TestMementoQueuePBCombEnqDeq<false>>(
+                            &opt.filepath,
+                            opt.threads,
+                        )
+                    }
+                    _ => unreachable!("Queue를 위한 테스트만 해야함"),
+                }
+            }
             TestTarget::MementoPipeQueue(kind) => match kind {
                 TestKind::QueuePair => {
                     todo!()

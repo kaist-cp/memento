@@ -153,7 +153,7 @@ lazy_static::lazy_static! {
 
 /// TODO: doc
 #[derive(Debug)]
-pub struct QueuePBComb {
+pub struct Queue {
     /// Shared non-volatile variables
     dummy: PPtr<Node>,
 
@@ -169,7 +169,7 @@ pub struct QueuePBComb {
     d_index: AtomicUsize,
 }
 
-impl Collectable for QueuePBComb {
+impl Collectable for Queue {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         PPtr::filter(&mut s.dummy, tid, gc, pool);
         for tid in 0..MAX_THREADS + 1 {
@@ -186,7 +186,7 @@ impl Collectable for QueuePBComb {
     }
 }
 
-impl PDefault for QueuePBComb {
+impl PDefault for Queue {
     fn pdefault(pool: &PoolHandle) -> Self {
         let dummy = pool.alloc::<Node>();
         let dummy_ref = unsafe { dummy.deref_mut(pool) };
@@ -221,20 +221,9 @@ impl PDefault for QueuePBComb {
 }
 
 /// Enq
-impl QueuePBComb {
-    /// enqueue
-    pub fn enqueue<const REC: bool>(
-        &mut self,
-        arg: Data,
-        enq: &mut Enqueue,
-        tid: usize,
-        pool: &PoolHandle,
-    ) -> EnqRetVal {
-        self.PBQueueEnq::<REC>(arg, enq, tid, pool)
-    }
-
-    /// 요청 등록 및 수행
-    fn PBQueueEnq<const REC: bool>(
+impl Queue {
+    /// enq 요청 등록 후 수행
+    pub fn PBQueueEnq<const REC: bool>(
         &mut self,
         arg: Data,
         enq: &mut Enqueue,
@@ -400,19 +389,9 @@ impl QueuePBComb {
 }
 
 /// Deq
-impl QueuePBComb {
-    /// dequeue
-    pub fn dequeue<const REC: bool>(
-        &mut self,
-        deq: &mut Dequeue,
-        tid: usize,
-        pool: &PoolHandle,
-    ) -> DeqRetVal {
-        self.PBQueueDeq::<REC>(deq, tid, pool)
-    }
-
-    /// 요청 등록
-    fn PBQueueDeq<const REC: bool>(
+impl Queue {
+    /// deq 요청 등록 후 수행
+    pub fn PBQueueDeq<const REC: bool>(
         &mut self,
         deq: &mut Dequeue,
         tid: usize,
@@ -567,7 +546,7 @@ impl QueuePBComb {
 mod test {
     use std::sync::atomic::Ordering;
 
-    use crate::ds::queue_pbcomb::QueuePBComb;
+    use crate::ds::queue_pbcomb::Queue;
     use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
@@ -600,11 +579,10 @@ mod test {
         }
     }
 
-    impl RootObj<EnqDeq> for TestRootObj<QueuePBComb> {
+    impl RootObj<EnqDeq> for TestRootObj<Queue> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // Get &mut queue
-            let queue =
-                unsafe { (&self.obj as *const QueuePBComb as *mut QueuePBComb).as_mut() }.unwrap();
+            let queue = unsafe { (&self.obj as *const _ as *mut Queue).as_mut() }.unwrap();
 
             match tid {
                 // T1: 다른 스레드들의 실행결과를 확인
@@ -636,9 +614,9 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let val = tid;
-                        queue.enqueue::<true>(val, &mut enq_deq.enqs[i], tid, pool);
+                        queue.PBQueueEnq::<true>(val, &mut enq_deq.enqs[i], tid, pool);
 
-                        let res = queue.dequeue::<true>(&mut enq_deq.deqs[i], tid, pool);
+                        let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, pool);
                         assert!(!res.is_null());
 
                         // deq 결과를 실험결과에 전달
@@ -658,6 +636,6 @@ mod test {
         const FILE_NAME: &str = "pbcomb_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<QueuePBComb>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
+        run_test::<TestRootObj<Queue>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 }
