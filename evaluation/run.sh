@@ -82,6 +82,7 @@ for kind in pair prob20 prob50 prob80; do
     benches memento_queue $kind $init_nodes
     benches memento_queue_lp $kind $init_nodes
     benches memento_queue_general $kind $init_nodes
+    benches memento_queue_pbcomb $kind $init_nodes
     # benches memento_pipe_queue $kind $init_nodes
     benches durable_queue $kind $init_nodes
     benches log_queue $kind $init_nodes
