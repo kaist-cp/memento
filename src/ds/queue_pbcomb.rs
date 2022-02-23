@@ -264,7 +264,7 @@ impl Queue {
         // enq combiner 결정
         let lockguard = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
-            let lval = match E_LOCK.try_lock::<REC>(enq.id(pool)) {
+            let lval = match E_LOCK.try_lock::<REC>(tid) {
                 Ok(g) => break g,
                 Err(lval) => lval,
             };
@@ -282,7 +282,7 @@ impl Queue {
                 // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
                 let lval = E_LOCK.peek();
                 if lval != 0 {
-                    // NOTE: 같은 client가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
+                    // NOTE: 같은 스레드가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
                     backoff.reset();
                     while lval == E_LOCK.peek() {
                         backoff.snooze();
@@ -430,7 +430,7 @@ impl Queue {
         // deq combiner 결정
         let lockguard = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
-            let lval = match D_LOCK.try_lock::<REC>(deq.id(pool)) {
+            let lval = match D_LOCK.try_lock::<REC>(tid) {
                 Ok(g) => break g,
                 Err(lval) => lval,
             };
@@ -448,7 +448,7 @@ impl Queue {
                 // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
                 let lval = D_LOCK.peek();
                 if lval != 0 {
-                    // NOTE: 같은 client가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
+                    // NOTE: 같은 스레드가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
                     backoff.reset();
                     while lval == D_LOCK.peek() {
                         backoff.snooze();
