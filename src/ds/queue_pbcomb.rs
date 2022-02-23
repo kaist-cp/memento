@@ -102,7 +102,7 @@ impl Collectable for Node {
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
     return_val: [Option<EnqRetVal>; MAX_THREADS + 1],
-    deactivate: [PAtomic<EnqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴
+    deactivate: [PAtomic<EnqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴 (TODO(opt) AtomicUsize로 할까?)
 }
 
 impl Collectable for EStateRec {
@@ -119,7 +119,7 @@ impl Collectable for EStateRec {
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
     return_val: [Option<DeqRetVal>; MAX_THREADS + 1],
-    deactivate: [PAtomic<DeqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴
+    deactivate: [PAtomic<DeqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴 (TODO(opt) AtomicUsize로 할까?)
 }
 
 impl Collectable for DStateRec {
