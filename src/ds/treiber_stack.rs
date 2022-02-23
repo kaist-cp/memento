@@ -39,12 +39,12 @@ impl<T: Collectable> Collectable for Node<T> {
 
 /// TreiberStack의 try push operation
 #[derive(Debug)]
-pub struct TryPush<T: Clone + Collectable> {
+pub struct TryPush {
     /// push를 위해 할당된 node
-    insert: Cas<Node<T>>,
+    insert: Cas,
 }
 
-impl<T: Clone + Collectable> Default for TryPush<T> {
+impl Default for TryPush {
     fn default() -> Self {
         Self {
             insert: Default::default(),
@@ -52,9 +52,9 @@ impl<T: Clone + Collectable> Default for TryPush<T> {
     }
 }
 
-unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryPush<T> {}
+unsafe impl Send for TryPush {}
 
-impl<T: Clone + Collectable> Collectable for TryPush<T> {
+impl Collectable for TryPush {
     fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Cas::filter(&mut try_push.insert, tid, gc, pool);
     }
@@ -64,7 +64,7 @@ impl<T: Clone + Collectable> Collectable for TryPush<T> {
 #[derive(Debug)]
 pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
-    try_push: TryPush<T>,
+    try_push: TryPush,
 }
 
 impl<T: Clone + Collectable> Default for Push<T> {
@@ -88,7 +88,7 @@ unsafe impl<T: Clone + Collectable> Send for Push<T> {}
 /// TreiberStack의 try pop operation
 #[derive(Debug)]
 pub struct TryPop<T: Clone + Collectable> {
-    delete: Cas<Node<T>>,
+    delete: Cas,
     top: Checkpoint<PAtomic<Node<T>>>,
 }
 
@@ -163,7 +163,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
     pub fn try_push<const REC: bool>(
         &self,
         node: PShared<'_, Node<T>>,
-        try_push: &mut TryPush<T>,
+        try_push: &mut TryPush,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,

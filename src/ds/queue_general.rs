@@ -52,7 +52,7 @@ impl<T: Collectable> Collectable for Node<T> {
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone + Collectable> {
     tail: Checkpoint<PAtomic<Node<T>>>,
-    insert: Cas<Node<T>>,
+    insert: Cas,
 }
 
 impl<T: Clone + Collectable> Default for TryEnqueue<T> {
@@ -108,7 +108,7 @@ unsafe impl<T: Clone + Collectable> Send for Enqueue<T> {}
 /// Queue의 try dequeue operation
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone + Collectable> {
-    delete: Cas<Node<T>>,
+    delete: Cas,
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
 }
 

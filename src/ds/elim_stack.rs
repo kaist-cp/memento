@@ -49,7 +49,7 @@ impl<T: Collectable> Collectable for Request<T> {
 #[derive(Debug)]
 pub struct TryPush<T: Clone + Collectable> {
     /// inner stack의 push op
-    try_push: treiber_stack::TryPush<Request<T>>,
+    try_push: treiber_stack::TryPush,
 
     /// elimination exchange를 위해 할당된 index
     elim_idx: usize,

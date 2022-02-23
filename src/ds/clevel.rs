@@ -37,7 +37,7 @@ pub struct Insert<K, V> {
     node: Checkpoint<PAtomic<Slot<K, V>>>,
     insert_inner: InsertInner<K, V>,
     move_done: Checkpoint<bool>,
-    tag_cas: Cas<Slot<K, V>>,
+    tag_cas: Cas,
 }
 
 impl<K, V> Default for Insert<K, V> {
@@ -62,7 +62,7 @@ impl<K, V> Collectable for Insert<K, V> {
 #[derive(Debug)]
 pub struct InsertInner<K, V> {
     insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
-    insert_cas: Cas<Slot<K, V>>,
+    insert_cas: Cas,
 }
 
 impl<K, V> Default for InsertInner<K, V> {
@@ -84,9 +84,9 @@ impl<K, V> Collectable for InsertInner<K, V> {
 #[derive(Debug)]
 pub struct Resize<K, V> {
     delete_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
-    delete_cas: Cas<Slot<K, V>>,
+    delete_cas: Cas,
     insert_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
-    insert_cas: Cas<Slot<K, V>>,
+    insert_cas: Cas,
 }
 
 impl<K, V> Default for Resize<K, V> {
@@ -109,7 +109,7 @@ impl<K, V> Collectable for Resize<K, V> {
 /// Delete client
 #[derive(Debug)]
 pub struct TryDelete<K, V> {
-    delete_cas: Cas<Slot<K, V>>,
+    delete_cas: Cas,
     find_result_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
 }
 
@@ -1095,7 +1095,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         slot_p: PPtr<DetectableCASAtomic<Slot<K, V>>>,
         slot_new: PShared<'g, Slot<K, V>>,
         size: usize,
-        cas: &mut Cas<Slot<K, V>>,
+        cas: &mut Cas,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1287,7 +1287,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
         move_done: &mut Checkpoint<bool>,
-        tag_cas: &mut Cas<Slot<K, V>>,
+        tag_cas: &mut Cas,
         insert_inner: &mut InsertInner<K, V>,
         tid: usize,
         guard: &'g Guard,

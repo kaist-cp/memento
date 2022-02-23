@@ -1,9 +1,6 @@
 //! General SMO
 
-use std::{
-    marker::PhantomData,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
@@ -52,7 +49,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         &self,
         old: PShared<'_, N>,
         new: PShared<'_, N>,
-        mmt: &mut Cas<N>,
+        mmt: &mut Cas,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -63,10 +60,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
         }
 
-        let prev_chk =
-            Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
-        let parity = !cas_parity_from_timestamp(prev_chk);
-        let tmp_new = new.with_aux_bit(cas_parity_to_bit(parity)).with_tid(tid);
+        let prev_chk = Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
+        let parity = !Cas::parity_from_timestamp(prev_chk);
+        let tmp_new = new.with_aux_bit(Cas::parity_to_bit(parity)).with_tid(tid);
 
         loop {
             let res = self.inner.compare_exchange(
@@ -118,7 +114,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
     fn cas_result<'g>(
         &self,
         new: PShared<'_, N>,
-        mmt: &mut Cas<N>,
+        mmt: &mut Cas,
         tid: usize,
         exec_info: &ExecInfo,
         guard: &'g Guard,
@@ -131,7 +127,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         }
 
         let vchk = Timestamp::from(exec_info.cas_info.own[tid].load(Ordering::Relaxed));
-        let vchk_par = cas_parity_from_timestamp(vchk);
+        let vchk_par = Cas::parity_from_timestamp(vchk);
 
         if let CasState::Success = cas_state {
             // TODO(must): local timestamp와 겹쳐서 잉여정보가 아닌지 생각해봐야 함
@@ -141,7 +137,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             if mmt.checkpoint >= vchk {
                 let _ = self.inner.compare_exchange(
-                    new.with_aux_bit(cas_parity_to_bit(vchk_par)).with_tid(tid),
+                    new.with_aux_bit(Cas::parity_to_bit(vchk_par)).with_tid(tid),
                     new.with_tid(0),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
@@ -157,7 +153,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let next_par = !vchk_par;
 
         // 내가 첫 CAS 성공한 채로 그대로 남아 있는지 확인
-        if cur == new.with_aux_bit(cas_parity_to_bit(next_par)).with_tid(tid) {
+        if cur == new.with_aux_bit(Cas::parity_to_bit(next_par)).with_tid(tid) {
             mmt.checkpoint_succ(next_par, tid, exec_info);
             let _ = self
                 .inner
@@ -174,7 +170,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         // CAS 성공한 뒤에 helping 받은 건지 체크
         let pchk = Timestamp::from(
-            exec_info.cas_info.help[cas_parity_to_bit(next_par)][tid].load(Ordering::SeqCst),
+            exec_info.cas_info.help[Cas::parity_to_bit(next_par)][tid].load(Ordering::SeqCst),
         );
         if vchk >= pchk {
             return None;
@@ -308,21 +304,19 @@ impl From<&'static [CASCheckpointArr; 2]> for CasInfo {
 
 /// TODO(doc)
 #[derive(Debug)]
-pub struct Cas<N> {
+pub struct Cas {
     checkpoint: Timestamp,
-    _marker: PhantomData<N>,
 }
 
-impl<N> Default for Cas<N> {
+impl Default for Cas {
     fn default() -> Self {
         Self {
-            checkpoint: Timestamp::from(NOT_CHECKED),
-            _marker: Default::default(),
+            checkpoint: Timestamp::from(Cas::NOT_CHECKED),
         }
     }
 }
 
-impl<N> Collectable for Cas<N> {
+impl Collectable for Cas {
     fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
         // CAS client 중 max checkpoint를 가진 걸로 vcheckpoint에 기록해줌
         let vchk = Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
@@ -339,11 +333,11 @@ enum CasState {
     Failure,
 }
 
-impl<N> Cas<N> {
+impl Cas {
     #[inline]
     fn checkpoint_succ(&mut self, parity: bool, tid: usize, exec_info: &ExecInfo) {
         let t = exec_info.exec_time();
-        let new_chk = Timestamp::new(if parity { PARITY } else { 0 }, t);
+        let new_chk = Timestamp::new(if parity { Self::PARITY } else { 0 }, t);
         self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, false); // There is always a CAS after this function
         exec_info.cas_info.own[tid].store(new_chk.into(), Ordering::Relaxed);
@@ -368,32 +362,32 @@ impl<N> Cas<N> {
     #[inline]
     fn check_as_failure(&mut self, exec_info: &ExecInfo) {
         let t = exec_info.exec_time();
-        self.checkpoint = Timestamp::new(FAILED, t);
+        self.checkpoint = Timestamp::new(Self::FAILED, t);
         persist_obj(&self.checkpoint, true);
     }
 
     #[inline]
     fn is_failed(&self) -> bool {
         let tag = self.checkpoint.high_tag();
-        tag & FAILED != 0
+        tag & Self::FAILED != 0
     }
-}
 
-const NOT_CHECKED: u64 = 0;
-const FAILED: u64 = 1;
-const PARITY: u64 = 2;
+    const NOT_CHECKED: u64 = 0;
+    const FAILED: u64 = 1;
+    const PARITY: u64 = 2;
 
-#[inline]
-fn cas_parity_from_timestamp(t: Timestamp) -> bool {
-    let tag = t.high_tag();
-    tag & PARITY != 0
-}
+    #[inline]
+    fn parity_from_timestamp(t: Timestamp) -> bool {
+        let tag = t.high_tag();
+        tag & Self::PARITY != 0
+    }
 
-#[inline]
-fn cas_parity_to_bit(p: bool) -> usize {
-    if p {
-        1
-    } else {
-        0
+    #[inline]
+    fn parity_to_bit(p: bool) -> usize {
+        if p {
+            1
+        } else {
+            0
+        }
     }
 }
