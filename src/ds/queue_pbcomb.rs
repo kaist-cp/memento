@@ -69,7 +69,6 @@ impl Dequeue {
 }
 
 #[derive(Debug, Default)]
-#[repr(align(64))]
 struct EnqRequestRec {
     arg: usize,
 }
@@ -79,7 +78,6 @@ impl Collectable for EnqRequestRec {
 }
 
 #[derive(Debug, Default)]
-#[repr(align(64))]
 struct DeqRequestRec {}
 
 impl Collectable for DeqRequestRec {
