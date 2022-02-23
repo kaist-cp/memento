@@ -632,6 +632,10 @@ struct PNode<T: Default> {
     value: T,
 }
 
+impl<T: Default> Collectable for PNode<T> {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
 impl<T: Default + Clone + PartialEq> PNode<T> {
     const NULL: usize = 0;
 
