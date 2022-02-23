@@ -587,18 +587,9 @@ mod test {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check queue is empty
-                    // TODO?(fix) 아래 주석처리된 코드처럼 memento로 empty check하면, 2번째 테스트 끝날때 invalid memory reference로 터짐
-                    // - assert는 성공. pool.execute 빠져나오기 전에 터짐
-                    // - gc 안돌리면 안터진다 (테스트 끝날때 clear()로 pool을 직접 닫아주면 2번째 테스트에서 gc 안돔)
-                    // - ralloc의 버그인가 여기 로직의 버그인가....
-                    // let mut tmp_deq = Dequeue::default();
-                    // let res = queue.dequeue::<true>(&mut tmp_deq, tid, pool);
-                    // assert!(res.is_null());
-                    assert!(queue.is_empty(guard, pool));
-
-                    // 이거 넣어도 터진다. 그냥 2번째 실행때 alloc하면 터지는듯. 왜지..
-                    // let a = POwned::new(3, pool);
-                    // std::mem::forget(a);
+                    let mut tmp_deq = Dequeue::default();
+                    let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, pool);
+                    assert!(res.is_null());
 
                     // Check results
                     assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
