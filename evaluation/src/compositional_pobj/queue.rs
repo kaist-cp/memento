@@ -44,7 +44,7 @@ impl PDefault for TestMementoQueue {
         // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            queue.enqueue::<false>(i, &mut push_init, 0, &guard, pool);
+            queue.enqueue::<false>(i, &mut push_init, 1, &guard, pool);
         }
         Self { queue }
     }
