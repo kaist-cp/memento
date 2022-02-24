@@ -38,14 +38,15 @@ impl VSpinLock {
 
     /// Try lock
     ///
+    /// return Ok: (seq, guard)
     /// return Err: (seq, tid)
     pub fn try_lock<const REC: bool>(
         &self,
         tid: usize,
-    ) -> Result<SpinLockGuard<'_>, (usize, usize)> {
+    ) -> Result<(usize, SpinLockGuard<'_>), (usize, usize)> {
         let (_seq, _tid) = decompose_aux_bit(self.inner.load(Ordering::Acquire));
         if REC && tid == _tid {
-            return Ok(SpinLockGuard { lock: self });
+            return Ok((_seq, SpinLockGuard { lock: self }));
         }
 
         self.inner
@@ -55,16 +56,16 @@ impl VSpinLock {
                 Ordering::Acquire,
                 Ordering::Relaxed,
             )
-            .map(|_| SpinLockGuard { lock: self })
+            .map(|_| (_seq + 1, SpinLockGuard { lock: self }))
             .map_err(|curr| decompose_aux_bit(curr))
     }
 
     /// lock
-    pub fn lock<const REC: bool>(&self, tid: usize) -> SpinLockGuard<'_> {
+    pub fn lock<const REC: bool>(&self, tid: usize) -> (usize, SpinLockGuard<'_>) {
         let backoff = Backoff::new();
         loop {
-            if let Ok(g) = self.try_lock::<REC>(tid) {
-                return g;
+            if let Ok((seq, g)) = self.try_lock::<REC>(tid) {
+                return (seq, g);
             }
             backoff.snooze();
         }
