@@ -296,13 +296,13 @@ impl<K, V: Collectable> Collectable for ClevelInner<K, V> {
 
 impl<K, V: Collectable> PDefault for ClevelInner<K, V> {
     fn pdefault(pool: &PoolHandle) -> Self {
-        let guard = unsafe { unprotected() }; // SAFE for initialization
+        let guard = unsafe { unprotected() }; // SAFE when initialization
 
         let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
         let last_level = new_node(MIN_SIZE, pool);
         let last_level_ref = unsafe { last_level.deref(pool) };
         last_level_ref.next.store(first_level, Ordering::Relaxed);
-        // persist_obj(&last_level_ref.next, true); // TODO(opt): false
+        persist_obj(&last_level_ref.next, true);
 
         ClevelInner {
             context: PAtomic::new(
@@ -366,7 +366,7 @@ impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
     type Item = &'g [MaybeUninit<T>];
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pool = global_pool().unwrap(); // TODO: global pool 안쓰기
+        let pool = global_pool().unwrap();
         let inner_ref = unsafe { self.inner.as_ref(pool) }?;
         self.inner = if self.inner == self.last {
             PShared::null()
@@ -576,16 +576,16 @@ fn new_node<K, V: Collectable>(
             size * std::mem::size_of::<Bucket<K, V>>(),
         );
     }
-    // TODO: persist_obj(&data_ref, true);
+    persist_obj(&data_ref, true);
 
-    // TODO: pallocation maybeuninit 잘 동작하나?
-    POwned::new(Node::from(PAtomic::from(data)), pool)
-    // TODO: persist_obj(&above, true);
+    let node = POwned::new(Node::from(PAtomic::from(data)), pool);
+    persist_obj(unsafe { node.deref(pool) }, true);
+    node
 }
 
 impl<K, V: Collectable> Drop for ClevelInner<K, V> {
     fn drop(&mut self) {
-        let pool = global_pool().unwrap(); // TODO: global pool 안쓰기?
+        let pool = global_pool().unwrap();
         let guard = unsafe { unprotected() };
         let context = self.context.load(Ordering::Relaxed, guard);
         let context_ref = unsafe { context.deref(pool) };
