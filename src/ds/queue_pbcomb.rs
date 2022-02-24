@@ -265,6 +265,8 @@ impl Queue {
         }
 
         // 요청 저장소에 등록
+        // NOTE: 위에 if REC { 결과 반환 } 없애려면 이 요청 등록도(+state도?) checkpoint해야할 듯.
+        //       안그러면 이미 끝난 요청이 또 등록되어 수행될 수 있음. 또 수행되면 combiner가 enq 노드 새로할당해서 새로 넣음
         self.e_request[tid].store(req, Ordering::SeqCst);
 
         // 등록한 요청 수행
