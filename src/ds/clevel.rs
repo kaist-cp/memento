@@ -32,7 +32,7 @@ const TINY_VEC_CAPACITY: usize = 8;
 
 /// Insert client
 #[derive(Debug)]
-pub struct Insert<K, V> {
+pub struct Insert<K, V: Collectable> {
     occupied: Checkpoint<bool>,
     node: Checkpoint<PAtomic<Slot<K, V>>>,
     insert_inner: InsertInner<K, V>,
@@ -40,7 +40,7 @@ pub struct Insert<K, V> {
     tag_cas: Cas,
 }
 
-impl<K, V> Default for Insert<K, V> {
+impl<K, V: Collectable> Default for Insert<K, V> {
     fn default() -> Self {
         Self {
             occupied: Default::default(),
@@ -52,7 +52,7 @@ impl<K, V> Default for Insert<K, V> {
     }
 }
 
-impl<K, V> Collectable for Insert<K, V> {
+impl<K, V: Collectable> Collectable for Insert<K, V> {
     fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut insert.occupied, tid, gc, pool);
         Checkpoint::filter(&mut insert.node, tid, gc, pool);
@@ -64,12 +64,12 @@ impl<K, V> Collectable for Insert<K, V> {
 
 /// Insert inner client
 #[derive(Debug)]
-pub struct InsertInner<K, V> {
+pub struct InsertInner<K, V: Collectable> {
     insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
     insert_cas: Cas,
 }
 
-impl<K, V> Default for InsertInner<K, V> {
+impl<K, V: Collectable> Default for InsertInner<K, V> {
     fn default() -> Self {
         Self {
             insert_chk: Default::default(),
@@ -78,7 +78,7 @@ impl<K, V> Default for InsertInner<K, V> {
     }
 }
 
-impl<K, V> Collectable for InsertInner<K, V> {
+impl<K, V: Collectable> Collectable for InsertInner<K, V> {
     fn filter(
         insert_inner: &mut Self,
         tid: usize,
@@ -92,14 +92,14 @@ impl<K, V> Collectable for InsertInner<K, V> {
 
 /// Resize client
 #[derive(Debug)]
-pub struct Resize<K, V> {
+pub struct Resize<K, V: Collectable> {
     delete_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
     delete_cas: Cas,
     insert_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
     insert_cas: Cas,
 }
 
-impl<K, V> Default for Resize<K, V> {
+impl<K, V: Collectable> Default for Resize<K, V> {
     fn default() -> Self {
         Self {
             delete_chk: Default::default(),
@@ -110,7 +110,7 @@ impl<K, V> Default for Resize<K, V> {
     }
 }
 
-impl<K, V> Collectable for Resize<K, V> {
+impl<K, V: Collectable> Collectable for Resize<K, V> {
     fn filter(resize: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut resize.delete_chk, tid, gc, pool);
         Cas::filter(&mut resize.delete_cas, tid, gc, pool);
@@ -121,12 +121,12 @@ impl<K, V> Collectable for Resize<K, V> {
 
 /// Delete client
 #[derive(Debug)]
-pub struct TryDelete<K, V> {
+pub struct TryDelete<K, V: Collectable> {
     delete_cas: Cas,
     find_result_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
 }
 
-impl<K, V> Default for TryDelete<K, V> {
+impl<K, V: Collectable> Default for TryDelete<K, V> {
     fn default() -> Self {
         Self {
             delete_cas: Default::default(),
@@ -135,7 +135,7 @@ impl<K, V> Default for TryDelete<K, V> {
     }
 }
 
-impl<K, V> Collectable for TryDelete<K, V> {
+impl<K, V: Collectable> Collectable for TryDelete<K, V> {
     fn filter(
         try_delete: &mut Self,
         tid: usize,
@@ -149,11 +149,11 @@ impl<K, V> Collectable for TryDelete<K, V> {
 
 /// Delete client
 #[derive(Debug)]
-pub struct Delete<K, V> {
+pub struct Delete<K, V: Collectable> {
     try_delete: TryDelete<K, V>,
 }
 
-impl<K, V> Default for Delete<K, V> {
+impl<K, V: Collectable> Default for Delete<K, V> {
     fn default() -> Self {
         Self {
             try_delete: Default::default(),
@@ -161,7 +161,7 @@ impl<K, V> Default for Delete<K, V> {
     }
 }
 
-impl<K, V> Collectable for Delete<K, V> {
+impl<K, V: Collectable> Collectable for Delete<K, V> {
     fn filter(delete: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryDelete::filter(&mut delete.try_delete, tid, gc, pool);
     }
@@ -214,28 +214,27 @@ fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
 }
 
 #[derive(Debug, Default)]
-struct Slot<K, V> {
+struct Slot<K, V: Collectable> {
     key: K,
     value: V,
 }
 
-impl<K, V> From<(K, V)> for Slot<K, V> {
+impl<K, V: Collectable> From<(K, V)> for Slot<K, V> {
     #[inline]
     fn from((key, value): (K, V)) -> Self {
         Self { key, value }
     }
 }
 
-// TODO(must): V도 collectable 해야 함
-impl<K, V> Collectable for Slot<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
+impl<K, V: Collectable> Collectable for Slot<K, V> {
+    fn filter(slot: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        V::filter(&mut slot.value, tid, gc, pool);
     }
 }
 
 #[derive(Debug)]
 #[repr(align(64))]
-struct Bucket<K, V> {
+struct Bucket<K, V: Collectable> {
     slots: [DetectableCASAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
@@ -262,7 +261,7 @@ struct NodeIter<'g, T> {
 }
 
 #[derive(Debug)]
-struct Context<K, V> {
+struct Context<K, V: Collectable> {
     first_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
     last_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
 
@@ -272,30 +271,30 @@ struct Context<K, V> {
     resize_size: usize,
 }
 
-impl<K, V> Collectable for Context<K, V> {
+impl<K, V: Collectable> Collectable for Context<K, V> {
     // TODO(must): 아마 volatile이어야 할 거임
     fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
 }
 
-/// TODO(doc)
+/// Inner Clevel
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct ClevelInner<K, V> {
+pub struct ClevelInner<K, V: Collectable> {
     context: PAtomic<Context<K, V>>,
 
     #[derivative(Debug = "ignore")]
     add_level_lock: RawMutexImpl,
 }
 
-impl<K, V> Collectable for ClevelInner<K, V> {
+impl<K, V: Collectable> Collectable for ClevelInner<K, V> {
     fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
         todo!()
     }
 }
 
-impl<K, V> PDefault for ClevelInner<K, V> {
+impl<K, V: Collectable> PDefault for ClevelInner<K, V> {
     fn pdefault(pool: &PoolHandle) -> Self {
         let guard = unsafe { unprotected() }; // SAFE for initialization
 
@@ -320,7 +319,11 @@ impl<K, V> PDefault for ClevelInner<K, V> {
 }
 
 /// Resize loop
-pub fn resize_loop<K: Debug + Display + PartialEq + Hash, V: Debug, const REC: bool>(
+pub fn resize_loop<
+    K: Debug + Display + PartialEq + Hash,
+    V: Debug + Collectable,
+    const REC: bool,
+>(
     clevel: &ClevelInner<K, V>,
     recv: &mpsc::Receiver<()>,
     resize: &mut Resize<K, V>,
@@ -341,14 +344,14 @@ pub fn resize_loop<K: Debug + Display + PartialEq + Hash, V: Debug, const REC: b
 }
 
 #[derive(Debug)]
-struct FindResult<'g, K, V> {
+struct FindResult<'g, K, V: Collectable> {
     /// level's size
     size: usize,
     slot: &'g DetectableCASAtomic<Slot<K, V>>,
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
 
-impl<'g, K, V> Default for FindResult<'g, K, V> {
+impl<'g, K, V: Collectable> Default for FindResult<'g, K, V> {
     #[allow(deref_nullptr)]
     fn default() -> Self {
         Self {
@@ -379,7 +382,7 @@ impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
     }
 }
 
-impl<K: PartialEq + Hash, V> Context<K, V> {
+impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
     pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
         NodeIter {
             inner: self.last_level.load(Ordering::Acquire, guard),
@@ -389,7 +392,7 @@ impl<K: PartialEq + Hash, V> Context<K, V> {
     }
 }
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
+impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
     /// `Ok`: found something (may not be unique)
     ///
     /// `Err` means contention
@@ -560,7 +563,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     }
 }
 
-fn new_node<K, V>(
+fn new_node<K, V: Collectable>(
     size: usize,
     pool: &PoolHandle,
 ) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
@@ -580,7 +583,7 @@ fn new_node<K, V>(
     // TODO: persist_obj(&above, true);
 }
 
-impl<K, V> Drop for ClevelInner<K, V> {
+impl<K, V: Collectable> Drop for ClevelInner<K, V> {
     fn drop(&mut self) {
         let pool = global_pool().unwrap(); // TODO: global pool 안쓰기?
         let guard = unsafe { unprotected() };
@@ -614,7 +617,7 @@ pub enum InsertError {
     Occupied,
 }
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
+impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<K, V> {
     // pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
     //     let guard = unsafe { unprotected() };
 
@@ -1647,7 +1650,7 @@ mod tests {
     impl Collectable for Smoke {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..SMOKE_CNT {
-                // TODO(must): filter resize
+                Resize::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
                 Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
             }
@@ -1735,8 +1738,8 @@ mod tests {
     impl Collectable for InsertSearch {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..INSERT_SEARCH_CNT {
-                // TODO(must): filter resize
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
+                Resize::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
             }
         }
     }

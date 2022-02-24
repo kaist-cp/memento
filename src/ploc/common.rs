@@ -265,7 +265,7 @@ where
         let idx = self.min_idx();
 
         // Normal run
-        self.saved[idx].1 = Timestamp::from(0); // First, invalidate existing data.
+        self.saved[idx].1 = Timestamp::from(0); // First, invalidate existing data. TODO(must): 아마 필요없을 거임
         if std::mem::size_of::<(T, Timestamp)>() > 1 << CACHE_LINE_SHIFT {
             persist_obj(&self.saved[idx].1, true);
         }
