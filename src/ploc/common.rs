@@ -1,21 +1,21 @@
 //! Atomic Update Common
 
 use core::fmt;
-use std::sync::atomic::{compiler_fence, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_utils::CachePadded;
 
 use crate::pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
-    rdtscp, PoolHandle, CACHE_LINE_SHIFT,
+    rdtscp, PoolHandle,
 };
 
 use super::{CASCheckpointArr, CasInfo};
 
 pub(crate) const NR_MAX_THREADS: usize = 511;
 
-/// TODO(doc)
+/// Get specific bit range in a word
 #[macro_export]
 macro_rules! impl_left_bits {
     ($func:ident, $pos:expr, $nr:expr, $type:ty) => {
@@ -36,13 +36,13 @@ pub(crate) const POS_AUX_BITS: u32 = 0;
 pub(crate) const NR_AUX_BITS: u32 = 1;
 impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
 
-/// TODO doc
+/// Compose aux bit (1-bit, MSB)
 #[inline]
 pub fn compose_aux_bit(cas_bit: usize, data: usize) -> usize {
     (aux_bits() & (cas_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
 }
 
-/// TODO doc
+/// Decompose aux bit (1-bit, MSB)
 #[inline]
 pub fn decompose_aux_bit(data: usize) -> (usize, usize) {
     (
@@ -51,7 +51,7 @@ pub fn decompose_aux_bit(data: usize) -> (usize, usize) {
     )
 }
 
-/// TODO(doc)
+/// Timestamp struct
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Timestamp(u64);
 
@@ -97,7 +97,6 @@ impl fmt::Debug for Timestamp {
 }
 
 impl Timestamp {
-    /// TODO(doc)
     /// 62-bit timestamp with 2-bit high tag
     #[inline]
     pub fn new(high_tag: u64, t: u64) -> Self {
@@ -122,20 +121,20 @@ impl Timestamp {
         )
     }
 
-    /// TODO(doc)
+    /// Decompose Timestamp into high tag and time value
     #[inline]
     pub fn decompose(&self) -> (u64, u64) {
         let (htag, t) = Self::decompose_high_tag(self.0);
         (htag, t)
     }
 
-    /// TODO(doc)
+    /// Get high tag part
     #[inline]
     pub fn high_tag(&self) -> u64 {
         self.decompose().0
     }
 
-    /// TODO(doc)
+    /// Get time part
     #[inline]
     pub fn time(&self) -> u64 {
         self.decompose().1
@@ -175,14 +174,10 @@ impl From<&'static [CASCheckpointArr; 2]> for ExecInfo {
 
 impl ExecInfo {
     pub(crate) fn set_info(&mut self) {
-        let max = self
-            .cas_info
-            .own
-            .iter()
-            .fold(Timestamp::from(0), |m, chk| {
-                let t = Timestamp::from(chk.load(Ordering::Relaxed));
-                std::cmp::max(m, t)
-            });
+        let max = self.cas_info.own.iter().fold(Timestamp::from(0), |m, chk| {
+            let t = Timestamp::from(chk.load(Ordering::Relaxed));
+            std::cmp::max(m, t)
+        });
         let max = self.cas_info.help.iter().fold(max, |m, chk_arr| {
             chk_arr.iter().fold(m, |mm, chk| {
                 let t = Timestamp::from(chk.load(Ordering::Relaxed));
@@ -200,7 +195,7 @@ impl ExecInfo {
     }
 }
 
-/// TODO(doc)
+/// Checkpoint memento
 #[derive(Debug)]
 pub struct Checkpoint<T: Default + Clone + Collectable> {
     saved: [CachePadded<(T, Timestamp)>; 2],
@@ -235,13 +230,13 @@ impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
     }
 }
 
-/// TODO(doc)
+/// Error of checkpoint containing existing/new value
 #[derive(Debug)]
 pub struct CheckpointError<T> {
-    /// TODO(doc)
+    /// Existing value
     pub current: T,
 
-    /// TODO(doc)
+    /// New value
     pub new: T,
 }
 
@@ -249,7 +244,7 @@ impl<T> Checkpoint<T>
 where
     T: Default + Clone + Collectable,
 {
-    /// TODO(doc)
+    /// Checkpoint
     pub fn checkpoint<const REC: bool>(
         &mut self,
         new: T,
@@ -265,20 +260,14 @@ where
         let idx = self.min_idx();
 
         // Normal run
-        self.saved[idx].1 = Timestamp::from(0); // First, invalidate existing data. TODO(must): 아마 필요없을 거임
-        if std::mem::size_of::<(T, Timestamp)>() > 1 << CACHE_LINE_SHIFT {
-            persist_obj(&self.saved[idx].1, true);
-        }
-        compiler_fence(Ordering::Release);
-
-        let t = pool.exec_info.exec_time();
-        self.saved[idx] = CachePadded::new((new.clone(), Timestamp::from(t)));
-        pool.exec_info.local_max_time[tid].store(self.saved[idx].1.into(), Ordering::Relaxed);
+        let t = Timestamp::from(pool.exec_info.exec_time());
+        self.saved[idx] = CachePadded::new((new.clone(), t));
         persist_obj(&*self.saved[idx], true);
+
+        pool.exec_info.local_max_time[tid].store(t.into(), Ordering::Relaxed);
         Ok(new)
     }
 
-    /// TODO(doc)
     #[inline]
     fn is_valid(&self, idx: usize, tid: usize, pool: &PoolHandle) -> bool {
         self.saved[idx].1.time() > 0
@@ -304,7 +293,7 @@ where
         }
     }
 
-    /// TODO(doc)
+    /// Peek
     pub fn peek(&self, tid: usize, pool: &PoolHandle) -> Option<T> {
         let idx = self.max_idx();
 
