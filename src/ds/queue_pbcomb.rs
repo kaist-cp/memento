@@ -9,7 +9,7 @@ use crate::PDefault;
 use array_init::array_init;
 use crossbeam_utils::{Backoff, CachePadded};
 use etrace::ok_or;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tinyvec::tiny_vec;
 
 const MAX_THREADS: usize = 32;
@@ -52,6 +52,7 @@ impl Collectable for Dequeue {
 #[derive(Debug, Default)]
 struct EnqRequestRec {
     arg: usize,
+    activate: bool,
 }
 
 impl Collectable for EnqRequestRec {
@@ -59,7 +60,9 @@ impl Collectable for EnqRequestRec {
 }
 
 #[derive(Debug, Default)]
-struct DeqRequestRec {}
+struct DeqRequestRec {
+    activate: bool,
+}
 
 impl Collectable for DeqRequestRec {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
@@ -79,28 +82,45 @@ impl Collectable for Node {
 }
 
 /// State of Enqueue PBComb
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
     return_val: [Option<EnqRetVal>; MAX_THREADS + 1],
-    deactivate: [PAtomic<EnqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴 (TODO(opt) AtomicUsize로 할까?)
+    deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
 impl Collectable for EStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         PAtomic::filter(&mut s.tail, tid, gc, pool);
-        for tid in 0..MAX_THREADS + 1 {
-            PAtomic::filter(&mut s.deactivate[tid], tid, gc, pool);
+    }
+}
+
+impl Clone for EStateRec {
+    fn clone(&self) -> Self {
+        Self {
+            tail: self.tail.clone(),
+            return_val: self.return_val.clone(),
+            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
         }
     }
 }
 
 /// State of Dequeue PBComb
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
     return_val: [Option<DeqRetVal>; MAX_THREADS + 1],
-    deactivate: [PAtomic<DeqRequestRec>; MAX_THREADS + 1], // client가 만든 reqeust를 가리킴 (TODO(opt) AtomicUsize로 할까?)
+    deactivate: [AtomicBool; MAX_THREADS + 1],
+}
+
+impl Clone for DStateRec {
+    fn clone(&self) -> Self {
+        Self {
+            head: self.head.clone(),
+            return_val: self.return_val.clone(),
+            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
+        }
+    }
 }
 
 impl Collectable for DStateRec {
@@ -110,7 +130,6 @@ impl Collectable for DStateRec {
             if let Some(mut ret) = s.return_val[tid] {
                 PPtr::filter(&mut ret, tid, gc, pool);
             }
-            PAtomic::filter(&mut s.deactivate[tid], tid, gc, pool);
         }
     }
 }
@@ -125,9 +144,11 @@ lazy_static::lazy_static! {
 
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: VSpinLock = VSpinLock::default();
+    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: VSpinLock = VSpinLock::default();
+    static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
 }
 
 /// TODO: doc
@@ -182,7 +203,7 @@ impl PDefault for Queue {
                 CachePadded::new(EStateRec {
                     tail: PAtomic::from(dummy),
                     return_val: array_init(|_| None),
-                    deactivate: array_init(|_| PAtomic::null()),
+                    deactivate: array_init(|_| AtomicBool::new(false)),
                 })
             }),
             e_index: Default::default(),
@@ -191,7 +212,7 @@ impl PDefault for Queue {
                 CachePadded::new(DStateRec {
                     head: PAtomic::from(dummy),
                     return_val: array_init(|_| None),
-                    deactivate: array_init(|_| PAtomic::null()),
+                    deactivate: array_init(|_| AtomicBool::new(false)),
                 })
             }),
             d_index: Default::default(),
@@ -209,8 +230,21 @@ impl Queue {
         tid: usize,
         pool: &PoolHandle,
     ) -> EnqRetVal {
+        let prev = self.e_request[tid].load(Ordering::SeqCst, unsafe { unprotected() });
+        let prev_activate = if prev.is_null() {
+            false
+        } else {
+            unsafe { prev.deref(pool).activate }
+        };
+
         // 새로운 요청 생성
-        let req = POwned::new(EnqRequestRec { arg }, pool);
+        let req = POwned::new(
+            EnqRequestRec {
+                arg,
+                activate: !prev_activate,
+            },
+            pool,
+        );
         persist_obj(unsafe { req.deref(pool) }, true);
 
         let req = ok_or!(
@@ -245,31 +279,33 @@ impl Queue {
         pool: &PoolHandle,
     ) -> EnqRetVal {
         // enq combiner 결정
-        let lockguard = loop {
+        let (lval, lockguard) = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
             let lval = match E_LOCK.try_lock::<REC>(tid) {
-                Ok(g) => break g,
-                Err(lval) => lval,
+                Ok(ret) => break ret,
+                Err((lval, _)) => lval,
             };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == E_LOCK.peek() {
+            while lval == E_LOCK.peek().0 {
                 backoff.snooze();
             }
 
-            if self.e_request[tid].load(Ordering::SeqCst, unsafe { unprotected() })
+            if unsafe {
+                self.e_request[tid]
+                    .load(Ordering::SeqCst, unprotected())
+                    .deref(pool)
+            }
+            .activate
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
-                    .load(Ordering::SeqCst, unsafe { unprotected() })
+                    .load(Ordering::SeqCst)
             {
-                // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
-                let lval = E_LOCK.peek();
-                if lval != 0 {
-                    // NOTE: 같은 스레드가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
-                    backoff.reset();
-                    while lval == E_LOCK.peek() {
-                        backoff.snooze();
-                    }
+                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
+                let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
+                backoff.reset();
+                while !(deactivate_lval < E_LOCK.peek().0) {
+                    backoff.snooze();
                 }
 
                 // 결과 저장하고 반환
@@ -293,11 +329,15 @@ impl Queue {
         );
 
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
-
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
-            if self.e_request[q].load(Ordering::SeqCst, unsafe { unprotected() })
-                != self.e_state[ind].deactivate[q].load(Ordering::SeqCst, unsafe { unprotected() })
+            if unsafe {
+                self.e_request[q]
+                    .load(Ordering::SeqCst, unprotected())
+                    .deref(pool)
+            }
+            .activate
+                != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 // 현재 tail의 persist를 예약
                 let tail_addr = self.e_state[ind]
@@ -316,8 +356,10 @@ impl Queue {
                     unsafe { q_req.deref(pool) }.arg,
                     pool,
                 );
+                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = Some(());
-                self.e_state[ind].deactivate[q].store(q_req, Ordering::SeqCst);
+                self.e_state[ind].deactivate[q]
+                    .store(unsafe { q_req.deref(pool) }.activate, Ordering::SeqCst);
             }
         }
         let tail_addr = self.e_state[ind]
@@ -375,8 +417,20 @@ impl Queue {
         tid: usize,
         pool: &PoolHandle,
     ) -> DeqRetVal {
+        let prev = self.d_request[tid].load(Ordering::SeqCst, unsafe { unprotected() });
+        let prev_activate = if prev.is_null() {
+            false
+        } else {
+            unsafe { prev.deref(pool).activate }
+        };
+
         // 새로운 요청 생성
-        let req = POwned::new(DeqRequestRec {}, pool);
+        let req = POwned::new(
+            DeqRequestRec {
+                activate: !prev_activate,
+            },
+            pool,
+        );
         persist_obj(unsafe { req.deref(pool) }, true);
 
         let req = ok_or!(
@@ -411,31 +465,33 @@ impl Queue {
         pool: &PoolHandle,
     ) -> DeqRetVal {
         // deq combiner 결정
-        let lockguard = loop {
+        let (lval, lockguard) = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
             let lval = match D_LOCK.try_lock::<REC>(tid) {
-                Ok(g) => break g,
-                Err(lval) => lval,
+                Ok(ret) => break ret,
+                Err((lval, _)) => lval,
             };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == D_LOCK.peek() {
+            while lval == D_LOCK.peek().0 {
                 backoff.snooze();
             }
 
-            if self.d_request[tid].load(Ordering::SeqCst, unsafe { unprotected() })
+            if unsafe {
+                self.d_request[tid]
+                    .load(Ordering::SeqCst, unprotected())
+                    .deref(pool)
+            }
+            .activate
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
-                    .load(Ordering::SeqCst, unsafe { unprotected() })
+                    .load(Ordering::SeqCst)
             {
-                // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
-                let lval = D_LOCK.peek();
-                if lval != 0 {
-                    // NOTE: 같은 스레드가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
-                    backoff.reset();
-                    while lval == D_LOCK.peek() {
-                        backoff.snooze();
-                    }
+                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
+                let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
+                backoff.reset();
+                while !(deactivate_lval < D_LOCK.peek().0) {
+                    backoff.snooze();
                 }
 
                 // 결과 저장하고 반환
@@ -453,8 +509,14 @@ impl Queue {
 
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
-            if self.d_request[q].load(Ordering::SeqCst, unsafe { unprotected() })
-                != self.d_state[ind].deactivate[q].load(Ordering::SeqCst, unsafe { unprotected() })
+            if unsafe {
+                self.d_request[q]
+                    .load(Ordering::SeqCst, unprotected())
+                    .deref(pool)
+            }
+            .activate
+                != self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[q]
+                    .load(Ordering::SeqCst)
             {
                 let ret_val;
                 // 확실히 persist된 노드들만 deq 수행. OLD_TAIL부터는 현재 enq 중인거라 persist 보장되지 않음
@@ -469,9 +531,15 @@ impl Queue {
                 } else {
                     ret_val = Some(PPtr::null());
                 }
+                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.d_state[ind].return_val[q] = ret_val;
                 self.d_state[ind].deactivate[q].store(
-                    self.d_request[q].load(Ordering::SeqCst, unsafe { unprotected() }),
+                    unsafe {
+                        self.d_request[q]
+                            .load(Ordering::SeqCst, unprotected())
+                            .deref(pool)
+                    }
+                    .activate,
                     Ordering::SeqCst,
                 )
             }
@@ -546,7 +614,7 @@ mod test {
     }
 
     impl RootObj<EnqDeq> for TestRootObj<Queue> {
-        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, _: &Guard, pool: &PoolHandle) {
             // Get &mut queue
             let queue = unsafe { (&self.obj as *const _ as *mut Queue).as_mut() }.unwrap();
 
