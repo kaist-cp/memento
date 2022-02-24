@@ -4,25 +4,59 @@ use std::sync::atomic::AtomicUsize;
 
 use crossbeam_utils::Backoff;
 
+use crate::impl_left_bits;
+
+// Auxiliary Bits
+// aux bits: MSB 55-bit in 64-bit
+// Used for:
+// - PBComb: Indicating sequence of combine
+pub(crate) const POS_AUX_BITS: u32 = 0;
+pub(crate) const NR_AUX_BITS: u32 = 55;
+impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
+
+#[inline]
+fn compose_aux_bit(aux: usize, data: usize) -> usize {
+    (aux_bits() & (aux.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
+}
+
+#[inline]
+fn decompose_aux_bit(data: usize) -> (usize, usize) {
+    (
+        (data & aux_bits()).rotate_left(POS_AUX_BITS + NR_AUX_BITS),
+        !aux_bits() & data,
+    )
+}
+
 /// volatile thread-recoverable spin lock
 #[derive(Debug, Default)]
 pub struct VSpinLock {
-    inner: AtomicUsize,
+    inner: AtomicUsize, // 55:lock sequence (짝수:lock 잡은애 없음, 홀수:누군가 lock 잡고 진행중), 9:tid
 }
 
 impl VSpinLock {
     const RELEASED: usize = 0;
 
     /// Try lock
-    pub fn try_lock<const REC: bool>(&self, tid: usize) -> Result<SpinLockGuard<'_>, usize> {
-        if REC && self.inner.load(Ordering::Acquire) == tid {
+    ///
+    /// return Err: (seq, tid)
+    pub fn try_lock<const REC: bool>(
+        &self,
+        tid: usize,
+    ) -> Result<SpinLockGuard<'_>, (usize, usize)> {
+        let (_seq, _tid) = decompose_aux_bit(self.inner.load(Ordering::Acquire));
+        if REC && tid == _tid {
             return Ok(SpinLockGuard { lock: self });
         }
 
         self.inner
-            .compare_exchange(Self::RELEASED, tid, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(
+                compose_aux_bit(_seq, Self::RELEASED),
+                compose_aux_bit(_seq + 1, tid),
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            )
             .map(|_| SpinLockGuard { lock: self })
-            .map_err(|curr| curr)
+            .map_err(|curr| decompose_aux_bit(curr))
     }
 
     /// lock
@@ -37,12 +71,16 @@ impl VSpinLock {
     }
 
     /// peek
-    pub fn peek(&self) -> usize {
-        self.inner.load(Ordering::SeqCst)
+    ///
+    /// return (seq, tid)
+    pub fn peek(&self) -> (usize, usize) {
+        decompose_aux_bit(self.inner.load(Ordering::SeqCst))
     }
 
     unsafe fn unlock(&self) {
-        self.inner.store(Self::RELEASED, Ordering::Release);
+        let (seq, _) = decompose_aux_bit(self.inner.load(Ordering::Relaxed));
+        self.inner
+            .store(compose_aux_bit(seq + 1, Self::RELEASED), Ordering::Release);
     }
 }
 
