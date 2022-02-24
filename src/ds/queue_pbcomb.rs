@@ -247,11 +247,11 @@ impl Queue {
         pool: &PoolHandle,
     ) -> EnqRetVal {
         // enq combiner 결정
-        let lockguard = loop {
+        let (lval, lockguard) = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
-            let (lval, _) = match E_LOCK.try_lock::<REC>(tid) {
-                Ok(g) => break g,
-                Err(lval) => lval,
+            let lval = match E_LOCK.try_lock::<REC>(tid) {
+                Ok(ret) => break ret,
+                Err((lval, _)) => lval,
             };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -292,7 +292,6 @@ impl Queue {
         );
 
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
-        let lval = E_LOCK.peek().0;
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
             if self.e_request[q].load(Ordering::SeqCst, unsafe { unprotected() })
@@ -411,11 +410,11 @@ impl Queue {
         pool: &PoolHandle,
     ) -> DeqRetVal {
         // deq combiner 결정
-        let lockguard = loop {
+        let (lval, lockguard) = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
             let lval = match D_LOCK.try_lock::<REC>(tid) {
-                Ok(g) => break g,
-                Err((seq, _tid)) => seq,
+                Ok(ret) => break ret,
+                Err((lval, _)) => lval,
             };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
@@ -428,7 +427,7 @@ impl Queue {
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst, unsafe { unprotected() })
             {
-                // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
+                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
                 let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
                 while !(deactivate_lval < D_LOCK.peek().0) {
@@ -545,7 +544,7 @@ mod test {
     }
 
     impl RootObj<EnqDeq> for TestRootObj<Queue> {
-        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, _: &Guard, pool: &PoolHandle) {
             // Get &mut queue
             let queue = unsafe { (&self.obj as *const _ as *mut Queue).as_mut() }.unwrap();
 
