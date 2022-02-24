@@ -52,7 +52,7 @@ impl Collectable for Dequeue {
 #[derive(Debug, Default)]
 struct EnqRequestRec {
     arg: usize,
-    activate: bool,
+    activate: AtomicBool,
 }
 
 impl Collectable for EnqRequestRec {
@@ -61,7 +61,7 @@ impl Collectable for EnqRequestRec {
 
 #[derive(Debug, Default)]
 struct DeqRequestRec {
-    activate: bool,
+    activate: AtomicBool,
 }
 
 impl Collectable for DeqRequestRec {
@@ -234,14 +234,14 @@ impl Queue {
         let prev_activate = if prev.is_null() {
             false
         } else {
-            unsafe { prev.deref(pool).activate }
+            unsafe { prev.deref(pool).activate.load(Ordering::Relaxed) }
         };
 
         // 새로운 요청 생성
         let req = POwned::new(
             EnqRequestRec {
                 arg,
-                activate: !prev_activate,
+                activate: AtomicBool::new(!prev_activate),
             },
             pool,
         );
@@ -300,6 +300,7 @@ impl Queue {
                     .deref(pool)
             }
             .activate
+            .load(Ordering::SeqCst)
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
@@ -339,6 +340,7 @@ impl Queue {
                     .deref(pool)
             }
             .activate
+            .load(Ordering::SeqCst)
                 != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 // 현재 tail의 persist를 예약
@@ -352,16 +354,17 @@ impl Queue {
                 }
 
                 // enq
-                let q_req = self.e_request[q].load(Ordering::SeqCst, unsafe { unprotected() });
-                Self::raw_enqueue(
-                    &mut self.e_state[ind].tail,
-                    unsafe { q_req.deref(pool) }.arg,
-                    pool,
-                );
+                let q_req_ref = unsafe {
+                    self.e_request[q]
+                        .load(Ordering::SeqCst, unprotected())
+                        .deref(pool)
+                };
+
+                Self::raw_enqueue(&mut self.e_state[ind].tail, q_req_ref.arg, pool);
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = Some(());
                 self.e_state[ind].deactivate[q]
-                    .store(unsafe { q_req.deref(pool) }.activate, Ordering::SeqCst);
+                    .store(q_req_ref.activate.load(Ordering::SeqCst), Ordering::SeqCst);
             }
         }
         let tail_addr = self.e_state[ind]
@@ -423,13 +426,13 @@ impl Queue {
         let prev_activate = if prev.is_null() {
             false
         } else {
-            unsafe { prev.deref(pool).activate }
+            unsafe { prev.deref(pool).activate.load(Ordering::SeqCst) }
         };
 
         // 새로운 요청 생성
         let req = POwned::new(
             DeqRequestRec {
-                activate: !prev_activate,
+                activate: AtomicBool::new(!prev_activate),
             },
             pool,
         );
@@ -486,6 +489,7 @@ impl Queue {
                     .deref(pool)
             }
             .activate
+            .load(Ordering::SeqCst)
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
@@ -517,6 +521,7 @@ impl Queue {
                     .deref(pool)
             }
             .activate
+            .load(Ordering::SeqCst)
                 != self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[q]
                     .load(Ordering::SeqCst)
             {
@@ -533,17 +538,15 @@ impl Queue {
                 } else {
                     ret_val = Some(PPtr::null());
                 }
+                let q_req_ref = unsafe {
+                    self.d_request[q]
+                        .load(Ordering::SeqCst, unprotected())
+                        .deref(pool)
+                };
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.d_state[ind].return_val[q] = ret_val;
-                self.d_state[ind].deactivate[q].store(
-                    unsafe {
-                        self.d_request[q]
-                            .load(Ordering::SeqCst, unprotected())
-                            .deref(pool)
-                    }
-                    .activate,
-                    Ordering::SeqCst,
-                )
+                self.d_state[ind].deactivate[q]
+                    .store(q_req_ref.activate.load(Ordering::SeqCst), Ordering::SeqCst)
             }
         }
         persist_obj(&self.d_request, false);
