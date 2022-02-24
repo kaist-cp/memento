@@ -125,9 +125,11 @@ lazy_static::lazy_static! {
 
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: VSpinLock = VSpinLock::default();
+    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: VSpinLock = VSpinLock::default();
+    static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
 }
 
 /// TODO: doc
@@ -247,14 +249,14 @@ impl Queue {
         // enq combiner 결정
         let lockguard = loop {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
-            let lval = match E_LOCK.try_lock::<REC>(tid) {
+            let (lval, _) = match E_LOCK.try_lock::<REC>(tid) {
                 Ok(g) => break g,
                 Err(lval) => lval,
             };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == E_LOCK.peek() {
+            while lval == E_LOCK.peek().0 {
                 backoff.snooze();
             }
 
@@ -262,14 +264,11 @@ impl Queue {
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst, unsafe { unprotected() })
             {
-                // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
-                let lval = E_LOCK.peek();
-                if lval != 0 {
-                    // NOTE: 같은 스레드가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
-                    backoff.reset();
-                    while lval == E_LOCK.peek() {
-                        backoff.snooze();
-                    }
+                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
+                let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
+                backoff.reset();
+                while !(deactivate_lval < E_LOCK.peek().0) {
+                    backoff.snooze();
                 }
 
                 // 결과 저장하고 반환
@@ -293,7 +292,7 @@ impl Queue {
         );
 
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
-
+        let lval = E_LOCK.peek().0;
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
             if self.e_request[q].load(Ordering::SeqCst, unsafe { unprotected() })
@@ -316,6 +315,7 @@ impl Queue {
                     unsafe { q_req.deref(pool) }.arg,
                     pool,
                 );
+                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = Some(());
                 self.e_state[ind].deactivate[q].store(q_req, Ordering::SeqCst);
             }
@@ -415,12 +415,12 @@ impl Queue {
             // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
             let lval = match D_LOCK.try_lock::<REC>(tid) {
                 Ok(g) => break g,
-                Err(lval) => lval,
+                Err((seq, _tid)) => seq,
             };
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == D_LOCK.peek() {
+            while lval == D_LOCK.peek().0 {
                 backoff.snooze();
             }
 
@@ -429,13 +429,10 @@ impl Queue {
                     .load(Ordering::SeqCst, unsafe { unprotected() })
             {
                 // 자신의 op을 처리한 combiner가 안끝났을 수 있으니, 한 combiner만 더 기다렸다가 결과 반환
-                let lval = D_LOCK.peek();
-                if lval != 0 {
-                    // NOTE: 같은 스레드가 연속적으로 combiner가 되면 starvation 발생가능. 그러나 이 경우는 적을듯
-                    backoff.reset();
-                    while lval == D_LOCK.peek() {
-                        backoff.snooze();
-                    }
+                let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
+                backoff.reset();
+                while !(deactivate_lval < D_LOCK.peek().0) {
+                    backoff.snooze();
                 }
 
                 // 결과 저장하고 반환
@@ -450,6 +447,7 @@ impl Queue {
         // deq combiner는 쌓인 deq 요청들을 수행
         let ind = 1 - self.d_index.load(Ordering::SeqCst);
         self.d_state[ind] = self.d_state[self.d_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
+        let lval = D_LOCK.peek().0;
 
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
@@ -469,6 +467,7 @@ impl Queue {
                 } else {
                     ret_val = Some(PPtr::null());
                 }
+                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.d_state[ind].return_val[q] = ret_val;
                 self.d_state[ind].deactivate[q].store(
                     self.d_request[q].load(Ordering::SeqCst, unsafe { unprotected() }),
