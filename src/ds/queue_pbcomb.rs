@@ -234,7 +234,7 @@ impl Queue {
         let prev_activate = if prev.is_null() {
             false
         } else {
-            unsafe { prev.deref(pool).activate.load(Ordering::Relaxed) }
+            unsafe { prev.deref(pool).activate.load(Ordering::SeqCst) }
         };
 
         // 새로운 요청 생성

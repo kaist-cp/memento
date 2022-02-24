@@ -53,8 +53,8 @@ impl VSpinLock {
             .compare_exchange(
                 compose_aux_bit(_seq, Self::RELEASED),
                 compose_aux_bit(_seq + 1, tid),
+                Ordering::SeqCst,
                 Ordering::Acquire,
-                Ordering::Relaxed,
             )
             .map(|_| (_seq + 1, SpinLockGuard { lock: self }))
             .map_err(|curr| decompose_aux_bit(curr))
