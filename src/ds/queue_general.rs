@@ -182,6 +182,12 @@ impl<T: Clone + Collectable> PDefault for QueueGeneral<T> {
 impl<T: Clone + Collectable> Collectable for QueueGeneral<T> {
     fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         DetectableCASAtomic::filter(&mut queue.head, tid, gc, pool);
+
+        // Align head and tail
+        let head = queue
+            .head
+            .load(Ordering::SeqCst, unsafe { epoch::unprotected() }, pool);
+        queue.tail.store(head, Ordering::SeqCst);
     }
 }
 
@@ -197,7 +203,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
     ) -> Result<(), TryFail> {
         let tail = loop {
             let tail = self.tail.load(Ordering::SeqCst, guard);
-            let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
+            let tail_ref = unsafe { tail.deref(pool) };
             let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
 
             if next.is_null() {

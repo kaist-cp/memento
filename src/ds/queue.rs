@@ -195,6 +195,12 @@ impl<T: Clone + Collectable> PDefault for Queue<T> {
 impl<T: Clone + Collectable> Collectable for Queue<T> {
     fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         SMOAtomic::filter(&mut queue.head, tid, gc, pool);
+
+        // Align head and tail
+        let head = queue
+            .head
+            .load(false, Ordering::SeqCst, unsafe { epoch::unprotected() });
+        queue.tail.store(head, Ordering::SeqCst);
     }
 }
 
@@ -202,7 +208,6 @@ impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
     fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(true, Ordering::SeqCst, guard);
 
-        // TODO(opt): null 나올 때까지 하지 않고 tail을 통해서 범위를 제한할 수 있을지?
         while !curr.is_null() {
             if curr == target {
                 return true;
@@ -227,7 +232,7 @@ impl<T: Clone + Collectable> Queue<T> {
     ) -> Result<(), TryFail> {
         let (tail, tail_ref) = loop {
             let tail = self.tail.load(Ordering::SeqCst, guard);
-            let tail_ref = unsafe { tail.deref(pool) }; // TODO(must): filter 에서 tail align 해야 함
+            let tail_ref = unsafe { tail.deref(pool) };
             let next = tail_ref.next.load(false, Ordering::SeqCst, guard);
 
             if next.is_null() {
