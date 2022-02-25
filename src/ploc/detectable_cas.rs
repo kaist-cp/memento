@@ -390,4 +390,11 @@ impl Cas {
             0
         }
     }
+
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.checkpoint = Timestamp::from(Cas::NOT_CHECKED);
+        persist_obj(&self.checkpoint, false);
+    }
 }

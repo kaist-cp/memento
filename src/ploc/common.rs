@@ -304,4 +304,15 @@ where
             None
         }
     }
+
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.saved = [
+            CachePadded::new((T::default(), Timestamp::from(0))),
+            CachePadded::new((T::default(), Timestamp::from(0))),
+        ];
+        persist_obj(&*self.saved[0], false);
+        persist_obj(&*self.saved[1], false);
+    }
 }

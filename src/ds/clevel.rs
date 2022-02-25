@@ -62,6 +62,18 @@ impl<K, V: Collectable> Collectable for Insert<K, V> {
     }
 }
 
+impl<K, V: Collectable> Insert<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.occupied.clear();
+        self.node.clear();
+        self.insert_inner.clear();
+        self.move_done.clear();
+        self.tag_cas.clear();
+    }
+}
+
 /// Insert inner client
 #[derive(Debug)]
 pub struct InsertInner<K, V: Collectable> {
@@ -87,6 +99,15 @@ impl<K, V: Collectable> Collectable for InsertInner<K, V> {
     ) {
         Checkpoint::filter(&mut insert_inner.insert_chk, tid, gc, pool);
         Cas::filter(&mut insert_inner.insert_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> InsertInner<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.insert_chk.clear();
+        self.insert_cas.clear();
     }
 }
 
@@ -119,6 +140,17 @@ impl<K, V: Collectable> Collectable for Resize<K, V> {
     }
 }
 
+impl<K, V: Collectable> Resize<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.delete_chk.clear();
+        self.delete_cas.clear();
+        self.insert_chk.clear();
+        self.insert_cas.clear();
+    }
+}
+
 /// Delete client
 #[derive(Debug)]
 pub struct TryDelete<K, V: Collectable> {
@@ -147,6 +179,15 @@ impl<K, V: Collectable> Collectable for TryDelete<K, V> {
     }
 }
 
+impl<K, V: Collectable> TryDelete<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.delete_cas.clear();
+        self.find_result_chk.clear();
+    }
+}
+
 /// Delete client
 #[derive(Debug)]
 pub struct Delete<K, V: Collectable> {
@@ -164,6 +205,14 @@ impl<K, V: Collectable> Default for Delete<K, V> {
 impl<K, V: Collectable> Collectable for Delete<K, V> {
     fn filter(delete: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryDelete::filter(&mut delete.try_delete, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> Delete<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_delete.clear();
     }
 }
 

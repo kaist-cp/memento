@@ -1,7 +1,5 @@
 //! Persistent Exchanger
 
-// TODO(must): 2-byte high tagging to resolve ABA problem
-
 use std::{sync::atomic::Ordering, time::Duration};
 
 use crossbeam_epoch::{self as epoch, Guard};
@@ -105,6 +103,16 @@ impl<T: Clone + Collectable> Collectable for TryExchange<T> {
     }
 }
 
+impl<T: Clone + Collectable> TryExchange<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.node.clear();
+        self.init_slot.clear();
+        self.wait_slot.clear();
+    }
+}
+
 type ExchangeCond<T> = fn(&T) -> bool;
 
 /// Exchanger의 exchange operation.
@@ -130,6 +138,15 @@ impl<T: Clone + Collectable> Collectable for Exchange<T> {
     fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut xchg.node, tid, gc, pool);
         TryExchange::filter(&mut xchg.try_xchg, tid, gc, pool);
+    }
+}
+
+impl<T: Clone + Collectable> Exchange<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.node.clear();
+        self.try_xchg.clear();
     }
 }
 
@@ -301,13 +318,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<T, TryFail> {
-        // TODO(opt): timeout을 받고 loop을 쓰자
-
-        if !REC {
-            // 누군가 update 해주길 기다림
-            // (복구 아닐 때에만 기다림)
-            std::thread::sleep(Duration::from_nanos(100));
-        }
+        std::thread::sleep(Duration::from_nanos(100));
 
         let wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
         let wait_slot = ok_or!(

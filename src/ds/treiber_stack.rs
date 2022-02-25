@@ -60,6 +60,14 @@ impl Collectable for TryPush {
     }
 }
 
+impl TryPush {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.insert.clear();
+    }
+}
+
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
 pub struct Push<T: Clone + Collectable> {
@@ -84,6 +92,15 @@ impl<T: Clone + Collectable> Collectable for Push<T> {
 }
 
 unsafe impl<T: Clone + Collectable> Send for Push<T> {}
+
+impl<T: Clone + Collectable> Push<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.node.clear();
+        self.try_push.clear();
+    }
+}
 
 /// TreiberStack의 try pop operation
 #[derive(Debug)]
@@ -110,6 +127,15 @@ impl<T: Clone + Collectable> Collectable for TryPop<T> {
     }
 }
 
+impl<T: Clone + Collectable> TryPop<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.delete.clear();
+        self.top.clear();
+    }
+}
+
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
 pub struct Pop<T: Clone + Collectable> {
@@ -131,6 +157,14 @@ impl<T: Clone + Collectable> Collectable for Pop<T> {
 }
 
 unsafe impl<T: Clone + Collectable> Send for Pop<T> {}
+
+impl<T: Clone + Collectable> Pop<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_pop.clear();
+    }
+}
 
 /// Persistent Treiber stack
 #[derive(Debug)]

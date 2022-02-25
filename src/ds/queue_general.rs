@@ -72,6 +72,15 @@ impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
     }
 }
 
+impl<T: Clone + Collectable> TryEnqueue<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.tail.clear();
+        self.insert.clear();
+    }
+}
+
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: Clone + Collectable> {
@@ -96,10 +105,11 @@ impl<T: Clone + Collectable> Collectable for Enqueue<T> {
 }
 
 impl<T: Clone + Collectable> Enqueue<T> {
-    /// Reset Enqueue memento
+    /// Clear
     #[inline]
-    pub fn reset(&mut self) {
-        todo!("Erase reset API")
+    pub fn clear(&mut self) {
+        self.node.clear();
+        self.try_enq.clear();
     }
 }
 
@@ -129,6 +139,15 @@ impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
     }
 }
 
+impl<T: Clone + Collectable> TryDequeue<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.delete.clear();
+        self.head_next.clear();
+    }
+}
+
 /// Queue의 Dequeue
 #[derive(Debug)]
 pub struct Dequeue<T: Clone + Collectable> {
@@ -150,10 +169,10 @@ impl<T: Clone + Collectable> Collectable for Dequeue<T> {
 }
 
 impl<T: Clone + Collectable> Dequeue<T> {
-    /// Reset Dequeue memento
+    /// Clear
     #[inline]
-    pub fn reset(&mut self) {
-        todo!("Erase reset API")
+    pub fn clear(&mut self) {
+        self.try_deq.clear();
     }
 }
 

@@ -75,6 +75,15 @@ impl<T: Clone + Collectable> Collectable for TryPush<T> {
     }
 }
 
+impl<T: Clone + Collectable> TryPush<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_push.clear();
+        self.try_xchg.clear();
+    }
+}
+
 /// Stack의 try push를 이용하는 push op.
 #[derive(Debug)]
 pub struct Push<T: Clone + Collectable> {
@@ -99,6 +108,15 @@ impl<T: Clone + Collectable> Collectable for Push<T> {
 }
 
 unsafe impl<T: Clone + Collectable> Send for Push<T> {}
+
+impl<T: Clone + Collectable> Push<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.node.clear();
+        self.try_push.clear();
+    }
+}
 
 /// `ElimStack::pop()`를 호출할 때 쓰일 client
 #[derive(Debug)]
@@ -135,6 +153,16 @@ impl<T: Clone + Collectable> Collectable for TryPop<T> {
     }
 }
 
+impl<T: Clone + Collectable> TryPop<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_pop.clear();
+        self.pop_node.clear();
+        self.try_xchg.clear();
+    }
+}
+
 /// Stack의 try pop을 이용하는 pop op.
 #[derive(Debug)]
 pub struct Pop<T: Clone + Collectable> {
@@ -156,6 +184,14 @@ impl<T: Clone + Collectable> Collectable for Pop<T> {
 }
 
 unsafe impl<T: Clone + Collectable> Send for Pop<T> {}
+
+impl<T: Clone + Collectable> Pop<T> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_pop.clear();
+    }
+}
 
 /// Persistent Elimination backoff stack
 /// - ELIM_SIZE: size of elimination array
