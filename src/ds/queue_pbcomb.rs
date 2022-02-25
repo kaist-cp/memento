@@ -290,8 +290,10 @@ impl Queue {
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == E_LOCK.peek().0 {
-                backoff.snooze();
+            if lval % 2 == 1 {
+                while lval == E_LOCK.peek().0 {
+                    backoff.snooze();
+                }
             }
 
             if unsafe {
@@ -479,8 +481,10 @@ impl Queue {
 
             // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
             let backoff = Backoff::new();
-            while lval == D_LOCK.peek().0 {
-                backoff.snooze();
+            if lval % 2 == 1 {
+                while lval == D_LOCK.peek().0 {
+                    backoff.snooze();
+                }
             }
 
             if unsafe {
