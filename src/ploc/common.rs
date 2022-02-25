@@ -261,7 +261,7 @@ where
 
         // Normal run
         let t = Timestamp::from(pool.exec_info.exec_time());
-        self.saved[idx] = CachePadded::new((new.clone(), t));
+        self.saved[idx] = CachePadded::new((new.clone(), t)); // TODO(must): 캐시라인 넘을 경우 잘라서 넣고 t 넣기 전에 앞에꺼는 persist 되어야 함
         persist_obj(&*self.saved[idx], true);
 
         pool.exec_info.local_max_time[tid].store(t.into(), Ordering::Relaxed);

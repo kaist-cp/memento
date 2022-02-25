@@ -1,5 +1,7 @@
 //! Linking Ralloc (https://github.com/urcs-sync/ralloc)
 
+use etrace::some_or;
+
 use super::{global_pool, PoolHandle};
 use std::{
     mem::MaybeUninit,
@@ -183,6 +185,13 @@ impl Collectable for usize {
 
 impl Collectable for bool {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
+impl<T: Collectable> Collectable for Option<T> {
+    fn filter(opt: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        let v = some_or!(opt, return);
+        T::filter(v, tid, gc, pool);
+    }
 }
 
 impl<T: Collectable> Collectable for MaybeUninit<T> {

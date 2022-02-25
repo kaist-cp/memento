@@ -38,6 +38,7 @@ pub struct Insert<K, V: Collectable> {
     occupied: Checkpoint<bool>,
     node: Checkpoint<PAtomic<Slot<K, V>>>,
     insert_inner: InsertInner<K, V>,
+    prev_slot: Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
     move_done: Checkpoint<bool>,
     tag_cas: Cas,
 }
@@ -48,6 +49,7 @@ impl<K, V: Collectable> Default for Insert<K, V> {
             occupied: Default::default(),
             node: Default::default(),
             insert_inner: Default::default(),
+            prev_slot: Default::default(),
             move_done: Default::default(),
             tag_cas: Default::default(),
         }
@@ -59,6 +61,7 @@ impl<K, V: Collectable> Collectable for Insert<K, V> {
         Checkpoint::filter(&mut insert.occupied, tid, gc, pool);
         Checkpoint::filter(&mut insert.node, tid, gc, pool);
         InsertInner::filter(&mut insert.insert_inner, tid, gc, pool);
+        Checkpoint::filter(&mut insert.prev_slot, tid, gc, pool);
         Checkpoint::filter(&mut insert.move_done, tid, gc, pool);
         Cas::filter(&mut insert.tag_cas, tid, gc, pool);
     }
@@ -71,6 +74,7 @@ impl<K, V: Collectable> Insert<K, V> {
         self.occupied.clear();
         self.node.clear();
         self.insert_inner.clear();
+        self.prev_slot.clear();
         self.move_done.clear();
         self.tag_cas.clear();
     }
@@ -1261,23 +1265,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                         continue;
                     }
 
-                    // Before
-                    // if let Ok(slot_ptr) = slot.compare_exchange(
-                    //     PShared::null(),
-                    //     slot_new,
-                    //     Ordering::AcqRel,
-                    //     Ordering::Relaxed,
-                    //     guard,
-                    // ) {
-                    //     return Ok(FindResult {
-                    //         size,
-                    //         _bucket_index: key_hash,
-                    //         slot,
-                    //         slot_ptr,
-                    //     });
-                    // }
-
-                    // After(general)
                     let (size, slot_p) = client
                         .insert_chk
                         .checkpoint::<false>(
@@ -1381,14 +1368,26 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         mut context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
+        prev_slot: Option<&DetectableCASAtomic<Slot<K, V>>>,
         sender: &mpsc::Sender<()>,
+        prev_slot_chk: &mut Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
         move_done: &mut Checkpoint<bool>,
         tag_cas: &mut Cas,
         insert_inner: &mut InsertInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) {
+    ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
+        let prev_p = ok_or!(
+            prev_slot_chk.checkpoint::<REC>(
+                prev_slot.map(|p| unsafe { p.as_pptr(pool) }),
+                tid,
+                pool
+            ),
+            e,
+            e.current
+        );
+
         let (_, result) = self.insert_inner::<REC>(
             context,
             slot,
@@ -1399,6 +1398,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             guard,
             pool,
         );
+
+        if let Some(p) = prev_p {
+            let prev = unsafe { p.deref(pool) };
+            prev.inner
+                .store(PShared::null().with_tag(1), Ordering::Release);
+            persist_obj(&prev.inner, true);
+        }
 
         // If the inserted slot is being resized, try again.
         fence(Ordering::SeqCst);
@@ -1415,7 +1421,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             e.current
         );
         if done {
-            return;
+            return Ok(());
         }
 
         // Move the slot if the slot is not already (being) moved.
@@ -1434,65 +1440,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             )
             .is_err()
         {
-            return;
+            return Ok(());
         }
 
-        let mut prev_result = result;
-        loop {
-            let (_, result) = self.insert_inner::<false>(
-                context,
-                slot,
-                key_hashes,
-                sender,
-                insert_inner,
-                tid,
-                guard,
-                pool,
-            );
-
-            // TODO(must): 이거 rec에서도 해줘야 함. 안 그러면 resize가 한없이 기다릴 수 있음
-            prev_result
-                .slot
-                .inner
-                .store(PShared::null().with_tag(1), Ordering::Release);
-
-            // If the inserted slot is being resized, try again.
-            fence(Ordering::SeqCst);
-
-            // If the context remains the same, it's done.
-            context = self.context.load(Ordering::Acquire, guard);
-
-            // If the inserted array is not being resized, it's done.
-            let context_ref = unsafe { context.deref(pool) };
-
-            let done = move_done
-                .checkpoint::<false>(context_ref.resize_size < result.size, tid, pool)
-                .unwrap();
-            if done {
-                return;
-            }
-
-            // Move the slot if the slot is not already (being) moved.
-            //
-            // the resize thread may already have passed the slot. I need to move it.
-
-            if result
-                .slot
-                .cas::<false>(
-                    result.slot_ptr,
-                    result.slot_ptr.with_tag(1),
-                    tag_cas,
-                    tid,
-                    guard,
-                    pool,
-                )
-                .is_err()
-            {
-                break;
-            }
-
-            prev_result = result;
-        }
+        Err((context, result))
     }
 
     pub fn insert<const REC: bool>(
@@ -1534,11 +1485,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         )
         .load(Ordering::Relaxed, guard);
 
-        self.insert_loop::<REC>(
+        let mut res = self.insert_loop::<REC>(
             context,
             slot,
             key_hashes,
+            None,
             sender,
+            &mut client.prev_slot,
             &mut client.move_done,
             &mut client.tag_cas,
             &mut client.insert_inner,
@@ -1546,7 +1499,27 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             guard,
             pool,
         );
-        Ok(())
+
+        loop {
+            if let Err((context, result)) = res {
+                res = self.insert_loop::<false>(
+                    context,
+                    slot,
+                    key_hashes,
+                    Some(result.slot),
+                    sender,
+                    &mut client.prev_slot,
+                    &mut client.move_done,
+                    &mut client.tag_cas,
+                    &mut client.insert_inner,
+                    tid,
+                    guard,
+                    pool,
+                );
+            } else {
+                return Ok(());
+            }
+        }
     }
 
     // pub fn update(
@@ -1605,30 +1578,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let (key_tag, key_hashes) = hashes(&key);
         let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
 
-        // Before
-        // let find_result = some_or!(find_result, {
-        //     println!("[delete] None");
-        //     return Ok(false);
-        // });
-        //
-        // if find_result
-        //     .slot
-        //     .compare_exchange(
-        //         find_result.slot_ptr,
-        //         PShared::null(),
-        //         Ordering::AcqRel,
-        //         Ordering::Relaxed,
-        //         guard,
-        //     )
-        //     .is_err()
-        // {
-        //     continue;
-        // }
-        // unsafe {
-        //     guard.defer_pdestroy(find_result.slot_ptr);
-        // }
-
-        // After(general)
         let (slot, slot_ptr) = match find_result {
             Some(res) => (
                 unsafe { res.slot.as_pptr(pool) },
