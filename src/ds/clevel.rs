@@ -12,12 +12,12 @@ use std::sync::mpsc;
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_utils::Backoff;
 use derivative::Derivative;
 use etrace::*;
 use fasthash::Murmur3HasherExt;
 use itertools::*;
 use libc::c_void;
-use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
@@ -27,6 +27,8 @@ use crate::pmem::{
     global_pool, persist_obj, sfence, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle,
 };
 use crate::PDefault;
+
+use super::spin_lock_volatile::VSpinLock;
 
 const TINY_VEC_CAPACITY: usize = 8;
 
@@ -334,7 +336,7 @@ pub struct ClevelInner<K, V: Collectable> {
     context: PAtomic<Context<K, V>>,
 
     #[derivative(Debug = "ignore")]
-    add_level_lock: RawMutexImpl,
+    add_level_lock: VSpinLock,
 }
 
 impl<K, V: Collectable> Collectable for ClevelInner<K, V> {
@@ -362,7 +364,7 @@ impl<K, V: Collectable> PDefault for ClevelInner<K, V> {
                 },
                 pool,
             ),
-            add_level_lock: RawMutexImpl::INIT, // TODO: use our spinlock
+            add_level_lock: VSpinLock::default(),
         }
     }
 }
@@ -719,10 +721,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         (first_level_data.len() * 2 - last_level_data.len()) * SLOTS_IN_BUCKET
     }
 
-    fn add_level<'g>(
+    fn add_level<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
@@ -731,27 +734,29 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let next_level_size = level_size_next(first_level_data.len());
 
         // insert a new level to the next of the first level.
-        let next_level = first_level.next.load(Ordering::Acquire, guard);
-        let next_level = if !next_level.is_null() {
-            next_level
-        } else {
-            self.add_level_lock.lock(); // TODO(must): volatile lock을 쓴다해도 여기에 도달했을 때 다시 lock을 얻어야 함
-                                        // TODO(opt): try lock
-            let next_node = new_node(next_level_size, pool);
-            let res = first_level
-                .next
-                .compare_exchange(
-                    PShared::null(),
-                    next_node,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard,
-                )
-                .unwrap_or_else(|err| err.current);
-            unsafe {
-                self.add_level_lock.unlock();
+        let backoff = Backoff::default();
+        let next_level = loop {
+            let next_level = first_level.next.load(Ordering::Acquire, guard);
+            if !next_level.is_null() {
+                break next_level;
             }
-            res
+
+            if let Ok(_g) = self.add_level_lock.try_lock::<REC>(tid) {
+                let next_node = new_node(next_level_size, pool);
+                let res = first_level
+                    .next
+                    .compare_exchange(
+                        PShared::null(),
+                        next_node,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                        guard,
+                    )
+                    .unwrap_or_else(|err| err.current);
+                break res;
+            }
+
+            backoff.snooze();
         };
         persist_obj(&first_level.next, true); // TODO(opt): Use insert_lp
 
@@ -861,7 +866,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         }
 
         if REC {
-            // TODO(opt): normal run에서 timestamp 증가로 인해 `REC` 분기 안 따도 되긴 함.
             if let Some(ins_slot) = client.insert_chk.peek(tid, pool) {
                 let ins_slot = unsafe { ins_slot.deref(pool) };
                 if ins_slot
@@ -945,7 +949,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             }
 
             // The first level is full. Resize and retry.
-            let (context_new, _) = self.add_level(context, first_level_ref, guard, pool);
+            let (context_new, _) =
+                self.add_level::<REC>(context, first_level_ref, tid, guard, pool);
             context = context_new;
         }
     }
@@ -1037,6 +1042,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 pool,
             );
 
+            unsafe {
+                guard.defer_pdestroy(last_level);
+            }
+
             loop {
                 context = ok_or!(
                     self.context.compare_exchange(
@@ -1062,9 +1071,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                     }
                 );
 
-                unsafe {
-                    guard.defer_pdestroy(last_level);
-                }
                 break;
             }
         }
@@ -1305,7 +1311,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let context_ref = unsafe { context.deref(pool) };
         let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let first_level_ref = unsafe { first_level.deref(pool) };
-        let (context_new, added) = self.add_level(context, first_level_ref, guard, pool);
+        let (context_new, added) =
+            self.add_level::<REC>(context, first_level_ref, tid, guard, pool);
         if added {
             let _ = sender.send(());
         }
