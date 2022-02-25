@@ -127,17 +127,20 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
         if result {
             unsafe {
                 // 여기서 PNode를 free한 뒤에도 client가 들고 있을 수 있으니 pguard로 보호
-                pguard.defer_unchecked(|| {
-                    ALLOC
-                        .try_with(|a| {
-                            ssmem_free(
-                                *a.borrow_mut(),
-                                curr_ref.pptr as *mut c_void,
-                                Some(global_pool().unwrap()),
-                            );
-                        })
-                        .unwrap();
-                })
+                pguard.defer_unchecked(
+                    || {
+                        ALLOC
+                            .try_with(|a| {
+                                ssmem_free(
+                                    *a.borrow_mut(),
+                                    curr_ref.pptr as *mut c_void,
+                                    Some(global_pool().unwrap()),
+                                );
+                            })
+                            .unwrap();
+                    },
+                    None, // None: VNode가 제거 되었으니 thread-crash시 이 분기를 또 탈 위험은 없음
+                )
             }
         }
         result
