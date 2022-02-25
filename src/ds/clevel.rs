@@ -289,8 +289,17 @@ struct Bucket<K, V: Collectable> {
     slots: [DetectableCASAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
+impl<K, V: Collectable> Collectable for Bucket<K, V> {
+    fn filter(bucket: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        for slot in bucket.slots.iter_mut() {
+            DetectableCASAtomic::filter(slot, tid, gc, pool);
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Node<T> {
+    // TODO(must): Collectable
     data: T,
     next: PAtomic<Node<T>>,
 }
@@ -304,8 +313,17 @@ impl<T> From<T> for Node<T> {
     }
 }
 
+// TODO(must): uncomment
+// impl<T: Collectable> Collectable for Node<T> {
+//     fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+//         T::filter(&mut node.data, tid, gc, pool);
+//         PAtomic::filter(&mut node.next, tid, gc, pool);
+//     }
+// }
+
 #[derive(Debug)]
 struct NodeIter<'g, T> {
+    // TODO(must): Collectable
     inner: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
     last: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
     guard: &'g Guard,
@@ -322,12 +340,12 @@ struct Context<K, V: Collectable> {
     resize_size: usize,
 }
 
-impl<K, V: Collectable> Collectable for Context<K, V> {
-    // TODO(must): 아마 volatile이어야 할 거임
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
-    }
-}
+// TODO(must): uncomment
+// impl<K, V: Collectable> Collectable for Context<K, V> {
+//     fn filter(context: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+//         PAtomic::filter(&mut context.last_level, tid, gc, pool);
+//     }
+// }
 
 /// Inner Clevel
 #[derive(Derivative)]
@@ -341,7 +359,7 @@ pub struct ClevelInner<K, V: Collectable> {
 
 impl<K, V: Collectable> Collectable for ClevelInner<K, V> {
     fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        todo!()
+        // TODO(must): collect
     }
 }
 

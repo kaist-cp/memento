@@ -14,10 +14,10 @@ use super::{ExecInfo, Timestamp, NR_MAX_THREADS};
 
 pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS + 1];
 
-/// TODO(doc)
+/// Detectable CAS Atomic pointer
 #[derive(Debug)]
 pub struct DetectableCASAtomic<N: Collectable> {
-    /// TODO: doc
+    /// Atomic pointer
     pub inner: PAtomic<N>,
 }
 
