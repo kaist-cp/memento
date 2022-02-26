@@ -277,7 +277,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         if REC {
-            return self.delete_result(old, tid, guard, pool);
+            return self.delete_result(old, new, tid, guard, pool);
         }
 
         // 빼려는 node에 내 이름 새겨넣음
@@ -314,6 +314,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     fn delete_result<'g>(
         &self,
         old: PShared<'g, N>,
+        new: PShared<'_, N>,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
@@ -324,12 +325,18 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         );
 
         // owner가 내가 아니면 실패
-        let owner = old_ref.replacement().load(Ordering::SeqCst, guard);
-        if owner.tid() != tid {
+        let owner = old_ref.replacement();
+        let o = owner.load(Ordering::SeqCst, guard);
+        if o.tid() != tid {
             return Err(ok_or!(self.load_helping(old, guard, pool), e, e));
         }
 
-        // TODO(must): location cas 마저 해줘야 함
+        persist_obj(owner, false);
+
+        let _ = self
+            .inner
+            .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
+        guard.defer_persist(&self.inner);
         unsafe { guard.defer_pdestroy(old) };
         Ok(old)
     }
