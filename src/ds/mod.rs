@@ -3,7 +3,7 @@
 // pub mod clevel_old;
 pub mod clevel;
 pub mod elim_stack;
-pub mod exchanger; // TODO(must): ins_del 바뀐 거 적용
+pub mod exchanger;
 pub mod queue;
 pub mod queue_general;
 pub mod queue_lp;

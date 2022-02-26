@@ -450,7 +450,6 @@ mod test {
         }
     }
 
-    // TODO(opt): queue의 enq_deq과 합치기
     // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // - pool을 2번째 열 때부터 gc 동작 확인가능:
     //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴

@@ -101,7 +101,7 @@ impl<T> Frozen<T> {
     ///    use memento::Frozen;
     ///
     ///    // 이 변수들은 언제나 pmem에서 접근 가능함을 가정
-    ///    let src = Frozen::<Box<i32>>::from(Box::new(42)); // TODO(opt): use `PBox`
+    ///    let src = Frozen::<Box<i32>>::from(Box::new(42));
     ///    let mut data = 0;
     ///    let mut flag = false;
     ///
@@ -123,8 +123,8 @@ impl<T> Frozen<T> {
     }
 }
 
-/// TODO(doc)
+/// Default trait for Persistent object
 pub trait PDefault: Collectable {
-    /// TODO(doc)
+    /// Persistent default using pool to allocate persistent object
     fn pdefault(pool: &PoolHandle) -> Self;
 }

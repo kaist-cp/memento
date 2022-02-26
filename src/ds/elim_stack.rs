@@ -62,7 +62,7 @@ impl<T: Clone + Collectable> Default for TryPush<T> {
     fn default() -> Self {
         Self {
             try_push: Default::default(),
-            elim_idx: get_random_elim_index(), // TODO(opt): Fixed index vs online random index 성능 비교
+            elim_idx: get_random_elim_index(),
             try_xchg: Default::default(),
         }
     }
@@ -138,7 +138,7 @@ impl<T: Clone + Collectable> Default for TryPop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
-            elim_idx: get_random_elim_index(), // TODO(opt): Fixed index vs online random index 성능 비교
+            elim_idx: get_random_elim_index(),
             pop_node: Default::default(),
             try_xchg: Default::default(),
         }

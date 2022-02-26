@@ -356,7 +356,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
         // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
         guard.defer_persist(&self.inner);
-        unsafe { guard.defer_pdestroy(old) } // TODO: crossbeam 패치 이전에는 test 끝날 때 double free 날 수 있음
+        unsafe { guard.defer_pdestroy(old) }
 
         Ok(old)
     }

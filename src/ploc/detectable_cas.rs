@@ -44,7 +44,7 @@ impl<N: Collectable> From<PShared<'_, N>> for DetectableCASAtomic<N> {
 }
 
 impl<N: Collectable> DetectableCASAtomic<N> {
-    /// TODO(doc)
+    /// Compare And Set
     pub fn cas<'g, const REC: bool>(
         &self,
         old: PShared<'_, N>,
@@ -183,7 +183,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         Some(Ok(()))
     }
 
-    /// TODO(doc)
+    /// Load
     #[inline]
     pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
         let cur = self.inner.load(ord, guard);
@@ -301,7 +301,7 @@ impl From<&'static [CASCheckpointArr; 2]> for CasInfo {
     }
 }
 
-/// TODO(doc)
+/// Compare and Set memento
 #[derive(Debug)]
 pub struct Cas {
     checkpoint: Timestamp,
