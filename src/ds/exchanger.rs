@@ -42,14 +42,14 @@ pub enum TryFail {
 #[derive(Debug)]
 pub struct Node<T: Collectable> {
     data: T,
-    replacement: PAtomic<Self>,
+    repl: PAtomic<Self>,
 }
 
 impl<T: Collectable> From<T> for Node<T> {
     fn from(value: T) -> Self {
         Self {
             data: value,
-            replacement: PAtomic::from(not_deleted()),
+            repl: PAtomic::from(not_deleted()),
         }
     }
 }
@@ -57,14 +57,14 @@ impl<T: Collectable> From<T> for Node<T> {
 impl<T: Collectable> Collectable for Node<T> {
     fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         T::filter(&mut node.data, tid, gc, pool);
-        // TODO(must): filter replacement..
+        PAtomic::filter(&mut node.repl, tid, gc, pool);
     }
 }
 
 impl<T: Collectable> SMONode for Node<T> {
     #[inline]
     fn replacement(&self) -> &PAtomic<Self> {
-        &self.replacement
+        &self.repl
     }
 }
 
