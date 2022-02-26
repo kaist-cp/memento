@@ -217,7 +217,6 @@ pub mod queue {
                         opt.threads,
                     )
                 }
-                _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
             TestTarget::MementoQueueLp(kind) => {
                 match kind {
@@ -232,7 +231,6 @@ pub mod queue {
                             opt.threads,
                         )
                     }
-                    _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
             }
             TestTarget::MementoQueueGeneral(kind) => match kind {
@@ -247,7 +245,6 @@ pub mod queue {
                         opt.threads,
                     )
                 }
-                _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
             TestTarget::MementoQueuePBComb(kind) => {
                 unsafe { MementoPBComb_NR_THREAD = opt.threads }; // combining시 이만큼만 순회
@@ -263,7 +260,6 @@ pub mod queue {
                             opt.threads,
                         )
                     }
-                    _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
             }
             TestTarget::FriedmanDurableQueue(kind) => match kind {
@@ -278,7 +274,6 @@ pub mod queue {
                         opt.threads,
                     )
                 }
-                _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
             TestTarget::FriedmanLogQueue(kind) => match kind {
                 TestKind::QueuePair => {
@@ -288,7 +283,6 @@ pub mod queue {
                     unsafe { PROB = prob };
                     get_nops::<TestLogQueue, TestLogQueueEnqDeq<false>>(&opt.filepath, opt.threads)
                 }
-                _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
             TestTarget::DSSQueue(kind) => match kind {
                 TestKind::QueuePair => {
@@ -298,7 +292,6 @@ pub mod queue {
                     unsafe { PROB = prob };
                     get_nops::<TestDSSQueue, TestDSSQueueEnqDeq<false>>(&opt.filepath, opt.threads)
                 }
-                _ => unreachable!("Queue를 위한 테스트만 해야함"),
             },
             TestTarget::PBCombQueue(kind) => {
                 unsafe { PBComb_NR_THREAD = opt.threads }; // combining시 이만큼만 순회
@@ -316,7 +309,6 @@ pub mod queue {
                             opt.threads,
                         )
                     }
-                    _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
             }
             TestTarget::CrndmQueue(kind) => {
@@ -327,7 +319,6 @@ pub mod queue {
                     TestKind::QueueProb(prob) => {
                         root.get_nops(opt.threads, opt.duration, Some(prob))
                     }
-                    _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
             }
         }
