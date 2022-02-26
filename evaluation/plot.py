@@ -39,7 +39,8 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.grid(True)
     plt.legend()
     plt.xlabel(xlabel, size='large')
-    plt.ylabel(ylabel, size='large')
+    if ylabel != '':
+        plt.ylabel(ylabel, size='large')
     fig_path = "{}.png".format(output)
     plt.savefig(fig_path, dpi=300)
     print(fig_path)
@@ -106,5 +107,9 @@ for obj in objs:
                               'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style': style})
 
         # Draw
-        draw('Threads', 'Throughput (M op/s)',
+        if k == 'pair':
+            ylabel = 'Throughput (M op/s)'
+        else:
+            ylabel = ''
+        draw('Threads', ylabel,
              plot_lines, "./out/{}".format(plot_id), 4)
