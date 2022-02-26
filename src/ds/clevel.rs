@@ -780,7 +780,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
             backoff.snooze();
         };
-        persist_obj(&first_level.next, true); // TODO(opt): Use insert_lp
+        persist_obj(&first_level.next, true);
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };

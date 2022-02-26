@@ -47,7 +47,7 @@ pub enum InsertError<'g, T> {
     RecFail,
 }
 
-/// Atomic pointer for use of `Insert'/`Delete`
+/// Atomic pointer for use of `Insert' and `Delete`
 #[derive(Debug)]
 pub struct SMOAtomic<N: Node + Collectable> {
     inner: PAtomic<N>,
