@@ -26,7 +26,7 @@ We assume you use **Ubuntu 20.04**.
 
 #### Detectable Operations
 
-The directory `src/ploc/` contains TODO
+The directory `src/ploc/` contains memento-based detectable operations.
 
 - `src/ploc/common.rs`: Implementation of Checkpoint (corresponding TODO) and timestamp calibration (corresponding TODO).
 - `src/ploc/detectable_cas.rs`: Implementation of Atomic Pointer Location supporting Detectable CAS corresponding TODO.
@@ -52,8 +52,8 @@ TODO
 
 #### Others
 
-- `src/pepoch`: TODO
-- `src/pmem`: TODO
+- `src/pmem`: This directory contains several libraries to create an environment to run memento-based programs, including persistent memory pool, persistent poiner, low-level instructions and other existing libraries (e.g. Ralloc, SSmem). (TODO: execution에서 old guard 강조 안 함?)
+- `src/pepoch`: Implementation of atomic pointer for persistent memory pool and SMR. It also provide ways to tag on a pointer to support detectable operations (corresponding TODO).
 
 ## Performance Evaluation
 
