@@ -9,7 +9,7 @@ function show_cfg() {
     echo "Test count: ${TEST_CNT}"
     echo "Test duration: ${TEST_DUR}s"
 
-    let total_dur=$TEST_CNT*$TEST_DUR*$MAX_THREADS/60
+    let total_dur=$TEST_CNT*$TEST_DUR*${#THREADS[*]}/60
     echo "테스트 총 소요시간: obj 수 * 약 ${total_dur}m (thread * count * duration)"
     echo "git hash: $git_hash"
     echo ""
@@ -38,12 +38,9 @@ function benches() {
     kind=$2
     init_nodes=$3
     echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}), init nodes: ${init_nodes} >"
-    # 스레드 `t`개를 사용할 때의 처리율 계산
-    for t in $( seq 1 $MAX_THREADS )
-    do
+    for t in ${THREADS[@]}; do
         # `TEST_CNT`번 반복
-        for ((var=1; var<=$TEST_CNT; var++));
-        do
+        for ((var=1; var<=$TEST_CNT; var++)); do
             echo "test $var/$TEST_CNT...";
             bench $target $kind $t $init_nodes
         done
@@ -60,8 +57,8 @@ if [ $# -ne 1 ] ; then
 fi
 
 # 1. Setup
-PMEM_PATH=$1   # PMEM_PATH에 풀 파일을 생성하여 사용
-MAX_THREADS=32        # 1~MAX_THREADS까지 스레드 수를 달리하며 처리율 계산
+PMEM_PATH=$1          # PMEM_PATH에 풀 파일을 생성하여 사용
+THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
 TEST_CNT=5            # 한 bench당 테스트 횟수
 TEST_DUR=10           # 한 테스트당 지속시간
 
