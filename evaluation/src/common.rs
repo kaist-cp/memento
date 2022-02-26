@@ -17,7 +17,7 @@ pub static mut QUEUE_INIT_SIZE: usize = 0;
 /// 테스트할 수 있는 최대 스레드 수
 // - 우리 큐, 로그 큐 등에서 사물함을 MAX_THREAD만큼 정적할당해야하니 필요
 // - TODO: 이 상수 없앨 수 있는지 고민 (e.g. MAX_THREAD=32 ./run.sh처럼 가능한가?)
-pub const MAX_THREADS: usize = 32;
+pub const MAX_THREADS: usize = 64;
 
 // ``` thread-local하게 사용하는 변수
 // TODO: 더 좋은 방법? 현재는 인자로 tid 밖에 전달해줄 수 없으니 이렇게 해둠
