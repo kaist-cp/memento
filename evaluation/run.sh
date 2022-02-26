@@ -25,7 +25,7 @@ function bench() {
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
-    if [ "${target}" == "pmdk_pipe" ] || [ "${target}" == "pmdk_queue" ]; then
+    if [ "${target}" == "pmdk_queue" ]; then
         # pinning NUMA node 0
         numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $init_nodes $outpath
     else
@@ -83,7 +83,6 @@ for kind in pair prob20 prob50 prob80; do
     benches memento_queue_lp $kind $init_nodes
     benches memento_queue_general $kind $init_nodes
     benches memento_queue_pbcomb $kind $init_nodes
-    # benches memento_pipe_queue $kind $init_nodes
     benches durable_queue $kind $init_nodes
     benches log_queue $kind $init_nodes
     benches dss_queue $kind $init_nodes
@@ -92,13 +91,6 @@ for kind in pair prob20 prob50 prob80; do
     benches crndm_queue $kind $init_nodes
 done
 
-# 3. Benchmarking pipe performance
-# for kind in pipe; do
-#     benches memento_pipe $kind
-#     benches crndm_pipe $kind
-#     benches pmdk_pipe $kind
-# done
-
-# 4. Plot and finish
+# 3. Plot and finish
 python3 plot.py
 echo "Entire benchmarking was done! see result on \".out/\""

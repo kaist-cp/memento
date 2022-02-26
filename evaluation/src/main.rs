@@ -20,7 +20,6 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
     let kind = match kind {
         "prob" => TestKind::QueueProb(arg.parse::<u32>().unwrap()),
         "pair" => TestKind::QueuePair,
-        "pipe" => TestKind::Pipe,
         _ => unreachable!(),
     };
     match target {
@@ -29,16 +28,11 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         "memento_queue_lp" => TestTarget::MementoQueueLp(kind),
         "memento_queue_general" => TestTarget::MementoQueueGeneral(kind),
         "memento_queue_pbcomb" => TestTarget::MementoQueuePBComb(kind),
-        "memento_pipe_queue" => TestTarget::MementoPipeQueue(kind),
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
         "pbcomb_queue" => TestTarget::PBCombQueue(kind),
         "crndm_queue" => TestTarget::CrndmQueue(kind),
-
-        // Pipe
-        "memento_pipe" => TestTarget::MementoPipe(kind),
-        "crndm_pipe" => TestTarget::CrndmPipe(kind),
         _ => unreachable!("invalid target"),
     }
 }
@@ -99,21 +93,11 @@ fn bench(opt: &Opt) -> f64 {
         | TestTarget::MementoQueueLp(_)
         | TestTarget::MementoQueueGeneral(_)
         | TestTarget::MementoQueuePBComb(_)
-        | TestTarget::MementoPipeQueue(_)
         | TestTarget::FriedmanDurableQueue(_)
         | TestTarget::FriedmanLogQueue(_)
         | TestTarget::DSSQueue(_)
         | TestTarget::PBCombQueue(_)
         | TestTarget::CrndmQueue(_) => bench_queue(opt, target),
-        TestTarget::MementoPipe(_) => {
-            // get_nops::<GetOurPipeNOps>(&opt.filepath, kind, opt.threads, opt.duration)
-            todo!()
-        }
-        TestTarget::CrndmPipe(_) => {
-            // let root = BuddyAlloc::open::<CrndmPipe>(&opt.filepath, O_16GB | O_CF).unwrap();
-            // root.get_nops(kind, opt.threads, opt.duration)
-            todo!()
-        }
     };
     let avg_ops = (nops as f64) / opt.duration; // 평균 op/s
     println!("avg ops: {}", avg_ops);

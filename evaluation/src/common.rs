@@ -14,10 +14,6 @@ pub const FILE_SIZE: usize = 128 * 1024 * 1024 * 1024;
 /// Queue 테스트시 초기 노드 수 (basket queue prob50 실험의 초기 노드 수 따라함)
 pub static mut QUEUE_INIT_SIZE: usize = 0;
 
-/// Pipe 테스트시 Queue 1의 초기 노드 수
-// TODO: cpp의 PIPE_INIT_SIZE는 별도로 있음(commons.hpp). 이를 하나의 컨픽 파일로 통일하기
-pub const PIPE_INIT_SIZE: usize = 10_000_000;
-
 /// 테스트할 수 있는 최대 스레드 수
 // - 우리 큐, 로그 큐 등에서 사물함을 MAX_THREAD만큼 정적할당해야하니 필요
 // - TODO: 이 상수 없앨 수 있는지 고민 (e.g. MAX_THREAD=32 ./run.sh처럼 가능한가?)
@@ -76,21 +72,17 @@ pub enum TestTarget {
     MementoQueueLp(TestKind), // link and persist
     MementoQueueGeneral(TestKind),
     MementoQueuePBComb(TestKind), // combining
-    MementoPipeQueue(TestKind),
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
     DSSQueue(TestKind),
     PBCombQueue(TestKind),
     CrndmQueue(TestKind), // TODO: CrndmQueue -> CorundumQueue
-    MementoPipe(TestKind),
-    CrndmPipe(TestKind),
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum TestKind {
     QueueProb(u32), // { p% 확률로 enq 혹은 deq }를 반복
     QueuePair,      // { enq; deq; }를 반복
-    Pipe,
 }
 
 #[inline]
@@ -274,16 +266,6 @@ pub mod queue {
                     _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
             }
-            TestTarget::MementoPipeQueue(kind) => match kind {
-                TestKind::QueuePair => {
-                    todo!()
-                }
-                TestKind::QueueProb(prob) => {
-                    unsafe { PROB = prob };
-                    todo!()
-                }
-                _ => unreachable!("Queue를 위한 테스트만 해야함"),
-            },
             TestTarget::FriedmanDurableQueue(kind) => match kind {
                 TestKind::QueuePair => get_nops::<TestDurableQueue, TestDurableQueueEnqDeq<true>>(
                     &opt.filepath,
@@ -348,11 +330,6 @@ pub mod queue {
                     _ => unreachable!("Queue를 위한 테스트만 해야함"),
                 }
             }
-            TestTarget::MementoPipe(_) | TestTarget::CrndmPipe(_) => {
-                unreachable!("queue만")
-            }
         }
     }
 }
-
-// TODO: add abstraction of pipe?

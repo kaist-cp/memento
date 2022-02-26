@@ -41,7 +41,6 @@
 
 // Persistent objects collection
 pub mod ds;
-// pub mod pipe;
 pub mod ploc;
 
 // Persistent memory underline

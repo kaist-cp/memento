@@ -14,7 +14,6 @@ objs = {
             "memento_queue_lp": {'data_id': '', 'label': "Memento queue-lp", 'marker': 'o', 'color': 'k', 'style': ':'},
             "memento_queue_general": {'data_id': '', 'label': "Memento queue-general", 'marker': 'o', 'color': 'k', 'style': '--'},
             "memento_queue_pbcomb": {'data_id': '', 'label': "Memento queue-pbcomb", 'marker': 'o', 'color': 'k', 'style': '..'},
-            # # 'memento_pipe_queue': {'data_id': '', 'label': "Memento pipe-queue", 'marker': 'o', 'color': 'firebrick', 'style': '-'},
             'durable_queue': {'data_id': '', 'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'data_id': '', 'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
@@ -23,15 +22,6 @@ objs = {
             'crndm_queue': {'data_id': '', 'label': "Corundum queue", 'marker': '^', 'color': 'green', 'style': '--'},
         },
     },
-
-    # TODO: pipe 필요시 실험 가능하게 하기
-    # "pipe": {
-    #     "targets": {
-    #         'memento_pipe': {'data_id': '', 'label': "Memento pipe", 'marker': 'o', 'color': 'k', 'style': '-'},
-    #         'crndm_pipe': {'data_id': '', 'label': "Corundum pipe", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
-    #         'pmdk_pipe': {'data_id': '', 'label': "PMDK pipe", 'marker': 'x', 'color': 'c', 'style': '--'},
-    #     },
-    # }
 
     # TODO: other obj
 }
@@ -93,10 +83,7 @@ for obj in objs:
     # draw graph: (obj, bench kind) 쌍마다 그래프 하나씩 그림 (e.g. queue-pair, queue-prob50, ..)
     kinds = set(data['bench kind'])
     for ix, k in enumerate(kinds):
-        if obj == "pipe":
-            plot_id = "pipe"
-        else:
-            plot_id = "{}-{}".format(obj, k)
+        plot_id = "{}-{}".format(obj, k)
         plot_lines = []
 
         # Gathering info

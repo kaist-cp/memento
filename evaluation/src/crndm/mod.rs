@@ -1,6 +1,5 @@
 //! Corundum Implementations (TODO: paper link)
 
-// mod pipe;
 mod queue;
 
 use corundum::default::Allocator;
