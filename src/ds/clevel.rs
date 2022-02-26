@@ -1028,9 +1028,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                             break;
                         }
 
-                        // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
+                        // tagged with 1 by concurrent move if resized. we should wait for the item to be moved before changing context.
                         // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                        // TODO: should we do it...?
                         if slot_ptr.tag() == 1 {
                             slot_ptr = slot.load(Ordering::Acquire, guard, pool);
                             continue;
@@ -1645,8 +1644,6 @@ mod tests {
         test_utils::tests::{run_test, TestRootObj},
     };
 
-    use crossbeam_epoch::pin;
-
     use super::*;
 
     static mut SEND: Option<Vec<mpsc::Sender<()>>> = None;
@@ -1687,8 +1684,8 @@ mod tests {
             match tid {
                 1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
-                    let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
-                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);
+                    let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, guard, pool);
                 }
                 2 => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
@@ -1774,8 +1771,8 @@ mod tests {
             match tid {
                 1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
-                    let mut g = pin(); // TODO(must): Use guard param (use unsafe repin_after)
-                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, &mut g, pool);
+                    let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
+                    let _ = resize_loop::<_, _, true>(kv, recv, &mut mmt.resize, tid, guard, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
