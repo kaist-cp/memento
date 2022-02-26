@@ -2,11 +2,12 @@
 #![allow(non_snake_case)]
 use crate::ds::spin_lock_volatile::VSpinLock;
 use crate::pepoch::atomic::Pointer;
-use crate::pepoch::{unprotected, PAtomic, POwned};
+use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned};
 use crate::ploc::Checkpoint;
 use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
+use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
 use etrace::ok_or;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -19,7 +20,7 @@ type Data = usize; // TODO: generic
 pub static mut NR_THREADS: usize = MAX_THREADS;
 
 type EnqRetVal = ();
-type DeqRetVal = PPtr<Node>;
+type DeqRetVal = Option<Data>;
 
 /// client for enqueue
 #[derive(Debug, Default)]
@@ -85,7 +86,7 @@ impl Collectable for Node {
 #[derive(Debug)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
-    return_val: [Option<EnqRetVal>; MAX_THREADS + 1],
+    return_val: [EnqRetVal; MAX_THREADS + 1],
     deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
@@ -109,7 +110,7 @@ impl Clone for EStateRec {
 #[derive(Debug)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
-    return_val: [Option<DeqRetVal>; MAX_THREADS + 1],
+    return_val: [DeqRetVal; MAX_THREADS + 1],
     deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
@@ -126,11 +127,6 @@ impl Clone for DStateRec {
 impl Collectable for DStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         PAtomic::filter(&mut s.head, tid, gc, pool);
-        for tid in 0..MAX_THREADS + 1 {
-            if let Some(mut ret) = s.return_val[tid] {
-                PPtr::filter(&mut ret, tid, gc, pool);
-            }
-        }
     }
 }
 
@@ -202,7 +198,7 @@ impl PDefault for Queue {
             e_state: array_init(|_| {
                 CachePadded::new(EStateRec {
                     tail: PAtomic::from(dummy),
-                    return_val: array_init(|_| None),
+                    return_val: array_init(|_| ()),
                     deactivate: array_init(|_| AtomicBool::new(false)),
                 })
             }),
@@ -228,9 +224,10 @@ impl Queue {
         arg: Data,
         enq: &mut Enqueue,
         tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> EnqRetVal {
-        let prev = self.e_request[tid].load(Ordering::SeqCst, unsafe { unprotected() });
+        let prev = self.e_request[tid].load(Ordering::SeqCst, guard);
         let prev_activate = if prev.is_null() {
             false
         } else {
@@ -255,7 +252,7 @@ impl Queue {
                 e.current
             }
         )
-        .load(Ordering::Relaxed, unsafe { unprotected() });
+        .load(Ordering::Relaxed, guard);
 
         // 이전에 끝난 client라면 같은 결과 반환
         if REC {
@@ -270,7 +267,7 @@ impl Queue {
         self.e_request[tid].store(req, Ordering::SeqCst);
 
         // 등록한 요청 수행
-        self.PerformEnqReq::<REC>(enq, tid, pool)
+        self.PerformEnqReq::<REC>(enq, tid, guard, pool)
     }
 
     /// 요청 수행
@@ -278,6 +275,7 @@ impl Queue {
         &mut self,
         enq: &mut Enqueue,
         tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> EnqRetVal {
         // enq combiner 결정
@@ -298,7 +296,7 @@ impl Queue {
 
             if unsafe {
                 self.e_request[tid]
-                    .load(Ordering::SeqCst, unprotected())
+                    .load(Ordering::SeqCst, guard)
                     .deref(pool)
             }
             .activate
@@ -314,9 +312,7 @@ impl Queue {
                 }
 
                 // 결과 저장하고 반환
-                let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
-                    .clone()
-                    .unwrap();
+                let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid].clone();
                 let _ = enq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
@@ -328,7 +324,7 @@ impl Queue {
         OLD_TAIL.store(
             self.e_state[ind]
                 .tail
-                .load(Ordering::SeqCst, unsafe { unprotected() })
+                .load(Ordering::SeqCst, guard)
                 .into_usize(),
             Ordering::SeqCst,
         );
@@ -336,19 +332,15 @@ impl Queue {
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
-            if unsafe {
-                self.e_request[q]
-                    .load(Ordering::SeqCst, unprotected())
-                    .deref(pool)
-            }
-            .activate
-            .load(Ordering::SeqCst)
+            if unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) }
+                .activate
+                .load(Ordering::SeqCst)
                 != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 // 현재 tail의 persist를 예약
                 let tail_addr = self.e_state[ind]
                     .tail
-                    .load(Ordering::SeqCst, unsafe { unprotected() })
+                    .load(Ordering::SeqCst, guard)
                     .into_usize();
                 match to_persist.binary_search(&tail_addr) {
                     Ok(_) => {} // 같은 주소 중복 persist 방지
@@ -356,22 +348,19 @@ impl Queue {
                 }
 
                 // enq
-                let q_req_ref = unsafe {
-                    self.e_request[q]
-                        .load(Ordering::SeqCst, unprotected())
-                        .deref(pool)
-                };
+                let q_req_ref =
+                    unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) };
 
-                Self::raw_enqueue(&mut self.e_state[ind].tail, q_req_ref.arg, pool);
+                Self::raw_enqueue(&mut self.e_state[ind].tail, q_req_ref.arg, guard, pool);
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                self.e_state[ind].return_val[q] = Some(());
+                self.e_state[ind].return_val[q] = ();
                 self.e_state[ind].deactivate[q]
                     .store(q_req_ref.activate.load(Ordering::SeqCst), Ordering::SeqCst);
             }
         }
         let tail_addr = self.e_state[ind]
             .tail
-            .load(Ordering::SeqCst, unsafe { unprotected() })
+            .load(Ordering::SeqCst, guard)
             .into_usize();
         match to_persist.binary_search(&tail_addr) {
             Ok(_) => {} // 같은 주소 중복 persist 방지
@@ -392,15 +381,13 @@ impl Queue {
         drop(lockguard); // release E_LOCK
 
         // 결과 저장하고 반환
-        let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
-            .clone()
-            .unwrap();
+        let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid].clone();
         let _ = enq.result.checkpoint::<REC>(res, tid, pool);
         return res;
     }
 
     /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
-    fn raw_enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) {
+    fn raw_enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
         let new_node = POwned::new(
             Node {
                 data: arg,
@@ -409,7 +396,7 @@ impl Queue {
             pool,
         )
         .into_shared(unsafe { unprotected() });
-        let tail_ref = unsafe { tail.load(Ordering::SeqCst, unprotected()).deref_mut(pool) };
+        let tail_ref = unsafe { tail.load(Ordering::SeqCst, guard).deref_mut(pool) };
         tail_ref.next.store(new_node, Ordering::SeqCst); // tail.next = new node
         tail.store(new_node, Ordering::SeqCst); // tail = new node
     }
@@ -422,9 +409,10 @@ impl Queue {
         &mut self,
         deq: &mut Dequeue,
         tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> DeqRetVal {
-        let prev = self.d_request[tid].load(Ordering::SeqCst, unsafe { unprotected() });
+        let prev = self.d_request[tid].load(Ordering::SeqCst, guard);
         let prev_activate = if prev.is_null() {
             false
         } else {
@@ -448,7 +436,7 @@ impl Queue {
                 e.current
             }
         )
-        .load(Ordering::Relaxed, unsafe { unprotected() });
+        .load(Ordering::Relaxed, guard);
 
         // 이전에 끝난 client라면 같은 결과 반환
         if REC {
@@ -461,7 +449,7 @@ impl Queue {
         self.d_request[tid].store(req, Ordering::SeqCst);
 
         // 등록한 요청 수행
-        self.PerformDeqReq::<REC>(deq, tid, pool)
+        self.PerformDeqReq::<REC>(deq, tid, guard, pool)
     }
 
     /// 요청 수행
@@ -469,6 +457,7 @@ impl Queue {
         &mut self,
         deq: &mut Dequeue,
         tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> DeqRetVal {
         // deq combiner 결정
@@ -489,7 +478,7 @@ impl Queue {
 
             if unsafe {
                 self.d_request[tid]
-                    .load(Ordering::SeqCst, unprotected())
+                    .load(Ordering::SeqCst, guard)
                     .deref(pool)
             }
             .activate
@@ -505,9 +494,7 @@ impl Queue {
                 }
 
                 // 결과 저장하고 반환
-                let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
-                    .clone()
-                    .unwrap();
+                let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid].clone();
                 let _ = deq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
@@ -519,13 +506,9 @@ impl Queue {
 
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
-            if unsafe {
-                self.d_request[q]
-                    .load(Ordering::SeqCst, unprotected())
-                    .deref(pool)
-            }
-            .activate
-            .load(Ordering::SeqCst)
+            if unsafe { self.d_request[q].load(Ordering::SeqCst, guard).deref(pool) }
+                .activate
+                .load(Ordering::SeqCst)
                 != self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[q]
                     .load(Ordering::SeqCst)
             {
@@ -534,19 +517,15 @@ impl Queue {
                 if OLD_TAIL.load(Ordering::SeqCst)
                     != self.d_state[ind]
                         .head
-                        .load(Ordering::SeqCst, unsafe { unprotected() })
+                        .load(Ordering::SeqCst, guard)
                         .into_usize()
                 {
-                    let node = Self::raw_dequeue(&self.d_state[ind].head, pool);
-                    ret_val = Some(node);
+                    ret_val = Self::raw_dequeue(&self.d_state[ind].head, guard, pool);
                 } else {
-                    ret_val = Some(PPtr::null());
+                    ret_val = None;
                 }
-                let q_req_ref = unsafe {
-                    self.d_request[q]
-                        .load(Ordering::SeqCst, unprotected())
-                        .deref(pool)
-                };
+                let q_req_ref =
+                    unsafe { self.d_request[q].load(Ordering::SeqCst, guard).deref(pool) };
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.d_state[ind].return_val[q] = ret_val;
                 self.d_state[ind].deactivate[q]
@@ -562,26 +541,24 @@ impl Queue {
         drop(lockguard); // release D_LOCK
 
         // 결과 저장하고 반환
-        let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
-            .clone()
-            .unwrap();
+        let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid].clone();
         let _ = deq.result.checkpoint::<REC>(res, tid, pool);
         return res;
     }
 
     /// 실질적인 dequeue: head 한 칸 전진하고 old head를 반환
-    fn raw_dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> DeqRetVal {
-        let head_ref = unsafe { head.load(Ordering::SeqCst, unprotected()).deref(pool) };
+    fn raw_dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> DeqRetVal {
+        let head_shared = head.load(Ordering::SeqCst, guard);
+        let head_ref = unsafe { head_shared.deref(pool) };
 
-        // NOTE: 얘네 구현은 데이터를 반환하질 않고 노드를 반환.
-        // 노드를 dequeue해간 애는 다 썼다고 함부로 노드 free하면 안됨. queue의 sentinel 노드로 남아있을 수 있음. TODO: 그냥 data 반환해도 될 것같은데..왜지
-        let ret = head_ref
-            .next
-            .load(Ordering::SeqCst, unsafe { unprotected() });
-        if !ret.is_null() {
-            head.store(ret, Ordering::SeqCst);
+        // NOTE: 원래 구현은 데이터를 반환하질 않고 노드를 반환하므로 free 안함
+        let next = head_ref.next.load(Ordering::SeqCst, guard);
+        if !next.is_null() {
+            head.store(next, Ordering::SeqCst);
+            unsafe { guard.defer_pdestroy(head_shared) };
+            return Some(unsafe { next.deref(pool) }.data);
         }
-        PPtr::from(ret.into_usize())
+        None
     }
 }
 
@@ -623,7 +600,7 @@ mod test {
     }
 
     impl RootObj<EnqDeq> for TestRootObj<Queue> {
-        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, _: &Guard, pool: &PoolHandle) {
+        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // Get &mut queue
             let queue = unsafe { (&self.obj as *const _ as *mut Queue).as_mut() }.unwrap();
 
@@ -635,8 +612,8 @@ mod test {
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
-                    let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, pool);
-                    assert!(res.is_null());
+                    let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, guard, pool);
+                    assert!(res.is_none());
 
                     // Check results
                     assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
@@ -648,13 +625,13 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let val = tid;
-                        queue.PBQueueEnq::<true>(val, &mut enq_deq.enqs[i], tid, pool);
+                        queue.PBQueueEnq::<true>(val, &mut enq_deq.enqs[i], tid, guard, pool);
 
-                        let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, pool);
-                        assert!(!res.is_null());
+                        let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
+                        assert!(!res.is_none());
 
                         // deq 결과를 실험결과에 전달
-                        let v = unsafe { res.deref(pool) }.data;
+                        let v = res.unwrap();
                         let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
                     }
 
