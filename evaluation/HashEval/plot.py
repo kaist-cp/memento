@@ -1,3 +1,4 @@
+from os.path import exists
 import re
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,10 +13,9 @@ objs = {
             'Level': {'label': "LEVEL", 'marker': 'o', 'color': 'orange', 'style': '-'},
             'Dash': {'label': "Dash", 'marker': '^', 'color': 'green', 'style': '-'},
             'PCLHT': {'label': "PCLHT", 'marker': 'v', 'color': 'gold', 'style': '-'},
-            'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
             "clevel": {'label': "CLEVEL", 'marker': 's', 'color': 'gray', 'style': '-'},
             "clevel_rust": {
-                'label': "CLEVEL-RUST", 'marker': 'o', 'color': 'black', 'style': '-',
+                'label': "CLEVEL-MMT", 'marker': 's', 'color': 'black', 'style': '-',
                 'data_id': {  # select data manually. 지정값 없을시 최신 commit의 데이터 읽음
                     'insert': '',
                     'pos_search': '',
@@ -26,8 +26,9 @@ objs = {
                     'read_heavy': '',
                 }
             },
+            'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
             'SOFT_rust': {
-                'label': "SOFT-RUST", 'marker': 'o', 'color': 'blue', 'style': '-',
+                'label': "SOFT-MMT", 'marker': 'o', 'color': 'blue', 'style': '-',
                 'data_id': {  # select data manually. 지정값 없을시 최신 commit의 데이터 읽음
                     'insert': '',
                     'pos_search': '',
@@ -42,10 +43,10 @@ objs = {
         'bench_kinds': {
             'throughput': {
                 'workloads': {
-                    'insert': {'label': "(a) Insert"},
-                    'pos_search': {'label': "(b) Pos. Search"},
-                    'neg_search': {'label': "(c) Neg. Search"},
-                    'delete': {'label': "(d) Delete"},
+                    'insert': {'label': "(a) Insert", 'label_single': "Insert"},
+                    'pos_search': {'label': "(b) Pos. Search", 'label_single': "Pos. Search"},
+                    'neg_search': {'label': "(c) Neg. Search", 'label_single': "Neg. Search"},
+                    'delete': {'label': "(d) Delete", 'label_single': "Delete"},
                     'write_heavy': {'label': "(e) Write heavy"},
                     'balanced': {'label': "(f) Balanced"},
                     'read_heavy': {'label': "(g) Read heavy"},
@@ -81,10 +82,12 @@ def get_filepath(bench, dist, workload, target):
 
         # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용 {hash}_{date}
         if data_id == '':
-            head = git.Repo(search_parent_directories=True).head
-            data_id = "{}_{}".format(
-                head.object.hexsha[:7], head.commit.committed_datetime.strftime('%Y%m%d'))
-
+            repo = git.Repo(search_parent_directories=True)
+            for commit in repo.iter_commits():
+                filepath = "./out/{}/{}/{}/{}_{}_{}.out".format(
+                    bench.upper(), dist.upper(), workload, target, commit.hexsha[:7], commit.committed_datetime.strftime('%Y%m%d'))
+                if exists(filepath):
+                    return filepath
         filepath = "./out/{}/{}/{}/{}_{}.out".format(
             bench.upper(), dist.upper(), workload, target, data_id)
     else:
@@ -127,26 +130,53 @@ def read_latency(filepath):
     return latency
 
 
+def draw_legend(line, label, figpath):
+    plt.clf()
+    legendFig = plt.figure("Legend plot")
+    legendFig.legend(line, label, loc='center',
+                     ncol=len(line))
+    legendFig.savefig(figpath, bbox_inches='tight')
+    print(figpath)
+
+
+latency_label_done = False
+
+
 def draw_ax(bench, ax, datas):
     for data in datas:
-        ax.plot(data['x'], data['y'], label=data['label'],
-                color=data['color'], linestyle=data['style'], marker=data['marker'])
+        if bench == "latency":
+            ax.plot(data['x'], data['y'], label=data['label'],
+                    color=data['color'], linestyle=data['style'], marker=data['marker'], markersize=4)
+        else:
+            ax.plot(data['x'], data['y'], label=data['label'],
+                    color=data['color'], linestyle=data['style'], marker=data['marker'])
+
     if bench == "latency":
         ax.tick_params(labelrotation=45)
         ax.set_yticks(np.arange(1, 4))
         ax.set_yticklabels(['$10^3$', '$10^6$', '$10^9$'], rotation=0)
+        ax.tick_params(axis='x', labelsize=8)
+
+        global latency_label_done
+        if not latency_label_done:
+            ax.set_yticklabels(['$10^3$', '$10^6$', '$10^9$'], rotation=0)
+            latency_label_done = True
+        else:
+            ax.set_yticklabels([], rotation=0)
     ax.grid()
     plt.setp(ax, xlabel=data['xlabel'])
 
 
 def draw_axes(bench, ylabel, axes_datas):
-    fig, axes = plt.subplots(1, len(axes_datas), figsize=(20, 3))
+    if bench == 'latency':
+        figsize = (6, 2)
+    else:
+        figsize = (20, 3)
+    fig, axes = plt.subplots(1, len(axes_datas), figsize=figsize)
     for i, ax_datas in enumerate(axes_datas):
         draw_ax(bench, axes[i], ax_datas)
-    axLine, axLabel = axes[0].get_legend_handles_labels()
-    fig.legend(axLine, axLabel,
-               loc='upper center', ncol=len(axes_datas[0]), borderaxespad=0.1)
     plt.setp(axes[0], ylabel=ylabel)
+    return axes
 
 # draw line graph for <bench-dist>
 #
@@ -155,7 +185,6 @@ def draw_axes(bench, ylabel, axes_datas):
 
 
 def draw(bench, dist, targets):
-
     plt.clf()
     bench_info = objs['hash']['bench_kinds'][bench]
     bd_datas = []
@@ -193,7 +222,7 @@ def draw(bench, dist, targets):
         # collect data for all workloads belonging to that <bench-dist>.
         bd_datas.append(wl_datas)
 
-    draw_axes(bench, bench_info['y_label'], bd_datas)
+    return draw_axes(bench, bench_info['y_label'], bd_datas)
 
 
 # 1. multi-threads thourghput, latency (line graph)
@@ -216,12 +245,15 @@ for obj, obj_info in objs.items():
                 plot_id = "hash-{}-multi{}-{}".format(bench, tnum, dist)
 
             # draw graph, not save
-            draw(bench, dist, targets)
+            axes = draw(bench, dist, targets)
 
             # save
             figpath = "./out/{}.png".format(plot_id)
-            plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
+            plt.savefig(figpath, bbox_inches='tight', dpi=300)
             print(figpath)
+
+    axLine, axLabel = axes[0].get_legend_handles_labels()
+    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
 
 # 2. single-thread throughput (bar graph)
 for obj, obj_info in objs.items():
@@ -234,7 +266,9 @@ for obj, obj_info in objs.items():
         bd_datas = []
 
         for wl in "insert", "pos_search", "neg_search", "delete":
-            wl_datas = {"workload": wl}
+
+            wl_datas = {"workload": obj_info['bench_kinds']
+                        ['throughput']['workloads'][wl]['label_single']}
 
             for t, t_plot in targets.items():
                 filepath = get_filepath('throughput', dist, wl, t)
@@ -253,16 +287,14 @@ for obj, obj_info in objs.items():
         dfs_xlabel.append('('+chr(ix+ord('a'))+') '+dist)
 
     # draw graph, not save
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3))
+    fig, axes = plt.subplots(1, 2, figsize=(6, 2))
     for ix, df in enumerate(dfs):
         colors = [objs["hash"]["targets"][target]["color"]
                   for target in df.columns[1:]]
         p = df.plot(ax=axes[ix], x="workload",
-                    xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False, color=colors)
+                    xlabel=dfs_xlabel[ix], kind="bar", rot=20, legend=False, color=colors)
+        p.tick_params(axis='x', labelsize=8)
         p.grid(True, axis='y', linestyle='--')
-    axLine, axLabel = axes[0].get_legend_handles_labels()
-    fig.legend(axLine, axLabel, loc='upper center',
-               ncol=dfs[1].shape[1], borderaxespad=0.1)
     plt.setp(axes[0], ylabel="Throughput (M op/s)")
 
     # save
