@@ -64,7 +64,6 @@ for obj in objs:
             if exists(data_path):
                 break
 
-        # 읽을 csv에는 1~32 스레드 데이터가 다 있어야함
         print("read {} for target {}".format(data_path, t))
         data = data.append(pd.read_csv(data_path))
 
@@ -77,6 +76,7 @@ for obj in objs:
     # get throughput
     data = data.groupby(['target', 'bench kind', 'threads'])[
         'throughput'].mean().div(pow(10, 6)).reset_index(name='throughput')
+    threads = np.array(list(set(data['threads'])))
     data = data.groupby(['target', 'bench kind'])['throughput'].apply(
         list).reset_index(name="throughput")
 
@@ -103,7 +103,7 @@ for obj in objs:
             throughputs = list(throughputs['throughput'])[0]
             stddev_t = list(stddev_t['stddev'])[0]
 
-            plot_lines.append({'x': np.arange(1, len(throughputs)+1), 'y': throughputs,
+            plot_lines.append({'x': threads, 'y': throughputs,
                               'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style': style})
 
         # Draw
