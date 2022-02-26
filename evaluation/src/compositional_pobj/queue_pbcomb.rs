@@ -1,5 +1,5 @@
 use core::sync::atomic::Ordering;
-use crossbeam_epoch::Guard;
+use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::ds::queue_pbcomb::*;
 use memento::pmem::pool::*;
@@ -13,20 +13,20 @@ impl TestQueue for Queue {
     type EnqInput = (usize, &'static mut Enqueue, usize); // value, memento, id
     type DeqInput = (&'static mut Dequeue, usize); // memento, tid
 
-    fn enqueue(&self, input: Self::EnqInput, _: &Guard, pool: &PoolHandle) {
+    fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
         let queue = unsafe { (self as *const _ as *mut Queue).as_mut() }.unwrap();
 
         let (value, enq_memento, tid) = input;
-        queue.PBQueueEnq::<false>(value, enq_memento, tid, pool);
+        queue.PBQueueEnq::<false>(value, enq_memento, tid, guard, pool);
     }
 
-    fn dequeue(&self, input: Self::DeqInput, _: &Guard, pool: &PoolHandle) {
+    fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
         let queue = unsafe { (self as *const _ as *mut Queue).as_mut() }.unwrap();
 
         let (deq_memento, tid) = input;
-        let _ = queue.PBQueueDeq::<false>(deq_memento, tid, pool);
+        let _ = queue.PBQueueDeq::<false>(deq_memento, tid, guard, pool);
     }
 }
 
@@ -47,9 +47,10 @@ impl PDefault for TestMementoQueuePBComb {
         let mut queue = Queue::pdefault(pool);
 
         // 초기 노드 삽입
+        let guard = epoch::pin();
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            queue.PBQueueEnq::<false>(i, &mut push_init, 1, pool);
+            queue.PBQueueEnq::<false>(i, &mut push_init, 1, &guard, pool);
         }
         Self { queue }
     }
