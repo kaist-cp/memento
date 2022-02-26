@@ -13,7 +13,7 @@ use etrace::ok_or;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tinyvec::tiny_vec;
 
-const MAX_THREADS: usize = 32;
+const MAX_THREADS: usize = 64;
 type Data = usize; // TODO: generic
 
 /// 사용할 스레드 수. combining시 이 스레드 수만큼만 op 순회
