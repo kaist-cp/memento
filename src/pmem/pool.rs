@@ -100,20 +100,20 @@ impl PoolHandle {
             // tid번째 스레드가 tid번째 memento를 성공할때까지 반복
             let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
 
-            for tid in 1..nr_memento + 1 {
+            for tid in 1..=nr_memento {
                 // tid번째 root memento 얻기
                 let m_addr =
                     unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
                 let barrier = barrier.clone();
 
                 let _ = scope.spawn(move |_| {
+                    let started = AtomicBool::new(false);
                     thread::scope(|scope| {
-                        let started = AtomicBool::new(false);
                         loop {
                             self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
 
                             // memento 실행
-                            let handler = scope.spawn(move |_| {
+                            let handler = scope.spawn(|_| {
                                 let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                                 let guard = unsafe { epoch::old_guard(tid) };
@@ -130,11 +130,7 @@ impl PoolHandle {
                             // 실패시 사용하던 guard도 정리하지 않음. 주인을 잃은 guard는 다음 반복에서 생성된 thread가 이어서 잘 사용해야함
                             match handler.join() {
                                 Ok(_) => break,
-                                Err(_) => {
-                                    println!("PANIC: Root memento No.{} re-executed.", tid);
-                                    std::thread::sleep(std::time::Duration::from_secs(10000)); // TODO: Use only when debugging
-                                    std::process::exit(1);
-                                }
+                                Err(_) => println!("PANIC: Root memento No.{} re-executed.", tid),
                             }
                         }
                     })
