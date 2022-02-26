@@ -13,7 +13,7 @@ objs = {
             "memento_queue": {'data_id': '', 'label': "Memento queue", 'marker': 'o', 'color': 'k', 'style': '-'},
             "memento_queue_lp": {'data_id': '', 'label': "Memento queue-lp", 'marker': 'o', 'color': 'k', 'style': ':'},
             "memento_queue_general": {'data_id': '', 'label': "Memento queue-general", 'marker': 'o', 'color': 'k', 'style': '--'},
-            "memento_queue_pbcomb": {'data_id': '', 'label': "Memento queue-pbcomb", 'marker': 'o', 'color': 'k', 'style': '..'},
+            "memento_queue_pbcomb": {'data_id': '', 'label': "Memento queue-pbcomb", 'marker': 'o', 'color': 'k', 'style': '-.'},
             'durable_queue': {'data_id': '', 'label': "Durable queue", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'data_id': '', 'label': "Log queue", 'marker': 'x', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DSS queue", 'marker': 'v', 'color': 'orange', 'style': '--'},
