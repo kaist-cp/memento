@@ -202,10 +202,18 @@ for obj, obj_info in objs.items():
     bench_kinds = obj_info['bench_kinds']
 
     for bench, bench_info in bench_kinds.items():
+        if bench == 'latency':
+            tnum = 32
+        else:
+            tnum = ''
 
         for dist in bench_info['distributions']:
             plt.clf()
-            plot_id = "{}_{}".format(bench, dist)
+            if dist == 'selfsimilar':
+                plot_id = "hash-{}-multi{}-{}".format(
+                    bench, tnum, "self-similar-0.2")
+            else:
+                plot_id = "hash-{}-multi{}-{}".format(bench, tnum, dist)
 
             # draw graph, not save
             draw(bench, dist, targets)
@@ -223,7 +231,6 @@ for obj, obj_info in objs.items():
 
     for ix, dist in enumerate(["uniform", "selfsimilar"]):
         plt.clf()
-        plot_id = "throughput (single_thread)"
         bd_datas = []
 
         for wl in "insert", "pos_search", "neg_search", "delete":
@@ -259,6 +266,6 @@ for obj, obj_info in objs.items():
     plt.setp(axes[0], ylabel="Throughput (M op/s)")
 
     # save
-    figpath = "./out/{}.png".format(plot_id)
+    figpath = "./out/hash-throughput-single.png"
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
     print(figpath)

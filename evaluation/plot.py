@@ -82,7 +82,7 @@ for obj in objs:
     # draw graph: (obj, bench kind) 쌍마다 그래프 하나씩 그림 (e.g. queue-pair, queue-prob50, ..)
     kinds = set(data['bench kind'])
     for ix, k in enumerate(kinds):
-        plot_id = "{}-{}".format(obj, k)
+        plot_id = "{}-throughput-{}".format(obj, k)
         plot_lines = []
 
         # Gathering info
