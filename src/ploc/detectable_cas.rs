@@ -130,7 +130,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let vchk_par = Cas::parity_from_timestamp(vchk);
 
         if let CasState::Success = cas_state {
-            // TODO(must): local timestamp와 겹쳐서 잉여정보가 아닌지 생각해봐야 함
             if mmt.checkpoint > vchk {
                 exec_info.cas_info.own[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
             }

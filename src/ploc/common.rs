@@ -8,7 +8,7 @@ use crossbeam_utils::CachePadded;
 use crate::pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
-    rdtscp, PoolHandle,
+    rdtscp, PoolHandle, CACHE_LINE_SHIFT,
 };
 
 use super::{CASCheckpointArr, CasInfo};
@@ -144,7 +144,6 @@ impl Timestamp {
 #[derive(Debug)]
 pub(crate) struct ExecInfo {
     /// 스레드별로 확인된 최대 체크포인트 시간
-    // TODO(opt): AtomicTimestamp로 wrapping 하는 게 나을지도? u64로 바꾸다가 사고날 수도..
     pub(crate) local_max_time: [AtomicU64; NR_MAX_THREADS + 1],
 
     /// 지난 실행에서 최대 체크포인트 시간 (not changed after main execution)
@@ -261,8 +260,15 @@ where
 
         // Normal run
         let t = Timestamp::from(pool.exec_info.exec_time());
-        self.saved[idx] = CachePadded::new((new.clone(), t)); // TODO(must): 캐시라인 넘을 경우 잘라서 넣고 t 넣기 전에 앞에꺼는 persist 되어야 함
-        persist_obj(&*self.saved[idx], true);
+        if std::mem::size_of::<(T, Timestamp)>() <= 1 << CACHE_LINE_SHIFT {
+            self.saved[idx] = CachePadded::new((new.clone(), t));
+            persist_obj(&*self.saved[idx], true);
+        } else {
+            self.saved[idx].0 = new.clone();
+            persist_obj(&self.saved[idx].0, true);
+            self.saved[idx].1 = t;
+            persist_obj(&self.saved[idx].1, true);
+        }
 
         pool.exec_info.local_max_time[tid].store(t.into(), Ordering::Relaxed);
         Ok(new)
