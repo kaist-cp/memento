@@ -9,7 +9,7 @@ use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         common::Checkpoint,
-        insert_delete::{Delete, Insert, Node as SMONode, SMOAtomic},
+        insert_delete::{Node as SMONode, SMOAtomic},
         not_deleted, Traversable,
     },
     pmem::{
@@ -74,10 +74,6 @@ pub struct TryExchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     init_slot: Checkpoint<PAtomic<Node<T>>>,
     wait_slot: Checkpoint<PAtomic<Node<T>>>,
-
-    insert: Insert<Exchanger<T>, Node<T>>,
-    update: Delete<Node<T>>,
-    delete: Delete<Node<T>>,
 }
 
 impl<T: Clone + Collectable> Default for TryExchange<T> {
@@ -86,9 +82,6 @@ impl<T: Clone + Collectable> Default for TryExchange<T> {
             node: Default::default(),
             init_slot: Default::default(),
             wait_slot: Default::default(),
-            insert: Default::default(),
-            update: Default::default(),
-            delete: Default::default(),
         }
     }
 }
@@ -97,9 +90,6 @@ impl<T: Clone + Collectable> Collectable for TryExchange<T> {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut s.init_slot, tid, gc, pool);
         Checkpoint::filter(&mut s.wait_slot, tid, gc, pool);
-        Insert::filter(&mut s.insert, tid, gc, pool);
-        Delete::filter(&mut s.update, tid, gc, pool);
-        Delete::filter(&mut s.delete, tid, gc, pool);
     }
 }
 
@@ -172,7 +162,7 @@ impl<T: Clone + Collectable> PDefault for Exchanger<T> {
 }
 
 impl<T: Clone + Collectable> Traversable<Node<T>> for Exchanger<T> {
-    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
+    fn contains(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
         let slot = self.slot.load(true, Ordering::SeqCst, guard);
         slot == target
     }
@@ -230,9 +220,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
         if init_slot.is_null() {
             let mine = node.with_high_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
 
-            let inserted =
-                self.slot
-                    .insert::<_, REC>(mine, self, &mut try_xchg.insert, guard, pool);
+            let inserted = self.slot.insert::<_, REC>(mine, self, guard, pool);
 
             // If insert failed, return error.
             if inserted.is_err() {
@@ -262,7 +250,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
         // (2) 이미 교환 끝난 애가 slot에 들어 있음
         let updated = self
             .slot
-            .delete::<REC>(init_slot, mine, &mut try_xchg.update, tid, guard, pool)
+            .delete::<REC>(init_slot, mine, tid, guard, pool)
             .map_err(|_| {
                 // 실패하면 contention으로 인한 fail 리턴
                 unsafe { guard.defer_pdestroy(node) };
@@ -339,14 +327,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
         // delete 실패하면 그 사이에 매칭 성사된 거임
         if self
             .slot
-            .delete::<REC>(
-                mine,
-                PShared::null(),
-                &mut try_xchg.delete,
-                tid,
-                guard,
-                pool,
-            )
+            .delete::<REC>(mine, PShared::null(), tid, guard, pool)
             .is_ok()
         {
             Err(TryFail::Timeout)

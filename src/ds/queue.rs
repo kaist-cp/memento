@@ -1,6 +1,6 @@
 //! Persistent opt queue
 
-use crate::ploc::insert_delete::{self, Delete, Insert, SMOAtomic};
+use crate::ploc::insert_delete::{self, SMOAtomic};
 use crate::ploc::{not_deleted, Checkpoint, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
@@ -59,38 +59,16 @@ impl<T: Collectable> insert_delete::Node for Node<T> {
     }
 }
 
-/// try push operation for Queue
-#[derive(Debug)]
-pub struct TryEnqueue<T: Clone + Collectable> {
-    insert: Insert<Queue<T>, Node<T>>,
-}
-
-impl<T: Clone + Collectable> Default for TryEnqueue<T> {
-    fn default() -> Self {
-        Self {
-            insert: Default::default(),
-        }
-    }
-}
-
-unsafe impl<T: Clone + Collectable> Send for TryEnqueue<T> {}
-
-impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
-}
-
 /// Queue의 enqueue
 #[derive(Debug)]
 pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
-    try_enq: TryEnqueue<T>,
 }
 
 impl<T: Clone + Collectable> Default for Enqueue<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
-            try_enq: Default::default(),
         }
     }
 }
@@ -98,7 +76,6 @@ impl<T: Clone + Collectable> Default for Enqueue<T> {
 impl<T: Clone + Collectable> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut enq.node, tid, gc, pool);
-        TryEnqueue::filter(&mut enq.try_enq, tid, gc, pool);
     }
 }
 
@@ -108,14 +85,12 @@ unsafe impl<T: Clone + Collectable> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone + Collectable> {
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
-    delete: Delete<Node<T>>,
 }
 
 impl<T: Clone + Collectable> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
             head_next: Default::default(),
-            delete: Default::default(),
         }
     }
 }
@@ -124,7 +99,7 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 
 impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Delete::filter(&mut try_deq.delete, tid, gc, pool);
+        Checkpoint::filter(&mut try_deq.head_next, tid, gc, pool);
     }
 }
 
@@ -205,7 +180,7 @@ impl<T: Clone + Collectable> Collectable for Queue<T> {
 }
 
 impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
-    fn search(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
+    fn contains(&self, target: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> bool {
         let mut curr = self.head.load(true, Ordering::SeqCst, guard);
 
         while !curr.is_null() {
@@ -226,7 +201,6 @@ impl<T: Clone + Collectable> Queue<T> {
     pub fn try_enqueue<const REC: bool>(
         &self,
         node: PShared<'_, Node<T>>,
-        try_enq: &mut TryEnqueue<T>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
@@ -248,7 +222,7 @@ impl<T: Clone + Collectable> Queue<T> {
 
         if tail_ref
             .next
-            .insert::<_, REC>(node, self, &mut try_enq.insert, guard, pool)
+            .insert::<_, REC>(node, self, guard, pool)
             .is_err()
         {
             return Err(TryFail);
@@ -290,18 +264,12 @@ impl<T: Clone + Collectable> Queue<T> {
         )
         .load(Ordering::Relaxed, guard);
 
-        if self
-            .try_enqueue::<REC>(node, &mut enq.try_enq, guard, pool)
-            .is_ok()
-        {
+        if self.try_enqueue::<REC>(node, guard, pool).is_ok() {
             return;
         }
 
         loop {
-            if self
-                .try_enqueue::<false>(node, &mut enq.try_enq, guard, pool)
-                .is_ok()
-            {
+            if self.try_enqueue::<false>(node, guard, pool).is_ok() {
                 return;
             }
         }
@@ -349,7 +317,7 @@ impl<T: Clone + Collectable> Queue<T> {
 
         if self
             .head
-            .delete::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
+            .delete::<REC>(head, next, tid, guard, pool)
             .is_err()
         {
             return Err(TryFail);

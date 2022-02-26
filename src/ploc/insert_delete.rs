@@ -1,6 +1,6 @@
 //! Atomic update memento collections
 
-use std::{marker::PhantomData, sync::atomic::Ordering};
+use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::Guard;
 use etrace::*;
@@ -34,28 +34,7 @@ pub fn not_deleted<'g, T>() -> PShared<'g, T> {
 /// Traversable object for recovery of `Insert`
 pub trait Traversable<N> {
     /// Search specific target pointer through the object
-    fn search(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
-}
-
-/// Insert
-#[derive(Debug)]
-pub struct Insert<O: Traversable<N>, N> {
-    _marker: PhantomData<*const (O, N)>,
-}
-
-unsafe impl<O: Traversable<N>, N> Send for Insert<O, N> {}
-unsafe impl<O: Traversable<N>, N> Sync for Insert<O, N> {}
-
-impl<O: Traversable<N>, N> Default for Insert<O, N> {
-    fn default() -> Self {
-        Self {
-            _marker: Default::default(),
-        }
-    }
-}
-
-impl<O: Traversable<N>, N> Collectable for Insert<O, N> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+    fn contains(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
 }
 
 /// Insert Error
@@ -66,32 +45,6 @@ pub enum InsertError<'g, T> {
 
     /// Fail judged when recovered (Weak fail)
     RecFail,
-}
-
-/// Delete
-///
-/// Do not use LSB while using `Delete`.
-/// It's reserved for it.
-/// - 이걸 사용하는 Node의 `acked()`는 owner가 `no_owner()`가 아닌지를 판단해야 함
-/// - Drop mode일 때는 new가 old와 같은 주소면 안 됨
-#[derive(Debug)]
-pub struct Delete<N: Node + Collectable> {
-    _marker: PhantomData<N>,
-}
-
-unsafe impl<N: Node + Collectable + Send + Sync> Send for Delete<N> {}
-unsafe impl<N: Node + Collectable + Send + Sync> Sync for Delete<N> {}
-
-impl<N: Node + Collectable> Default for Delete<N> {
-    fn default() -> Self {
-        Self {
-            _marker: Default::default(),
-        }
-    }
-}
-
-impl<N: Node + Collectable> Collectable for Delete<N> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 /// Atomic pointer for use of `Insert'/`Delete`
@@ -222,12 +175,11 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         &self,
         new: PShared<'_, N>,
         obj: &O,
-        insert: &mut Insert<O, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError<'g, N>> {
         if REC {
-            return Self::insert_result(new, obj, insert, guard, pool);
+            return Self::insert_result(new, obj, guard, pool);
         }
 
         // Normal run
@@ -276,12 +228,11 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         &self,
         new: PShared<'_, N>,
         obj: &O,
-        insert: &mut Insert<O, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError<'g, N>> {
         if REC {
-            return Self::insert_result(new, obj, insert, guard, pool);
+            return Self::insert_result(new, obj, guard, pool);
         }
 
         // Normal run
@@ -303,12 +254,11 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     fn insert_result<'g, O: Traversable<N>>(
         new: PShared<'_, N>,
         obj: &O,
-        _: &mut Insert<O, N>,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<(), InsertError<'g, N>> {
         if unsafe { new.deref(pool) }.acked(guard)
-            || obj.search(new, guard, pool)
+            || obj.contains(new, guard, pool)
             || unsafe { new.deref(pool) }.acked(guard)
         {
             return Ok(());
@@ -322,13 +272,12 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         &self,
         old: PShared<'g, N>,
         new: PShared<'_, N>,
-        delete: &mut Delete<N>,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         if REC {
-            return self.delete_result(old, delete, tid, guard, pool);
+            return self.delete_result(old, tid, guard, pool);
         }
 
         // 빼려는 node에 내 이름 새겨넣음
@@ -365,7 +314,6 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     fn delete_result<'g>(
         &self,
         old: PShared<'g, N>,
-        _: &mut Delete<N>,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
