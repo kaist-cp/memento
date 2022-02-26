@@ -27,14 +27,13 @@ objs = {
 }
 
 
-def draw(title, xlabel, ylabel, datas, output, x_interval=1):
+def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.clf()
     markers_on = (datas[0]['x'] == 1) | (datas[0]['x'] % x_interval == 0)
 
     for data in datas:
         plt.errorbar(data['x'], data['y'], data['stddev'], label=data['label'], color=data['color'],
                      linestyle=data['style'], marker=data['marker'], markevery=markers_on)
-    plt.title(title)
     ax = plt.subplot()
     ax.xaxis.set_major_locator(plt.MultipleLocator(x_interval))  # 눈금선 간격
     plt.grid(True)
@@ -107,5 +106,5 @@ for obj in objs:
                               'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style': style})
 
         # Draw
-        draw(plot_id, 'Threads', 'Throughput (M op/s)',
+        draw('Threads', 'Throughput (M op/s)',
              plot_lines, "./out/{}".format(plot_id), 4)
