@@ -1,9 +1,12 @@
 use std::process::Command;
 
 fn main() {
-    println!("cargo:rerun-if-changed=ext/");
-
-    // Build libralloc.a
+    // Build Ralloc
+    Command::new("make")
+        .args(&["clean"])
+        .current_dir("./ext/ralloc/test")
+        .status()
+        .expect("failed to make clean!");
     let args = {
         #[cfg(not(feature = "no_persist"))]
         {
