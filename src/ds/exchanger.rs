@@ -28,13 +28,13 @@ fn opposite_tag(t: usize) -> usize {
     1 - t
 }
 
-/// Exchanger의 try exchange 실패
+/// try exchange failure
 #[derive(Debug)]
 pub enum TryFail {
-    /// 시간 초과
+    /// Time out
     Timeout,
 
-    /// 컨텐션
+    /// Busy due to contention
     Busy,
 }
 
@@ -68,7 +68,7 @@ impl<T: Collectable> SMONode for Node<T> {
     }
 }
 
-/// Exchanger의 try exchange
+/// Try exchange memento
 #[derive(Debug)]
 pub struct TryExchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
@@ -140,8 +140,8 @@ impl<T: Clone + Collectable> Exchange<T> {
     }
 }
 
-/// 스레드 간의 exchanger
-/// 내부에 마련된 slot을 통해 스레드들끼리 값을 교환함
+/// Exchanger
+/// Values are exchanged between threads through internal slots.
 #[derive(Debug)]
 pub struct Exchanger<T: Clone + Collectable> {
     slot: SMOAtomic<Node<T>>,
@@ -204,7 +204,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
         )
         .load(Ordering::Relaxed, guard);
 
-        // 예전에 읽었던 slot을 불러오거나 새로 읽음
+        // Loads previously read slots or reads new ones
         let init_slot = self.slot.load(true, Ordering::SeqCst, guard);
         let init_slot = ok_or!(
             try_xchg
@@ -215,10 +215,10 @@ impl<T: Clone + Collectable> Exchanger<T> {
         )
         .load(Ordering::Relaxed, guard);
 
-        // slot이 null 이면 insert해서 기다림
-        // - 실패하면 fail 리턴
+        // If slot is null, insert and wait
+        // - return fail on failure
         if init_slot.is_null() {
-            let mine = node.with_high_tag(WAITING); // 비어있으므로 내가 WAITING으로 선언
+            let mine = node.with_high_tag(WAITING); // It's empty, so I declare WAITING
 
             let inserted = self.slot.insert::<_, REC>(mine, self, guard, pool);
 
@@ -231,38 +231,39 @@ impl<T: Clone + Collectable> Exchanger<T> {
             return self.wait::<REC>(mine, try_xchg, tid, guard, pool);
         }
 
-        // slot이 null이 아니면 tag를 확인하고 반대껄 장착하고 update
-        // - 내가 WAITING으로 성공하면 기다림
-        // - 내가 non WAITING으로 성공하면 성공 리턴
-        // - 실패하면 contention으로 인한 fail 리턴
+        // If the slot is not null, check the tag and install the opposite one and update
+        // - Wait if I succeed with WAITING
+        // - Return success if I succeed with non-WAITING
+        // - If it fails, it returns fail due to contention.
         let my_tag = opposite_tag(init_slot.high_tag());
         let mine = node.with_high_tag(my_tag);
 
-        // 상대가 기다리는 입장인 경우
+        // Case where the partner is in a waiting position
         if my_tag != WAITING {
-            let slot_ref = unsafe { init_slot.deref(pool) }; // SAFE: free되지 않은 node임. 왜냐하면 WAITING 하던 애가 그냥 나갈 때는 반드시 slot을 비우고 나감.
+            let slot_ref = unsafe { init_slot.deref(pool) }; // SAFE: It is a node that is not freed.
+                                                             // Because, when the thread that was waiting for exits without exchange, it must empty the slot.
             if !cond(&slot_ref.data) {
                 return Err(TryFail::Busy);
             }
         }
 
-        // (1) cond를 통과한 적합한 상대가 기다리고 있거나
-        // (2) 이미 교환 끝난 애가 slot에 들어 있음
+        // (1) A suitable partner who has passed cond is waiting or
+        // (2) a node that has already been exchanged is in the slot
         let updated = self
             .slot
             .delete::<REC>(init_slot, mine, tid, guard, pool)
             .map_err(|_| {
-                // 실패하면 contention으로 인한 fail 리턴
+                // If it fails, it returns fail due to contention.
                 unsafe { guard.defer_pdestroy(node) };
                 TryFail::Busy
             })?;
 
-        // 내가 기다린다고 선언한 거면 기다림
+        // Wait if I declared I'm waiting
         if my_tag == WAITING {
             return self.wait::<REC>(mine, try_xchg, tid, guard, pool);
         }
 
-        // 내가 안 기다리고 성공
+        // Case where I succeeded right away without waiting.
         let partner = updated;
         let partner_ref = unsafe { partner.deref(pool) };
         Ok(partner_ref.data.clone())
@@ -318,13 +319,13 @@ impl<T: Clone + Collectable> Exchanger<T> {
         )
         .load(Ordering::Relaxed, guard);
 
-        // wait_slot이 나에서 다른 애로 바뀌었다면 내 파트너의 value 갖고 나감
+        // If wait_slot is changed from me to another node, I take my partner's value
         if wait_slot != mine {
             return Ok(Self::succ_after_wait(mine, guard, pool));
         }
 
-        // 기다리다 지치면 delete 함
-        // delete 실패하면 그 사이에 매칭 성사된 거임
+        // If I get tired of waiting, I empty the slot.
+        // If delete fails, matching has been completed.
         if self
             .slot
             .delete::<REC>(mine, PShared::null(), tid, guard, pool)
@@ -338,7 +339,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
 
     #[inline]
     fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> T {
-        // 내 파트너는 나의 owner()임
+        // My partner is my replacement()
         let mine_ref = unsafe { mine.deref(pool) };
         let partner = mine_ref.replacement().load(Ordering::SeqCst, guard);
         let partner_ref = unsafe { partner.deref(pool) };
@@ -358,7 +359,7 @@ mod tests {
 
     use super::*;
 
-    /// 두 스레드가 한 exchanger를 두고 잘 교환하는지 (1회) 테스트
+    /// Test whether two threads exchange well with one exchanger (one time)
     #[derive(Default)]
     struct ExchangeOnce {
         xchg: Exchange<usize>,
@@ -397,7 +398,7 @@ mod tests {
         run_test::<TestRootObj<Exchanger<usize>>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
     }
 
-    /// 세 스레드가 인접한 스레드와 아이템을 교환하여 전체적으로 rotation 되는지 테스트
+    /// Test whether three threads rotate as a whole by exchanging items with adjacent threads
     ///
     ///   ---T0---                   -------T1-------                   ---T2---
     ///  |        |                 |                |                 |        |
