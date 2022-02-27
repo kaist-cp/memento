@@ -17,7 +17,7 @@ lazy_static! {
 
 thread_local! {
     /// The per-thread participant for the default garbage collector.
-    // @seungminjeon: RefCell은 old_guard에서 원래 쓰던 local을 못찾았을 때 새로 만든 local로 바꿔주기 위함
+    // @anonymous: RefCell은 old_guard에서 원래 쓰던 local을 못찾았을 때 새로 만든 local로 바꿔주기 위함
     static HANDLE: RefCell<LocalHandle> = RefCell::new(COLLECTOR.register(None));
 }
 

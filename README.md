@@ -13,10 +13,6 @@ We assume you use **Ubuntu 20.04**.
 
 ### Build
 
-- TODO: Ralloc
-  ```
-  TODO: Ralloc
-  ```
 - To build our framework including detectable operations, data structures and SMR libraries:
   ```
   cargo build --release

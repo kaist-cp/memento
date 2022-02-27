@@ -117,7 +117,7 @@ impl LocalHandle {
 impl Drop for LocalHandle {
     #[inline]
     fn drop(&mut self) {
-        // @seungminjeon: thread-local panic시 local handle은 drop 되어도 상관 없음. guard만 drop되지 않으면 됨
+        // @anonymous: thread-local panic시 local handle은 drop 되어도 상관 없음. guard만 drop되지 않으면 됨
         //
         // (detail) local handle drop의 목적은, 남은 handle 및 guard가 없을 때 global list에서 local을 빼기 위함
         // - guard가 있었다면: local handle은 drop 되어도 global list에서 local 안빠짐

@@ -634,7 +634,7 @@ impl Local {
     pub(crate) fn acquire_handle(&self) {
         let handle_count = self.handle_count.get();
 
-        // @seungminjeon: 이제 handle 개수는 0이 될 수 있음. thread-local crash 이후 old guard로 다시 handle 가져오기 전까진 0
+        // @anonymous: 이제 handle 개수는 0이 될 수 있음. thread-local crash 이후 old guard로 다시 handle 가져오기 전까진 0
         // debug_assert!(handle_count >= 1);
         self.handle_count.set(handle_count + 1);
     }
@@ -678,7 +678,7 @@ impl Local {
             let collector: Collector = ptr::read(self.collector.with(|c| &*(*c)));
 
             // Mark this node in the linked list as deleted.
-            // @seungminjeon: this is logically deleted i studied before.
+            // @anonymous: this is logically deleted i studied before.
             self.entry.delete(unprotected());
 
             // Finally, drop the reference to the global. Note that this might be the last reference

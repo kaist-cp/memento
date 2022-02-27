@@ -41,7 +41,7 @@ disabled (0), the program should employ manual SSMEM_SAFE_TO_RECLAIM() calls
 to indicate when the thread does not hold any ssmem-allocated memory
 references. */
 
-// @seungminjeon: SSMEM_TS_INCR_ON은 timestamp를 언제 올리냐를 선택
+// @anonymous: SSMEM_TS_INCR_ON은 timestamp를 언제 올리냐를 선택
 const SSMEM_TS_INCR_ON_NONE: usize = 0; // 유저가 직접 올려야함. 아마 ssmem_ts_next() 이용해야할듯
 const SSMEM_TS_INCR_ON_BOTH: usize = 1; // alloc or free할 때 올림
 const SSMEM_TS_INCR_ON_ALLOC: usize = 2; // alloc할 때 올림

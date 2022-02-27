@@ -339,7 +339,7 @@ impl Guard {
     ///     assert_eq!(unsafe { p.as_ref() }, Some(&777));
     /// }
     /// ```
-    // @seungminjeon: 목적은 unpin 했다가 다시 pin하여 local epoch을 최신 상태로 업데이트
+    // @anonymous: 목적은 unpin 했다가 다시 pin하여 local epoch을 최신 상태로 업데이트
     pub fn repin(&mut self) {
         if let Some(local) = unsafe { self.local.as_ref() } {
             local.repin();
@@ -376,7 +376,7 @@ impl Guard {
     ///     assert_eq!(unsafe { p.as_ref() }, Some(&777));
     /// }
     /// ```
-    // @seungminjeon: 목적은 unpin 했다가 다시 pin하여 local epoch을 최신 상태로 업데이트. 단, 다시 pin 하기 전에 f()를 수행
+    // @anonymous: 목적은 unpin 했다가 다시 pin하여 local epoch을 최신 상태로 업데이트. 단, 다시 pin 하기 전에 f()를 수행
     pub fn repin_after<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -385,7 +385,7 @@ impl Guard {
             local.is_repinning.set(true);
             // We need to acquire a handle here to ensure the Local doesn't
             // disappear from under us.
-            // @seungminjeon: acquire_handle 하는 이유는
+            // @anonymous: acquire_handle 하는 이유는
             //  - unpin할 때 global list에서 local 빼버리는 걸 방지하기 위함
             //  - unpin시 local handle 개수 0이면 빼버림
             local.acquire_handle(); // local handle cnt += 1;

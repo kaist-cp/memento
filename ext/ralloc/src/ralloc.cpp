@@ -97,7 +97,8 @@ int RP_recover(){
     return (int) base_md->restart();
 }
 
-// @seungminjeon: 사용자가 RP_close로 persistent heap을 닫을 수 있도록 함 (기존의 Ralloc 구현은 한 번 열면 프로그램 끝날때까지 닫지 못함)
+// @anonymous: 사용자가 RP_close로 persistent heap을 닫을 수 있도록 함
+// (기존의 Ralloc 구현은 한 번 열면 프로그램 끝날때까지 닫지 못함)
 void RP_close(){
     delete _holder;
 }
