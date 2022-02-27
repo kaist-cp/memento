@@ -48,7 +48,7 @@ impl<T: Collectable> Collectable for Node<T> {
     }
 }
 
-/// ComposedQueue의 try push operation
+/// Try enqueue memento
 #[derive(Debug)]
 pub struct TryEnqueue<T: Clone + Collectable> {
     tail: Checkpoint<PAtomic<Node<T>>>,
@@ -81,7 +81,7 @@ impl<T: Clone + Collectable> TryEnqueue<T> {
     }
 }
 
-/// Queue의 enqueue
+/// Enqueue memento
 #[derive(Debug)]
 pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
@@ -115,7 +115,7 @@ impl<T: Clone + Collectable> Enqueue<T> {
 
 unsafe impl<T: Clone + Collectable> Send for Enqueue<T> {}
 
-/// Queue의 try dequeue operation
+/// Try dequeue memento
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone + Collectable> {
     delete: Cas,
@@ -148,7 +148,7 @@ impl<T: Clone + Collectable> TryDequeue<T> {
     }
 }
 
-/// Queue의 Dequeue
+/// Dequeue memento
 #[derive(Debug)]
 pub struct Dequeue<T: Clone + Collectable> {
     try_deq: TryDequeue<T>,
@@ -412,9 +412,9 @@ mod test {
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<usize>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
-                // T1: 다른 스레드들의 실행결과를 확인
+                // T1: Check the execution results of other threads
                 1 => {
-                    // 다른 스레드들이 다 끝날때까지 기다림
+                    // Wait for all other threads to finish
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check queue is empty
@@ -427,7 +427,7 @@ mod test {
                     assert!((2..NR_THREAD + 2)
                         .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
-                // T1이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
+                // Threads other than T1 perform { enq; deq; }
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
@@ -439,21 +439,20 @@ mod test {
                             .dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         assert!(res.is_some());
 
-                        // deq 결과를 실험결과에 전달
+                        // Transfer the deq result to the result array
                         let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
                     }
 
-                    // "나 끝났다"
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
     }
 
-    // - 테스트시 Enqueue/Dequeue 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
-    // - pool을 2번째 열 때부터 gc 동작 확인가능:
-    //      - 출력문으로 COUNT * NR_THREAD + 2개의 block이 reachable하다고 나옴
-    //      - 여기서 +2는 Root, Queue를 가리키는 포인터
+    // - We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+    // - You can check gc operation from the second time you open the pool:
+    //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
+    //   - where +2 is a pointer to Root, Queue
     #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "general_enq_deq.pool";
