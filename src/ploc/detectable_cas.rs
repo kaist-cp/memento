@@ -337,7 +337,7 @@ impl Cas {
         let t = exec_info.exec_time();
         let new_chk = Timestamp::new(if parity { Self::PARITY } else { 0 }, t);
         self.checkpoint = new_chk;
-        persist_obj(&self.checkpoint, false); // There is always a CAS after this function
+        persist_obj(&self.checkpoint, false);
         exec_info.cas_info.own[tid].store(new_chk.into(), Ordering::Relaxed);
         exec_info.local_max_time[tid].store(new_chk.into(), Ordering::Relaxed);
     }

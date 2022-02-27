@@ -2,9 +2,7 @@
 name = "memento"
 version = "0.1.0"
 authors = [
-    "Kyeongmin Cho <kyeongmin.cho@kaist.ac.kr>",
-    "Seungmin Jeon <seungmin.jeon@kaist.ac.kr>",
-    "Jeehoon Kang <jeehoon.kang@kaist.ac.kr>"
+    "Anonymous",
 ]
 edition = "2021"
 build = "build.rs"
