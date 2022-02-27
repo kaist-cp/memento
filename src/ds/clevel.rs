@@ -11,7 +11,7 @@ use core::sync::atomic::{fence, Ordering};
 use std::sync::mpsc;
 
 use cfg_if::cfg_if;
-use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::Backoff;
 use etrace::*;
 use fasthash::Murmur3HasherExt;
@@ -301,41 +301,63 @@ impl<K, V: Collectable> Collectable for Bucket<K, V> {
 }
 
 #[derive(Debug)]
-struct Node<T> {
-    // TODO(must): Collectable
-    data: T,
-    next: PAtomic<Node<T>>,
+struct Node<T: Collectable> {
+    data: PAtomic<[MaybeUninit<T>]>,
+    next: PAtomic<Self>,
 }
 
-impl<T> From<T> for Node<T> {
-    fn from(val: T) -> Self {
+impl<T: Collectable> From<PAtomic<[MaybeUninit<T>]>> for Node<T> {
+    fn from(data: PAtomic<[MaybeUninit<T>]>) -> Self {
         Self {
-            data: val,
+            data,
             next: PAtomic::null(),
         }
     }
 }
 
-// TODO(must): uncomment
-// impl<T: Collectable> Collectable for Node<T> {
-//     fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-//         T::filter(&mut node.data, tid, gc, pool);
-//         PAtomic::filter(&mut node.next, tid, gc, pool);
-//     }
-// }
+impl<T: Collectable> Collectable for Node<T> {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        let mut data = node.data.load(Ordering::SeqCst, guard);
+        let data_ref = unsafe { data.deref_mut(pool) };
+        for b in data_ref.iter_mut() {
+            MaybeUninit::<T>::mark(b, tid, gc);
+        }
+    }
+}
 
 #[derive(Debug)]
-struct NodeIter<'g, T> {
-    // TODO(must): Collectable
-    inner: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
-    last: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
+struct NodeIter<'g, T: Collectable> {
+    inner: PShared<'g, Node<T>>,
+    last: PShared<'g, Node<T>>,
     guard: &'g Guard,
+}
+
+impl<'g, T: Debug + Collectable> Iterator for NodeIter<'g, T> {
+    type Item = &'g [MaybeUninit<T>];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let pool = global_pool().unwrap();
+        let inner_ref = unsafe { self.inner.as_ref(pool) }?;
+        self.inner = if self.inner == self.last {
+            PShared::null()
+        } else {
+            inner_ref.next.load(Ordering::Acquire, self.guard)
+        };
+        Some(unsafe {
+            inner_ref
+                .data
+                .load(Ordering::Relaxed, self.guard)
+                .deref(pool)
+        })
+    }
 }
 
 #[derive(Debug)]
 struct Context<K, V: Collectable> {
-    first_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
-    last_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    first_level: PAtomic<Node<Bucket<K, V>>>,
+    last_level: PAtomic<Node<Bucket<K, V>>>,
 
     /// Should resize until the last level's size > resize_size
     ///
@@ -343,12 +365,27 @@ struct Context<K, V: Collectable> {
     resize_size: usize,
 }
 
-// TODO(must): uncomment
-// impl<K, V: Collectable> Collectable for Context<K, V> {
-//     fn filter(context: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-//         PAtomic::filter(&mut context.last_level, tid, gc, pool);
-//     }
-// }
+impl<K, V: Collectable> Collectable for Context<K, V> {
+    fn filter(context: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+        let mut node = context.last_level.load(Ordering::SeqCst, guard);
+        while !node.is_null() {
+            let node_ref = unsafe { node.deref_mut(pool) };
+            Node::mark(node_ref, tid, gc);
+            node = node_ref.next.load(Ordering::SeqCst, guard);
+        }
+    }
+}
+
+impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
+    pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
+        NodeIter {
+            inner: self.last_level.load(Ordering::Acquire, guard),
+            last: self.first_level.load(Ordering::Acquire, guard),
+            guard,
+        }
+    }
+}
 
 /// Inner Clevel
 #[derive(Debug)]
@@ -358,14 +395,14 @@ pub struct ClevelInner<K, V: Collectable> {
 }
 
 impl<K, V: Collectable> Collectable for ClevelInner<K, V> {
-    fn filter(_s: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &mut PoolHandle) {
-        // TODO(must): collect
+    fn filter(clevel: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        PAtomic::filter(&mut clevel.context, tid, gc, pool);
     }
 }
 
 impl<K, V: Collectable> PDefault for ClevelInner<K, V> {
     fn pdefault(pool: &PoolHandle) -> Self {
-        let guard = unsafe { unprotected() }; // SAFE when initialization
+        let guard = unsafe { epoch::unprotected() }; // SAFE when initialization
 
         let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
         let last_level = new_node(MIN_SIZE, pool);
@@ -427,36 +464,6 @@ impl<K, V: Collectable> Default for FindResult<'_, K, V> {
             size: 0,
             slot: unsafe { &*ptr::null() },
             slot_ptr: PShared::null(),
-        }
-    }
-}
-
-impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
-    type Item = &'g [MaybeUninit<T>];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pool = global_pool().unwrap();
-        let inner_ref = unsafe { self.inner.as_ref(pool) }?;
-        self.inner = if self.inner == self.last {
-            PShared::null()
-        } else {
-            inner_ref.next.load(Ordering::Acquire, self.guard)
-        };
-        Some(unsafe {
-            inner_ref
-                .data
-                .load(Ordering::Relaxed, self.guard)
-                .deref(pool)
-        })
-    }
-}
-
-impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
-    pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
-        NodeIter {
-            inner: self.last_level.load(Ordering::Acquire, guard),
-            last: self.first_level.load(Ordering::Acquire, guard),
-            guard,
         }
     }
 }
@@ -632,10 +639,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> Context<K, V
     }
 }
 
-fn new_node<K, V: Collectable>(
-    size: usize,
-    pool: &PoolHandle,
-) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
@@ -655,7 +659,7 @@ fn new_node<K, V: Collectable>(
 impl<K, V: Collectable> Drop for ClevelInner<K, V> {
     fn drop(&mut self) {
         let pool = global_pool().unwrap();
-        let guard = unsafe { unprotected() };
+        let guard = unsafe { epoch::unprotected() };
         let context = self.context.load(Ordering::Relaxed, guard);
         let context_ref = unsafe { context.deref(pool) };
 
@@ -742,7 +746,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
     fn add_level<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
-        first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level: &'g Node<Bucket<K, V>>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -838,16 +842,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
     fn invalidate_and_move<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
-        mut first_level: PShared<'g, Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+        mut first_level: PShared<'g, Node<Bucket<K, V>>>,
         slot_slot_ptr: Option<(&DetectableCASAtomic<Slot<K, V>>, PShared<'_, Slot<K, V>>)>,
         client: &mut Resize<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> (
-        PShared<'g, Context<K, V>>,
-        PShared<'g, Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
-    ) {
+    ) -> (PShared<'g, Context<K, V>>, PShared<'g, Node<Bucket<K, V>>>) {
         let (slot, slot_ptr) = if REC {
             some_or!(
                 client.delete_chk.peek(tid, pool),
