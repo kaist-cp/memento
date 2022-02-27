@@ -38,6 +38,9 @@
 #![feature(new_uninit)] // for clevel
 #![feature(core_intrinsics)]
 
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+
 #![recursion_limit = "512"]
 
 // Persistent objects collection

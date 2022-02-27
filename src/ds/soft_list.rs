@@ -250,7 +250,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                 );
 
                 let pred_ref = unsafe { pred.deref() };
-                if !pred_ref
+                if pred_ref
                     .next
                     .compare_exchange(
                         curr,
@@ -259,7 +259,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                         Ordering::SeqCst,
                         vguard,
                     )
-                    .is_ok()
+                    .is_err()
                 {
                     // 삽입 실패시 alloc 했던거 free하고 처음부터 재시도
                     // 1. free(vnode)
@@ -490,38 +490,43 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             loop {
                 succ = curr_ref.next.load(Ordering::SeqCst, guard);
                 curr_state = get_state(succ);
+
                 // trimming
                 while curr_state == State::Deleted {
-                    assert!(false);
+                    panic!();
                 }
-                // continue searching
-                if curr_ref.key < key {
-                    pred = curr;
-                    curr = succ;
-                    curr_ref = unsafe { curr.deref() };
-                }
-                // found the same
-                else if curr_ref.key == key {
-                    assert!(false);
-                } else {
-                    new_node_ref
-                        .next
-                        .store(curr.with_tag(State::Inserted as usize), Ordering::Relaxed);
-                    let pred_ref = unsafe { pred.deref() };
-                    if !pred_ref
-                        .next
-                        .compare_exchange(
-                            curr,
-                            new_node.with_tag(State::Inserted as usize),
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                            guard,
-                        )
-                        .is_ok()
-                    {
-                        continue 'retry;
+
+                match curr_ref.key.cmp(&key) {
+                    std::cmp::Ordering::Less => {
+                        // continue searching
+                        pred = curr;
+                        curr = succ;
+                        curr_ref = unsafe { curr.deref() };
                     }
-                    return;
+                    std::cmp::Ordering::Equal => {
+                        // found the same
+                        panic!();
+                    }
+                    std::cmp::Ordering::Greater => {
+                        new_node_ref
+                            .next
+                            .store(curr.with_tag(State::Inserted as usize), Ordering::Relaxed);
+                        let pred_ref = unsafe { pred.deref() };
+                        if pred_ref
+                            .next
+                            .compare_exchange(
+                                curr,
+                                new_node.with_tag(State::Inserted as usize),
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                                guard,
+                            )
+                            .is_err()
+                        {
+                            continue 'retry;
+                        }
+                        return;
+                    }
                 }
             }
         }
@@ -537,7 +542,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             let curr_chunk = curr_ref.obj as *mut PNode<T>;
             let num_nodes = SSMEM_DEFAULT_MEM_SIZE / size_of::<PNode<T>>();
             for i in 0..num_nodes {
-                let curr_node = unsafe { curr_chunk.offset(i as isize) };
+                let curr_node = unsafe { curr_chunk.add(i) };
                 let curr_node_ref = unsafe { curr_node.as_ref() }.unwrap();
                 if curr_node_ref.is_inserted() {
                     // 삽입되어있는 PNode면 VList에 재구성

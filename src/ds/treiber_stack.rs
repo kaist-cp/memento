@@ -38,17 +38,9 @@ impl<T: Collectable> Collectable for Node<T> {
 }
 
 /// Try push memento
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TryPush {
     insert: Cas,
-}
-
-impl Default for TryPush {
-    fn default() -> Self {
-        Self {
-            insert: Default::default(),
-        }
-    }
 }
 
 unsafe impl Send for TryPush {}

@@ -210,7 +210,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             guard,
         );
 
-        return Ok(());
+        Ok(())
     }
 
     /// Load

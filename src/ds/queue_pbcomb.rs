@@ -100,7 +100,7 @@ impl Clone for EStateRec {
     fn clone(&self) -> Self {
         Self {
             tail: self.tail.clone(),
-            return_val: self.return_val.clone(),
+            return_val: self.return_val,
             deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
         }
     }
@@ -118,7 +118,7 @@ impl Clone for DStateRec {
     fn clone(&self) -> Self {
         Self {
             head: self.head.clone(),
-            return_val: self.return_val.clone(),
+            return_val: self.return_val,
             deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
         }
     }
@@ -307,12 +307,12 @@ impl Queue {
                 // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
                 let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
-                while !(deactivate_lval < E_LOCK.peek().0) {
+                while deactivate_lval >= E_LOCK.peek().0 {
                     backoff.snooze();
                 }
 
                 // 결과 저장하고 반환
-                let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid].clone();
+                let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid];
                 let _ = enq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
@@ -351,7 +351,7 @@ impl Queue {
                 let q_req_ref =
                     unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) };
 
-                Self::raw_enqueue(&mut self.e_state[ind].tail, q_req_ref.arg, guard, pool);
+                Self::raw_enqueue(&self.e_state[ind].tail, q_req_ref.arg, guard, pool);
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 self.e_state[ind].return_val[q] = ();
                 self.e_state[ind].deactivate[q]
@@ -381,9 +381,9 @@ impl Queue {
         drop(lockguard); // release E_LOCK
 
         // 결과 저장하고 반환
-        let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid].clone();
+        let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid];
         let _ = enq.result.checkpoint::<REC>(res, tid, pool);
-        return res;
+        res
     }
 
     /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
@@ -489,12 +489,12 @@ impl Queue {
                 // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
                 let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
-                while !(deactivate_lval < D_LOCK.peek().0) {
+                while deactivate_lval >= D_LOCK.peek().0 {
                     backoff.snooze();
                 }
 
                 // 결과 저장하고 반환
-                let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid].clone();
+                let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid];
                 let _ = deq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
@@ -541,9 +541,9 @@ impl Queue {
         drop(lockguard); // release D_LOCK
 
         // 결과 저장하고 반환
-        let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid].clone();
+        let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid];
         let _ = deq.result.checkpoint::<REC>(res, tid, pool);
-        return res;
+        res
     }
 
     /// 실질적인 dequeue: head 한 칸 전진하고 old head를 반환

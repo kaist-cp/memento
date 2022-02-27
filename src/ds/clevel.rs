@@ -857,7 +857,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             let s = slot_slot_ptr.unwrap();
             ok_or!(
                 client.delete_chk.checkpoint::<REC>(
-                    (PPtr::from(unsafe { s.0.as_pptr(pool) }), PAtomic::from(s.1),),
+                    (unsafe { s.0.as_pptr(pool) }, PAtomic::from(s.1),),
                     tid,
                     pool,
                 ),
@@ -945,7 +945,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                     }
 
                     let _ = client.insert_chk.checkpoint::<REC>(
-                        PPtr::from(unsafe { slot.as_pptr(pool) }),
+                        unsafe { slot.as_pptr(pool) },
                         tid,
                         pool,
                     );
@@ -1262,11 +1262,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
                     let (size, slot_p) = client
                         .insert_chk
-                        .checkpoint::<false>(
-                            (size, PPtr::from(unsafe { slot.as_pptr(pool) })),
-                            tid,
-                            pool,
-                        )
+                        .checkpoint::<false>((size, unsafe { slot.as_pptr(pool) }), tid, pool)
                         .unwrap();
 
                     let res = self.try_slot_insert_inner::<false>(

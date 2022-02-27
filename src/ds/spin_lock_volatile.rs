@@ -57,7 +57,7 @@ impl VSpinLock {
                 Ordering::Acquire,
             )
             .map(|_| (_seq + 1, SpinLockGuard { lock: self }))
-            .map_err(|curr| decompose_aux_bit(curr))
+            .map_err(decompose_aux_bit)
     }
 
     /// lock
