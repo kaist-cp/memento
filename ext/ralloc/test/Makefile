@@ -107,6 +107,7 @@ prod-con_test: ./benchmark/prod-con.cpp libralloc.a
 
 libralloc.a: $(OBJECTS)
 	ar -rcs $@ $^
+	bash -c "echo $(FLAGS) > makeflags"
 
 clean:
 	rm -f *_test

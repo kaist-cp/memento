@@ -8,10 +8,6 @@ function show_cfg() {
     echo "Max threads: ${MAX_THREADS}"
     echo "Test count: ${TEST_CNT}"
     echo "Test duration: ${TEST_DUR}s"
-
-    let total_dur=$TEST_CNT*$TEST_DUR*${#THREADS[*]}/60
-    echo "테스트 총 소요시간: obj 수 * 약 ${total_dur}m (thread * count * duration)"
-    echo "git hash: $git_hash"
     echo ""
 }
 
@@ -57,7 +53,7 @@ if [ $# -ne 1 ] ; then
 fi
 
 # 1. Setup
-PMEM_PATH=$1          # PMEM_PATH에 풀 파일을 생성하여 사용
+PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
 TEST_CNT=5            # 한 bench당 테스트 횟수
 TEST_DUR=10           # 한 테스트당 지속시간
