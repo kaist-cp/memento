@@ -192,7 +192,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
     const PATIENCE: u64 = 40000;
 
-    /// return bool: 계속 진행 가능 여부 (`old`로 CAS를 해도 되는지 여부)
     #[inline]
     fn load_help<'g>(
         &self,
