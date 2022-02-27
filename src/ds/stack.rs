@@ -94,11 +94,11 @@ pub(crate) mod tests {
     where
         S: Stack<usize>,
     {
-        /// push_pop을 반복하는 Concurrent stack test
+        /// Concurrent stack test that repeats push and pop
         ///
-        /// - Job: 자신의 tid로 1회 push하고 그 뒤 1회 pop을 함
-        /// - 여러 스레드가 Job을 반복
-        /// - 마지막에 지금까지의 모든 pop의 결과물이 각 tid값의 정확한 누적 횟수를 가지는지 체크
+        /// - Job: Push 1 time with thread's id, then pop 1 time
+        /// - All threads repeat the job
+        /// - Finally, it is checked whether the results of all pops so far have the correct cumulative count of each tid value.
         fn run(
             &self,
             push_pop: &mut PushPop<S, NR_THREAD, COUNT>,
@@ -107,9 +107,9 @@ pub(crate) mod tests {
             pool: &PoolHandle,
         ) {
             match tid {
-                // T1: 다른 스레드들의 실행결과를 확인
+                // T1: Check the execution results of other threads
                 1 => {
-                    // 다른 스레드들이 다 끝날때까지 기다림
+                    // Wait for all other threads to finish
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check empty
@@ -122,7 +122,7 @@ pub(crate) mod tests {
                     assert!((2..NR_THREAD + 2)
                         .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
-                // T1이 아닌 다른 스레드들은 stack에 { push; pop; } 수행
+                // Threads other than T1 perform { push; pop; }
                 _ => {
                     // push; pop;
                     for i in 0..COUNT {
@@ -134,7 +134,7 @@ pub(crate) mod tests {
                             .pop::<true>(&mut push_pop.pops[i], tid, guard, pool);
                         assert!(res.is_some());
 
-                        // deq 결과를 실험결과에 전달
+                        // Transfer the pop result to the result array
                         let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
                     }
 

@@ -37,10 +37,9 @@ impl<T: Collectable> Collectable for Node<T> {
     }
 }
 
-/// TreiberStack의 try push operation
+/// Try push memento
 #[derive(Debug)]
 pub struct TryPush {
-    /// push를 위해 할당된 node
     insert: Cas,
 }
 
@@ -68,7 +67,7 @@ impl TryPush {
     }
 }
 
-/// Stack의 try push를 이용하는 push op.
+/// Push memento
 #[derive(Debug)]
 pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
@@ -102,7 +101,7 @@ impl<T: Clone + Collectable> Push<T> {
     }
 }
 
-/// TreiberStack의 try pop operation
+/// Try pop memento
 #[derive(Debug)]
 pub struct TryPop<T: Clone + Collectable> {
     delete: Cas,
@@ -136,7 +135,7 @@ impl<T: Clone + Collectable> TryPop<T> {
     }
 }
 
-/// Stack의 try pop을 이용하는 pop op.
+/// Pop memento
 #[derive(Debug)]
 pub struct Pop<T: Clone + Collectable> {
     try_pop: TryPop<T>,
@@ -343,7 +342,7 @@ mod tests {
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-    // 테스트시 정적할당을 위해 스택 크기를 늘려줘야함 (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+    // We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     fn push_pop() {
         const FILE_NAME: &str = "treiber_push_pop.pool";
