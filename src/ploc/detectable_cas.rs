@@ -280,7 +280,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
     }
 }
 
-unsafe impl<N: Collectable> Send for DetectableCASAtomic<N> {}
+unsafe impl<N: Collectable + Send + Sync> Send for DetectableCASAtomic<N> {}
 unsafe impl<N: Collectable> Sync for DetectableCASAtomic<N> {}
 
 #[derive(Debug)]

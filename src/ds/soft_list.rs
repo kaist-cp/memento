@@ -491,11 +491,6 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                 succ = curr_ref.next.load(Ordering::SeqCst, guard);
                 curr_state = get_state(succ);
 
-                // trimming
-                while curr_state == State::Deleted {
-                    panic!();
-                }
-
                 match curr_ref.key.cmp(&key) {
                     std::cmp::Ordering::Less => {
                         // continue searching
@@ -734,7 +729,7 @@ impl<T: Default> VNode<T> {
 }
 
 unsafe impl<T: Default> Sync for VNode<T> {}
-unsafe impl<T: Default> Send for VNode<T> {}
+unsafe impl<T: Default + Send + Sync> Send for VNode<T> {}
 
 #[derive(PartialEq, Clone, Copy)]
 enum State {

@@ -79,7 +79,7 @@ impl<T: Clone + Collectable> Collectable for Enqueue<T> {
     }
 }
 
-unsafe impl<T: Clone + Collectable> Send for Enqueue<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for Enqueue<T> {}
 
 /// Try dequeue memento
 #[derive(Debug)]
@@ -123,7 +123,7 @@ impl<T: Clone + Collectable> Collectable for Dequeue<T> {
     }
 }
 
-unsafe impl<T: Clone + Collectable> Send for Dequeue<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for Dequeue<T> {}
 
 /// Must dequeue a value from Queue
 #[derive(Debug)]
@@ -145,7 +145,7 @@ impl<T: Clone + Collectable> Collectable for DequeueSome<T> {
     }
 }
 
-unsafe impl<T: Clone + Collectable> Send for DequeueSome<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for DequeueSome<T> {}
 
 /// Persistent Queue
 #[derive(Debug)]

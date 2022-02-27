@@ -342,5 +342,5 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     }
 }
 
-unsafe impl<N: Node + Collectable> Send for SMOAtomic<N> {}
+unsafe impl<N: Node + Collectable + Send + Sync> Send for SMOAtomic<N> {}
 unsafe impl<N: Node + Collectable> Sync for SMOAtomic<N> {}

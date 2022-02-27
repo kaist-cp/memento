@@ -88,6 +88,10 @@ impl Collectable for SpinLock {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
+/// Lock fail
+#[derive(Debug)]
+pub struct LockFail;
+
 impl SpinLock {
     const RELEASED: usize = 0;
 
@@ -97,7 +101,7 @@ impl SpinLock {
         try_lock: &mut TryLock,
         tid: usize,
         pool: &PoolHandle,
-    ) -> Result<(), ()> {
+    ) -> Result<(), LockFail> {
         if REC {
             let cur = self.inner.load(Ordering::Relaxed);
 
@@ -107,7 +111,7 @@ impl SpinLock {
             }
 
             if cur != SpinLock::RELEASED {
-                return Err(());
+                return Err(LockFail);
             }
         }
 
@@ -122,7 +126,7 @@ impl SpinLock {
                 persist_obj(&self.inner, true);
                 self.acq_succ::<REC>(try_lock, tid, pool);
             })
-            .map_err(|_| ())
+            .map_err(|_| LockFail)
     }
 
     #[inline]

@@ -82,7 +82,7 @@ impl<T: Clone + Collectable> Collectable for Push<T> {
     }
 }
 
-unsafe impl<T: Clone + Collectable> Send for Push<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for Push<T> {}
 
 impl<T: Clone + Collectable> Push<T> {
     /// Clear
@@ -147,7 +147,7 @@ impl<T: Clone + Collectable> Collectable for Pop<T> {
     }
 }
 
-unsafe impl<T: Clone + Collectable> Send for Pop<T> {}
+unsafe impl<T: Clone + Collectable + Send + Sync> Send for Pop<T> {}
 
 impl<T: Clone + Collectable> Pop<T> {
     /// Clear
