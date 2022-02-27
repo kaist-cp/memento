@@ -299,7 +299,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
         }
     }
 
-    fn wait<'g, const REC: bool>(
+    fn wait<const REC: bool>(
         &self,
         mine: PShared<'_, Node<T>>,
         try_xchg: &mut TryExchange<T>,

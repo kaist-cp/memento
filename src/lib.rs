@@ -14,22 +14,22 @@
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
 #![deny(unaligned_references)]
-// #![deny(unused_crate_dependencies)]
+#![deny(unused_crate_dependencies)]
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-// #![deny(warnings)]
+#![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
 #![deny(unreachable_pub)]
-// #![deny(single_use_lifetimes)] // Allowed due to GAT
-// #![deny(unused_lifetimes)] // Allowed due to GAT
-// #![deny(unstable_features)] // Allowed due to GAT
-#![allow(clippy::type_complexity)] // to allow SMO prepare functions
+#![deny(single_use_lifetimes)]
+#![deny(unused_lifetimes)]
+
+// #![deny(unstable_features)] // Allowed due to below
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
 #![feature(generic_associated_types)] // to define fields of `Memento`
 #![feature(asm)]
@@ -37,6 +37,7 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 #![feature(new_uninit)] // for clevel
 #![feature(core_intrinsics)]
+
 #![recursion_limit = "512"]
 
 // Persistent objects collection

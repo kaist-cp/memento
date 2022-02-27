@@ -420,7 +420,7 @@ struct FindResult<'g, K, V: Collectable> {
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
 
-impl<'g, K, V: Collectable> Default for FindResult<'g, K, V> {
+impl<K, V: Collectable> Default for FindResult<'_, K, V> {
     #[allow(deref_nullptr)]
     fn default() -> Self {
         Self {
@@ -1093,7 +1093,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         }
     }
 
-    pub fn is_resizing<'g>(&self, guard: &'g Guard, pool: &PoolHandle) -> bool {
+    pub fn is_resizing(&self, guard: &Guard, pool: &PoolHandle) -> bool {
         let context = self.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);

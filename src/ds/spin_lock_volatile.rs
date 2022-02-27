@@ -91,7 +91,7 @@ pub struct SpinLockGuard<'a> {
     lock: &'a VSpinLock,
 }
 
-impl<'a> Drop for SpinLockGuard<'a> {
+impl Drop for SpinLockGuard<'_> {
     fn drop(&mut self) {
         unsafe { self.lock.unlock() };
     }
