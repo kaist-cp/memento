@@ -50,7 +50,7 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.xlabel(xlabel, size='large')
     if ylabel != '':
         plt.ylabel(ylabel, size='large')
-    figpath = "{}.png".format(output)
+    figpath = "{}.svg".format(output)
     plt.tight_layout()
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
 
@@ -128,4 +128,4 @@ for obj in objs:
         ax = draw('Threads', ylabel,
                   plot_lines, "./out/{}".format(plot_id), 4)
     axLine, axLabel = ax.get_legend_handles_labels()
-    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
+    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))

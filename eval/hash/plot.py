@@ -248,12 +248,12 @@ for obj, obj_info in objs.items():
             axes = draw(bench, dist, targets)
 
             # save
-            figpath = "./out/{}.png".format(plot_id)
+            figpath = "./out/{}.svg".format(plot_id)
             plt.savefig(figpath, bbox_inches='tight', dpi=300)
             print(figpath)
 
     axLine, axLabel = axes[0].get_legend_handles_labels()
-    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
+    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
 
 # 2. single-thread throughput (bar graph)
 for obj, obj_info in objs.items():
@@ -298,6 +298,6 @@ for obj, obj_info in objs.items():
     plt.setp(axes[0], ylabel="Throughput (M op/s)")
 
     # save
-    figpath = "./out/hash-throughput-single.png"
+    figpath = "./out/hash-throughput-single.svg"
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
     print(figpath)
