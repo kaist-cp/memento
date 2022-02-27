@@ -13,7 +13,6 @@ use std::sync::mpsc;
 use cfg_if::cfg_if;
 use crossbeam_epoch::{unprotected, Guard};
 use crossbeam_utils::Backoff;
-use derivative::Derivative;
 use etrace::*;
 use fasthash::Murmur3HasherExt;
 use itertools::*;
@@ -240,10 +239,10 @@ cfg_if! {
     } else {
         // For real workload.
 
-        // 해시 크기: MIN_SIZE * SLOTS_IN_BUCKET * (1+LEVEL_RATIO)
-        const SLOTS_IN_BUCKET: usize = 8; // 고정
-        const LEVEL_RATIO: usize = 2; // 고정
-        const MIN_SIZE: usize = 786432; // 이걸로 해시 크기 조절
+        // Hash size: MIN_SIZE * SLOTS_IN_BUCKET * (1+LEVEL_RATIO)
+        const SLOTS_IN_BUCKET: usize = 8;
+        const LEVEL_RATIO: usize = 2;
+        const MIN_SIZE: usize = 786432;
 
         const fn level_size_next(size: usize) -> usize {
             size * LEVEL_RATIO
@@ -352,12 +351,9 @@ struct Context<K, V: Collectable> {
 // }
 
 /// Inner Clevel
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct ClevelInner<K, V: Collectable> {
     context: PAtomic<Context<K, V>>,
-
-    #[derivative(Debug = "ignore")]
     add_level_lock: VSpinLock,
 }
 
