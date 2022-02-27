@@ -25,7 +25,7 @@ pub trait Node: Sized {
     fn replacement(&self) -> &PAtomic<Self>;
 }
 
-/// No owner를 표시하기 위함
+/// Indicate no owner
 #[inline]
 pub fn not_deleted<'g, T>() -> PShared<'g, T> {
     PShared::null()
