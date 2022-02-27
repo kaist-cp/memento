@@ -96,11 +96,11 @@ extern "C" {
 /// ```text
 ///             ----------- Black box ------------------      Ralloc
 ///            |                                        |
-/// fn mark   ---> unsafe RP_mark                      --->    ...
+/// fn mark   --->          unsafe RP_mark             --->    ...
 ///     ^      |                                        |       |
 ///     |      |                                        |       |
 ///     |      |                                        |       v
-/// fn filter <--- unsafe filter_inner                 <---    ...
+/// fn filter <---       unsafe filter_inner           <---    ...
 ///            |                                        |
 ///             ----------------------------------------
 /// ```

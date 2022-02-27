@@ -76,8 +76,8 @@ impl<N: Node + Collectable> From<PShared<'_, N>> for SMOAtomic<N> {
 }
 
 impl<N: Node + Collectable> SMOAtomic<N> {
-    /// Ok(ptr): helping 다 해준 뒤의 최종 ptr
-    /// Err(ptr): helping 다 해준 뒤의 최종 ptr. 단, 최종 ptr은 지금 delete가 불가능함
+    /// Ok(ptr): The final ptr after all helps
+    /// Err(ptr): The final ptr after all helps but the final ptr cannot be deleted for now.
     pub fn load_helping<'g>(
         &self,
         old: PShared<'g, N>,
@@ -93,8 +93,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
 
         if next.as_ptr() == old.as_ptr() {
-            // 자기 자신이 owner인 상태
-            // 현재로썬 delete는 사용할 수 없음을 알림
+            // Reflexive
+            // Notice that it cannot be deleted at this time
             return Err(old);
         }
 
@@ -264,7 +264,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             return Ok(());
         }
 
-        Err(InsertError::RecFail) // Fail이 crash 이후 달라질 수 있음. Insert는 weak 함
+        Err(InsertError::RecFail) // Fail type may change after crash. Insert is weak.
     }
 
     /// Delete
@@ -280,7 +280,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             return self.delete_result(old, new, tid, guard, pool);
         }
 
-        // 빼려는 node에 내 이름 새겨넣음
+        // Record the tid on the node to be deleted.
         let target_ref = unsafe { old.deref(pool) };
         let owner = target_ref.replacement();
         let _ = owner
@@ -296,13 +296,13 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         // Now I own the location. flush the owner.
         persist_obj(owner, false); // we're doing CAS soon.
 
-        // 주인을 정했으니 이제 point를 바꿔줌
+        // Now that the owner has been decided, the point is changed
         let _ = self
             .inner
             .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
 
-        // 바뀐 point는 내가 뽑은 node를 free하기 전에 persist 될 거임
-        // defer_persist이어도 post-crash에서 history가 끊기진 않음: 다음 접근자가 `Insert`라면, 그는 point를 persist 무조건 할 거임.
+        // The changed location will persist before freeing the node I deleted.
+        // defer_persist() does not break history in post-crash: if the next accessor is `Insert`, it will persist the location.
         // e.g. A --(defer per)--> B --(defer per)--> null --(per)--> C
         guard.defer_persist(&self.inner);
         unsafe { guard.defer_pdestroy(old) }
@@ -324,7 +324,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             return Err(ok_or!(self.load_helping(old, guard, pool), e, e)) // if null, return failure.
         );
 
-        // owner가 내가 아니면 실패
+        // Failure if the owner is not me
         let owner = old_ref.replacement();
         let o = owner.load(Ordering::SeqCst, guard);
         if o.tid() != tid {

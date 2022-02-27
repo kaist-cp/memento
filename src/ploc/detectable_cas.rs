@@ -87,14 +87,14 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 return Err(cur);
             }
 
-            // 성공하면 target을 persist
+            // If successful, persist the location
             persist_obj(&self.inner, true);
 
-            // 성공했다고 체크포인팅
+            // Checkpoint success
             mmt.checkpoint_succ(parity, tid, &pool.exec_info);
             lfence();
 
-            // 그후 tid 뗀 포인터를 넣어줌으로써 checkpoint는 필요 없다고 알림
+            // By inserting a pointer with tid removed, it prevents further helping.
             let _ = self
                 .inner
                 .compare_exchange(
@@ -104,7 +104,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     Ordering::SeqCst,
                     guard,
                 )
-                .map_err(|_| sfence()); // cas 실패시 synchronous flush를 위해 sfence 해줘야 함
+                .map_err(|_| sfence()); // In case of CAS failure, sfence is required for synchronous flush.
 
             return Ok(());
         }
@@ -151,7 +151,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let cur = self.inner.load(Ordering::SeqCst, guard);
         let next_par = !vchk_par;
 
-        // 내가 첫 CAS 성공한 채로 그대로 남아 있는지 확인
+        // Check if the CAS I did before crash remains as it is
         if cur == new.with_aux_bit(Cas::parity_to_bit(next_par)).with_tid(tid) {
             mmt.checkpoint_succ(next_par, tid, exec_info);
             let _ = self
@@ -167,7 +167,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return Some(Ok(()));
         }
 
-        // CAS 성공한 뒤에 helping 받은 건지 체크
+        // After successful CAS, check if I received help
         let pchk = Timestamp::from(
             exec_info.cas_info.help[Cas::parity_to_bit(next_par)][tid].load(Ordering::SeqCst),
         );
@@ -175,8 +175,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return None;
         }
 
-        // 마지막 CAS보다 helper가 쓴 체크포인트가 높으므로 성공한 것
-        // 이미 location의 값은 바뀌었으므로 내 checkpoint만 마무리
+        // Success because the checkpoint written by the helper is higher than the last CAS
+        // Since the value of location has already been changed, I just need to finalize my checkpoint.
         mmt.checkpoint_succ(next_par, tid, exec_info);
         sfence();
 
@@ -285,10 +285,10 @@ unsafe impl<N: Collectable> Sync for DetectableCASAtomic<N> {}
 
 #[derive(Debug)]
 pub(crate) struct CasInfo {
-    /// tid별 스스로 cas 성공한 시간
+    /// Per-thread CAS self-successful time
     pub(crate) own: CASCheckpointArr,
 
-    /// tid별 helping 받은 시간
+    /// Per-thread Last time receiving CAS helping
     pub(crate) help: &'static [CASCheckpointArr; 2],
 }
 
@@ -317,7 +317,7 @@ impl Default for Cas {
 
 impl Collectable for Cas {
     fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // CAS client 중 max checkpoint를 가진 걸로 vcheckpoint에 기록해줌
+        // Among CAS clients, those with max checkpoint are recorded in vcheckpoint
         let vchk = Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
 
         if cas.checkpoint > vchk {
