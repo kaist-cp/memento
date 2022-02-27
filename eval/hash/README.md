@@ -26,7 +26,7 @@ cd bin
 ```
 
 where
-- `[lib.so]`: `CCEH(.so)`, `Level`, `Dash`, `PCLHT`, `clevel`, `clevel_rust`(clevel_mmt at paper), `SOFT`, `SOFT_rust`(SOFT_mmt at paper)
+- `[lib.so]`: `CCEH(.so)`, `Level`, `Dash`, `PCLHT`, `clevel`, `clevel_rust`(mmt at paper), `SOFT`, `SOFT_rust`(mmt at paper)
 - `[args...]`: please see [Persistent Memory Hash Indexes repo](https://github.com/HNUSystemsLab/HashEvaluation#run-with-pibench).
 
 For example, following command measure the search throughput of `clevel_rust` when using 32 threads with uniform distribution.
