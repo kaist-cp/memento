@@ -2,14 +2,12 @@
 use super::{pool::PoolHandle, Collectable, GarbageCollection};
 use std::marker::PhantomData;
 
-/// 상대주소의 NULL 식별자
+/// NULL identifier of relative address
 const NULL_OFFSET: usize = 0;
 
-/// 풀에 속한 오브젝트를 가리킬 포인터
-/// - 풀의 시작주소로부터의 offset을 가지고 있음
-/// - 참조시 풀의 시작주소와 offset을 더한 절대주소를 참조
-// `T: ?Sized`인 이유: `PPtr::null()`을 사용해야하는 Atomic 포인터의 T가 ?Sized임
-// NOTE: plocation offset의 align이 안맞을 수 있음. 주의 필요
+/// Pointer to an object belonging to the pool
+/// - It has an offset from the starting address of the pool.
+/// - When referencing, refer to the absolute address of the pool start address plus the offset
 #[derive(Debug, Default)]
 pub struct PPtr<T: ?Sized> {
     offset: usize,
@@ -37,7 +35,7 @@ impl<T: Collectable> Collectable for PPtr<T> {
 impl<T: ?Sized> Copy for PPtr<T> {}
 
 impl<T: ?Sized> PPtr<T> {
-    /// null 포인터 반환
+    /// Return a null pointer
     pub const fn null() -> Self {
         Self {
             offset: NULL_OFFSET,
@@ -45,50 +43,50 @@ impl<T: ?Sized> PPtr<T> {
         }
     }
 
-    /// offset으로 변환
+    /// Convert to offset
     ///
     /// # Example
     ///
-    /// pool에 할당하면 나오는 PersistentPtr를 Atomic Pointer로 변환하기 위해 필요
-    /// - `Owned::from_usize(ptr.into_offset())`
+    /// Required to convert the `PPtr` that comes out when allocated to the pool into an Atomic Pointer.
+    /// - `POwned::from_usize(ptr.into_offset())`
     pub fn into_offset(self) -> usize {
         self.offset
     }
 
-    /// null 포인터인지 확인
+    /// Check for null pointer
     pub fn is_null(self) -> bool {
         self.offset == NULL_OFFSET
     }
 }
 
 impl<T> PPtr<T> {
-    /// 절대주소 참조
+    /// Refer by absolute address
     ///
     /// # Safety
     ///
-    /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// When multiple pools are opened at the same time, the ptr of pool1 should not use the starting address of pool2.
     pub unsafe fn deref(self, pool: &PoolHandle) -> &'_ T {
         &*((pool.start() + self.offset) as *const T)
     }
 
-    /// 절대주소 mutable 참조
+    /// Refer mutably by absolute address
     ///
     /// # Safety
     ///
-    /// TODO: 동시에 풀 여러개를 열 수있다면 pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// When multiple pools are opened at the same time, the ptr of pool1 should not use the starting address of pool2.
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn deref_mut(self, pool: &PoolHandle) -> &'_ mut T {
         &mut *((pool.start() + self.offset) as *mut T)
     }
 }
 
-/// reference를 persistent ptr로 바꿔줌
+/// Convert reference to persistent ptr
 pub trait AsPPtr {
-    /// reference를 persistent ptr로 바꿔줌
+    /// Convert reference to persistent ptr
     ///
     /// # Safety
     ///
-    /// object가 `pool`에 속한 reference여야 함
+    /// object must be a reference in `pool`
     unsafe fn as_pptr(&self, pool: &PoolHandle) -> PPtr<Self>;
 }
 
@@ -102,7 +100,7 @@ impl<T> AsPPtr for T {
 }
 
 impl<T> From<usize> for PPtr<T> {
-    /// 주어진 offset을 T obj의 시작 주소로 간주하고 이를 참조하는 포인터 반환
+    /// Regard the given offset as the starting address of T obj and returns a pointer referencing it.
     fn from(off: usize) -> Self {
         Self {
             offset: off,

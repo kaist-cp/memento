@@ -1,24 +1,25 @@
-//! 풀이 열려있는 동안 풀의 정보(e.g. 풀의 시작주소, 풀의 메타데이터)를 들고 있을 global object
+//! A global object that will hold information about the pool
+//! (e.g. the starting address of the pool, metadata of the pool) while the pool is open.
 
 use super::pool::PoolHandle;
 
 static mut GLOBAL_POOL: Option<PoolHandle> = None;
 
-/// 글로벌 풀 세팅
+/// Set the global pool handle
 pub fn init(pool: PoolHandle) {
     unsafe {
         GLOBAL_POOL = Some(pool);
     }
 }
 
-/// 글로벌 풀 clear
+/// Clear the global pool handle
 pub fn clear() {
     unsafe {
         GLOBAL_POOL = None;
     }
 }
 
-/// 글로벌 풀 읽기
+/// Load the global pool handle
 pub fn global_pool() -> Option<&'static mut PoolHandle> {
     unsafe { GLOBAL_POOL.as_mut() }
 }
