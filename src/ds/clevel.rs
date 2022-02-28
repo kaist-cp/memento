@@ -691,34 +691,6 @@ pub enum InsertError {
 }
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<K, V> {
-    // pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
-    //     let guard = unsafe { unprotected() };
-
-    //     let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
-    //     let last_level = new_node(MIN_SIZE, pool);
-    //     let last_level_ref = unsafe { last_level.deref(pool) };
-    //     last_level_ref.next.store(first_level, Ordering::Relaxed);
-    //     let inner = Arc::new(ClevelInner {
-    //         context: PAtomic::new(
-    //             Context {
-    //                 first_level: first_level.into(),
-    //                 last_level: last_level.into(),
-    //                 resize_size: 0,
-    //             },
-    //             pool,
-    //         ),
-    //         add_level_lock: RawMutexImpl::INIT,
-    //     });
-    //     let (resize_send, resize_recv) = mpsc::channel();
-    //     (
-    //         Self {
-    //             inner: inner.clone(),
-    //             resize_send,
-    //         },
-    //         ClevelResize { inner, resize_recv },
-    //     )
-    // }
-
     pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
         let context = self.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
@@ -1514,49 +1486,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         }
     }
 
-    // pub fn update(
-    //     &self,
-    //     tid: usize,
-    //     key: K,
-    //     value: V,
-    //     sender: &mpsc::Sender<()>,
-    //     guard: &Guard,
-    //     pool: &PoolHandle,
-    // ) -> Result<(), (K, V)>
-    // where
-    //     K: Clone,
-    // {
-    //     let (key_tag, key_hashes) = hashes(&key);
-    //     let mut slot_new =
-    //         POwned::new(Slot::from((key.clone(), value)), pool).with_high_tag(key_tag as usize);
-
-    //     loop {
-    //         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
-    //         let find_result = some_or!(find_result, {
-    //             let slot_ref = unsafe { slot_new.deref(pool) };
-    //             let (k, v) = (slot_ref.key.clone(), unsafe { ptr::read(&slot_ref.value) });
-    //             return Err((k, v));
-    //         });
-
-    //         if let Err(e) = find_result.slot.compare_exchange(
-    //             find_result.slot_ptr,
-    //             slot_new,
-    //             Ordering::AcqRel,
-    //             Ordering::Acquire,
-    //             guard,
-    //         ) {
-    //             slot_new = e.new;
-    //             continue;
-    //         }
-
-    //         unsafe {
-    //             guard.defer_pdestroy(find_result.slot_ptr);
-    //         }
-    //         self.move_if_resized(tid, context, find_result, key_hashes, sender, guard, pool);
-    //         return Ok(());
-    //     }
-    // }
-
     fn try_delete<const REC: bool>(
         &self,
         key: &K,
@@ -1685,15 +1614,10 @@ mod tests {
                         let _ =
                             kv.insert::<true>(i, i, &send, &mut mmt.insert[i], tid, guard, pool);
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
-
-                        // let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
-                        // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
                     }
 
                     for i in 0..SMOKE_CNT {
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
-                        // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
-
                         let del_res = kv.delete::<true>(&i, &mut mmt.delete[i], tid, guard, pool);
                         assert!(del_res);
                         assert_eq!(kv.search(&i, guard, pool), None);
@@ -1811,73 +1735,4 @@ mod tests {
             FILE_NAME, FILE_SIZE, NR_THREADS,
         )
     }
-
-    // struct InsertUpdateSearch {}
-
-    // impl Default for InsertUpdateSearch {
-    //     fn default() -> Self {
-    //         Self {}
-    //     }
-    // }
-
-    // impl Collectable for InsertUpdateSearch {
-    //     fn filter(_m: &mut Self, _tid: usize, _gc: &mut GarbageCollection, _pool: &PoolHandle) {
-    //         todo!()
-    //     }
-    // }
-
-    // impl RootObj<InsertUpdateSearch> for TestRootObj<ClevelInner<usize, usize>> {
-    //     fn run(&self, _mmt: &mut InsertUpdateSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
-    //         let kv = &self.obj;
-
-    //         match tid {
-    //             0 => {
-    //                 let recv = unsafe { RECV.as_ref().unwrap() };
-    //                 let mut g = pin();
-    //                 let _ = resize_loop::<_, _, true>(kv, recv, &mut g, pool);
-    //             }
-    //             _ => {
-    //                 let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
-    //                 const RANGE: usize = 1usize << 6;
-
-    //                 for i in 0..RANGE {
-    //                     // println!("[test] tid = {tid}, i = {i}, insert");
-    //                     let _ = kv.insert::<true>(tid, i, i, &send, &guard, pool);
-
-    //                     // println!("[test] tid = {tid}, i = {i}, update");
-    //                     let _ = kv.update(tid, i, i + RANGE, &send, &guard, pool);
-
-    //                     // println!("[test] tid = {tid}, i = {i}, search");
-    //                     if kv.search(&i, &guard, pool) != Some(&i)
-    //                         && kv.search(&i, &guard, pool) != Some(&(i + RANGE))
-    //                     {
-    //                         panic!("[test] tid = {tid} fail on {i}");
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
-    // #[test]
-    // fn insert_update_search() {
-    //     const FILE_NAME: &str = "clevel_insert_update_search.pool";
-    //     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-    //     const THREADS: usize = 1usize << 4;
-
-    //     let (send, recv) = mpsc::channel();
-    //     let mut vec_s = Vec::new();
-    //     for _ in 0..THREADS - 1 {
-    //         vec_s.push(send.clone());
-    //     }
-    //     drop(send);
-    //     unsafe {
-    //         SEND = Some(vec_s);
-    //         RECV = Some(recv);
-    //     }
-
-    //     run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertUpdateSearch, _>(
-    //         FILE_NAME, FILE_SIZE, THREADS,
-    //     )
-    // }
 }
