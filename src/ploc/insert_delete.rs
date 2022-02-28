@@ -170,7 +170,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         }
     }
 
-    /// Insert
+    /// Insert link-persist
     pub fn insert_lp<'g, O: Traversable<N>, const REC: bool>(
         &self,
         new: PShared<'_, N>,
