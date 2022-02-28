@@ -43,7 +43,6 @@ pub enum ReturnVal {
 }
 
 #[derive(Debug, Default)]
-#[repr(align(64))]
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
@@ -173,7 +172,7 @@ pub struct PBCombQueue {
     e_index: AtomicUsize,
 
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
-    d_request: [RequestRec; MAX_THREADS + 1],
+    d_request: [CachePadded<RequestRec>; MAX_THREADS + 1],
     d_state: [CachePadded<DStateRec>; 2],
     d_index: AtomicUsize,
 }
@@ -184,8 +183,8 @@ impl Collectable for PBCombQueue {
         Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
 
         for t in 1..MAX_THREADS + 1 {
-            Collectable::filter(&mut s.e_request[t], tid, gc, pool);
-            Collectable::filter(&mut s.d_request[t], tid, gc, pool);
+            Collectable::filter(&mut *s.e_request[t], tid, gc, pool);
+            Collectable::filter(&mut *s.d_request[t], tid, gc, pool);
         }
 
         // initialize global volatile variable manually
@@ -205,7 +204,7 @@ impl PDefault for PBCombQueue {
 
         Self {
             dummy,
-            e_request: array_init(|_| Default::default()),
+            e_request: array_init(|_| CachePadded::new(Default::default())),
             e_state: array_init(|_| {
                 CachePadded::new(EStateRec {
                     tail: PAtomic::from(dummy),
@@ -214,7 +213,7 @@ impl PDefault for PBCombQueue {
                 })
             }),
             e_index: Default::default(),
-            d_request: array_init(|_| Default::default()),
+            d_request: array_init(|_| CachePadded::new(Default::default())),
             d_state: array_init(|_| {
                 CachePadded::new(DStateRec {
                     head: PAtomic::from(dummy),
