@@ -12,12 +12,12 @@ objs = {
             "memento_queue_lp": {'data_id': '', 'label': "MMT-lp", 'marker': 'd', 'color': 'k', 'style': ':'},
             "memento_queue_general": {'data_id': '', 'label': "MMT-general", 'marker': 'x', 'color': 'k', 'style': '--'},
             "memento_queue_pbcomb": {'data_id': '', 'label': "MMT-pbcomb", 'marker': 'v', 'color': 'k', 'style': '-.'},
-            'durable_queue': {'data_id': '', 'label': "Durable", 'marker': 'o', 'color': 'hotpink', 'style': '--'},
-            'log_queue': {'data_id': '', 'label': "Log", 'marker': 'o', 'color': 'c', 'style': '--'},
-            'dss_queue': {'data_id': '', 'label': "DSS", 'marker': 'o', 'color': 'orange', 'style': '--'},
-            'pbcomb_queue': {'data_id': '', 'label': "PBComb", 'marker': 'o', 'color': 'red', 'style': '--'},
+            'durable_queue': {'data_id': '', 'label': "Durable", 'marker': 's', 'color': 'hotpink', 'style': '--'},
+            'log_queue': {'data_id': '', 'label': "Log", 'marker': 's', 'color': 'c', 'style': '--'},
+            'dss_queue': {'data_id': '', 'label': "DSS", 'marker': 's', 'color': 'orange', 'style': '--'},
+            'pbcomb_queue': {'data_id': '', 'label': "PBComb", 'marker': 's', 'color': 'red', 'style': '--'},
             'pmdk_queue': {'data_id': '', 'label': "PMDK", 'marker': 's', 'color': 'skyblue', 'style': '--'},
-            'crndm_queue': {'data_id': '', 'label': "Corundum", 'marker': '^', 'color': 'green', 'style': '--'},
+            'crndm_queue': {'data_id': '', 'label': "Corundum", 'marker': 's', 'color': 'green', 'style': '--'},
         },
     },
 
@@ -40,8 +40,10 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     markers_on = (datas[0]['x'] == 1) | (datas[0]['x'] % x_interval == 0)
 
     for data in datas:
-        plt.errorbar(data['x'], data['y'], data['stddev'], label=data['label'], color=data['color'],
-                     linestyle=data['style'], marker=data['marker'], markevery=markers_on)
+        # plt.errorbar(data['x'], data['y'], data['stddev'], label=data['label'], color=data['color'],
+        #              linestyle=data['style'], marker=data['marker'], markevery=markers_on)
+        plt.plot(data['x'], data['y'], label=data['label'], color=data['color'],
+                 linestyle=data['style'], marker=data['marker'], markevery=markers_on)
     ax = plt.subplot()
     ax.xaxis.set_major_locator(plt.MultipleLocator(x_interval))
     plt.grid(True)
@@ -113,6 +115,10 @@ for obj in objs:
             throughputs = list(throughputs['throughput'])[0]
             stddev_t = list(stddev_t['stddev'])[0]
 
+            if len(threads) > len(throughputs):
+                gap = len(threads)-len(throughputs)
+                throughputs += [None]*gap
+                stddev_t += [0]*gap
             plot_lines.append({'x': threads, 'y': throughputs,
                               'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style': style})
 
@@ -122,6 +128,6 @@ for obj in objs:
         else:
             ylabel = ''
         ax = draw('Threads', ylabel,
-                  plot_lines, "./out/{}".format(plot_id), 4)
+                  plot_lines, "./out/{}".format(plot_id), 8)
     axLine, axLabel = ax.get_legend_handles_labels()
     draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
