@@ -903,7 +903,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             }
         }
 
-        // 넣을 곳 찾고 넣기
+        // find where to insert, and insert
         loop {
             let context_ref = unsafe { context.deref(pool) };
             first_level = context_ref.first_level.load(Ordering::Acquire, guard);
@@ -1534,9 +1534,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
     //         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
     //         let find_result = some_or!(find_result, {
     //             let slot_ref = unsafe { slot_new.deref(pool) };
-    //             // TODO: 이렇게 k,v 리턴하면 안됨. 그냥 update 실패 리턴값 없애자
     //             let (k, v) = (slot_ref.key.clone(), unsafe { ptr::read(&slot_ref.value) });
-    //             // TODO(must): free new slot
     //             return Err((k, v));
     //         });
 
@@ -1688,14 +1686,12 @@ mod tests {
                             kv.insert::<true>(i, i, &send, &mut mmt.insert[i], tid, guard, pool);
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
 
-                        // TODO(opt): update 살리기
                         // let _ = kv.update(0, i, i + RANGE, &send, &guard, pool);
                         // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
                     }
 
                     for i in 0..SMOKE_CNT {
                         assert_eq!(kv.search(&i, guard, pool), Some(&i));
-                        // TODO(opt): update 살리기
                         // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
 
                         let del_res = kv.delete::<true>(&i, &mut mmt.delete[i], tid, guard, pool);

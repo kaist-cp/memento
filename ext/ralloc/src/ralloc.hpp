@@ -20,7 +20,6 @@ namespace ralloc{
     extern BaseMeta* base_md;
 };
 
-// @anonymous: template은 Rust에 linking 불가
 template<class T>
 T* RP_get_root(uint64_t i){
     assert(ralloc::initialized);
@@ -40,8 +39,7 @@ void RP_close();
 void* RP_malloc(size_t sz);
 void RP_free(void* ptr);
 void* RP_set_root(void* ptr, uint64_t i);
-void* RP_get_root_c(uint64_t i);  // @anonymous: Rust에서 RP_get_root를
-                                  // 사용하기 위해 c 버전 노출
+void* RP_get_root_c(uint64_t i);
 size_t RP_malloc_size(void* ptr);
 void* RP_calloc(size_t num, size_t size);
 void* RP_realloc(void* ptr, size_t new_size);
@@ -51,7 +49,7 @@ int RP_in_prange(void* ptr);
 int RP_region_range(int idx, void** start_addr, void** end_addr);
 void RP_set_root_filter(
     void (*filter_func)(char*, size_t, GarbageCollection&),
-    uint64_t i);  // @anonymous: GC시 trace 시작지점인 filter 함수 등록
+    uint64_t i);
 #ifdef __cplusplus
 }
 #endif

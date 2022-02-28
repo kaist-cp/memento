@@ -41,11 +41,11 @@ disabled (0), the program should employ manual SSMEM_SAFE_TO_RECLAIM() calls
 to indicate when the thread does not hold any ssmem-allocated memory
 references. */
 
-// @anonymous: SSMEM_TS_INCR_ON은 timestamp를 언제 올리냐를 선택
-const SSMEM_TS_INCR_ON_NONE: usize = 0; // 유저가 직접 올려야함. 아마 ssmem_ts_next() 이용해야할듯
-const SSMEM_TS_INCR_ON_BOTH: usize = 1; // alloc or free할 때 올림
-const SSMEM_TS_INCR_ON_ALLOC: usize = 2; // alloc할 때 올림
-const SSMEM_TS_INCR_ON_FREE: usize = 3; // free할 때 올림
+// strategy to increase timestamp
+const SSMEM_TS_INCR_ON_NONE: usize = 0;
+const SSMEM_TS_INCR_ON_BOTH: usize = 1;
+const SSMEM_TS_INCR_ON_ALLOC: usize = 2;
+const SSMEM_TS_INCR_ON_FREE: usize = 3;
 
 const SSMEM_TS_INCR_ON: usize = SSMEM_TS_INCR_ON_FREE;
 
@@ -66,48 +66,35 @@ const CACHE_LINE_SIZE: usize = 64;
 #[derive(Debug)]
 #[repr(align(64))]
 pub struct SsmemAllocator {
-    /// allocator가 사용중인 메모리 (사용중인 memory chunk의 시작주소를 가리킴)
     mem: *mut c_void,
 
-    /// pointer to the next addrr to be allocated (사용중인 memory chunk가 어디까지 사용되었는지를 가리킴. 다음 할당 요청시 이 주소를 반환)
     mem_curr: usize,
 
-    /// memory chunk 하나의 크기
     mem_size: usize,
 
-    /// allocator가 사용중인 메모리의 총 크기 (e.g. memory chunk 2개 가지고 있으면 mem_size * 2)
     tot_size: usize,
 
-    /// free set 하나에 저장될 수 있는 obj의 수
     fs_size: usize,
 
-    /// 사용중인 memory chunk들의 리스트
+    /// list of memory chunks
     pub mem_chunks: *const SsmemList,
 
-    /// timestamp
+    // timestamp
     ts: *mut SsmemTS,
 
-    /// free 되어 collect되길 기다리고 있는 obj들을 모아둠. 한 set에 obj를 `SSMEM_GC_FREE_SET_SIZE`개까지 담아둘 수 있음
     free_set_list: *mut SsmemFreeSet,
 
-    /// free_set_list에 있는 free set의 수
     free_set_num: usize,
 
-    /// free 후 collect 까지되어서 재사용가능한 obj들을 모아둠. alloc시 여기 있는 거부터 빼감
     collected_set_list: *mut SsmemFreeSet,
 
-    /// collected_set_list에 있는 free set의 수
     collected_set_num: usize,
 
-    /// collected_set이였다가 다시 free_set으로 이용가능한 set
     available_set_list: *mut SsmemFreeSet,
 
-    /// TODO: doc
     released_num: usize,
 
-    /// TODO: doc
     released_mem_list: *const SsmemReleased,
-    // TODO: cache line*2 크기로 패딩?
 }
 
 #[repr(align(64))]
@@ -117,17 +104,11 @@ struct SsmemTS {
     next: *mut SsmemTS,
 }
 
-/// ssmem allocator는 free된 block들을 `SsmemFreeSet`에 담아 관리함
+/// ssmem allocator manage free blocks using `SsmemFreeSet`
 ///
 /// # Possible transition of `SsmemFreeSet` on `SsmemAllocator`
 ///
 /// free_set -> collected_set -> available_set -> free_set ...
-///
-/// # Meaning of state
-///
-/// - free_set: free된 obj들을 모아두는 set. 이 set은 collect되어 collected_set이 될 수 있음.
-/// - collected_set: free된 후 collect까지 되어서 재사용가능한 obj들을 모아두는 set. alloc시 여기있는 obj부터 빼감
-/// - available_set: 다시 free_set으로 이용가능한 set. collected_set에 있는 obj들이 전부 재사용되면, 남은 빈 SsmemFreeSet은 다시 free_set으로 재사용 가능. 이를 위한 대기열이 available_set_lit
 #[repr(align(64))]
 struct SsmemFreeSet {
     ts_set: *mut usize,
@@ -135,18 +116,17 @@ struct SsmemFreeSet {
     curr: isize,
     set_next: *mut SsmemFreeSet,
 
-    /// 이 주소부터 free obj들이 위치함
+    /// start address of free obj(s)
     set: *mut usize,
 }
 
-// TODO: 안쓰이는 struct임. 지워도 될듯?
 struct SsmemReleased {
     ts_set: *const usize,
     mem: *const c_void,
     next: *const SsmemReleased,
 }
 
-/// TODO: doc
+/// SsmemList
 #[derive(Debug)]
 pub struct SsmemList {
     /// pointing memory chunk
@@ -163,8 +143,6 @@ pub struct SsmemList {
  */
 
 /// initialize an allocator with the default number of objects
-// TODO: therad-local recovery시 이 alloc_init은 다시 호출하면 안될 듯.
-//       복구를 위해선 allocator의 필드 mem_chunk 값을 보존하고 있어야하는데, 이 함수를 호출하면 mem_chunk를 재설정함.
 pub fn ssmem_alloc_init(a: *mut SsmemAllocator, size: usize, id: isize, pool: Option<&PoolHandle>) {
     ssmem_alloc_init_fs_size(a, size, SSMEM_GC_FREE_SET_SIZE, id, pool)
 }
@@ -183,7 +161,7 @@ pub fn ssmem_alloc_init_fs_size(
         *x.borrow_mut() = ssmem_list_node_new(a as *mut _, next, pool)
     });
 
-    // 첫 memory chunk 할당
+    // allocate first memory chunk
     let a = unsafe { a.as_mut() }.unwrap();
     a.mem = alloc(
         Layout::from_size_align(size, CACHE_LINE_SIZE).unwrap(),
@@ -196,7 +174,7 @@ pub fn ssmem_alloc_init_fs_size(
     a.tot_size = size;
     a.fs_size = free_set_size;
 
-    // memory chunk를 zero-initalize
+    // zero-initialize memory chunk
     ssmem_zero_memory(a);
 
     let new_mem_chunks: *const SsmemList = ssmem_list_node_new(a.mem, null(), pool);
@@ -219,9 +197,6 @@ pub fn ssmem_alloc_init_fs_size(
 }
 
 /// explicitely subscribe to the list of threads in order to used timestamps for GC
-// TODO: thread-local recovery시 이 gc_init 다시 호출해야할 듯.
-// - 그래야 다른 스레드와 epoch 조율을 위한 `ssmem_ts`가 thread-local `ssmem_ts_local`에 세팅되고, global list `ssmem_ts_list`에 추가됨
-// - 지금 로직은 재호출 시 crash 이전에 사용하던 `ssmem_ts`가 global list에 남아있음. 이게 계속 쌓이면서 메모리가 터질 순 있지만, correctness엔 문제없음
 pub fn ssmem_gc_thread_init(a: *mut SsmemAllocator, id: isize, pool: Option<&PoolHandle>) {
     let a_ref = unsafe { a.as_mut() }.unwrap();
     a_ref.ts = SSMEM_TS_LOCAL.with(|ts| *ts.borrow());
@@ -243,7 +218,6 @@ pub fn ssmem_gc_thread_init(a: *mut SsmemAllocator, id: isize, pool: Option<&Poo
         loop {
             ts_ref.next = unsafe { SSMEM_TS_LIST };
 
-            // TODO: c++의 `__sync_val_compare_and_swap` 대신 이걸 써도 correct한가?
             let (_, ok) = unsafe {
                 intrinsics::atomic_cxchg(
                     &mut SSMEM_TS_LIST as *mut _,
@@ -261,7 +235,7 @@ pub fn ssmem_gc_thread_init(a: *mut SsmemAllocator, id: isize, pool: Option<&Poo
 
 /// terminate the system (all allocators) and free all memory
 pub fn ssmem_term(_: Option<&PoolHandle>) {
-    todo!("필요하면 구현. 기존 repo의 SOFT hash 구현에는 안쓰임")
+    unimplemented!("no need for SOFT hash")
 }
 
 /// terminate the allocator a and free all its memory.
@@ -271,7 +245,7 @@ pub fn ssmem_term(_: Option<&PoolHandle>) {
 /// This function should NOT be used if the memory allocated by this allocator
 /// might have been freed (and is still in use) by other allocators
 pub unsafe fn ssmem_alloc_term(_: &SsmemAllocator, _: Option<&PoolHandle>) {
-    todo!("필요하면 구현. 기존 repo의 SOFT hash 구현에는 안쓰임")
+    unimplemented!("no need for SOFT hash")
 }
 
 /// allocate some memory using allocator a
@@ -281,12 +255,9 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
 
     /* 1st try to use from the collected memory */
     let cs = a_ref.collected_set_list;
-    // free 이후 collect까지 되어 재사용 가능한 obj가 있으면 재사용
     if !cs.is_null() {
         let cs_ref = unsafe { cs.as_mut() }.unwrap();
 
-        // fs.set[fs.curr-1]에 저장되어있는 collect된 obj 주소를 가져옴
-        // TODO: obj 주소 m이 size를 담을 수 있을 거란 없어보임. 이래서 fixed-size allocator라는 것 같은데, 이럴거면 애초에 size arg를 왜 여기서 받나?
         cs_ref.curr -= 1;
         m = unsafe { *(cs_ref.set.offset(cs_ref.curr)) as *mut _ };
         prefetchw(m);
@@ -296,18 +267,13 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
             let _ = libc::memset(m, 0x0, size);
         }
 
-        // collected set에 남은 재사용가능 obj가 없으면,
-        // 이를 free set으로 재사용 할 수 있게 available list에 넣음
         if cs_ref.curr <= 0 {
             a_ref.collected_set_list = cs_ref.set_next;
             a_ref.collected_set_num -= 1;
 
             ssmem_free_set_make_avail(a, cs);
         }
-    }
-    // 재사용가능한 obj가 없으면(i.e. collected list가 비어있으면) 블록을 새로 할당
-    else {
-        // 현재 사용중인 memmory chunk에 남은 공간 부족하면, 새로운 memory chunk 등록 후 사용
+    } else {
         if (a_ref.mem_curr + size) >= a_ref.mem_size {
             if SSMEM_MEM_SIZE_DOUBLE == 1 {
                 a_ref.mem_size <<= 1;
@@ -316,10 +282,9 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
                 }
             }
 
-            // 요청한 size가 한 memory chunk보다 크다면, 요청 크기를 담을 수 있을 만큼 memory chunk 크기를 늘림
+            // check if size is larger than memory chunk
             if size > a_ref.mem_size {
                 while a_ref.mem_size < size {
-                    // memory chunk 최대치 넘으면 에러
                     if a_ref.mem_size > SSMEM_MEM_SIZE_MAX {
                         eprintln!(
                             "[ALLOC] asking for memory chunk larger than max ({} MB)",
@@ -328,12 +293,11 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
                         assert!(a_ref.mem_size <= SSMEM_MEM_SIZE_MAX);
                     }
 
-                    // memorch chunk 크기를 2배 키움
                     a_ref.mem_size <<= 1;
                 }
             }
 
-            // 새로운 memory chunk 할당
+            // allocate new memory chunk
             a_ref.mem = alloc(
                 Layout::from_size_align(a_ref.mem_size, CACHE_LINE_SIZE).unwrap(),
                 pool,
@@ -343,10 +307,10 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
             a_ref.mem_curr = 0;
             a_ref.tot_size += a_ref.mem_size;
 
-            // allocator가 현재 쥐고 있는 memory chunk를 zero-initialize
+            // zero-initialize
             ssmem_zero_memory(a);
 
-            // 새로 할당한 memory chunk를 memory chunk list에 추가
+            // add new memory chunk to list
             let new_mem_chunks = ssmem_list_node_new(a_ref.mem, a_ref.mem_chunks, pool);
             persist_obj(unsafe { new_mem_chunks.as_ref() }.unwrap(), true);
 
@@ -354,12 +318,10 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
             persist_obj(unsafe { a_ref.mem_chunks.as_ref() }.unwrap(), true);
         }
 
-        // 사용가능한 블록의 위치 계산 (start + offset)
-        m = (a_ref.mem as usize + a_ref.mem_curr) as *mut c_void;
+        m = (a_ref.mem as usize + a_ref.mem_curr) as *mut c_void; // addr of available block
         a_ref.mem_curr += size;
     }
 
-    // timestamp 증가 전략이 "alloc할 때"가 포함이면 timestamp 증가
     if SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_ALLOC || SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_BOTH {
         ssmem_ts_next();
     }
@@ -370,13 +332,11 @@ pub fn ssmem_alloc(a: *mut SsmemAllocator, size: usize, pool: Option<&PoolHandle
 ///
 /// # Safety
 ///
-/// double free 주의
+/// use `free` carefully
 pub unsafe fn ssmem_free(a: *mut SsmemAllocator, obj: *mut c_void, pool: Option<&PoolHandle>) {
     let a = unsafe { a.as_mut() }.unwrap();
     let mut fs = unsafe { a.free_set_list.as_mut() }.unwrap();
 
-    // 현재 쥐고 있는 free set(free set list의 head)이 꽉찼으면 (1) collect 한번 돌리고 (2) 새로운 free set을 추가
-    // 이때 추가되는 새로운 free set은 collect 후 재사용되는 free set일 수도 있고, 아예 새로 만들어진 free set일 수도 있음
     if fs.curr as usize == fs.size {
         fs.ts_set = ssmem_ts_set_collect(fs.ts_set, pool);
         let _ = ssmem_mem_reclaim(a as *mut _, pool);
@@ -387,11 +347,9 @@ pub unsafe fn ssmem_free(a: *mut SsmemAllocator, obj: *mut c_void, pool: Option<
         fs = unsafe { fs_new.as_mut() }.unwrap();
     }
 
-    // fs.set[fs.curr]에 free된 obj 주소를 저장
     unsafe { *(fs.set.offset(fs.curr)) = obj as usize };
     fs.curr += 1;
 
-    // timestamp 증가 전략이 "free할 때"가 포함이면 timestamp 증가
     if SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_FREE || SSMEM_TS_INCR_ON == SSMEM_TS_INCR_ON_BOTH {
         ssmem_ts_next();
     }
@@ -399,12 +357,12 @@ pub unsafe fn ssmem_free(a: *mut SsmemAllocator, obj: *mut c_void, pool: Option<
 
 /// release some memory to the OS using allocator a
 pub fn ssmem_release(_: &SsmemAllocator, _: *mut c_void, _: Option<&PoolHandle>) {
-    todo!("필요하면 구현. SOFT hash 구현에는 안쓰임")
+    unimplemented!("no need for SOFT hash")
 }
 
 /// increment the thread-local activity counter. Invoking this function suggests
 /// that no memory references to ssmem-allocated memory are held by the current
-/// thread beyond this point. (유저가 이 의미를 가지도록 잘 사용해야함)
+/// thread beyond this point.
 pub fn ssmem_ts_next() {
     SSMEM_TS_LOCAL.with(|ts| {
         let ts_ref = unsafe { ts.borrow_mut().as_mut() }.unwrap();
@@ -414,22 +372,14 @@ pub fn ssmem_ts_next() {
 
 /* ****************************************************************************************
  */
-/* platform-specific definitions */
+/* global variables or private functions from ssmem.cpp */
 /* ****************************************************************************************
  */
 
-// TODO: 필요?
-
-/* ****************************************************************************************
- */
-/* ssmem.cpp에 있는 global 변수 및 priavte 함수들 */
-/* ****************************************************************************************
- */
-
-static mut SSMEM_TS_LIST: *mut SsmemTS = null_mut(); // TODO: Atomic으로 표현?
-static mut SSMEM_TS_LIST_LEN: usize = 0; // TODO: volatile keyword? Atomic으로 표현?
+static mut SSMEM_TS_LIST: *mut SsmemTS = null_mut();
+static mut SSMEM_TS_LIST_LEN: usize = 0;
 thread_local! {
-    static SSMEM_TS_LOCAL: RefCell<*mut SsmemTS> = RefCell::new(null_mut()); // TODO: volatile keyword?
+    static SSMEM_TS_LOCAL: RefCell<*mut SsmemTS> = RefCell::new(null_mut());
     static SSMEM_NUM_ALLOCATORS: RefCell<usize>  = RefCell::new(0);
     static SSMEM_ALLOCATOR_LIST: RefCell<*const SsmemList> = RefCell::new(null());
 }
@@ -447,7 +397,6 @@ fn ssmem_list_node_new(
     mc
 }
 
-/// allocator가 쥐고 있는 현재 memory chunk를 zero-initialize
 fn ssmem_zero_memory(a: *mut SsmemAllocator) {
     if SSMEM_ZERO_MEMORY == 1 {
         let a_ref = unsafe { a.as_mut() }.unwrap();
@@ -484,14 +433,13 @@ fn ssmem_free_set_new(
     fs_ref.size = size;
     fs_ref.curr = 0;
 
-    fs_ref.set = (fs as usize + size_of::<SsmemFreeSet>()) as *mut _; // free obj들이 위치하는 시작 주소
+    fs_ref.set = (fs as usize + size_of::<SsmemFreeSet>()) as *mut _; // start addr of free obj(s)
     fs_ref.ts_set = null_mut();
     fs_ref.set_next = next;
 
     fs
 }
 
-/// 다른 스레드의 version들을 `ts_set`(timestamp_set)에 저장해둠. (각 스레드의 version은 ssmem_tx_next에 의해 증가)
 fn ssmem_ts_set_collect(ts_set: *mut usize, pool: Option<&PoolHandle>) -> *mut usize {
     let ts_set = if ts_set.is_null() {
         alloc(
@@ -518,9 +466,8 @@ fn ssmem_ts_set_collect(ts_set: *mut usize, pool: Option<&PoolHandle>) -> *mut u
 fn ssmem_mem_reclaim(a: *mut SsmemAllocator, _: Option<&PoolHandle>) -> isize {
     let a_ref = unsafe { a.as_mut() }.unwrap();
 
-    // 이 if문은 아예 안타는 듯: released_num 증가시키는 ssmem_release를 호출하는 곳이 없음
     if a_ref.released_num > 0 {
-        todo!("필요하면 구현. SOFT hash 구현에서는 ssmem_release를 쓰는 곳이 없으므로 이 if문에 진입할 일이 없음")
+        unimplemented!("no need for SOFT hash")
     }
 
     let fs_cur = a_ref.free_set_list;
@@ -537,7 +484,6 @@ fn ssmem_mem_reclaim(a: *mut SsmemAllocator, _: Option<&PoolHandle>) -> isize {
     let fs_nxt_ref = unsafe { fs_nxt.as_mut() }.unwrap();
 
     if ssmem_ts_compare(fs_cur_ref.ts_set, fs_nxt_ref.ts_set) == 1 {
-        // head를 제외하고 모두 garbage collect
         gced_num = a_ref.free_set_num - 1;
 
         /* take the the suffix of the list (all collected free_sets) away from the
@@ -547,11 +493,9 @@ fn ssmem_mem_reclaim(a: *mut SsmemAllocator, _: Option<&PoolHandle>) -> isize {
 
         /* find the tail for the collected_set list in order to append the new
         free_sets that were just collected */
-        // head 제외한 free set을 collected set의 tail에 연결
         let mut collected_set_cur = a_ref.collected_set_list;
         if !collected_set_cur.is_null() {
             let mut collected_set_cur_ref = unsafe { collected_set_cur.as_mut() }.unwrap();
-            // tail 찾기
             while !collected_set_cur_ref.set_next.is_null() {
                 collected_set_cur = collected_set_cur_ref.set_next;
                 collected_set_cur_ref = unsafe { collected_set_cur.as_mut() }.unwrap();
@@ -567,7 +511,6 @@ fn ssmem_mem_reclaim(a: *mut SsmemAllocator, _: Option<&PoolHandle>) -> isize {
     gced_num as isize
 }
 
-/// 남는 free set이 있으면 가져다 쓰고(available_set_list), 남는 free set 없으면 새로 만듦
 fn ssmem_free_set_get_avail(
     a: *mut SsmemAllocator,
     size: usize,
@@ -577,7 +520,7 @@ fn ssmem_free_set_get_avail(
     let a_ref = unsafe { a.as_mut() }.unwrap();
     let mut fs = null_mut();
 
-    // 남는 free set 있으므로 재사용
+    // reuse available free set
     if !a_ref.available_set_list.is_null() {
         fs = a_ref.available_set_list;
         let fs_ref = unsafe { fs.as_mut() }.unwrap();
@@ -586,18 +529,16 @@ fn ssmem_free_set_get_avail(
         fs_ref.curr = 0;
         fs_ref.set_next = next;
     }
-    // 남는 free set 없으므로 새로 만듦
+    // make new free set
     else {
         fs = ssmem_free_set_new(size, next, pool);
     };
     fs
 }
 
-/// `set`을 free set으로 재사용할 수 있도록 available list에 추가
 fn ssmem_free_set_make_avail(a: *mut SsmemAllocator, set: *mut SsmemFreeSet) {
     let a = unsafe { a.as_mut() }.unwrap();
     let set = unsafe { set.as_mut() }.unwrap();
-    // set의 curr을 0으로 만들고, available_set_list의 head로 삽입
     set.curr = 0;
     set.set_next = a.available_set_list;
     a.available_set_list = set;

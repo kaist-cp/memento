@@ -19,7 +19,7 @@ type Data = [usize; DATA_WORDS];
 pub(crate) struct Deferred {
     call: unsafe fn(*mut u8),
     data: Data,
-    key: Option<usize>,            // thread-crash시 중복 defer를 방지하기 위한 key
+    key: Option<usize>,            // key to recognize duplicate `defer` after thread crash
     _marker: PhantomData<*mut ()>, // !Send + !Sync
 }
 

@@ -35,7 +35,6 @@ function benches() {
     init_nodes=$3
     echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}), init nodes: ${init_nodes} >"
     for t in ${THREADS[@]}; do
-        # `TEST_CNT`번 반복
         for ((var=1; var<=$TEST_CNT; var++)); do
             echo "test $var/$TEST_CNT...";
             bench $target $kind $t $init_nodes
@@ -55,14 +54,14 @@ fi
 # 1. Setup
 PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
-TEST_CNT=5            # 한 bench당 테스트 횟수
-TEST_DUR=10           # 한 테스트당 지속시간
+TEST_CNT=5            # test cnt per 1 bench
+TEST_DUR=10           # test duration
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
 mkdir -p $PMEM_PATH
 mkdir -p $out_path
-rm -rf ${PMEM_PATH}/*.pool* # 기존 풀 파일 제거
+rm -rf ${PMEM_PATH}/*.pool*
 show_cfg
 
 # 2. Benchmarking queue performance

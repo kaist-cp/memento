@@ -20,30 +20,30 @@ function dmsg() {
 function bench() {
     target=$1   # possible arg: CCEH, Level, Dash, PCLHT, SOFT, clevel, clevel_rust, SOFT_rust (TODO: clevel_rust -> clevel_memento)
     workload=$2 # possible arg: insert, pos_search, ...
-    mode=$3     # possible arg: THROUGHPUT, LOAD_FACTOR, RESIZE, LATENCY (대소문자 중요!!)
+    mode=$3     # possible arg: THROUGHPUT, LOAD_FACTOR, RESIZE, LATENCY
     dist=$4     # possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN
     thread=$5
 
-    # output 설정
+    # set output
     rm -rf /mnt/pmem0/*
     out_dir=./$OUT/$mode/$dist/$workload
     mkdir -p $out_dir
     out=$out_dir/${target}_${git_hash}_${git_date}.out
     echo "out: $out"
 
-    # clevel, clevel-rust 제외한 나머지는 더미 폴더 필요
+    # make dummy folder for target except for clevel, clevel-rust
     if [[ "$target" != "clevel" && "$target" != "clevel_rust" ]]; then
         mkdir /mnt/pmem0/pibench
     fi
 
-    # workload에 맞게 파라미터 설정
+    # set workload parameters
     HASH_SIZE=16777216      # Initial capacity of hash table
-    OP=200000000            # Load, Run phase 각가에서 실행시킬 op 수
-    SKIP_LOAD=false         # Load phase를 skip할지 여부
-    READ_RT=0               # Run phase에 실행시킬 op 중 몇 %를 read로 할건가
-    INSERT_RT=1             # Run phase에 실행시킬 op 중 몇 %를 insert로 할건가
-    REMOVE_RT=0             # Run phase에 실행시킬 op 중 몇 %를 remove로 할건가
-    NEGATIVE_RT=0           # Run phase에 실행시킬 read 중 몇 %를 negative search로 할건가
+    OP=200000000            # op num for each Load, Run phase
+    SKIP_LOAD=false         # skip Load phase or not
+    READ_RT=0               # rate of read operation (Run phase)
+    INSERT_RT=1             # rate of insert operation (Run phase)
+    REMOVE_RT=0             # rate of read operation (Run phase)
+    NEGATIVE_RT=0           # rate of negative read among reads (Run phase)
     DISTRIBUTION=$dist      # Key distribution
 
     if [ "${workload}" == "insert" ]; then
@@ -81,7 +81,6 @@ function bench() {
         INSERT_RT=0.2
         REMOVE_RT=0
     elif [ "${workload}" == "dummy" ]; then
-        # 빨리 끝나는 더미 테스트. 일단 돌려지는지 확인하는 데 유용
         HASH_SIZE=1
         OP=1
     else
@@ -89,7 +88,7 @@ function bench() {
         exit
     fi
 
-    # 맞춘 파라미터로 실행
+    # start evaluation
     echo "start target: $target, workload: $workload, mode: $mode, dist: $dist, thread: $thread"
     dmsg  "start target: $target, workload: $workload, mode: $mode, dist: $dist, thread: $thread"
 
@@ -104,7 +103,6 @@ function bench() {
         -t $thread \
         >> $out
 
-    # 정상 종료되지 않은 것 기록
     ext=$?
     if [ $ext -ne 0 ]; then
         dmsg "exit with code $ext! (target: $target, workload: $workload, mode: $mode, dist: $dist, thread: $thread)"
@@ -114,11 +112,11 @@ function bench() {
 
 function bench_all() {
     workload=$1 # possible arg: insert, pos_search, ...
-    mode=$2     # possible arg: THROUGHPUT, LOAD_FACTOR, RESIZE, LATENCY (대소문자 중요!!)
+    mode=$2     # possible arg: THROUGHPUT, LOAD_FACTOR, RESIZE, LATENCY
     dist=$3     # possible arg: UNIFORM, SELFSIMILAR, ZIPFIAN
 
     for THREAD in 1 4 8 16 24 32 48 64; do
-        # LATENCY 측정은 32 스레드로만 한 번 하고 끝냄
+        # LATENCY use only 32 thread
         if [ "$mode" == "LATENCY" ]; then
             THREAD=32
         fi
@@ -132,7 +130,7 @@ function bench_all() {
         bench SOFT $workload $mode $dist $THREAD
         bench SOFT_rust $workload $mode $dist $THREAD
 
-        # LATENCY 측정은 32 스레드로만 한 번 하고 끝냄
+        # LATENCY use only 32 thread
         if [ "$mode" == "LATENCY" ]; then
             break
         fi

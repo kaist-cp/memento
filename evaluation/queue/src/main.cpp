@@ -45,7 +45,7 @@ struct Config
   string kind; // bench kind
   int threads;
   double duration;
-  int init; // target의 초기 노드 수
+  int init; // initial number of nodes
   ofstream *output;
 
   Config(string filepath, string target, string kind, int threads, double duration, int init, ofstream *output) : filepath{filepath}, target{target}, kind{kind}, threads{threads}, duration{duration}, init{init}, output{output} {}
@@ -55,7 +55,7 @@ Config setup(int argc, char *argv[])
 {
   if (argc < 8)
   {
-    std::cerr << "Argument 부족. plz see usage on readme" << std::endl;
+    std::cerr << "no sufficient arguments. plz see usage on readme" << std::endl;
     exit(0);
   }
 
@@ -73,15 +73,12 @@ Config setup(int argc, char *argv[])
        << "throughput" << endl;
   }
 
-  // example: ./bench ./pmem/ pmdk_pipe pipe 16 5 0
-  // TODO: Rust처럼 arg 받게 하기? ./main -f ./pmem/ -a pmdk_pipe -k pipe -t 16 -d 5
-
   //                 filepath, target,  kind,   threads,        duration,      init,          output
   Config cfg = Config(argv[1], argv[2], argv[3], atoi(argv[4]), atof(argv[5]), atoi(argv[6]), &of);
   return cfg;
 }
 
-// 스레드 `nr_thread`개를 사용할 때의 처리율 계산
+// Calculate throughput when using `nr_thread` threads
 double bench(Config cfg)
 {
   cout << "bench " << cfg.target + ":" + cfg.kind << " using " << cfg.threads << " threads" << endl;
@@ -103,7 +100,6 @@ double bench(Config cfg)
     // TODO: other c++ implementations?
   }
 
-  // 처리율 (op/s) 계산하여 반환
   float avg_ops = nops / cfg.duration;
   cout << "avg ops: " << avg_ops << endl;
   return avg_ops;
@@ -120,7 +116,8 @@ int main(int argc, char *argv[])
       << cfg.kind << ","
       << cfg.threads << ","
       << cfg.duration << ","
-      << "none" << "," // relaxed (TODO: relaxed는 그냥 csv에 안찍는게 좋겠다)
+      << "none"
+      << "," // for relaxed column
       << cfg.init << ","
       << avg_ops << endl;
 }

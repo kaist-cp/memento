@@ -783,9 +783,7 @@ void GarbageCollection::operator() () {
         char* last_possible_free_block = curr_sb;
 
         // go through all curr_marked_blk that's in this sb
-        // fix bug(@anonymous): 절대주소로 blk의 sb를 판단하면(>>SB_SHIFT),
-        // 원래 같은 sb의 소속인데도 매핑되는 주소에 따라 다른 sb로 판단될 수
-        // 있음. 따라서 상대주소로 sb를 판단해야함
+        // fix bug(@anonymous): we should calculate sb using relativae address, not absolute address
         while (curr_marked_blk!=marked_blk.end() &&
                 ((uint64_t)(_rgs->untranslate(SB_IDX, curr_sb))>>SB_SHIFT) == ((uint64_t)(_rgs->untranslate(SB_IDX, *curr_marked_blk))>>SB_SHIFT))
         {

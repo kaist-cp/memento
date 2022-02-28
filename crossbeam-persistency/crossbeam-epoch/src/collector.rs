@@ -97,7 +97,7 @@ impl LocalHandle {
         unsafe { (*self.local).collector() }
     }
 
-    /// repin 중인지 여부를 반환
+    /// is_repinning
     #[inline]
     pub(crate) fn is_repinning(&self) -> bool {
         unsafe { (*self.local).is_repinning.get() }

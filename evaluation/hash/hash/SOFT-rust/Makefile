@@ -6,18 +6,17 @@ CSHARED = -Wl,-whole-archive $(SOFT_rust)/target/release/libSOFT_rust.a -Wl,-no-
 
 all:SOFT_rust.so
 
-# NOTE: default는 pmem 버전 컴파일. dram에서 실험해보고 싶다면 `do_build`->`do_build_dram`
 SOFT_rust.so:SOFT_rust.o do_build
 	$(CXX) $(CFLAGS) -fPIC -shared -o $@ SOFT_rust.o $(CSHARED)
 
 SOFT_rust.o:SOFT_rust.cpp
 	$(CXX) -fPIC -o SOFT_rust.o -c SOFT_rust.cpp $(CFLAGS)
 
-# pmem 버전 컴파일
+# pmem
 do_build:
 	bash -c "cd $(SOFT_rust); cargo update; cargo build --release"
 
-# dram 버전 컴파일
+# dram
 do_build_dram:
 	bash -c "cd $(SOFT_rust); cargo update; cargo build --release --features no_persist;"
 

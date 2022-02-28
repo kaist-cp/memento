@@ -11,9 +11,9 @@ use std::path::Path;
 use structopt::StructOpt;
 
 fn parse_target(target: &str, kind: &str) -> TestTarget {
-    // 앞 4글자는 테스트 종류 구분 역할, 뒤에 더 붙는 글자는 부가 입력 역할
-    // e.g. "prob50"이면 prob 테스트, 확률은 50%으로 설정
-    // e.g. "prob30"이면 prob 테스트, 확률은 30%으로 설정
+    // The first 4 letters serve as test type classification, and the following letters serve as additional input
+    // e.g. "prob50": 50% probability test (enqueue 50%, dequeue 50%)
+    // e.g. "prob30": 30% probability test (enqueue 30%, dequeue 70%)
     let re = Regex::new(r"(\w{4})(\d*)").unwrap();
     let cap = re.captures(kind).unwrap();
     let (kind, arg) = (&cap[1], &cap[2]);
@@ -39,8 +39,8 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
 
 fn setup() -> (Opt, Writer<File>) {
     let opt = Opt::from_args();
-    unsafe { DURATION = opt.duration }; // 각 스레드가 수행할 시간 설정
-    unsafe { RELAXED = opt.relax }; // 각 스레드가 op을 `n`번 실행할때마다 guard repin
+    unsafe { DURATION = opt.duration };
+    unsafe { RELAXED = opt.relax };
 
     let output_name = match &opt.output {
         Some(o) => o.clone(),
@@ -80,8 +80,7 @@ fn setup() -> (Opt, Writer<File>) {
     (opt, output)
 }
 
-// 스레드 `nr_thread`개를 사용할 때의 처리율(op 실행 수/s) 계산
-// TODO: refactoring
+//  the throughput (op execution/s) when using `nr_thread` threads
 fn bench(opt: &Opt) -> f64 {
     println!(
         "bench {}:{} using {} threads",
@@ -99,7 +98,7 @@ fn bench(opt: &Opt) -> f64 {
         | TestTarget::PBCombQueue(_)
         | TestTarget::CrndmQueue(_) => bench_queue(opt, target),
     };
-    let avg_ops = (nops as f64) / opt.duration; // 평균 op/s
+    let avg_ops = (nops as f64) / opt.duration;
     println!("avg ops: {}", avg_ops);
     avg_ops
 }

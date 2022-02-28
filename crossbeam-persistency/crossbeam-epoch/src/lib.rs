@@ -186,5 +186,4 @@ cfg_if! {
     }
 }
 
-// TODO: persist 쓸 때만
 mod ll;

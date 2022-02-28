@@ -23,7 +23,7 @@ pub mod tests {
         }
         #[cfg(feature = "no_persist")]
         {
-            path.push(env!("CARGO_MANIFEST_DIR")); // 프로젝트 경로
+            path.push(env!("CARGO_MANIFEST_DIR")); // project path
         }
         path.push("test");
         path.push(rel_path);

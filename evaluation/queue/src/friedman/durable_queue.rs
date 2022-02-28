@@ -116,10 +116,10 @@ impl<T: Clone> DurableQueue<T> {
 
         let prev = self.ret_val[tid].load(Ordering::Relaxed, guard);
         self.ret_val[tid].store(new_ret_val, Ordering::Relaxed);
-        persist_obj(&*self.ret_val[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+        persist_obj(&*self.ret_val[tid], true); // persist inner of CachePadded
 
         // ```
-        // 이전 ret_val을 free
+        // deallocate previous ret_val
         if !prev.is_null() {
             unsafe { guard.defer_pdestroy(prev) };
         }
@@ -176,7 +176,7 @@ impl<T: Clone> DurableQueue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
-                        guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+                        guard.defer_persist(&*self.head); // persist inner of CachePadded
                         unsafe { guard.defer_pdestroy(first) };
                         return;
                     } else {
@@ -233,7 +233,6 @@ impl PDefault for TestDurableQueue {
         let queue = DurableQueue::pdefault(pool);
         let guard = epoch::pin();
 
-        // 초기 노드 삽입
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
             queue.enqueue(i, &guard, pool);
         }
@@ -252,7 +251,6 @@ impl<const PAIR: bool> Collectable for TestDurableQueueEnqDeq<PAIR> {
     }
 }
 
-// TODO: 모든 큐의 실험 로직이 통합되어야 함
 impl<const PAIR: bool> RootObj<TestDurableQueueEnqDeq<PAIR>> for TestDurableQueue {
     fn run(
         &self,

@@ -332,11 +332,7 @@ public:
 
     // C version of `mark_func()`
     //
-    // `ptr`을 마킹하고 다음 마킹할 것은 이 `filter_func`으로 추가해라
-    //
-    // Example:
-    //  - `ptr`이 가리키는 타입이 Queue라면, `filter_func`에는 Queue::filter_func이 들어와야함
-    //  - Queue::filter_func은 이렇게 구현돼어있어야함: Queue::filter_func(...) { mark_func_c(head); }
+    // mark `ptr` and reserve next action, `filter_func`
     void mark_func_c(char* ptr, size_t, void (*filter_func)(char*, size_t, GarbageCollection&));
 };
 

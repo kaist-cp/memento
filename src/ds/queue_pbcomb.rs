@@ -605,9 +605,8 @@ mod test {
             let queue = unsafe { (&self.obj as *const _ as *mut Queue).as_mut() }.unwrap();
 
             match tid {
-                // T1: 다른 스레드들의 실행결과를 확인
+                // T1: Check results of other threads
                 1 => {
-                    // 다른 스레드들이 다 끝날때까지 기다림
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check queue is empty
@@ -620,7 +619,7 @@ mod test {
                     assert!((2..NR_THREAD + 2)
                         .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
-                // T1이 아닌 다른 스레드들은 queue에 { enq; deq; } 수행
+                // other threads: { enq; deq; }
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
@@ -630,12 +629,11 @@ mod test {
                         let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         assert!(!res.is_none());
 
-                        // deq 결과를 실험결과에 전달
+                        // send output of deq
                         let v = res.unwrap();
                         let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
                     }
 
-                    // "나 끝났다"
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }

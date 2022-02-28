@@ -54,7 +54,7 @@ pub struct TryPush<T: Clone + Collectable> {
     /// elimination exchange index
     elim_idx: usize,
 
-    /// elimination exchanger의 exchange op
+    /// elimination exchanger's exchange op
     try_xchg: TryExchange<Request<T>>,
 }
 
@@ -129,7 +129,6 @@ pub struct TryPop<T: Clone + Collectable> {
 
     /// exchanger node
     pop_node: Checkpoint<PAtomic<Node<Request<T>>>>,
-
     /// try exchange memento
     try_xchg: TryExchange<Request<T>>,
 }

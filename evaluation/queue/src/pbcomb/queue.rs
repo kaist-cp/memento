@@ -79,7 +79,7 @@ impl RequestRec {
 #[derive(Debug)]
 pub struct Node {
     data: Data,
-    next: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
+    next: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain load/store.
 }
 
 impl Collectable for Node {
@@ -95,7 +95,7 @@ impl Collectable for Node {
 /// State of Enqueue PBComb
 #[derive(Debug)]
 struct EStateRec {
-    tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
+    tail: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain load/store.
     return_val: [Option<ReturnVal>; MAX_THREADS + 1],
     deactivate: [AtomicBool; MAX_THREADS + 1],
 }
@@ -123,7 +123,7 @@ impl Collectable for EStateRec {
 /// State of Dequeue PBComb
 #[derive(Debug)]
 struct DStateRec {
-    head: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
+    head: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain load/store.
     return_val: [Option<ReturnVal>; MAX_THREADS + 1],
     deactivate: [AtomicBool; MAX_THREADS + 1],
 }

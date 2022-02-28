@@ -16,7 +16,7 @@ objs = {
             "clevel": {'label': "CLEVEL", 'marker': 's', 'color': 'gray', 'style': '-'},
             "clevel_rust": {
                 'label': "CLEVEL-MMT", 'marker': 's', 'color': 'black', 'style': '-',
-                'data_id': {  # select data manually. 지정값 없을시 최신 commit의 데이터 읽음
+                'data_id': {  # select data manually. or read latest data
                     'insert': '',
                     'pos_search': '',
                     'neg_search': '',
@@ -29,7 +29,7 @@ objs = {
             'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
             'SOFT_rust': {
                 'label': "SOFT-MMT", 'marker': 'o', 'color': 'blue', 'style': '-',
-                'data_id': {  # select data manually. 지정값 없을시 최신 commit의 데이터 읽음
+                'data_id': {  # select data manually. or read latest data
                     'insert': '',
                     'pos_search': '',
                     'neg_search': '',
@@ -80,7 +80,6 @@ def get_filepath(bench, dist, workload, target):
     if 'data_id' in objs['hash']['targets'][target]:
         data_id = objs['hash']['targets'][target]['data_id'][workload]
 
-        # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용 {hash}_{date}
         if data_id == '':
             repo = git.Repo(search_parent_directories=True)
             for commit in repo.iter_commits():
@@ -210,7 +209,7 @@ def draw(bench, dist, targets):
             elif bench == "latency":
                 threads = [32]
                 data = read_latency(filepath)
-                data = (np.log(data) / np.log(10**3))  # 10*3 단위로 plot
+                data = (np.log(data) / np.log(10**3))
             else:
                 print("invalid bench: {}", bench)
                 exit()

@@ -1,6 +1,6 @@
 //! Persistent Memory Pool
 //!
-//! 파일을 persistent heap으로서 가상주소에 매핑하고, 그 메모리 영역을 관리하는 메모리 "풀"
+//! A memory "pool" that maps files to virtual addresses as a persistent heap and manages those memory areas.
 
 use std::alloc::Layout;
 use std::ffi::{c_void, CString};
@@ -22,12 +22,12 @@ use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::{thread, CachePadded};
 
-// metadata, root obj, root memento들이 Ralloc의 몇 번째 root에 위치하는 지를 나타내는 상수
+// indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
     RootObj,       // root obj
     CASCheckpoint, // cas general checkpoint
-    NrMemento,     // memento의 개수
-    MementoStart,  // root memento(s) 시작 위치
+    NrMemento,     // number of root mementos
+    MementoStart,  // start index of root memento(s)
 }
 
 /// 열린 풀을 관리하기 위한 풀 핸들러

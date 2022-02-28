@@ -1,23 +1,15 @@
-//! Persistent Atomic Pointer (crossbeam_epoch atomic.rs의 persistent 버전)
+//! Persistent Atomic Pointer (persistent version of crossbeam_epoch atomic.rs)
 //!
-//! # crossbeam에서 달라진 점
-//! - high-level
-//!     - 포인터가 절대주소가 아닌 상대주소를 가지고 있고,
-//!     - load후 참조시 풀의 시작주소와 상대주소를 더한 절대주소 참조
-//! - change log
-//!     - 변수명, 타입, 관련함수를 아래와 같이 변경
-//!         - 변경 전
-//!             - 절대주소를 가리키는 포인터: `raw: *const T`
-//!             - 절대주소: `raw: usize`
-//!             - 함수: `from_raw(raw: *mut T) -> Owned<T>`
-//!         - 변경 후
-//!             - 상대주소를 가리키는 포인터: `ptr: PPtr<T>`
-//!             - 상대주소: `offset: usize`
-//!             - 함수: `from_ptr(ptr: PPtr<T>) -> Owned<T>`
-//!     - crossbeam에 원래 있던 TODO는 TODO(crossbeam)으로 명시
-//!     - 메모리 관련 operation(e.g. `init`, `deref`)은 `PoolHandle`을 받게 변경. 특히 `deref`는 다른 풀을 참조할 수 있으니 unsafe로 명시
-//!     - Box operation(e.g. into_box, from<Box>)은 주석처리 해놓고 TODO 남김(PersistentBox 구현할지 고민 필요)
-//!     - 모든 test를 persistent 버전으로 변경
+//! The difference from crossbeam is that pointers have relative address, not absolute address.
+//!
+//! - prev
+//!     - pointer that pointing absolute  addr: `raw: *const T`
+//!     - abosulte addr: `raw: usize`
+//!     - function: `from_raw(raw: *mut T) -> Owned<T>`
+//! - current
+//!     - pointer that pointing relative addr: `ptr: PPtr<T>`
+//!     - relative addr: `offset: usize`
+//!     - function: `from_ptr(ptr: PPtr<T>) -> Owned<T>`
 
 use core::cmp;
 use core::fmt;
@@ -185,7 +177,6 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, us
     )
 }
 
-// TODO: 배포 전에 주석을 persistent 버전에 알맞게 수정
 /// Types that are pointed to by a single word.
 ///
 /// In concurrent programming, it is necessary to represent an object within a word because atomic
@@ -201,7 +192,6 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, us
 /// particular, Crossbeam supports dynamically sized slices as follows.
 ///
 /// ```
-/// # // 테스트용 pool 얻기
 /// # use memento::pmem::pool::*;
 /// # use memento::*;
 /// # use memento::test_utils::tests::get_dummy_handle;
@@ -230,25 +220,19 @@ pub trait Pointable {
     ///
     /// # Safety
     ///
-    /// - TODO: pool1의 obj에 pool2의 PoolHandle을 사용하는 일이 없도록 해야함
     /// - The given `offset` should have been initialized with [`Pointable::init`].
     /// - `offset` should not have yet been dropped by [`Pointable::drop`].
     /// - `offset` should not be mutably dereferenced by [`Pointable::deref_mut`] concurrently.
-    // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
-    // crossbeam에선 <'a>를 명시하지만 여기선 &PoolHandle이 추가되니 inference됨
     unsafe fn deref(offset: usize, pool: &PoolHandle) -> &Self;
 
     /// Mutably dereferences the given offset in the pool.
     ///
     /// # Safety
     ///
-    /// - TODO: pool1의 obj에 pool2의 PoolHandle을 사용하는 일이 없도록 해야함
     /// - The given `offset` should have been initialized with [`Pointable::init`].
     /// - `offset` should not have yet been dropped by [`Pointable::drop`].
     /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
-    // crossbeam에선 절대주소를 받아 deref하니 여기선 상대주소를 받도록 함
-    // crossbeam에선 <'a>를 명시하지만 여기선 &PoolHandle이 추가되니 inference됨
     #[allow(clippy::mut_from_ref)]
     unsafe fn deref_mut(offset: usize, pool: &PoolHandle) -> &mut Self;
 
@@ -256,12 +240,10 @@ pub trait Pointable {
     ///
     /// # Safety
     ///
-    /// - TODO: pool1의 obj에 pool2의 PoolHandle을 사용하는 일이 없도록 해야함
     /// - The given `offset` should have been initialized with [`Pointable::init`].
     /// - `offset` should not have yet been dropped by [`Pointable::drop`].
     /// - `offset` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
     ///   concurrently.
-    // crossbeam에선 절대주소를 받아 drop하니 여기선 상대주소를 받도록 함
     unsafe fn drop(offset: usize, pool: &PoolHandle);
 }
 
@@ -292,7 +274,6 @@ impl<T> Pointable for T {
     }
 }
 
-// TODO: 주석 수정할지 고민하기. `Box<[T]>` -> `PersistentBox<[T]>`?
 /// Array with size.
 ///
 /// # Memory layout
@@ -333,7 +314,6 @@ impl<T> Pointable for [MaybeUninit<T>] {
         let align = mem::align_of::<PArray<T>>();
         let layout = alloc::Layout::from_size_align(size, align).unwrap();
         let ptr = pool.alloc_layout::<PArray<T>>(layout);
-        // TODO(persistent allocator): 여기서 crash나면 할당은 됐지만 len이 초기화안됨. 이러면 재시작 시 len이 초기화 됐는지/안됐는지 구분이 힘듬
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
         }
@@ -386,7 +366,6 @@ impl<T> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -407,7 +386,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -456,7 +434,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -488,7 +465,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -512,7 +488,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -538,7 +513,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -575,7 +549,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -637,7 +610,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -722,7 +694,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -788,7 +759,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # #![allow(deprecated)]
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -852,7 +822,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     /// ```
     /// # #![allow(deprecated)]
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -915,7 +884,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -944,7 +912,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -972,7 +939,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1038,7 +1004,6 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
         }
     }
 
-    /// PoolHandle을 받아야하므로 fmt::Pointer trait impl 하던 것을 직접 구현
     pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
         let (_, _, _, offset, _) = decompose_tag::<T>(data);
@@ -1084,7 +1049,6 @@ impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1100,14 +1064,6 @@ impl<T: ?Sized + Pointable> From<POwned<T>> for PAtomic<T> {
         Self::from_usize(data)
     }
 }
-
-// TODO: PersistentBox 구현?
-//
-// impl<T> From<Box<T>> for Atomic<T> {
-//     fn from(b: Box<T>) -> Self {
-//         Self::from(Owned::from(b))
-//     }
-// }
 
 impl<'g, T: ?Sized + Pointable> From<PShared<'g, T>> for PAtomic<T> {
     /// Returns a new atomic pointer pointing to `ptr`.
@@ -1175,7 +1131,6 @@ pub trait Pointer<T: ?Sized + Pointable> {
 /// least significant bits of the address.
 pub struct POwned<T: ?Sized + Pointable> {
     data: usize,
-    // TODO: PhantomData<PersistentBox<T>>로 해야할지 고민 필요
     _marker: PhantomData<T>,
 }
 
@@ -1221,7 +1176,6 @@ impl<T> POwned<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1239,30 +1193,11 @@ impl<T> POwned<T> {
         Self::from_usize(offset)
     }
 
-    // TODO: PersistentBox 구현할지 고민 필요
-    // /// Converts the owned pointer into a `Box`.
-    // ///
-    // /// # Examples
-    // ///
-    // /// ```
-    // /// use crossbeam_epoch::Owned;
-    // ///
-    // /// let o = Owned::new(1234);
-    // /// let b: Box<i32> = o.into_box();
-    // /// assert_eq!(*b, 1234);
-    // /// ```
-    // pub fn into_box(self) -> Box<T> {
-    //     let (raw, _) = decompose_tag::<T>(self.data);
-    //     mem::forget(self);
-    //     unsafe { Box::from_raw(raw as *mut _) }
-    // }
-
     /// Allocates `value` on the persistent heap and returns a new owned pointer pointing to it.
     ///
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1283,7 +1218,6 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1302,7 +1236,6 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1324,7 +1257,6 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1339,19 +1271,19 @@ impl<T: ?Sized + Pointable> POwned<T> {
         tag
     }
 
-    /// TODO(doc)
+    /// get aux_bit
     pub fn aux_bit(&self) -> usize {
         let (aux_bit, _, _, _, _) = decompose_tag::<T>(self.data);
         aux_bit
     }
 
-    /// TODO(doc)
+    /// get tid
     pub fn tid(&self) -> usize {
         let (_, tid, _, _, _) = decompose_tag::<T>(self.data);
         tid
     }
 
-    /// TODO(doc)
+    /// get high_tag
     pub fn high_tag(&self) -> usize {
         let (_, _, tag, _, _) = decompose_tag::<T>(self.data);
         tag
@@ -1363,7 +1295,6 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1400,66 +1331,61 @@ impl<T: ?Sized + Pointable> POwned<T> {
         unsafe { Self::from_usize(compose_high_tag::<T>(tag, data)) }
     }
 
-    // PoolHandle을 받아야하므로 Deref trait impl 하던 것을 직접 구현
-    /// 절대주소 참조
+    /// deref absolute addr based on pool
     ///
     /// # Safety
     ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// pool should be correct
     pub unsafe fn deref<'a>(&self, pool: &'a PoolHandle) -> &'a T {
         let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
 
-    // PoolHandle을 받아야하므로 DerefMut trait impl 하던 것을 직접 구현
-    /// 절대주소 mutable 참조
+    /// deref absoulte addr based on pool
     ///
     /// # Safety
     ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// pool should be correct
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn deref_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
         let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
 
-    // PoolHandle을 받아야하므로 Borrow trait impl 하던 것을 직접 구현
-    /// borrow
+    /// borrow abolsulte addr based on pool
     ///
     /// # Safety
     ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// pool should be correct
     pub unsafe fn borrow<'a>(&self, pool: &'a PoolHandle) -> &'a T {
         self.deref(pool)
     }
 
-    // PoolHandle을 받아야하므로 BorrowMut trait impl 하던 것을 직접 구현
-    /// borrow_mut
+    /// borrow_mut abolsulte addr based on pool
     ///
     /// # Safety
     ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// pool should be correct
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn borrow_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
         self.deref_mut(pool)
     }
 
-    // PoolHandle을 받아야하므로 AsRef trait impl 하던 것을 직접 구현
+    // as_ref absolute addr based on pool
     /// as_ref
     ///
     /// # Safety
     ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// pool should be correct
     pub unsafe fn as_ref<'a>(&self, pool: &'a PoolHandle) -> &'a T {
         self.deref(pool)
     }
 
-    // PoolHandle을 받아야하므로 AsMut trait impl 하던 것을 직접 구현
-    /// as_mut
+    /// as_mut absolute addr based on pool
     ///
     /// # Safety
     ///
-    /// TODO: pool1의 ptr이 pool2의 시작주소를 사용하는 일이 없도록 해야함
+    /// pool should be correct
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn as_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
         self.deref_mut(pool)
@@ -1470,8 +1396,6 @@ impl<T: ?Sized + Pointable> Drop for POwned<T> {
     fn drop(&mut self) {
         let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
         unsafe {
-            // TODO: application 로직에서는 global pool 접근 막을 수 없을지 고민
-            // - e.g. Pool::free를 호출하면, 그쪽에서 private한 global pool 사용
             T::drop(offset, global_pool().unwrap());
         }
     }
@@ -1491,9 +1415,7 @@ impl<T: ?Sized + Pointable> fmt::Debug for POwned<T> {
     }
 }
 
-// PoolHandle을 받아야하므로 Clone trait impl 하던 것을 직접 구현
 impl<T: Clone> POwned<T> {
-    /// 주어진 pool에 clone
     pub fn clone(&self, pool: &PoolHandle) -> Self {
         POwned::new(unsafe { self.deref(pool) }.clone(), pool).with_tag(self.tag())
     }
@@ -1506,7 +1428,6 @@ impl<T: Collectable> Collectable for POwned<T> {
     }
 }
 
-// TODO: PersistentBox 구현할지 고민 필요
 // impl<T> From<Box<T>> for Owned<T> {
 //     /// Returns a new owned pointer pointing to `b`.
 //     ///
@@ -1568,7 +1489,6 @@ impl<T> PShared<'_, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1618,7 +1538,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1661,7 +1580,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1700,7 +1618,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1754,7 +1671,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1795,7 +1711,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1821,7 +1736,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1865,7 +1779,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;
@@ -1904,7 +1817,6 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
         unsafe { Self::from_usize(compose_high_tag::<T>(tag, self.data)) }
     }
 
-    // PoolHandle을 받아야하므로 fmt trait impl 하던 것을 직접 구현
     /// formatting Pointer
     pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
         fmt::Pointer::fmt(&(unsafe { self.deref(pool) as *const _ }), f)
@@ -1921,7 +1833,6 @@ impl<T> From<PPtr<T>> for PShared<'_, T> {
     /// # Examples
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;

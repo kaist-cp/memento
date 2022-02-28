@@ -5,8 +5,6 @@ import numpy as np
 import git
 import traceback
 
-# plot 하지 않을 target은 주석처리 해야함
-# dava_id: 사용할 데이터 id. 지정된게 없으면 최신 commit에서 뽑은 데이터를 사용
 objs = {
     "queue": {
         "targets": {
@@ -45,7 +43,7 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
         plt.errorbar(data['x'], data['y'], data['stddev'], label=data['label'], color=data['color'],
                      linestyle=data['style'], marker=data['marker'], markevery=markers_on)
     ax = plt.subplot()
-    ax.xaxis.set_major_locator(plt.MultipleLocator(x_interval))  # 눈금선 간격
+    ax.xaxis.set_major_locator(plt.MultipleLocator(x_interval))
     plt.grid(True)
     plt.xlabel(xlabel, size='large')
     if ylabel != '':
@@ -65,10 +63,8 @@ for obj in objs:
     data = pd.DataFrame()
     for t in targets:
 
-        # 사용할 데이터 선택
         data_id = objs[obj]['targets'][t]['data_id']
 
-        # 사용할 데이터가 지정되지 않았으면, 최신 commit에서 뽑은 데이터를 사용: {hash}_{date}
         repo = git.Repo(search_parent_directories=True)
         data_path = ''
         for commit in repo.iter_commits():
@@ -94,7 +90,7 @@ for obj in objs:
     data = data.groupby(['target', 'bench kind'])['throughput'].apply(
         list).reset_index(name="throughput")
 
-    # draw graph: (obj, bench kind) 쌍마다 그래프 하나씩 그림 (e.g. queue-pair, queue-prob50, ..)
+    # draw graph per (obj, bench kind) pairs. (e.g. queue-pair, queue-prob50, ..)
     kinds = set(data['bench kind'])
     for ix, k in enumerate(kinds):
         plot_id = "{}-throughput-{}".format(obj, k)

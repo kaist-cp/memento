@@ -103,7 +103,7 @@ impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
     }
 }
 
-/// Queue의 Dequeue
+/// Dequeue client
 #[derive(Debug)]
 pub struct Dequeue<T: Clone + Collectable> {
     try_deq: TryDequeue<T>,
@@ -246,7 +246,7 @@ impl<T: Clone + Collectable> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let node = POwned::new(Node::from(value), pool); // TODO(opt): persist_obj를 new 안으로 넣기
+        let node = POwned::new(Node::from(value), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = ok_or!(

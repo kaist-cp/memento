@@ -5,7 +5,7 @@ pub mod atomic;
 pub use atomic::{PAtomic, POwned, PShared};
 pub use crossbeam_epoch::{pin, unprotected, Guard};
 
-/// crossbeam의 Guard가 PAtomic 포인터도 다룰 수 있도록 하기 위한 trait
+/// A trait to allow the crossbeam's Guard to handle PAtomic pointers as well
 pub trait PDestroyable {
     /// Stores a destructor for an persistent object so that it can be deallocated and dropped at some point
     /// after all currently pinned threads get unpinned.
@@ -54,7 +54,6 @@ pub trait PDestroyable {
     /// consequently drop all their references on the stack.
     ///
     /// ```
-    /// # // 테스트용 pool 얻기
     /// # use memento::pmem::pool::*;
     /// # use memento::*;
     /// # use memento::test_utils::tests::get_dummy_handle;

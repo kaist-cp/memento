@@ -23,8 +23,7 @@ void pipe(pool<pipe_root> pop, persistent_ptr<queue> q1, persistent_ptr<queue> q
                     if (v != nullopt)
                         break;
                 }
-                q2->push(pop, *v);
-            }
+                q2->push(pop, *v); }
 
         );
     }
@@ -45,8 +44,7 @@ int get_pipe_nops(string filepath, int nr_threads, float duration, int init)
         pop, [&]
         {
             q_manager->q1 = make_persistent<queue>();
-            q_manager->q2 = make_persistent<queue>();
-        });
+            q_manager->q2 = make_persistent<queue>(); });
     persistent_ptr<queue> q1 = q_manager->q1;
     persistent_ptr<queue> q2 = q_manager->q2;
     for (int i = 0; i < init; i++)
@@ -58,8 +56,6 @@ int get_pipe_nops(string filepath, int nr_threads, float duration, int init)
     int local_ops[nr_threads];
     int sum_ops = 0;
 
-    // `duration`초 동안 pipe 수행 횟수 카운트
-    // TODO: generic하게 구현 (common.rs의 TestNOps trait처럼)
     for (int tid = 0; tid < nr_threads; tid++)
     {
         workers[tid] = std::thread(

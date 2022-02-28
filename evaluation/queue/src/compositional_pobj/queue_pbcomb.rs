@@ -30,7 +30,7 @@ impl TestQueue for Queue {
     }
 }
 
-/// 초기화시 세팅한 노드 수만큼 넣어줌
+/// Root obj for evaluation of MementoQueuePBComb
 #[derive(Debug)]
 pub struct TestMementoQueuePBComb {
     queue: Queue,
@@ -46,7 +46,6 @@ impl PDefault for TestMementoQueuePBComb {
     fn pdefault(pool: &PoolHandle) -> Self {
         let mut queue = Queue::pdefault(pool);
 
-        // 초기 노드 삽입
         let guard = epoch::pin();
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
@@ -93,10 +92,10 @@ impl<const PAIR: bool> RootObj<TestMementoQueuePBCombEnqDeq<PAIR>> for TestMemen
 
         let ops = self.test_nops(
             &|tid, guard| {
-                // NOTE!!!: &CahePadded<T>를 &T로 읽으면 안됨. 지금처럼 &*로 &T를 가져와서 &T로 읽어야함
+                // unwrap CachePadded
                 let enq = unsafe { (&*mmt.enq as *const _ as *mut Enqueue).as_mut() }.unwrap();
                 let deq = unsafe { (&*mmt.deq as *const _ as *mut Dequeue).as_mut() }.unwrap();
-                let enq_input = (tid, enq, tid); // `tid` 값을 enq. 특별한 이유는 없음
+                let enq_input = (tid, enq, tid); // enq `tid`
                 let deq_input = (deq, tid);
 
                 if PAIR {

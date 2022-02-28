@@ -105,8 +105,7 @@ impl<T: Clone + Collectable> TryExchange<T> {
 
 type ExchangeCond<T> = fn(&T) -> bool;
 
-/// Exchanger의 exchange operation.
-/// 반드시 exchange에 성공함.
+/// Exchanger's exchange operation.
 #[derive(Debug)]
 pub struct Exchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,

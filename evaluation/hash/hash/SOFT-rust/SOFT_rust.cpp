@@ -26,8 +26,8 @@ enum RootIdx
 {
     RootObj,       // root obj
     CASCheckpoint, // cas general checkpoint
-    NrMemento,     // memento의 개수
-    MementoStart,  // root memento(s) 시작 위치
+    NrMemento,     // number of root mementos
+    MementoStart,  // start index of root memento(s)
 };
 
 #ifdef __cplusplus
@@ -91,12 +91,12 @@ public:
     }
     void thread_ini(int tid)
     {
-        tid = tid + 1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
+        tid = tid + 1; // pibench can give tid 0, but tid in memento starts from 1
         thread_init(tid, pool);
     }
     bool find(const char *key, size_t key_sz, char *value_out, unsigned tid)
     {
-        tid = tid + 1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
+        tid = tid + 1;
         auto k = *reinterpret_cast<const Key *>(key);
         return search(c, tid, k, pool);
     }
@@ -104,7 +104,7 @@ public:
     bool insert(const char *key, size_t key_sz, const char *value,
                 size_t value_sz, unsigned tid, unsigned t)
     {
-        tid = tid + 1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
+        tid = tid + 1;
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
 
@@ -118,7 +118,7 @@ public:
 
     bool remove(const char *key, size_t key_sz, unsigned tid)
     {
-        tid = tid + 1; // pibench는 tid 0부터 넘겨주지만, memento framework는 tid 1부터 시작
+        tid = tid + 1;
         auto k = *reinterpret_cast<const Key *>(key);
         return run_delete(m[tid], c, tid, k, pool);
     }

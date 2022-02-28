@@ -112,14 +112,13 @@ impl<T: Clone> LogQueue<T> {
 
         let prev = self.logs[tid].load(Ordering::Relaxed, guard);
         self.logs[tid].store(log, Ordering::Relaxed);
-        persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+        persist_obj(&*self.logs[tid], true); // persist inner of CachePadded
 
         // ```
 
-        // 이전 로그를 free
+        // deallocate previous log
         if !prev.is_null() {
             unsafe { guard.defer_pdestroy(prev) };
-            // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
         }
 
         loop {
@@ -174,14 +173,13 @@ impl<T: Clone> LogQueue<T> {
 
         let prev = self.logs[tid].load(Ordering::Relaxed, guard);
         self.logs[tid].store(log, Ordering::Relaxed);
-        persist_obj(&*self.logs[tid], true); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+        persist_obj(&*self.logs[tid], true); // persist inner of CachePadded
 
         // ```
 
-        // 이전 로그를 free
+        // deallocate previous log
         if !prev.is_null() {
             unsafe { guard.defer_pdestroy(prev) };
-            // NOTE: 로그가 가리키고 있는 deq한 노드는 free하면 안됨. queue의 센티넬 노드로 쓰이고 있을 수 있음
         }
 
         loop {
@@ -245,7 +243,7 @@ impl<T: Clone> LogQueue<T> {
                             Ordering::SeqCst,
                             guard,
                         );
-                        guard.defer_persist(&*self.head); // 참조하는 이유: CachePadded 전체를 persist하면 손해이므로 안쪽 T만 persist
+                        guard.defer_persist(&*self.head); // persist inner of CachePadded
                         unsafe { guard.defer_pdestroy(first) };
                         return;
                     } else if self.head.load(Ordering::SeqCst, guard) == first {
@@ -305,7 +303,6 @@ impl PDefault for TestLogQueue {
         let queue = LogQueue::pdefault(pool);
         let guard = epoch::pin();
 
-        // 초기 노드 삽입
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
             queue.enqueue(i, 0, &mut 0, &guard, pool);
         }
@@ -327,7 +324,6 @@ impl<const PAIR: bool> Collectable for TestLogQueueEnqDeq<PAIR> {
     }
 }
 
-// TODO: 모든 큐의 실험 로직이 통합되어야 함
 impl<const PAIR: bool> RootObj<TestLogQueueEnqDeq<PAIR>> for TestLogQueue {
     fn run(
         &self,
@@ -342,7 +338,6 @@ impl<const PAIR: bool> RootObj<TestLogQueueEnqDeq<PAIR>> for TestLogQueue {
 
         let ops = self.test_nops(
             &|tid, guard| {
-                // TODO: 더 깔끔하게 op_num의 ref 전달
                 let op_num = unsafe { (&*mmt.op_num as *const _ as *mut usize).as_mut() }.unwrap();
                 let op_num_same =
                     unsafe { (&*mmt.op_num as *const _ as *mut usize).as_mut() }.unwrap();

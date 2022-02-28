@@ -28,7 +28,6 @@
 #![deny(unreachable_pub)]
 #![deny(single_use_lifetimes)]
 #![deny(unused_lifetimes)]
-
 // #![deny(unstable_features)] // Allowed due to below
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
 #![feature(generic_associated_types)] // to define fields of `Memento`
@@ -37,10 +36,8 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 #![feature(new_uninit)] // for clevel
 #![feature(core_intrinsics)]
-
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
-
 #![recursion_limit = "512"]
 
 // Persistent objects collection

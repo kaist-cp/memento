@@ -24,7 +24,7 @@ impl<T: 'static + Clone + Collectable> TestQueue for Queue<T> {
     }
 }
 
-/// 초기화시 세팅한 노드 수만큼 넣어줌
+/// Root obj for evaluation of MementoQueue
 #[derive(Debug)]
 pub struct TestMementoQueue {
     queue: Queue<usize>,
@@ -41,7 +41,6 @@ impl PDefault for TestMementoQueue {
         let queue = Queue::pdefault(pool);
         let guard = epoch::pin();
 
-        // 초기 노드 삽입
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
             queue.enqueue::<false>(i, &mut push_init, 1, &guard, pool);
@@ -87,12 +86,12 @@ impl<const PAIR: bool> RootObj<TestMementoQueueEnqDeq<PAIR>> for TestMementoQueu
 
         let ops = self.test_nops(
             &|tid, guard| {
-                // NOTE!!!: &CahePadded<T>를 &T로 읽으면 안됨. 지금처럼 &*로 &T를 가져와서 &T로 읽어야함
+                // unwrap CachePadded
                 let enq =
                     unsafe { (&*mmt.enq as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
                 let deq =
                     unsafe { (&*mmt.deq as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
-                let enq_input = (tid, enq, tid); // `tid` 값을 enq. 특별한 이유는 없음
+                let enq_input = (tid, enq, tid); // enq `tid`
                 let deq_input = (deq, tid);
 
                 if PAIR {

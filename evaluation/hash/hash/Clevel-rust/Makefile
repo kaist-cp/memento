@@ -6,18 +6,17 @@ CSHARED = -Wl,-whole-archive $(CLEVEL_RUST)/target/release/libclevel_rust.a -Wl,
 
 all:clevel_rust.so
 
-# NOTE: default는 pmem 버전 컴파일. dram에서 실험해보고 싶다면 `do_build`->`do_build_dram`
 clevel_rust.so:clevel_rust.o do_build
 	$(CXX) $(CFLAGS) -fPIC -shared -o $@ clevel_rust.o $(CSHARED)
 
 clevel_rust.o:clevel_rust.cpp
 	$(CXX) -fPIC -o clevel_rust.o -c clevel_rust.cpp $(CFLAGS)
 
-# pmem 버전 컴파일
+# pmem
 do_build:
 	bash -c "cd $(CLEVEL_RUST); cargo update; cargo build --release"
 
-# dram 버전 컴파일
+# dram
 do_build_dram:
 	bash -c "cd $(CLEVEL_RUST); cargo update; cargo build --release --features no_persist;"
 

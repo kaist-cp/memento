@@ -46,7 +46,6 @@ fn get_guard(tid: usize) -> &'static mut Guard {
     unsafe {
         CNT[tid] += 1;
         if CNT[tid] % 1024 == 0 {
-            // TODO: repin_after하기 전에 memento들을 clear 해줘야함
             guard.repin_after(|| {});
         }
     }
@@ -80,7 +79,7 @@ pub extern "C" fn pool_create(
     Pool::create::<ClevelInner<Key, Value>, ClevelMemento>(
         c_str.to_str().unwrap(),
         size,
-        nr_thread + 1, // +1은 resize loop 역할. 나머지는 pibench가 넘겨주는 insert/delete/search op 실행
+        nr_thread + 1, // +1 for resize loop thread.
     )
     .unwrap()
 }

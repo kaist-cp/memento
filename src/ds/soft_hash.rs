@@ -1,4 +1,4 @@
-//! TODO doc
+//! SOFT hash table
 use super::soft_list::{thread_ini, Insert, Remove, SOFTList};
 use crate::pmem::{Collectable, PoolHandle};
 use core::hash::{Hash, Hasher};
@@ -12,7 +12,7 @@ pub fn hash_thread_ini(tid: usize, pool: &PoolHandle) {
     thread_ini(tid, pool)
 }
 
-/// TODO: doc
+/// SOFT HashTable
 #[derive(Debug)]
 pub struct SOFTHashTable<T: Default> {
     table: [SOFTList<T>; BUCKET_NUM],
@@ -41,7 +41,7 @@ impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
         bucket.insert::<REC>(k, item, &mut client.insert, tid, guard, pool)
     }
 
-    /// TODO: doc
+    /// remove
     pub fn remove<const REC: bool>(
         &self,
         k: usize,
@@ -54,7 +54,7 @@ impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
         bucket.remove::<REC>(k, &mut client.remove, tid, guard, pool)
     }
 
-    /// TODO: doc
+    /// contains
     pub fn contains(&self, k: usize) -> bool {
         let bucket = self.get_bucket(k);
         bucket.contains(k)
@@ -64,18 +64,18 @@ impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
         let mut hasher = Murmur3Hasher::default();
         k.hash(&mut hasher);
         let hash = hasher.finish() as usize;
-        &self.table[hash % BUCKET_NUM] // TODO: c++에선 abs() 왜함?
+        &self.table[hash % BUCKET_NUM]
     }
 }
 
-/// TODO: doc
+/// HashInsert client
 #[derive(Debug, Default)]
 pub struct HashInsert<T: Default + 'static> {
     insert: Insert<T>,
 }
 
 impl<T: Default> HashInsert<T> {
-    /// TODO: doc
+    /// clear
     pub fn clear(&mut self) {
         self.insert.clear()
     }
@@ -92,7 +92,7 @@ impl<T: Default> Collectable for HashInsert<T> {
     }
 }
 
-/// TODO: doc
+/// HashRemove client
 #[derive(Debug, Default)]
 pub struct HashRemove<T: Default + 'static> {
     remove: Remove<T>,

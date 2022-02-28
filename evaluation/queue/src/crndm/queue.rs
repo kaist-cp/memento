@@ -146,7 +146,7 @@ impl TestCrndmQueue {
             q.enqueue(i);
         }
 
-        // nr_thread 개 만들어서ㄱ 각각 op 실행
+        // Create nr_threads and execute
         #[allow(box_pointers)]
         thread::scope(|scope| {
             for tid in 0..nr_thread {

@@ -13,8 +13,9 @@ template <class T>
 class SOFTHashTable : public hash_api
 {
 public:
-  SOFTHashTable() {
-    thread_ini(-1); // TODO: -1 init 왜함? 아마 기존 bench 따라한 것 같은데..
+  SOFTHashTable()
+  {
+    thread_ini(-1);
   }
   bool insert(uintptr_t k, T item)
   {
@@ -60,7 +61,7 @@ public:
     //     (float)bn * 16 / ((sizeof(PNode<T>) + sizeof(Node<T>)) * bn) * 100.0;
     return u;
   };
-  void vmem_print_api() { std::cout<<"tisss:"<<tisss<<std::endl; }
+  void vmem_print_api() { std::cout << "tisss:" << tisss << std::endl; }
   std::string hash_name() { return "SOFT"; };
   bool recovery()
   {

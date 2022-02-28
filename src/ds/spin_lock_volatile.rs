@@ -30,7 +30,7 @@ fn decompose_aux_bit(data: usize) -> (usize, usize) {
 /// volatile thread-recoverable spin lock
 #[derive(Debug, Default)]
 pub struct VSpinLock {
-    inner: AtomicUsize, // 55:lock sequence (짝수:lock 잡은애 없음, 홀수:누군가 lock 잡고 진행중), 9:tid
+    inner: AtomicUsize, // 55:lock sequence (even:no owner), 9:tid
 }
 
 impl VSpinLock {

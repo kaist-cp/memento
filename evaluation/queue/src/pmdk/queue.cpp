@@ -99,7 +99,7 @@ int get_queue_nops(string filepath, int nr_threads, float duration, int init, op
     int local_ops[nr_threads];
     int sum_ops = 0;
 
-    // `duration`초 동안 op 수행 횟수 카운트
+    // Count the number of times the op is executed in `duration` seconds
     for (int tid = 0; tid < nr_threads; tid++)
     {
         workers[tid] = std::thread(

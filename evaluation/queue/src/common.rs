@@ -8,34 +8,28 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
 
-/// 테스트시 만들 풀 파일의 크기
+/// file size
 pub const FILE_SIZE: usize = 128 * 1024 * 1024 * 1024;
 
-/// Queue 테스트시 초기 노드 수 (basket queue prob50 실험의 초기 노드 수 따라함)
+/// number of init nodes
 pub static mut QUEUE_INIT_SIZE: usize = 0;
 
-/// 테스트할 수 있는 최대 스레드 수
-// - 우리 큐, 로그 큐 등에서 사물함을 MAX_THREAD만큼 정적할당해야하니 필요
-// - TODO: 이 상수 없앨 수 있는지 고민 (e.g. MAX_THREAD=32 ./run.sh처럼 가능한가?)
+/// max threads
 pub const MAX_THREADS: usize = 64;
 
-// ``` thread-local하게 사용하는 변수
-// TODO: 더 좋은 방법? 현재는 인자로 tid 밖에 전달해줄 수 없으니 이렇게 해둠
-
-/// op 반복을 지속할 시간
+/// test duration
 pub static mut DURATION: f64 = 0.0;
 
-/// 확률값
+/// probability for specific test (e.g. queue prob50)
 pub static mut PROB: u32 = 0;
 
-/// repin 호출 주기 (op을 `RELAXED`번 수행시마다 repin 호출)
+/// period of repin
 pub static mut RELAXED: usize = 0;
-// ```
 
 pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
 
 pub trait TestNOps {
-    /// `duration`초 동안의 `op` 실행횟수 계산
+    // Count number of executions of `op` in `duration` seconds
     fn test_nops<'f, F: Fn(usize, &Guard)>(
         &self,
         op: &'f F,
@@ -81,8 +75,8 @@ pub enum TestTarget {
 
 #[derive(Clone, Copy, Debug)]
 pub enum TestKind {
-    QueueProb(u32), // { p% 확률로 enq 혹은 deq }를 반복
-    QueuePair,      // { enq; deq; }를 반복
+    QueueProb(u32), // { p% enq or 100-p% deq }
+    QueuePair,      // { enq; deq; }
 }
 
 #[inline]
@@ -90,7 +84,6 @@ pub fn pick(prob: u32) -> bool {
     rand::thread_rng().gen_ratio(prob, 100)
 }
 
-// 우리의 pool API로 만든 테스트 로직 실행
 fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: RootObj<M> + Send + Sync,
@@ -100,7 +93,7 @@ where
 
     let pool_handle = Pool::create::<O, M>(filepath, FILE_SIZE, nr_thread).unwrap();
 
-    // 루트 op 실행: 각 스레드가 `duration` 초 동안 op 실행하고 `TOTAL_NOPS`에 실행 수 누적
+    // Each thread executes op for `duration` seconds and accumulates execution count in `TOTAL_NOPS`
     pool_handle.execute::<O, M>();
 
     // Load `TOTAL_NOPS`
@@ -110,42 +103,35 @@ where
 #[derive(StructOpt, Debug)]
 #[structopt(name = "bench")]
 pub struct Opt {
-    /// PMEM pool로서 사용할 파일 경로
+    /// filepath
     #[structopt(short, long)]
     pub filepath: String,
 
-    // /// 처리율 측정할 자료구조
-    // #[structopt(short = "j", long)]
-    // obj: String,
-    //
-    // /// 무엇으로 구현한 자료구조의 처리율을 측정할 것인가
-    // #[structopt(short = "a", long)]
-    // target: String,
-    /// 처리율 측정대상
+    /// target
     #[structopt(short = "a", long)]
     pub target: String,
 
-    /// 실험종류
+    /// test kind
     #[structopt(short, long)]
     pub kind: String,
 
-    /// 동작시킬 스레드 수
+    /// number of threads
     #[structopt(short, long)]
     pub threads: usize,
 
-    /// 처리율 1번 측정시 실험 수행시간
+    /// test duration
     #[structopt(short, long, default_value = "5")]
     pub duration: f64,
 
-    /// 출력 파일. 주어지지 않으면 ./out/{target}.csv에 저장
+    /// output path
     #[structopt(short, long)]
     pub output: Option<String>,
 
-    /// repin_after 실행주기 (e.g. 1000이면 op 1000번마다 1번 repin_after)
+    /// period of repin (default: repin_after once every 10000 ops)
     #[structopt(short, long, default_value = "10000")]
     pub relax: usize,
 
-    /// 초기 노드 수
+    /// number of initial nodes
     #[structopt(short, long, default_value = "0")]
     pub init: usize,
 }
@@ -247,7 +233,7 @@ pub mod queue {
                 }
             },
             TestTarget::MementoQueuePBComb(kind) => {
-                unsafe { MementoPBComb_NR_THREAD = opt.threads }; // combining시 이만큼만 순회
+                unsafe { MementoPBComb_NR_THREAD = opt.threads }; // restriction of combining iteration
                 match kind {
                     TestKind::QueuePair => get_nops::<
                         TestMementoQueuePBComb,
@@ -294,7 +280,7 @@ pub mod queue {
                 }
             },
             TestTarget::PBCombQueue(kind) => {
-                unsafe { PBComb_NR_THREAD = opt.threads }; // combining시 이만큼만 순회
+                unsafe { PBComb_NR_THREAD = opt.threads }; // restriction of combining iteration
                 match kind {
                     TestKind::QueuePair => {
                         get_nops::<TestPBCombQueue, TestPBCombQueueEnqDeq<true>>(

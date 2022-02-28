@@ -13,7 +13,7 @@ namespace softUtils
     DELETED = 3
   };
 
-  // 포인터에서 state 태그를 떼서 반환 (~= crossbeam atomic load)
+  // (~= crossbeam atomic load)
   template <class Node>
   static inline Node *getRef(Node *ptr)
   {
@@ -22,7 +22,7 @@ namespace softUtils
     return (Node *)(ptrLong);
   }
 
-  // 포인터에 태그를 붙여 반환 (~= crossbeam atomic with_tag)
+  // (~= crossbeam atomic with_tag)
   template <class Node>
   static inline Node *createRef(Node *p, state s)
   {
@@ -32,7 +32,7 @@ namespace softUtils
     return (Node *)(ptrLong);
   }
 
-  // state tag를 CAS (~= crossbeam atomic CAS(curr, curr with tag))
+  // (~= crossbeam atomic CAS(curr, curr with tag))
   template <class Node>
   static inline bool stateCAS(std::atomic<Node *> &atomicP, state expected,
                               state newVal)
@@ -43,7 +43,7 @@ namespace softUtils
     return atomicP.compare_exchange_strong(before, after);
   }
 
-  /// 포인터의 state 태그를 반환 (~= crossbeam atomic tag())
+  /// (~= crossbeam atomic tag())
   static inline state getState(void *p)
   {
     return static_cast<state>((uintptr_t)(p)&STATE_MASK);
