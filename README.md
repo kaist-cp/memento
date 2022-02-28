@@ -44,7 +44,8 @@ The directory `src/ds/` contains memento-based data structures supporting exactl
 
 #### Safe Memory Reclamation
 
-TODO
+- TODO(defer_persist corresponding 6.1)
+- TODO(old guard & dedup corresponding 6.2)
 
 #### Others
 
