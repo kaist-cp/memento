@@ -78,7 +78,7 @@ impl<N: Node + Collectable> From<PShared<'_, N>> for SMOAtomic<N> {
 impl<N: Node + Collectable> SMOAtomic<N> {
     /// Ok(ptr): The final ptr after all helps
     /// Err(ptr): The final ptr after all helps but the final ptr cannot be deleted for now.
-    pub fn load_helping<'g>(
+    pub fn load_help<'g>(
         &self,
         old: PShared<'g, N>,
         guard: &'g Guard,
@@ -291,7 +291,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 Ordering::SeqCst,
                 guard,
             )
-            .map_err(|_| self.load_helping(old, guard, pool).unwrap())?;
+            .map_err(|_| self.load_help(old, guard, pool).unwrap())?;
 
         // Now I own the location. flush the owner.
         persist_obj(owner, false); // we're doing CAS soon.
@@ -321,14 +321,14 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         let old_ref = some_or!(
             unsafe { old.as_ref(pool) },
-            return Err(ok_or!(self.load_helping(old, guard, pool), e, e)) // if null, return failure.
+            return Err(ok_or!(self.load_help(old, guard, pool), e, e)) // if null, return failure.
         );
 
         // Failure if the owner is not me
         let owner = old_ref.replacement();
         let o = owner.load(Ordering::SeqCst, guard);
         if o.tid() != tid {
-            return Err(ok_or!(self.load_helping(old, guard, pool), e, e));
+            return Err(ok_or!(self.load_help(old, guard, pool), e, e));
         }
 
         persist_obj(owner, false);
