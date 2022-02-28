@@ -89,7 +89,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             .unwrap()
     }
 
-    /// curr을 physical delete
+    /// physical delete `curr`
     ///
     /// # Example
     ///
@@ -220,17 +220,17 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             let curr_ref = unsafe { curr.deref() };
             let pred_state = get_state(curr);
 
-            // 중복 키를 발견. 이미 삽입 완료된거면 된거면 실패로 끝내고, 삽입 중이라면 삽입완료를 helping
+            // Find duplicated key
             if curr_ref.key == key {
-                // 이미 삽입 완료된 것
                 if curr_state != State::IntendToInsert {
-                    let _ = client.target.checkpoint::<REC>(failed(), tid, pool); // "실패"로 끝났음을 표시
+                    // Already inserted
+                    let _ = client.target.checkpoint::<REC>(failed(), tid, pool); // checkpoint as "failed"
                     return false;
                 }
-                // 삽입 중이므로 이 result_node의 삽입완료를 helping
+                // Not yet inserted, so help the insertion
                 result_node = curr;
             }
-            // 중복 키 없으므로 State: IntendToInsert 노드를 만들어 삽입 시도
+            // There is no duplicate key. Insert new node
             else {
                 let new_pnode = self.alloc_new_pnode(pool);
                 let new_node = self.alloc_new_vnode(key, value.clone(), new_pnode);
@@ -251,8 +251,6 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                     )
                     .is_err()
                 {
-                    // 삽입 실패시 alloc 했던거 free하고 처음부터 재시도
-                    // 1. free(vnode)
                     VOLATILE_ALLOC
                         .try_with(|a| {
                             unsafe {
@@ -260,7 +258,6 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                             };
                         })
                         .unwrap();
-                    // 2. free(pnode): 이 때의 free(pnode)는 pguard로 보호 안해도 됨. 타겟팅하는 client 없음.
                     ALLOC
                         .try_with(|a| {
                             unsafe {
@@ -274,18 +271,18 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             }
             let result_node = unsafe { result_node.deref() };
 
-            // clinet가 PNode를 타겟팅
+            // checkpoint PNode
             let pnode = unsafe { result_node.pptr.as_ref().unwrap() };
             let _ = client
                 .target
                 .checkpoint::<REC>(unsafe { pnode.as_pptr(pool) }, tid, pool);
 
-            // 타겟팅한 노드의 삽입을 마무리
+            // finish insertion of checkpointed PNode
             return self.finish_insert(result_node, value, client, pool);
         }
     }
 
-    // 삽입 마무리: (1) PNode에 "삽입완료" 표시 (2) VNode에 "삽입완료" 표시
+    // (1) Mark PNode as "inserted" (2) Mark VNode as "inserted"
     fn finish_insert(
         &self,
         result_node: &VNode<T>,
@@ -333,32 +330,31 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
         let vguard = unsafe { unprotected() }; // vnodes are managed by ssmem's ebr
         if REC {
             if let Some(target) = client.target.peek(tid, pool) {
-                // 1. 실패로 끝났었다면 같은 결과 반환
+                // 1. If it ended in failure, return the same result.
                 if target == failed() {
                     return false;
                 }
 
-                // 2. 실패로 끝나진 않았지만 target하던 PNode가 있다면 crash 이전에 target에 하려던 것을 마무리하고 종료
-                //    crash이전에 하려던 것: PNode에 "삭제완료", 대응되는 VNode에 "삭제완료" 표시(logical delete) 후 VList에서 제거(physical delete)
-                // target에 대응되는 VNode 탐색
+                // 2. If there is a target PNode, finish remove procedure of that PNode.
+                // find corrosponding VNode
                 let mut curr_state = State::Dummy;
                 let (pred, curr) = self.find(key, &mut curr_state, pguard);
-                let vnode = unsafe { curr.deref() }; // 이번에 찾은 VNode
-                let pnode = unsafe { vnode.pptr.as_ref() }.unwrap(); // 이번에 찾은 VNode가 가리키는 PNode
-                let target = unsafe { target.deref_mut(pool) }; // 내가(client) 가리키고 있는 PNode
+                let vnode = unsafe { curr.deref() };
+                let pnode = unsafe { vnode.pptr.as_ref() }.unwrap();
+                let target = unsafe { target.deref_mut(pool) };
 
-                // target에 대응되는 VNode가 없다면, target에 대응되는 VNode는 이미 삭제 마무리된 것
+                // if there is no corrosponding VNode, that VNode was already deleted and deleted by other thread
                 if pnode as *const _ as usize != target as *const _ as usize {
-                    // 결과: target.deleter == me
+                    // result: target.deleter == me
                     return target.destroy(client, pool);
                 }
 
-                // target에 대응되는 VNode를 찾았다면 crash 이전에 하던 "삭제완료" 표시를 재시도하고 마무리
-                // 결과: target.deleter == me
+                // if there is corrosponding VNode, finish remove procedure of that VNode.
+                // result: target.deleter == me
                 return self.finish_remove((pred, curr), client, pguard, pool);
             }
 
-            // 기록된 게 없으면 normal run을 재개
+            // If there is no target, restart normal run.
         }
 
         let mut cas_result = false;
@@ -393,7 +389,7 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
                 .is_ok();
         }
 
-        // client checkpoints PNode
+        // checkpoints PNode
         let pnode = unsafe { curr_ref.pptr.as_ref().unwrap() };
         let _ = client
             .target
@@ -584,7 +580,6 @@ impl<T: Default> Collectable for Remove<T> {
 impl<T: Default + PartialEq + Clone> Remove<T> {
     #[inline]
     fn id(&self, pool: &PoolHandle) -> usize {
-        // 풀 열릴때마다 주소바뀌니 상대주소로 식별해야함
         unsafe { self.as_pptr(pool).into_offset() }
     }
 
@@ -717,7 +712,6 @@ impl From<usize> for State {
     }
 }
 
-/// 노드의 state 태그를 반환 (helper function)
 #[inline]
 fn get_state<T: Default>(p: Shared<'_, VNode<T>>) -> State {
     State::from(p.tag())

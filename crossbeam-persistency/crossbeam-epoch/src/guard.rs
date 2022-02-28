@@ -196,13 +196,13 @@ impl Guard {
         F: FnOnce() -> R,
     {
         if let Some(local) = self.local.as_ref() {
-            // 같은 epoch에서 같은 key의 중복 defer 방지
+            // Avoid duplicate defers of the same key in the same epoch
             if let Some(k) = key {
-                // local bag에 있으면 중복
+                // It is duplicated If there is same key in local bag
                 if local.bag.with(|b| unsafe { &*b }.is_exist(k)) {
                     return;
                 }
-                // 같은 epoch에 global bag에 간 기록이 있다면 중복
+                // It is a duplicate if there is a record that went to the global bag in the same epoch
                 if local.is_exist_pfree(k) {
                     return;
                 }
@@ -339,7 +339,6 @@ impl Guard {
     ///     assert_eq!(unsafe { p.as_ref() }, Some(&777));
     /// }
     /// ```
-    // @anonymous: 목적은 unpin 했다가 다시 pin하여 local epoch을 최신 상태로 업데이트
     pub fn repin(&mut self) {
         if let Some(local) = unsafe { self.local.as_ref() } {
             local.repin();
@@ -376,7 +375,6 @@ impl Guard {
     ///     assert_eq!(unsafe { p.as_ref() }, Some(&777));
     /// }
     /// ```
-    // @anonymous: 목적은 unpin 했다가 다시 pin하여 local epoch을 최신 상태로 업데이트. 단, 다시 pin 하기 전에 f()를 수행
     pub fn repin_after<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -385,19 +383,18 @@ impl Guard {
             local.is_repinning.set(true);
             // We need to acquire a handle here to ensure the Local doesn't
             // disappear from under us.
-            // @anonymous: acquire_handle 하는 이유는
-            //  - unpin할 때 global list에서 local 빼버리는 걸 방지하기 위함
-            //  - unpin시 local handle 개수 0이면 빼버림
             local.acquire_handle(); // local handle cnt += 1;
             local.unpin(); // guard cnt -= 1;
 
-            // 여기서 crash나고 다시 old guard 부르면? guard cnt는 0이더라도 repin 중이었으니까 "guard가 있었다"라고 인식해야함. 이를 위해 is_repinning 추가
+            // @old_guard: What if thread was crashed here and call the old guard?
+            // Even if the guard cnt is 0, it should be recognized as "there was a guard" because it was being repined.
+            // So we add `is_repinning` for this case.
         }
 
         // Ensure the Guard is re-pinned even if the function panics
         defer! {
             if let Some(local) = unsafe { self.local.as_ref() } {
-                mem::forget(local.pin()); // guard cnt += 1; (forget으로 cnt += 1 제외한 일은 일어나지 않게 함. i.e. Guard drop 발생 방지)
+                mem::forget(local.pin()); // guard cnt += 1;
                 local.release_handle(); // local handle cnt -= 1;
                 local.is_repinning.set(false);
             }
@@ -438,7 +435,7 @@ impl Drop for Guard {
     #[inline]
     fn drop(&mut self) {
         if let Some(local) = unsafe { self.local.as_ref() } {
-            // owner가 있는 guard는 thread panic 났을때 drop 되지 않게함
+            // A guard with an owner prevents it from being dropped when a thread panic occurs.
             if local.owner().is_some() && std::thread::panicking() {
                 return;
             }

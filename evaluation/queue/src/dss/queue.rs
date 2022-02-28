@@ -289,13 +289,11 @@ impl<T: Clone> TestQueue for DSSQueue<T> {
     type DeqInput = usize; // tid
 
     fn enqueue(&self, (input, tid): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
-        // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_enqueue(input, tid, pool);
         self.exec_enqueue(tid, guard, pool);
     }
 
     fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
-        // NOTE: 만약 crash를 고려한다면 새로 prep 하기전에 남아있는거 resolve로 확인 후 필요시 free 해야함
         self.prep_dequeue(tid);
         let val = self.exec_dequeue(tid, guard, pool);
 

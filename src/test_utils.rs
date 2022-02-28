@@ -12,7 +12,7 @@ pub mod tests {
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::PDefault;
 
-    /// 테스트 파일이 위치할 경로 계산
+    /// get path for test file
     ///
     /// e.g. "foo.pool" => "{project-path}/test/foo.pool"
     pub fn get_test_abs_path<P: AsRef<Path>>(rel_path: P) -> String {
@@ -60,26 +60,21 @@ pub mod tests {
         }
     }
 
-    /// test에 사용하기 위한 더미용 PoolHandle 얻기
+    /// get dummy pool handle for test
     pub fn get_dummy_handle(filesize: usize) -> Result<&'static PoolHandle, Error> {
         #[cfg(not(feature = "no_persist"))]
         {
-            // 임시파일 경로 얻기. `create`에서 파일이 이미 존재하면 실패하기 때문에 여기선 경로만 얻어야함
             let temp_path = NamedTempFile::new_in("/mnt/pmem0")?
                 .path()
                 .to_str()
                 .unwrap()
                 .to_owned();
 
-            // 풀 생성 및 핸들 반환
             Pool::create::<DummyRootObj, DummyRootMemento>(&temp_path, filesize, 0)
         }
         #[cfg(feature = "no_persist")]
         {
-            // 임시파일 경로 얻기. `create`에서 파일이 이미 존재하면 실패하기 때문에 여기선 경로만 얻어야함
             let temp_path = NamedTempFile::new()?.path().to_str().unwrap().to_owned();
-
-            // 풀 생성 및 핸들 반환
             Pool::create::<DummyRootObj, DummyRootMemento>(&temp_path, filesize, 0)
         }
     }
@@ -110,14 +105,14 @@ pub mod tests {
             array_init::array_init(|_| AtomicUsize::new(0));
     }
 
-    /// test op 돌리기
+    /// run test op
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
         O: RootObj<M> + Send + Sync,
         M: Collectable + Default + Send + Sync,
         P: AsRef<Path>,
     {
-        // 테스트 변수 초기화
+        // initialze test variables
         JOB_FINISHED.store(0, Ordering::SeqCst);
         for res in RESULTS.as_ref() {
             res.store(0, Ordering::SeqCst);
@@ -125,14 +120,14 @@ pub mod tests {
 
         let filepath = get_test_abs_path(pool_name);
 
-        // 풀 지우기
+        // remove pool
         // let _ = Pool::remove(&filepath);
 
-        // 풀 열기 (없으면 새로 만듦)
+        // open pool
         let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
             .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap());
 
-        // 루트 memento 실행
+        // run root memento(s)
         pool_handle.execute::<O, M>();
     }
 }

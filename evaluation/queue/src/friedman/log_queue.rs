@@ -91,10 +91,6 @@ impl<T: Clone> PDefault for LogQueue<T> {
 
 impl<T: Clone> LogQueue<T> {
     fn enqueue(&self, val: T, tid: usize, op_num: &mut usize, guard: &Guard, pool: &PoolHandle) {
-        // NOTE: Log 큐의 하자 (1/2)
-        // - 우리 큐: enq할 노드만 새롭게 할당 & persist함
-        // - Log 큐: enq할 노드 뿐 아니라 enq log 또한 할당하고 persist함
-        //
         // ```
         let log = POwned::new(
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Enqueue, *op_num),
@@ -158,11 +154,6 @@ impl<T: Clone> LogQueue<T> {
     }
 
     fn dequeue(&self, tid: usize, op_num: &mut usize, guard: &Guard, pool: &PoolHandle) {
-        // NOTE: Log 큐의 하자 (2/2)
-        // - 우리 큐: deq에서 새롭게 할당하는 것 없음
-        // - Log 큐: deq 로그 할당 및 persist
-        //
-        // ```
         let mut log = POwned::new(
             LogEntry::<T>::new(false, PAtomic::null(), Operation::Dequeue, *op_num),
             pool,
@@ -174,8 +165,6 @@ impl<T: Clone> LogQueue<T> {
         let prev = self.logs[tid].load(Ordering::Relaxed, guard);
         self.logs[tid].store(log, Ordering::Relaxed);
         persist_obj(&*self.logs[tid], true); // persist inner of CachePadded
-
-        // ```
 
         // deallocate previous log
         if !prev.is_null() {
@@ -206,15 +195,6 @@ impl<T: Clone> LogQueue<T> {
                         guard,
                     );
                 } else {
-                    // NOTE: 여기서 Log 큐가 우리 큐랑 persist하는 시점은 다르지만 persist하는 총 횟수는 똑같음
-                    // - 우리 큐:
-                    //      - if/else문 진입 전에 persist 1번: "나는(deq POp) 이 노드를 pop 시도할거다"
-                    //      - if/else문 진입 후에 각각 persist 1번: "이 노드를 pop해간 deq POp은 얘다"
-                    // - Log 큐:
-                    //      - if/else문 진입 전에 persist 0번
-                    //      - if/else문 진입 후에 각각 persist 2번: "이 노드를 pop해간 deq log는 얘다", "deq log가 pop한 노드는 이거다"
-                    // TODO: 이게 성능 차이에 영향 미칠지?
-
                     let next_ref = unsafe { next.deref(pool) };
                     if next_ref
                         .log_remove

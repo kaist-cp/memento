@@ -16,7 +16,7 @@ use tinyvec::tiny_vec;
 const MAX_THREADS: usize = 64;
 type Data = usize; // TODO: generic
 
-/// 사용할 스레드 수. combining시 이 스레드 수만큼만 op 순회
+/// restriction of combining iteration
 pub static mut NR_THREADS: usize = MAX_THREADS;
 
 type EnqRetVal = ();
@@ -73,7 +73,7 @@ impl Collectable for DeqRequestRec {
 #[derive(Debug, Default)]
 pub struct Node {
     data: Data,
-    next: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
+    next: PAtomic<Node>,
 }
 
 impl Collectable for Node {
@@ -85,7 +85,7 @@ impl Collectable for Node {
 /// State of Enqueue PBComb
 #[derive(Debug)]
 struct EStateRec {
-    tail: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
+    tail: PAtomic<Node>,
     return_val: [EnqRetVal; MAX_THREADS + 1],
     deactivate: [AtomicBool; MAX_THREADS + 1],
 }
@@ -109,7 +109,7 @@ impl Clone for EStateRec {
 /// State of Dequeue PBComb
 #[derive(Debug)]
 struct DStateRec {
-    head: PAtomic<Node>, // NOTE: reordering 방지를 위한 atomic. CAS는 안씀
+    head: PAtomic<Node>, // Atomic type to restrict reordering. We use this likes plain pointer.
     return_val: [DeqRetVal; MAX_THREADS + 1],
     deactivate: [AtomicBool; MAX_THREADS + 1],
 }
@@ -132,15 +132,11 @@ impl Collectable for DStateRec {
 
 // Shared volatile variables
 lazy_static::lazy_static! {
-    /// 현재 진행중인 enq combiner가 enq 시작한 지점. 여기서부턴 persist아직 보장되지 않았으니 deq해가면 안됨
-    ///
-    /// - 프로그램 시작시 dummy node를 가리키도록 초기화 (첫 시작은 pdefault에서, 이후엔 gc에서)
-    /// - 노드를 직접 저장하지 않고 노드의 상대주소를 저장 (여기에 Atomic<PPtr<Node>>나 PAtomic<Node>는 이상함)
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: VSpinLock = VSpinLock::default();
-    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0)); // TODO: 더 적절한 이름..
+    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: VSpinLock = VSpinLock::default();
@@ -154,7 +150,6 @@ pub struct Queue {
     dummy: PPtr<Node>,
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
-    // NOTE: enq하는데 deq의 variable을 쓰는 실수 주의
     e_request: [CachePadded<PAtomic<EnqRequestRec>>; MAX_THREADS + 1],
     e_state: [CachePadded<EStateRec>; 2],
     e_index: AtomicUsize,
@@ -218,7 +213,7 @@ impl PDefault for Queue {
 
 /// Enq
 impl Queue {
-    /// enq 요청 등록 후 수행
+    /// enq
     pub fn PBQueueEnq<const REC: bool>(
         &mut self,
         arg: Data,
@@ -234,7 +229,7 @@ impl Queue {
             unsafe { prev.deref(pool).activate.load(Ordering::SeqCst) }
         };
 
-        // 새로운 요청 생성
+        // make new request
         let req = POwned::new(
             EnqRequestRec {
                 arg,
@@ -254,23 +249,20 @@ impl Queue {
         )
         .load(Ordering::Relaxed, guard);
 
-        // 이전에 끝난 client라면 같은 결과 반환
+        // return same result if client was already finished.
         if REC {
             if let Some(res) = enq.result.peek(tid, pool) {
                 return res;
             }
         }
 
-        // 요청 저장소에 등록
-        // NOTE: 위에 if REC { 결과 반환 } 없애려면 이 요청 등록도(+state도?) checkpoint해야할 듯.
-        //       안그러면 이미 끝난 요청이 또 등록되어 수행될 수 있음. 또 수행되면 combiner가 enq 노드 새로할당해서 새로 넣음
+        // register request
         self.e_request[tid].store(req, Ordering::SeqCst);
 
-        // 등록한 요청 수행
+        // perform
         self.PerformEnqReq::<REC>(enq, tid, guard, pool)
     }
 
-    /// 요청 수행
     fn PerformEnqReq<const REC: bool>(
         &mut self,
         enq: &mut Enqueue,
@@ -278,15 +270,15 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> EnqRetVal {
-        // enq combiner 결정
+        // decide enq combiner
         let (lval, lockguard) = loop {
-            // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
+            // try to be combiner.
             let lval = match E_LOCK.try_lock::<REC>(tid) {
-                Ok(ret) => break ret,
+                Ok(ret) => break ret, // i am combiner
                 Err((lval, _)) => lval,
             };
 
-            // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
+            // on-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
             let backoff = Backoff::new();
             if lval % 2 == 1 {
                 while lval == E_LOCK.peek().0 {
@@ -304,21 +296,20 @@ impl Queue {
                 == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
-                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
+                // wait until the combiner that processed my op is finished
                 let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
                 while deactivate_lval >= E_LOCK.peek().0 {
                     backoff.snooze();
                 }
 
-                // 결과 저장하고 반환
                 let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid];
                 let _ = enq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
         };
 
-        // enq combiner는 쌓인 enq 요청들을 수행
+        // enq combiner executes the enq requests
         let ind = 1 - self.e_index.load(Ordering::SeqCst);
         self.e_state[ind] = self.e_state[self.e_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
         OLD_TAIL.store(
@@ -329,7 +320,9 @@ impl Queue {
             Ordering::SeqCst,
         );
 
+        // collect the enqueued nodes here and persist them all at once
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
+
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
             if unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) }
@@ -337,13 +330,13 @@ impl Queue {
                 .load(Ordering::SeqCst)
                 != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
-                // 현재 tail의 persist를 예약
+                // reserve persist(current tail)
                 let tail_addr = self.e_state[ind]
                     .tail
                     .load(Ordering::SeqCst, guard)
                     .into_usize();
                 match to_persist.binary_search(&tail_addr) {
-                    Ok(_) => {} // 같은 주소 중복 persist 방지
+                    Ok(_) => {} // no duplicate
                     Err(idx) => to_persist.insert(idx, tail_addr),
                 }
 
@@ -363,7 +356,7 @@ impl Queue {
             .load(Ordering::SeqCst, guard)
             .into_usize();
         match to_persist.binary_search(&tail_addr) {
-            Ok(_) => {} // 같은 주소 중복 persist 방지
+            Ok(_) => {} // no duplicate
             Err(idx) => to_persist.insert(idx, tail_addr),
         }
         // persist all in `to_persist`
@@ -380,13 +373,11 @@ impl Queue {
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
         drop(lockguard); // release E_LOCK
 
-        // 결과 저장하고 반환
         let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid];
         let _ = enq.result.checkpoint::<REC>(res, tid, pool);
         res
     }
 
-    /// 실질적인 enqueue: tail 뒤에 새로운 노드 삽입하고 tail로 설정
     fn raw_enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
         let new_node = POwned::new(
             Node {
@@ -404,7 +395,7 @@ impl Queue {
 
 /// Deq
 impl Queue {
-    /// deq 요청 등록 후 수행
+    /// deq
     pub fn PBQueueDeq<const REC: bool>(
         &mut self,
         deq: &mut Dequeue,
@@ -419,7 +410,7 @@ impl Queue {
             unsafe { prev.deref(pool).activate.load(Ordering::SeqCst) }
         };
 
-        // 새로운 요청 생성
+        // make new deq request
         let req = POwned::new(
             DeqRequestRec {
                 activate: AtomicBool::new(!prev_activate),
@@ -438,21 +429,20 @@ impl Queue {
         )
         .load(Ordering::Relaxed, guard);
 
-        // 이전에 끝난 client라면 같은 결과 반환
+        // return same result if client was already finished.
         if REC {
             if let Some(res) = deq.result.peek(tid, pool) {
                 return res;
             }
         }
 
-        // 요청 저장소에 등록
+        // register new request
         self.d_request[tid].store(req, Ordering::SeqCst);
 
-        // 등록한 요청 수행
+        // perform
         self.PerformDeqReq::<REC>(deq, tid, guard, pool)
     }
 
-    /// 요청 수행
     fn PerformDeqReq<const REC: bool>(
         &mut self,
         deq: &mut Dequeue,
@@ -460,15 +450,15 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> DeqRetVal {
-        // deq combiner 결정
+        // decide deq combiner
         let (lval, lockguard) = loop {
-            // combiner 되기를 시도. lval을 내가 점유했다면 내가 combiner
+            // try to be combiner.
             let lval = match D_LOCK.try_lock::<REC>(tid) {
                 Ok(ret) => break ret,
                 Err((lval, _)) => lval,
             };
 
-            // non-comibner는 combiner가 lock 풀 때까지 busy waiting한 뒤, combiner가 준 결과만 받아감
+            // non-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
             let backoff = Backoff::new();
             if lval % 2 == 1 {
                 while lval == D_LOCK.peek().0 {
@@ -486,21 +476,20 @@ impl Queue {
                 == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
                     .load(Ordering::SeqCst)
             {
-                // 자신의 op을 처리한 combiner가 끝날때까지 기다렸다가 결과 반환
+                // wait until the combiner that processed my op is finished
                 let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
                 while deactivate_lval >= D_LOCK.peek().0 {
                     backoff.snooze();
                 }
 
-                // 결과 저장하고 반환
                 let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid];
                 let _ = deq.result.checkpoint::<REC>(res, tid, pool);
                 return res;
             }
         };
 
-        // deq combiner는 쌓인 deq 요청들을 수행
+        // deq combiner executes the deq requests
         let ind = 1 - self.d_index.load(Ordering::SeqCst);
         self.d_state[ind] = self.d_state[self.d_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
 
@@ -513,7 +502,8 @@ impl Queue {
                     .load(Ordering::SeqCst)
             {
                 let ret_val;
-                // 확실히 persist된 노드들만 deq 수행. OLD_TAIL부터는 현재 enq 중인거라 persist 보장되지 않음
+                // only nodes that are persisted can be dequeued.
+                // from `OLD_TAIL`, persist is not guaranteed as it is currently enqueud.
                 if OLD_TAIL.load(Ordering::SeqCst)
                     != self.d_state[ind]
                         .head
@@ -540,22 +530,19 @@ impl Queue {
         sfence();
         drop(lockguard); // release D_LOCK
 
-        // 결과 저장하고 반환
         let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid];
         let _ = deq.result.checkpoint::<REC>(res, tid, pool);
         res
     }
 
-    /// 실질적인 dequeue: head 한 칸 전진하고 old head를 반환
     fn raw_dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> DeqRetVal {
         let head_shared = head.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head_shared.deref(pool) };
 
-        // NOTE: 원래 구현은 데이터를 반환하질 않고 노드를 반환하므로 free 안함
         let next = head_ref.next.load(Ordering::SeqCst, guard);
         if !next.is_null() {
             head.store(next, Ordering::SeqCst);
-            unsafe { guard.defer_pdestroy(head_shared) };
+            unsafe { guard.defer_pdestroy(head_shared) }; // NOTE: The original implementation does not free because it returns a node rather than data.
             return Some(unsafe { next.deref(pool) }.data);
         }
         None

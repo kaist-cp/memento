@@ -63,7 +63,6 @@ fn get_guard(tid: usize) -> &'static mut Guard {
     unsafe {
         CNT[tid] += 1;
         if CNT[tid] % 1024 == 0 {
-            // TODO: repin_after하기 전에 memento들을 clear 해줘야함
             guard.repin_after(|| {});
         }
     }

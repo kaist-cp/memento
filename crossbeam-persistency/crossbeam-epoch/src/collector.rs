@@ -117,11 +117,9 @@ impl LocalHandle {
 impl Drop for LocalHandle {
     #[inline]
     fn drop(&mut self) {
-        // @anonymous: thread-local panic시 local handle은 drop 되어도 상관 없음. guard만 drop되지 않으면 됨
-        //
-        // (detail) local handle drop의 목적은, 남은 handle 및 guard가 없을 때 global list에서 local을 빼기 위함
-        // - guard가 있었다면: local handle은 drop 되어도 global list에서 local 안빠짐
-        // - guard가 없었다면: global list에서 local 뺄테지만 이는 괜찮은 행동임. 어차피 guard 없었던 거니 새로 만들어도 무방
+        // @old_guard:
+        // - It doesn't matter if the local handle is dropped in a thread-local panic. Only the guard should not be dropped.
+        // - The purpose of local handle drop is to remove local from the global list when there are no remaining handles and guards.
         unsafe {
             Local::release_handle(&*self.local);
         }

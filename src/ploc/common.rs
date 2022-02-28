@@ -143,19 +143,19 @@ impl Timestamp {
 
 #[derive(Debug)]
 pub(crate) struct ExecInfo {
-    /// 스레드별로 확인된 최대 체크포인트 시간
+    /// Maximum checkpoint time checked per thread
     pub(crate) local_max_time: [AtomicU64; NR_MAX_THREADS + 1],
 
-    /// 지난 실행에서 최대 체크포인트 시간 (not changed after main execution)
+    /// Maximum checkpoint time in last execution (not changed after main execution)
     pub(crate) global_max_time: Timestamp,
 
-    /// CAS 정보
+    /// CAS information
     pub(crate) cas_info: CasInfo,
 
-    /// Checkpoint 정보 (not changed after main execution)
+    /// Checkpoint information (not changed after main execution)
     pub(crate) chk_info: Timestamp,
 
-    /// 프로그램 초기 시간 (not changed after main execution)
+    /// Program initial time (not changed after main execution)
     pub(crate) init_time: Timestamp,
 }
 
@@ -218,7 +218,7 @@ impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
     fn filter(chk: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let idx = chk.max_idx();
 
-        // Checkpoint 중 max timestamp를 가진 걸로 기록해줌
+        // Record the one with max timestamp among checkpoints
         if chk.saved[idx].1 > pool.exec_info.chk_info {
             pool.exec_info.chk_info = chk.saved[idx].1;
         }

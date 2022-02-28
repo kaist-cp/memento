@@ -24,20 +24,17 @@ check:
     - cargo check --verbose
     - cargo fmt -- --check
     # - cargo clippy -- -D warnings
-    # - cargo audit # TODO: chrono 때문에 통과 안 돼서 잠시 commenting (issue: https://github.com/chronotope/chrono/pull/578#issuecomment-945604623)
+    # - cargo audit
 
 debug:
   stage: test
   script:
-    # pool layout 바뀔 때마다 기존 파일을 직접 제거해야하는 불편함 해소
     - rm -f test/*
 
-    # `RUST_MIN_STACK`: 테스트시 Op들을 정적할당하기 위해 Stack 크기가 커야함
-    # `no_persist`: ci 서버는 clflush 등의 persist instruction 안됨 ("illegal instruction")
     - RUST_MIN_STACK=5073741824 cargo test --features no_persist
 
-    # idempotency 테스트를 위해 한 번 더 실행하기
-    # - RUST_MIN_STACK=5073741824 cargo test --features no_persist # TODO: test에 rec run 적용해서 다시 오픈
+    # idempotency test
+    # - RUST_MIN_STACK=5073741824 cargo test --features no_persist
 
 release:
   stage: test

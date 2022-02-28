@@ -105,11 +105,6 @@ impl<T: Clone> DurableQueue<T> {
     }
 
     fn dequeue(&self, tid: usize, guard: &Guard, pool: &PoolHandle) {
-        // NOTE: Durable 큐의 하자 (1/1)
-        // - 우리 큐: deq에서 새롭게 할당하는 것 없음
-        // - Durable 큐: deq한 값을 가리킬 포인터 할당 및 persist
-        //
-        // ```
         let mut new_ret_val = POwned::new(None, pool).into_shared(guard);
         let new_ret_val_ref = unsafe { new_ret_val.deref_mut(pool) };
         persist_obj(new_ret_val_ref, true);
@@ -118,7 +113,6 @@ impl<T: Clone> DurableQueue<T> {
         self.ret_val[tid].store(new_ret_val, Ordering::Relaxed);
         persist_obj(&*self.ret_val[tid], true); // persist inner of CachePadded
 
-        // ```
         // deallocate previous ret_val
         if !prev.is_null() {
             unsafe { guard.defer_pdestroy(prev) };
@@ -148,16 +142,6 @@ impl<T: Clone> DurableQueue<T> {
                         guard,
                     );
                 } else {
-                    // NOTE: 여기서 Durable 큐가 우리 큐랑 persist하는 시점은 다르지만 persist하는 총 횟수는 똑같음
-                    // - 우리 큐:
-                    //      - if/else문 진입 전에 persist 1번: "나는(deq POp) 이 노드를 pop 시도할거다"
-                    //      - if/else문 진입 후에 각각 persist 1번: "이 노드를 pop해간 deq POp은 얘다"
-                    // - Durable 큐:
-                    //      - if/else문 진입 전에 persist 0번
-                    //      - if/else문 진입 후에 각각 persist 2번: "이 노드를 pop해간 스레드는 `deq tid`다, "`deq tid` 스레드가 pop한 값는 이거다"
-                    // TODO: 이게 성능 차이에 영향 미칠지?
-                    //      - e.g. KSC 실험은 T를 고작 usize로 했지만, pop value의 사이즈가 커지면 유의미한 차이를 보일 것으로 기대
-
                     let next_ref = unsafe { next.deref(pool) };
                     let val = Some(unsafe { (*next_ref.val.as_ptr()).clone() });
 

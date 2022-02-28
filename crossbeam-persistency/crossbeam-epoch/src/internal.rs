@@ -105,7 +105,7 @@ impl Bag {
         SealedBag { epoch, _bag: self }
     }
 
-    /// 같은 key를 가진 deferred function이 있는지 여부 반환
+    /// check if there is deferred function with `key`
     pub(crate) fn is_exist(&self, key: usize) -> bool {
         for d in &self.deferreds[0..self.len] {
             if let Some(k) = d.key() {
@@ -276,7 +276,6 @@ impl Global {
         };
 
         for _ in 0..steps {
-            // 만료된 bag을 drop시키며 안에 저장해두었던 deferred function 실행
             match self.queue.try_pop_if(
                 &|sealed_bag: &SealedBag| sealed_bag.is_expired(global_epoch),
                 guard,
@@ -418,18 +417,17 @@ impl Local {
         }
     }
 
-    /// global list에서 tid의 `Local` 찾아 handle 반환
+    /// Find `Local` of `tid` in the provided `Global`
     pub(crate) fn find<'a>(collector: &'a Collector, tid: usize) -> Option<LocalHandle> {
-        // list 탐색용 임시 guard 얻기
+        // guard to iterate list
         let tmp_handle = Local::register(collector, None);
         let tmp_guard = tmp_handle.pin();
 
-        // list 탐색
         'find: loop {
             for local in collector.global.locals.iter(&tmp_guard) {
                 match local {
                     Err(IterError::Stalled) => {
-                        // 다른 스레드와 꼬인 경우 처음부터 다시 탐색
+                        // If it is stalled due to contention with another thread, try again.
                         continue 'find;
                     }
                     Ok(local) => {
@@ -450,11 +448,11 @@ impl Local {
         self.tid
     }
 
-    // Local이 세고 있는 obj의 수를, Local을 처음 만들 때처럼 초기화
+    // reset count of obj likes new Local
     pub(crate) unsafe fn reset_count(&self) {
         self.handle_count.set(1);
         self.guard_count.set(0);
-        self.pin_count.set(Wrapping(1)); // 얘는 초기화 안해도 되지만 API 이름과 맞추기 위해 수행. 별로 중요하지 않음
+        self.pin_count.set(Wrapping(1));
         self.is_repinning.set(false);
     }
 
@@ -518,7 +516,6 @@ impl Local {
             let global_epoch = self.global().epoch.load(Ordering::Relaxed);
             let new_epoch = global_epoch.pinned();
 
-            // local의 epoch을 global epoch에 맞게 설정
             // Now we must store `new_epoch` into `self.epoch` and execute a `SeqCst` fence.
             // The fence makes sure that any future loads from `Atomic`s will not happen before
             // this store.
@@ -560,7 +557,6 @@ impl Local {
             // After every `PINNINGS_BETWEEN_COLLECT` try advancing the epoch and collecting
             // some garbage.
             if count.0 % Self::PINNINGS_BETWEEN_COLLECT == 0 {
-                // 첫 guard 생성을 128(PINNINGS_BETWEEN_COLLECT)번 할때마다 epoch을 advance시키며 만료된 deferred function을 호출
                 self.global().collect(&guard);
             }
         }
@@ -585,7 +581,6 @@ impl Local {
                 sfence();
             }
 
-            // local의 epoch을 다시 '시작' 상태로 초기화
             self.epoch.store(Epoch::starting(), Ordering::Release);
 
             if self.handle_count.get() == 0 {
@@ -634,7 +629,7 @@ impl Local {
     pub(crate) fn acquire_handle(&self) {
         let handle_count = self.handle_count.get();
 
-        // @anonymous: 이제 handle 개수는 0이 될 수 있음. thread-local crash 이후 old guard로 다시 handle 가져오기 전까진 0
+        // Now the number of handles can be zero by thread-crash.
         // debug_assert!(handle_count >= 1);
         self.handle_count.set(handle_count + 1);
     }
@@ -688,7 +683,7 @@ impl Local {
         }
     }
 
-    /// pfree set에 key가 있는지 확인
+    /// check if there is `key` in pfree set
     pub(crate) fn is_exist_pfree(&self, k: usize) -> bool {
         self.pfree
             .with(|v| unsafe { &*v })
@@ -696,7 +691,7 @@ impl Local {
             .is_ok()
     }
 
-    /// bag에 있는 deferred function의 key들을 pfree set에도 기록
+    /// push keys of deffered function in the `bag` to `pfree` set
     pub(crate) fn push_pfrees(&self, bag: &Bag) {
         let v = self.pfree.with_mut(|v| unsafe { &mut *v });
         for d in &bag.deferreds[0..bag.len] {
@@ -708,7 +703,7 @@ impl Local {
         }
     }
 
-    /// TODO: doc
+    /// push persist request to `persist` set
     pub(crate) fn push_persist<T>(&self, obj: &T) {
         let ptr = obj as *const T as *const u8 as *mut u8 as usize;
         let len = std::mem::size_of_val(obj);
