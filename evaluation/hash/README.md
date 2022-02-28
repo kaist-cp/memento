@@ -5,7 +5,6 @@ We used the same benchmark and comparison target as [Persistent Memory Hash Inde
 
 ## Run the entire benchmark
 
-
 ```
 ulimit -s 8192000
 ./build.sh
@@ -16,7 +15,7 @@ This creates raw txt that containing measuring result and plots under `./out/`.
 
 ## Run a single benchmark,
 
-You can run a single benchamrk with PiBench executable likes following command.
+You can run a single benchamrk with PiBench executable,
 
 ```
 ulimit -s 8192000

@@ -1,5 +1,5 @@
 [package]
-name = "clevel"
+name = "SOFT"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,8 +9,8 @@ edition = "2021"
 # memento  = { git = "https://cp-git.kaist.ac.kr/persistent-mem/memento.git/" }
 
 memento  = { path = "../../../../../" }
-crossbeam-epoch = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-epoch", branch = "memento" }
-crossbeam-utils = { git = "https://cp-git.kaist.ac.kr/persistent-mem/crossbeam-memento/", package = "crossbeam-utils", branch = "memento" }
+crossbeam-epoch = { path = "../../../../../crossbeam-persistency/crossbeam-epoch" }
+crossbeam-utils = { path = "../../../../../crossbeam-persistency/crossbeam-utils" }
 itertools = "0.10.3"
 etrace = "1.1.1"
 hashers = "1.0.1"
@@ -22,7 +22,7 @@ tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
 array-init = "2.0.0"
 
 [lib]
-name = "clevel_rust"
+name = "SOFT_rust"
 crate_type = ["staticlib"]
 
 [features]

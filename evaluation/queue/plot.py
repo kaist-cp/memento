@@ -11,15 +11,15 @@ objs = {
     "queue": {
         "targets": {
             "memento_queue": {'data_id': '', 'label': "MMT", 'marker': 'o', 'color': 'k', 'style': '-'},
-            "memento_queue_lp": {'data_id': '', 'label': "MMT-lp", 'marker': 'o', 'color': 'k', 'style': ':'},
-            "memento_queue_general": {'data_id': '', 'label': "MMT-general", 'marker': 'o', 'color': 'k', 'style': '--'},
-            "memento_queue_pbcomb": {'data_id': '', 'label': "MMT-pbcomb", 'marker': 'o', 'color': 'k', 'style': '-.'},
-            'durable_queue': {'data_id': '', 'label': "Durable", 'marker': 'd', 'color': 'hotpink', 'style': '--'},
-            'log_queue': {'data_id': '', 'label': "Log", 'marker': 'x', 'color': 'c', 'style': '--'},
-            'dss_queue': {'data_id': '', 'label': "DSS", 'marker': 'v', 'color': 'orange', 'style': '--'},
-            'pbcomb_queue': {'data_id': '', 'label': "PBComb", 'marker': '>', 'color': 'red', 'style': '--'},
-            'pmdk_queue': {'data_id': '', 'label': "PMDK", 'marker': 's', 'color': 'skyblue', 'style': '--'},
-            'crndm_queue': {'data_id': '', 'label': "Corundum", 'marker': '^', 'color': 'green', 'style': '--'},
+            "memento_queue_lp": {'data_id': '', 'label': "MMT-lp", 'marker': 'd', 'color': 'k', 'style': ':'},
+            "memento_queue_general": {'data_id': '', 'label': "MMT-general", 'marker': 'x', 'color': 'k', 'style': '--'},
+            "memento_queue_pbcomb": {'data_id': '', 'label': "MMT-pbcomb", 'marker': 'v', 'color': 'k', 'style': '-.'},
+            'durable_queue': {'data_id': '', 'label': "Durable", 'marker': 'o', 'color': 'hotpink', 'style': '--'},
+            'log_queue': {'data_id': '', 'label': "Log", 'marker': 'o', 'color': 'c', 'style': '--'},
+            'dss_queue': {'data_id': '', 'label': "DSS", 'marker': 'o', 'color': 'orange', 'style': '--'},
+            'pbcomb_queue': {'data_id': '', 'label': "PBComb", 'marker': 'o', 'color': 'red', 'style': '--'},
+            # 'pmdk_queue': {'data_id': '', 'label': "PMDK", 'marker': 's', 'color': 'skyblue', 'style': '--'},
+            # 'crndm_queue': {'data_id': '', 'label': "Corundum", 'marker': '^', 'color': 'green', 'style': '--'},
         },
     },
 
@@ -50,7 +50,7 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.xlabel(xlabel, size='large')
     if ylabel != '':
         plt.ylabel(ylabel, size='large')
-    figpath = "{}.svg".format(output)
+    figpath = "{}.png".format(output)
     plt.tight_layout()
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
 
@@ -128,4 +128,4 @@ for obj in objs:
         ax = draw('Threads', ylabel,
                   plot_lines, "./out/{}".format(plot_id), 4)
     axLine, axLabel = ax.get_legend_handles_labels()
-    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
+    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))

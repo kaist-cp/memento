@@ -13,7 +13,7 @@ This creates CSV data and plots under `./out/`.
 
 ## Run a single benchmark
 
-You can run a single benchamrk with following command,
+You can run a single benchamrk,
 
 ```bash
 ./build.sh
