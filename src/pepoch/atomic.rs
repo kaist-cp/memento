@@ -165,7 +165,6 @@ fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
 
 /// Decomposes a tagged pointer `data` into the pointer and the tag.
 /// (tid, high_tag, ptr, low_tag)
-// TODO(opt): Decompose separately?
 #[inline]
 fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, usize, usize) {
     (
@@ -1004,6 +1003,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
         }
     }
 
+    /// Format
     pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
         let (_, _, _, offset, _) = decompose_tag::<T>(data);
@@ -1312,13 +1312,13 @@ impl<T: ?Sized + Pointable> POwned<T> {
         unsafe { Self::from_usize(compose_tag::<T>(data, tag)) }
     }
 
-    /// TODO(doc)
+    /// Set aux bit
     pub fn with_aux_bit(self, aux_bit: usize) -> POwned<T> {
         let data = self.into_usize();
         unsafe { Self::from_usize(compose_aux_bit(aux_bit, data)) }
     }
 
-    /// TODO(doc)
+    /// Set tid
     pub fn with_tid(self, tid: usize) -> POwned<T> {
         let data = self.into_usize();
         unsafe { Self::from_usize(compose_tid::<T>(tid, data)) }
@@ -1416,6 +1416,7 @@ impl<T: ?Sized + Pointable> fmt::Debug for POwned<T> {
 }
 
 impl<T: Clone> POwned<T> {
+    /// Clone
     pub fn clone(&self, pool: &PoolHandle) -> Self {
         POwned::new(unsafe { self.deref(pool) }.clone(), pool).with_tag(self.tag())
     }
@@ -1506,7 +1507,6 @@ impl<T> PShared<'_, T> {
     /// let p = a.load(SeqCst, guard);
     /// assert_eq!(p.as_ptr(), ptr);
     /// ```
-    // TODO: Define as as AsPptr? (using `impl AsPptr for PShared<....`)
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn as_ptr(&self) -> PPtr<T> {
         let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
@@ -1755,19 +1755,19 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
         tag
     }
 
-    /// TODO(doc)
+    /// Get aux bit
     pub fn aux_bit(&self) -> usize {
         let (aux_bit, _, _, _, _) = decompose_tag::<T>(self.data);
         aux_bit
     }
 
-    /// TODO(doc)
+    /// Get tid
     pub fn tid(&self) -> usize {
         let (_, tid, _, _, _) = decompose_tag::<T>(self.data);
         tid
     }
 
-    /// TODO(doc)
+    /// Get high tag
     pub fn high_tag(&self) -> usize {
         let (_, _, tag, _, _) = decompose_tag::<T>(self.data);
         tag
@@ -1801,12 +1801,12 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
         unsafe { Self::from_usize(compose_tag::<T>(self.data, tag)) }
     }
 
-    /// TODO(doc)
+    /// Set aux bit
     pub fn with_aux_bit(&self, aux_bit: usize) -> PShared<'g, T> {
         unsafe { Self::from_usize(compose_aux_bit(aux_bit, self.data)) }
     }
 
-    /// TODO(doc)
+    /// Set tid
     pub fn with_tid(&self, tid: usize) -> PShared<'g, T> {
         unsafe { Self::from_usize(compose_tid::<T>(tid, self.data)) }
     }
