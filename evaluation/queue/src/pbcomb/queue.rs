@@ -167,7 +167,7 @@ pub struct PBCombQueue {
     dummy: PPtr<Node>,
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
-    e_request: [RequestRec; MAX_THREADS + 1],
+    e_request: [CachePadded<RequestRec>; MAX_THREADS + 1],
     e_state: [CachePadded<EStateRec>; 2],
     e_index: AtomicUsize,
 
