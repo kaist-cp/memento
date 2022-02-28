@@ -18,8 +18,8 @@ objs = {
             'log_queue': {'data_id': '', 'label': "Log", 'marker': 'o', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DSS", 'marker': 'o', 'color': 'orange', 'style': '--'},
             'pbcomb_queue': {'data_id': '', 'label': "PBComb", 'marker': 'o', 'color': 'red', 'style': '--'},
-            # 'pmdk_queue': {'data_id': '', 'label': "PMDK", 'marker': 's', 'color': 'skyblue', 'style': '--'},
-            # 'crndm_queue': {'data_id': '', 'label': "Corundum", 'marker': '^', 'color': 'green', 'style': '--'},
+            'pmdk_queue': {'data_id': '', 'label': "PMDK", 'marker': 's', 'color': 'skyblue', 'style': '--'},
+            'crndm_queue': {'data_id': '', 'label': "Corundum", 'marker': '^', 'color': 'green', 'style': '--'},
         },
     },
 
