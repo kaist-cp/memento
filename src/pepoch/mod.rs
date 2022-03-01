@@ -86,6 +86,7 @@ pub trait PDestroyable {
 
 impl PDestroyable for Guard {
     unsafe fn defer_pdestroy<T>(&self, ptr: PShared<'_, T>) {
-        self.defer_unchecked(move || ptr.into_owned(), Some(ptr.as_ptr().into_offset()));
+        // self.defer_unchecked(move || ptr.into_owned(), Some(ptr.as_ptr().into_offset())); // 2081026.1
+        self.defer_unchecked(move || ptr.into_owned(), None); // 2498565
     }
 }
