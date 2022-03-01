@@ -86,13 +86,13 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
         let old_ref = some_or!(unsafe { old.as_ref(pool) }, return Ok(old));
 
-        let owner = old_ref.replacement();
-        let next = owner.load(Ordering::SeqCst, guard);
-        if next == not_deleted() {
+        let repl = old_ref.replacement();
+        let new = repl.load(Ordering::SeqCst, guard);
+        if new == not_deleted() {
             return Ok(old);
         }
 
-        if next.as_ptr() == old.as_ptr() {
+        if new.as_ptr() == old.as_ptr() {
             // Reflexive
             // Notice that it cannot be deleted at this time
             return Err(old);
@@ -110,10 +110,10 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 continue;
             }
 
-            persist_obj(owner, false); // cas soon
+            persist_obj(repl, false); // cas soon
             let ret = match self.inner.compare_exchange(
                 cur,
-                next.with_tid(0),
+                new.with_tid(0),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
