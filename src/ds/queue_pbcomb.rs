@@ -213,15 +213,17 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> EnqRetVal {
+        let node = POwned::new(
+            Node {
+                data: arg,
+                next: PAtomic::null(),
+            },
+            pool,
+        );
+        persist_obj(unsafe { node.deref(pool) }, true);
         let req = POwned::new(
             EnqRequestRec {
-                arg: PAtomic::new(
-                    Node {
-                        data: arg,
-                        next: PAtomic::null(),
-                    },
-                    pool,
-                ),
+                arg: PAtomic::from(node),
                 retval: None,
                 deactivate: AtomicBool::new(false),
             },
@@ -316,7 +318,7 @@ impl Queue {
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 q_req_ref.retval = Some(());
                 q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                let _ = ENQ_CNT.fetch_add(1, Ordering::SeqCst);
+                persist_obj(q_req_ref, true);
             }
         }
         let tail_addr = self.e_state.tail[ind]
@@ -332,7 +334,7 @@ impl Queue {
             persist_obj(unsafe { node.deref(pool) }, false);
         }
         let new_req_arr = POwned::new(array_init(|_| PAtomic::null()), pool);
-        persist_obj(unsafe { &new_req_arr.deref(pool) }, true);
+        persist_obj(unsafe { new_req_arr.deref(pool) }, true);
         self.e_state
             .requests
             .store(new_req_arr.with_tag(ind), Ordering::SeqCst);
@@ -448,7 +450,6 @@ impl Queue {
                 {
                     ret_val = Self::raw_dequeue(&self.d_state.head[ind], guard, pool);
                 } else {
-                    panic!("!!!");
                     ret_val = None;
                 }
                 let q_req_ref =
@@ -456,11 +457,11 @@ impl Queue {
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 q_req_ref.retval = Some(ret_val);
                 q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                let _ = DEQ_CNT.fetch_add(1, Ordering::SeqCst);
+                persist_obj(q_req_ref, true);
             }
         }
         let new_req_arr = POwned::new(array_init(|_| PAtomic::null()), pool);
-        persist_obj(unsafe { &new_req_arr.deref(pool) }, true);
+        persist_obj(unsafe { new_req_arr.deref(pool) }, true);
         self.d_state
             .requests
             .store(new_req_arr.with_tag(ind), Ordering::SeqCst);
