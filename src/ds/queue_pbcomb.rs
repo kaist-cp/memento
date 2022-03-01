@@ -1,4 +1,4 @@
-//! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
+//! Combining queue
 #![allow(non_snake_case)]
 #![allow(warnings)]
 use crate::ds::spin_lock_volatile::VSpinLock;
@@ -17,7 +17,7 @@ use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use tinyvec::tiny_vec;
 
 const MAX_THREADS: usize = 64;
-type Data = usize; // TODO: generic
+type Data = usize;
 
 /// restriction of combining iteration
 pub static mut NR_THREADS: usize = MAX_THREADS;
@@ -57,12 +57,8 @@ struct EnqRequestRec {
 }
 
 impl Collectable for EnqRequestRec {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
-}
-
-impl Clone for EnqRequestRec {
-    fn clone(&self) -> Self {
-        todo!()
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut s.arg, tid, gc, pool);
     }
 }
 
@@ -73,9 +69,7 @@ struct DeqRequestRec {
 }
 
 impl Collectable for DeqRequestRec {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 /// Node
@@ -100,8 +94,16 @@ struct EStateRec {
 
 impl Collectable for EStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // PAtomic::filter(&mut s.tail, tid, gc, pool);
-        todo!()
+        PAtomic::filter(&mut s.tail[0], tid, gc, pool);
+        PAtomic::filter(&mut s.tail[1], tid, gc, pool);
+
+        let mut req_arr = s.requests.load(Ordering::SeqCst, unsafe { unprotected() });
+        if !req_arr.is_null() {
+            let req_arr_ref = unsafe { req_arr.deref_mut(pool) };
+            for mut req in req_arr_ref.iter_mut() {
+                PAtomic::filter(req, tid, gc, global_pool().unwrap());
+            }
+        }
     }
 }
 
@@ -114,7 +116,16 @@ struct DStateRec {
 
 impl Collectable for DStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // PAtomic::filter(&mut s.head, tid, gc, pool);
+        PAtomic::filter(&mut s.head[0], tid, gc, pool);
+        PAtomic::filter(&mut s.head[1], tid, gc, pool);
+
+        let mut req_arr = s.requests.load(Ordering::SeqCst, unsafe { unprotected() });
+        if !req_arr.is_null() {
+            let req_arr_ref = unsafe { req_arr.deref_mut(pool) };
+            for mut req in req_arr_ref.iter_mut() {
+                PAtomic::filter(req, tid, gc, global_pool().unwrap());
+            }
+        }
     }
 }
 
@@ -125,42 +136,29 @@ lazy_static::lazy_static! {
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: VSpinLock = VSpinLock::default();
     static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
-    static ref ENQ_CNT: AtomicUsize = AtomicUsize::new(0);
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: VSpinLock = VSpinLock::default();
     static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
-    static ref DEQ_CNT: AtomicUsize = AtomicUsize::new(0);
 }
 
-/// TODO: doc
+/// Combining Queue
 #[derive(Debug)]
 pub struct Queue {
     /// Shared non-volatile variables
     dummy: PPtr<Node>,
-
-    /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     e_state: CachePadded<EStateRec>,
-
-    /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
     d_state: CachePadded<DStateRec>,
 }
 
 impl Collectable for Queue {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // PPtr::filter(&mut s.dummy, tid, gc, pool);
-        // for tid in 0..MAX_THREADS + 1 {
-        //     PAtomic::filter(&mut *s.e_request[tid], tid, gc, pool);
-        //     PAtomic::filter(&mut *s.d_request[tid], tid, gc, pool);
-        // }
-        // EStateRec::filter(&mut *s.e_state[0], tid, gc, pool);
-        // EStateRec::filter(&mut *s.e_state[1], tid, gc, pool);
-        // DStateRec::filter(&mut *s.d_state[0], tid, gc, pool);
-        // DStateRec::filter(&mut *s.d_state[1], tid, gc, pool);
+        PPtr::filter(&mut s.dummy, tid, gc, pool);
+        EStateRec::filter(&mut *s.e_state, tid, gc, pool);
+        DStateRec::filter(&mut *s.d_state, tid, gc, pool);
 
         // initialize global volatile variable manually
-        // OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
-        todo!()
+        OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
     }
 }
 
@@ -230,7 +228,6 @@ impl Queue {
             pool,
         );
         persist_obj(unsafe { req.deref(pool) }, true);
-
         let my_req = ok_or!(
             enq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
             e,
@@ -488,12 +485,11 @@ impl Queue {
 mod test {
     use std::sync::atomic::Ordering;
 
-    use crate::ds::queue_combining::{Queue, DEQ_CNT, ENQ_CNT};
     use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
 
-    use super::{Dequeue, Enqueue};
+    use super::{Dequeue, Enqueue, Queue};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
@@ -530,11 +526,6 @@ mod test {
                 // T1: Check results of other threads
                 1 => {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
-                    let enq_cnt = ENQ_CNT.load(Ordering::SeqCst);
-                    let deq_cnt = ENQ_CNT.load(Ordering::SeqCst);
-                    println!("enq cnt: {enq_cnt}, deq_cnt: {deq_cnt}");
-                    assert!(enq_cnt == NR_THREAD * COUNT);
-                    assert!(deq_cnt == NR_THREAD * COUNT);
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
