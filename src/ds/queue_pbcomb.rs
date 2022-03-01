@@ -315,7 +315,7 @@ impl Queue {
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 q_req_ref.retval = Some(());
                 q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                persist_obj(q_req_ref, true);
+                persist_obj(q_req_ref, false);
             }
         }
         let tail_addr = self.e_state.tail[ind]
@@ -454,7 +454,7 @@ impl Queue {
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 q_req_ref.retval = Some(ret_val);
                 q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                persist_obj(q_req_ref, true);
+                persist_obj(q_req_ref, false);
             }
         }
         let new_req_arr = POwned::new(array_init(|_| PAtomic::null()), pool);
