@@ -80,10 +80,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     continue;
                 }
 
-                if !mmt.is_failed() {
-                    mmt.check_as_failure(&pool.exec_info);
-                }
-
+                mmt.checkpoint_fail(tid, &pool.exec_info);
                 return Err(cur);
             }
 
@@ -358,10 +355,12 @@ impl Cas {
     }
 
     #[inline]
-    fn check_as_failure(&mut self, exec_info: &ExecInfo) {
+    fn checkpoint_fail(&mut self, tid: usize, exec_info: &ExecInfo) {
         let t = exec_info.exec_time();
-        self.checkpoint = Timestamp::new(Self::FAILED, t);
+        let new_chk = Timestamp::new(Self::FAILED, t);
+        self.checkpoint = new_chk;
         persist_obj(&self.checkpoint, true);
+        exec_info.local_max_time[tid].store(new_chk.into(), Ordering::Relaxed);
     }
 
     #[inline]
