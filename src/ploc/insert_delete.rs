@@ -268,6 +268,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     }
 
     /// Delete
+    ///
+    /// Requirement: `old` is not null
     pub fn delete<'g, const REC: bool>(
         &self,
         old: PShared<'g, N>,
@@ -319,10 +321,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         guard: &'g Guard,
         pool: &PoolHandle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        let old_ref = some_or!(
-            unsafe { old.as_ref(pool) },
-            return Err(ok_or!(self.load_help(old, guard, pool), e, e)) // if null, return failure.
-        );
+        let old_ref = unsafe { old.deref(pool) };
 
         // Failure if the owner is not me
         let owner = old_ref.replacement();

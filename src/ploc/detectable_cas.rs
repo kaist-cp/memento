@@ -150,6 +150,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         // Check if the CAS I did before crash remains as it is
         if cur == new.with_aux_bit(Cas::parity_to_bit(next_par)).with_tid(tid) {
+            persist_obj(&self.inner, true);
             mmt.checkpoint_succ(next_par, tid, exec_info);
             let _ = self
                 .inner
