@@ -10,12 +10,12 @@ objs = {
     "hash": {
         "targets": {
             "CCEH": {'label': "CCEH", 'marker': 'x', 'color': 'skyblue', 'style': '-'},
-            'Level': {'label': "LEVEL", 'marker': 'o', 'color': 'orange', 'style': '-'},
+            'Level': {'label': "Level", 'marker': 'o', 'color': 'orange', 'style': '-'},
             'Dash': {'label': "Dash", 'marker': '^', 'color': 'green', 'style': '-'},
             'PCLHT': {'label': "PCLHT", 'marker': 'v', 'color': 'gold', 'style': '-'},
-            "clevel": {'label': "CLEVEL", 'marker': 's', 'color': 'gray', 'style': '-'},
+            "clevel": {'label': "Clevel", 'marker': 's', 'color': 'gray', 'style': '-'},
             "clevel_rust": {
-                'label': "CLEVEL-MMT", 'marker': 's', 'color': 'black', 'style': '-',
+                'label': "Clevel-mmt", 'marker': 's', 'color': 'black', 'style': '-',
                 'data_id': {  # select data manually. or read latest data
                     'insert': '',
                     'pos_search': '',
@@ -28,7 +28,7 @@ objs = {
             },
             'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
             'SOFT_rust': {
-                'label': "SOFT-MMT", 'marker': 'o', 'color': 'blue', 'style': '-',
+                'label': "SOFT-mmt", 'marker': 'o', 'color': 'blue', 'style': '-',
                 'data_id': {  # select data manually. or read latest data
                     'insert': '',
                     'pos_search': '',
