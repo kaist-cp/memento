@@ -36,7 +36,7 @@ def draw_legend(line, label, figpath):
 
 def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.clf()
-    plt.figure(figsize=(4, 4))
+    plt.figure(figsize=(4, 3))
     markers_on = (datas[0]['x'] == 1) | (datas[0]['x'] % x_interval == 0)
 
     for data in datas:

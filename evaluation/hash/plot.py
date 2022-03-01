@@ -168,9 +168,9 @@ def draw_ax(bench, ax, datas):
 
 def draw_axes(bench, ylabel, axes_datas):
     if bench == 'latency':
-        figsize = (6, 2)
+        figsize = (6, 1.6)
     else:
-        figsize = (20, 3)
+        figsize = (20, 2.4)
     fig, axes = plt.subplots(1, len(axes_datas), figsize=figsize)
     for i, ax_datas in enumerate(axes_datas):
         draw_ax(bench, axes[i], ax_datas)
@@ -286,7 +286,7 @@ for obj, obj_info in objs.items():
         dfs_xlabel.append('('+chr(ix+ord('a'))+') '+dist)
 
     # draw graph, not save
-    fig, axes = plt.subplots(1, 2, figsize=(6, 2))
+    fig, axes = plt.subplots(1, 2, figsize=(6, 1.6))
     for ix, df in enumerate(dfs):
         colors = [objs["hash"]["targets"][target]["color"]
                   for target in df.columns[1:]]
