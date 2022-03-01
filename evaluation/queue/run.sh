@@ -5,7 +5,6 @@ git_hash=$(git log -1 --format="%h")
 function show_cfg() {
     echo "<Configurations>"
     echo "PMEM path: $(realpath ${PMEM_PATH})"
-    echo "Max threads: ${MAX_THREADS}"
     echo "Test count: ${TEST_CNT}"
     echo "Test duration: ${TEST_DUR}s"
     echo ""
@@ -45,11 +44,6 @@ function benches() {
 }
 
 set -e
-
-if [ $# -ne 1 ] ; then
-    echo "Usage: run.sh <pmempath>"
-    exit 0
-fi
 
 # 1. Setup
 PMEM_PATH=/mnt/pmem0
