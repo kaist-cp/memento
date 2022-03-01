@@ -161,8 +161,7 @@ pub extern "C" fn get_capacity(obj: &ClevelInner<Key, Value>, pool: &PoolHandle)
 }
 
 #[no_mangle]
-pub extern "C" fn is_resizing(_obj: &ClevelInner<Key, Value>, _pool: &PoolHandle) -> bool {
-    // let guard = crossbeam_epoch::pin();
-    // obj.is_resizing(&guard, pool)
-    false
+pub extern "C" fn is_resizing(obj: &ClevelInner<Key, Value>, pool: &PoolHandle) -> bool {
+    let guard = crossbeam_epoch::pin();
+    obj.is_resizing(&guard, pool)
 }
