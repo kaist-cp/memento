@@ -66,32 +66,6 @@ impl Clone for EnqRequestRec {
     }
 }
 
-impl EnqRequestRec {
-    // const ACK: usize = 1;
-
-    fn set_retval(&mut self, retval: ()) {
-        self.retval = Some(retval);
-        // let node = PAtomic::null()
-        //     .load(Ordering::SeqCst, unsafe { unprotected() })
-        //     .with_tag(Self::ACK);
-        // self.retval.store(node, Ordering::SeqCst);
-        // assert!(self.get_retval().is_some())
-    }
-
-    fn get_retval(&self) -> Option<()> {
-        // if self
-        //     .retval
-        //     .load(Ordering::SeqCst, unsafe { unprotected() })
-        //     .tag()
-        //     == Self::ACK
-        // {
-        //     return Some(());
-        // }
-        // None
-        todo!()
-    }
-}
-
 #[derive(Debug, Default)]
 struct DeqRequestRec {
     retval: Option<DeqRetVal>,
@@ -101,37 +75,6 @@ struct DeqRequestRec {
 impl Collectable for DeqRequestRec {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
-    }
-}
-
-impl DeqRequestRec {
-    const EMPTY: usize = 1;
-
-    fn set_retval(&mut self, retval: DeqRetVal) {
-        self.retval = Some(retval);
-        fence(Ordering::SeqCst);
-    }
-
-    fn get_retval(&self, guard: &Guard, pool: &PoolHandle) -> Option<DeqRetVal> {
-        fence(Ordering::SeqCst);
-        self.retval
-        // // println!("{:?}", node);
-        // if node.is_null() {
-        //     if node.tag() != Self::EMPTY {
-        //         return None; // not yet finished
-        //     }
-        //     return Some(None); // finished with EMPTY
-        // }
-
-        // // finished with some Node
-        // Some(Some(unsafe {
-        //     guard.defer_pdestroy(node);
-        //     node.deref(pool)
-        //         .next
-        //         .load(Ordering::SeqCst, guard)
-        //         .deref(pool)
-        //         .data
-        // }))
     }
 }
 
@@ -326,6 +269,7 @@ impl Queue {
                 }
             }
 
+            // if my_req_ref.deactivate.load(Ordering::SeqCst) {
             if my_req_ref.deactivate.load(Ordering::SeqCst) {
                 // wait until the combiner that processed my op is finished
                 let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
@@ -465,10 +409,8 @@ impl Queue {
                 }
             }
 
-            // if let Some(ret) = unsafe { my_req.deref(pool) }.get_retval(guard, pool) {
             if my_req_ref.deactivate.load(Ordering::SeqCst) {
                 // wait until the combiner that processed my op is finished
-                // sleep(Duration::from_millis(10));
                 let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
                 while deactivate_lval >= D_LOCK.peek().0 {
@@ -488,7 +430,6 @@ impl Queue {
             Ordering::SeqCst,
         );
 
-        // println!("[deq] {tid} combine start");
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
             let req_q = req_arr_ref[q].load(Ordering::SeqCst, guard);
@@ -507,20 +448,17 @@ impl Queue {
                 {
                     ret_val = Self::raw_dequeue(&self.d_state.head[ind], guard, pool);
                 } else {
-                    // panic!("[queue_combining] old tail");
+                    panic!("!!!");
                     ret_val = None;
                 }
-                // println!("[deq] {tid} process {q}'s request. ret_val: {:?}", ret_val);
                 let q_req_ref =
                     unsafe { req_arr_ref[q].load(Ordering::SeqCst, guard).deref_mut(pool) };
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                 q_req_ref.retval = Some(ret_val);
                 q_req_ref.deactivate.store(true, Ordering::SeqCst);
-
                 let _ = DEQ_CNT.fetch_add(1, Ordering::SeqCst);
             }
         }
-        // persist_obj(state_ref, true);
         let new_req_arr = POwned::new(array_init(|_| PAtomic::null()), pool);
         persist_obj(unsafe { &new_req_arr.deref(pool) }, true);
         self.d_state
@@ -541,7 +479,6 @@ impl Queue {
             unsafe { guard.defer_pdestroy(head_shared) }; // NOTE: The original implementation does not free because it returns a node rather than data.
             return Some(unsafe { next.deref(pool) }.data);
         }
-        // panic!("??!!");
         None
     }
 }
@@ -592,17 +529,16 @@ mod test {
                 // T1: Check results of other threads
                 1 => {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
-
-                    // Check queue is empty
-                    // let mut tmp_deq = Dequeue::default();
-                    // let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, guard, pool);
-                    // assert!(res.is_none());
-
                     let enq_cnt = ENQ_CNT.load(Ordering::SeqCst);
                     let deq_cnt = ENQ_CNT.load(Ordering::SeqCst);
                     println!("enq cnt: {enq_cnt}, deq_cnt: {deq_cnt}");
                     assert!(enq_cnt == NR_THREAD * COUNT);
                     assert!(deq_cnt == NR_THREAD * COUNT);
+
+                    // Check queue is empty
+                    let mut tmp_deq = Dequeue::default();
+                    let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, guard, pool);
+                    assert!(res.is_none());
 
                     // Check results
                     assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
@@ -619,13 +555,11 @@ mod test {
                         queue.PBQueueEnq::<true>(val, &mut enq_deq.enqs[i], tid, guard, pool);
 
                         let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
-                        // assert!(!res.is_none());
+                        assert!(!res.is_none());
 
                         // send output of deq
-                        if res.is_some() {
-                            let v = res.unwrap();
-                            let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
-                        }
+                        let v = res.unwrap();
+                        let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
