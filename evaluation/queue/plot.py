@@ -8,16 +8,16 @@ import traceback
 objs = {
     "queue": {
         "targets": {
-            "memento_queue": {'data_id': '', 'label': "MMT", 'marker': 'o', 'color': 'k', 'style': '-'},
-            "memento_queue_lp": {'data_id': '', 'label': "MMT-lp", 'marker': 'd', 'color': 'k', 'style': ':'},
-            "memento_queue_general": {'data_id': '', 'label': "MMT-general", 'marker': 'x', 'color': 'k', 'style': '--'},
-            "memento_queue_pbcomb": {'data_id': '', 'label': "MMT-pbcomb", 'marker': 'v', 'color': 'k', 'style': '-.'},
-            'durable_queue': {'data_id': '', 'label': "Durable", 'marker': 's', 'color': 'hotpink', 'style': '--'},
-            'log_queue': {'data_id': '', 'label': "Log", 'marker': 's', 'color': 'c', 'style': '--'},
-            'dss_queue': {'data_id': '', 'label': "DSS", 'marker': 's', 'color': 'orange', 'style': '--'},
-            'pbcomb_queue': {'data_id': '', 'label': "PBComb", 'marker': 's', 'color': 'red', 'style': '--'},
-            'pmdk_queue': {'data_id': '', 'label': "PMDK", 'marker': 's', 'color': 'skyblue', 'style': '--'},
-            'crndm_queue': {'data_id': '', 'label': "Corundum", 'marker': 's', 'color': 'green', 'style': '--'},
+            "memento_queue_general": {'data_id': '', 'label': "MSQ-mmt-cas", 'marker': 'o', 'color': 'k', 'style': '-'},
+            "memento_queue_lp": {'data_id': '', 'label': "MSQ-mmt-indel", 'marker': 'd', 'color': 'k', 'style': '-'},
+            "memento_queue": {'data_id': '', 'label': "MSQ-mmt-vol", 'marker': 'x', 'color': 'k', 'style': '-'},
+            "memento_queue_pbcomb": {'data_id': '', 'label': "PBcombQ-mmt", 'marker': 'v', 'color': 'k', 'style': '-'},
+            'durable_queue': {'data_id': '', 'label': "DurableQ", 'marker': 's', 'color': 'hotpink', 'style': '--'},
+            'log_queue': {'data_id': '', 'label': "LogQ", 'marker': 's', 'color': 'c', 'style': '--'},
+            'dss_queue': {'data_id': '', 'label': "DssQ", 'marker': 's', 'color': 'orange', 'style': '--'},
+            'pbcomb_queue': {'data_id': '', 'label': "PBCombQ", 'marker': 's', 'color': 'red', 'style': '--'},
+            'pmdk_queue': {'data_id': '', 'label': "PMDKQ", 'marker': 's', 'color': 'skyblue', 'style': '--'},
+            'crndm_queue': {'data_id': '', 'label': "CorundumQ", 'marker': 's', 'color': 'green', 'style': '--'},
         },
     },
 
