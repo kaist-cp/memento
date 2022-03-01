@@ -1,19 +1,16 @@
 //! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
 #![allow(non_snake_case)]
-#![allow(warnings)]
 use crate::ds::spin_lock_volatile::VSpinLock;
 use crate::pepoch::atomic::Pointer;
-use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned};
 use crate::ploc::Checkpoint;
-use crate::pmem::{
-    global_pool, persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle,
-};
+use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
 use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
 use etrace::ok_or;
-use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tinyvec::tiny_vec;
 
 const MAX_THREADS: usize = 64;
@@ -29,11 +26,13 @@ type DeqRetVal = Option<Data>;
 #[derive(Debug, Default)]
 pub struct Enqueue {
     req: Checkpoint<PAtomic<EnqRequestRec>>,
+    result: Checkpoint<EnqRetVal>,
 }
 
 impl Collectable for Enqueue {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut enq.req, tid, gc, pool);
+        Checkpoint::filter(&mut enq.result, tid, gc, pool);
     }
 }
 
@@ -41,41 +40,33 @@ impl Collectable for Enqueue {
 #[derive(Debug, Default)]
 pub struct Dequeue {
     req: Checkpoint<PAtomic<DeqRequestRec>>,
+    result: Checkpoint<DeqRetVal>,
 }
 
 impl Collectable for Dequeue {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut deq.req, tid, gc, pool);
+        Checkpoint::filter(&mut deq.result, tid, gc, pool);
     }
 }
 
 #[derive(Debug, Default)]
 struct EnqRequestRec {
-    arg: PAtomic<Node>,
-    retval: Option<EnqRetVal>,
-    deactivate: AtomicBool,
+    arg: usize,
+    activate: AtomicBool,
 }
 
 impl Collectable for EnqRequestRec {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
-impl Clone for EnqRequestRec {
-    fn clone(&self) -> Self {
-        todo!()
-    }
-}
-
 #[derive(Debug, Default)]
 struct DeqRequestRec {
-    retval: Option<DeqRetVal>,
-    deactivate: AtomicBool,
+    activate: AtomicBool,
 }
 
 impl Collectable for DeqRequestRec {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 /// Node
@@ -94,27 +85,48 @@ impl Collectable for Node {
 /// State of Enqueue PBComb
 #[derive(Debug)]
 struct EStateRec {
-    tail: [PAtomic<Node>; 2],
-    requests: PAtomic<[PAtomic<EnqRequestRec>; MAX_THREADS + 1]>,
+    tail: PAtomic<Node>,
+    return_val: [EnqRetVal; MAX_THREADS + 1],
+    deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
 impl Collectable for EStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // PAtomic::filter(&mut s.tail, tid, gc, pool);
-        todo!()
+        PAtomic::filter(&mut s.tail, tid, gc, pool);
+    }
+}
+
+impl Clone for EStateRec {
+    fn clone(&self) -> Self {
+        Self {
+            tail: self.tail.clone(),
+            return_val: self.return_val,
+            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
+        }
     }
 }
 
 /// State of Dequeue PBComb
 #[derive(Debug)]
 struct DStateRec {
-    head: [PAtomic<Node>; 2],
-    requests: PAtomic<[PAtomic<DeqRequestRec>; MAX_THREADS + 1]>,
+    head: PAtomic<Node>, // Atomic type to restrict reordering. We use this likes plain pointer.
+    return_val: [DeqRetVal; MAX_THREADS + 1],
+    deactivate: [AtomicBool; MAX_THREADS + 1],
+}
+
+impl Clone for DStateRec {
+    fn clone(&self) -> Self {
+        Self {
+            head: self.head.clone(),
+            return_val: self.return_val,
+            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
+        }
+    }
 }
 
 impl Collectable for DStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // PAtomic::filter(&mut s.head, tid, gc, pool);
+        PAtomic::filter(&mut s.head, tid, gc, pool);
     }
 }
 
@@ -125,12 +137,10 @@ lazy_static::lazy_static! {
     /// Used by the PBQueueENQ instance of PBCOMB
     static ref E_LOCK: VSpinLock = VSpinLock::default();
     static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
-    static ref ENQ_CNT: AtomicUsize = AtomicUsize::new(0);
 
     /// Used by the PBQueueDEQ instance of PBCOMB
     static ref D_LOCK: VSpinLock = VSpinLock::default();
     static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
-    static ref DEQ_CNT: AtomicUsize = AtomicUsize::new(0);
 }
 
 /// TODO: doc
@@ -140,27 +150,30 @@ pub struct Queue {
     dummy: PPtr<Node>,
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
-    e_state: CachePadded<EStateRec>,
+    e_request: [CachePadded<PAtomic<EnqRequestRec>>; MAX_THREADS + 1],
+    e_state: [CachePadded<EStateRec>; 2],
+    e_index: AtomicUsize,
 
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
-    d_state: CachePadded<DStateRec>,
+    d_request: [CachePadded<PAtomic<DeqRequestRec>>; MAX_THREADS + 1],
+    d_state: [CachePadded<DStateRec>; 2],
+    d_index: AtomicUsize,
 }
 
 impl Collectable for Queue {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // PPtr::filter(&mut s.dummy, tid, gc, pool);
-        // for tid in 0..MAX_THREADS + 1 {
-        //     PAtomic::filter(&mut *s.e_request[tid], tid, gc, pool);
-        //     PAtomic::filter(&mut *s.d_request[tid], tid, gc, pool);
-        // }
-        // EStateRec::filter(&mut *s.e_state[0], tid, gc, pool);
-        // EStateRec::filter(&mut *s.e_state[1], tid, gc, pool);
-        // DStateRec::filter(&mut *s.d_state[0], tid, gc, pool);
-        // DStateRec::filter(&mut *s.d_state[1], tid, gc, pool);
+        PPtr::filter(&mut s.dummy, tid, gc, pool);
+        for tid in 0..MAX_THREADS + 1 {
+            PAtomic::filter(&mut *s.e_request[tid], tid, gc, pool);
+            PAtomic::filter(&mut *s.d_request[tid], tid, gc, pool);
+        }
+        EStateRec::filter(&mut *s.e_state[0], tid, gc, pool);
+        EStateRec::filter(&mut *s.e_state[1], tid, gc, pool);
+        DStateRec::filter(&mut *s.d_state[0], tid, gc, pool);
+        DStateRec::filter(&mut *s.d_state[1], tid, gc, pool);
 
         // initialize global volatile variable manually
-        // OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
-        todo!()
+        OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
     }
 }
 
@@ -174,18 +187,26 @@ impl PDefault for Queue {
         // initialize global volatile variable manually
         OLD_TAIL.store(dummy.into_offset(), Ordering::SeqCst);
 
-        let e_state = EStateRec {
-            tail: [PAtomic::from(dummy), PAtomic::from(dummy)],
-            requests: PAtomic::new(array_init(|_| PAtomic::null()), pool),
-        };
-        let d_state = DStateRec {
-            head: [PAtomic::from(dummy), PAtomic::from(dummy)],
-            requests: PAtomic::new(array_init(|_| PAtomic::null()), pool),
-        };
         Self {
             dummy,
-            e_state: CachePadded::new(e_state),
-            d_state: CachePadded::new(d_state),
+            e_request: array_init(|_| Default::default()),
+            e_state: array_init(|_| {
+                CachePadded::new(EStateRec {
+                    tail: PAtomic::from(dummy),
+                    return_val: array_init(|_| ()),
+                    deactivate: array_init(|_| AtomicBool::new(false)),
+                })
+            }),
+            e_index: Default::default(),
+            d_request: array_init(|_| Default::default()),
+            d_state: array_init(|_| {
+                CachePadded::new(DStateRec {
+                    head: PAtomic::from(dummy),
+                    return_val: array_init(|_| None),
+                    deactivate: array_init(|_| AtomicBool::new(false)),
+                })
+            }),
+            d_index: Default::default(),
         }
     }
 }
@@ -201,55 +222,54 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> EnqRetVal {
-        // perform
-        self.PerformEnqReq::<REC>(arg, enq, tid, guard, pool)
-    }
+        let prev = self.e_request[tid].load(Ordering::SeqCst, guard);
+        let prev_activate = if prev.is_null() {
+            false
+        } else {
+            unsafe { prev.deref(pool).activate.load(Ordering::SeqCst) }
+        };
 
-    fn PerformEnqReq<const REC: bool>(
-        &mut self,
-        arg: Data,
-        enq: &mut Enqueue,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> EnqRetVal {
+        // make new request
         let req = POwned::new(
             EnqRequestRec {
-                arg: PAtomic::new(
-                    Node {
-                        data: arg,
-                        next: PAtomic::null(),
-                    },
-                    pool,
-                ),
-                retval: None,
-                deactivate: AtomicBool::new(false),
+                arg,
+                activate: AtomicBool::new(!prev_activate),
             },
             pool,
         );
         persist_obj(unsafe { req.deref(pool) }, true);
 
-        let my_req = ok_or!(
+        let req = ok_or!(
             enq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
             e,
             unsafe {
-                let guard = unprotected();
-                let dup_req = e.new.load(Ordering::Relaxed, guard);
-                drop(
-                    dup_req
-                        .deref(pool)
-                        .arg
-                        .load(Ordering::Relaxed, guard)
-                        .into_owned(),
-                );
-                drop(dup_req.into_owned());
-                panic!("??");
+                drop(e.new.load(Ordering::Relaxed, unprotected()).into_owned());
                 e.current
             }
         )
         .load(Ordering::Relaxed, guard);
-        let my_req_ref = unsafe { my_req.deref(pool) };
 
+        // return same result if client was already finished.
+        if REC {
+            if let Some(res) = enq.result.peek(tid, pool) {
+                return res;
+            }
+        }
+
+        // register request
+        self.e_request[tid].store(req, Ordering::SeqCst);
+
+        // perform
+        self.PerformEnqReq::<REC>(enq, tid, guard, pool)
+    }
+
+    fn PerformEnqReq<const REC: bool>(
+        &mut self,
+        enq: &mut Enqueue,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> EnqRetVal {
         // decide enq combiner
         let (lval, lockguard) = loop {
             // try to be combiner.
@@ -257,9 +277,6 @@ impl Queue {
                 Ok(ret) => break ret, // i am combiner
                 Err((lval, _)) => lval,
             };
-            let req_arr = self.e_state.requests.load(Ordering::SeqCst, guard);
-            let req_arr_ref = unsafe { req_arr.deref(pool) };
-            req_arr_ref[tid].store(my_req, Ordering::SeqCst);
 
             // on-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
             let backoff = Backoff::new();
@@ -269,39 +286,53 @@ impl Queue {
                 }
             }
 
-            // if my_req_ref.deactivate.load(Ordering::SeqCst) {
-            if my_req_ref.deactivate.load(Ordering::SeqCst) {
+            if unsafe {
+                self.e_request[tid]
+                    .load(Ordering::SeqCst, guard)
+                    .deref(pool)
+            }
+            .activate
+            .load(Ordering::SeqCst)
+                == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
+                    .load(Ordering::SeqCst)
+            {
                 // wait until the combiner that processed my op is finished
                 let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
                 while deactivate_lval >= E_LOCK.peek().0 {
                     backoff.snooze();
                 }
-                return my_req_ref.retval.unwrap();
+
+                let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid];
+                let _ = enq.result.checkpoint::<REC>(res, tid, pool);
+                return res;
             }
         };
 
         // enq combiner executes the enq requests
-        let req_arr = self.e_state.requests.load(Ordering::SeqCst, guard);
-        let req_arr_ref = unsafe { req_arr.deref(pool) };
-        req_arr_ref[tid].store(my_req, Ordering::SeqCst);
-        let old_tail = self.e_state.tail[req_arr.tag()].load(Ordering::SeqCst, guard);
-        let ind = 1 - req_arr.tag();
-        self.e_state.tail[ind].store(old_tail, Ordering::SeqCst);
-        OLD_TAIL.store(old_tail.into_usize(), Ordering::SeqCst);
+        let ind = 1 - self.e_index.load(Ordering::SeqCst);
+        self.e_state[ind] = self.e_state[self.e_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
+        OLD_TAIL.store(
+            self.e_state[ind]
+                .tail
+                .load(Ordering::SeqCst, guard)
+                .into_usize(),
+            Ordering::SeqCst,
+        );
 
         // collect the enqueued nodes here and persist them all at once
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
+
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `q` thread has a request that is not yet applied
-            let req_q = req_arr_ref[q].load(Ordering::SeqCst, guard);
-            if !req_q.is_null()
-                && !unsafe { req_q.deref(pool) }
-                    .deactivate
-                    .load(Ordering::SeqCst)
+            if unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) }
+                .activate
+                .load(Ordering::SeqCst)
+                != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
             {
                 // reserve persist(current tail)
-                let tail_addr = self.e_state.tail[ind]
+                let tail_addr = self.e_state[ind]
+                    .tail
                     .load(Ordering::SeqCst, guard)
                     .into_usize();
                 match to_persist.binary_search(&tail_addr) {
@@ -311,15 +342,17 @@ impl Queue {
 
                 // enq
                 let q_req_ref =
-                    unsafe { req_arr_ref[q].load(Ordering::SeqCst, guard).deref_mut(pool) };
-                Self::raw_enqueue(&self.e_state.tail[ind], &q_req_ref.arg, guard, pool);
+                    unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) };
+
+                Self::raw_enqueue(&self.e_state[ind].tail, q_req_ref.arg, guard, pool);
                 E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                q_req_ref.retval = Some(());
-                q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                let _ = ENQ_CNT.fetch_add(1, Ordering::SeqCst);
+                self.e_state[ind].return_val[q] = ();
+                self.e_state[ind].deactivate[q]
+                    .store(q_req_ref.activate.load(Ordering::SeqCst), Ordering::SeqCst);
             }
         }
-        let tail_addr = self.e_state.tail[ind]
+        let tail_addr = self.e_state[ind]
+            .tail
             .load(Ordering::SeqCst, guard)
             .into_usize();
         match to_persist.binary_search(&tail_addr) {
@@ -331,24 +364,29 @@ impl Queue {
             let node = PPtr::<Node>::from(to_persist.pop().unwrap());
             persist_obj(unsafe { node.deref(pool) }, false);
         }
-        let new_req_arr = POwned::new(array_init(|_| PAtomic::null()), pool);
-        persist_obj(unsafe { &new_req_arr.deref(pool) }, true);
-        self.e_state
-            .requests
-            .store(new_req_arr.with_tag(ind), Ordering::SeqCst);
-        persist_obj(&*self.e_state, true);
+        persist_obj(&self.e_request, false);
+        persist_obj(&*self.e_state[ind], false);
+        sfence();
+        self.e_index.store(ind, Ordering::SeqCst);
+        persist_obj(&self.e_index, false);
+        sfence();
         OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
         drop(lockguard); // release E_LOCK
-        my_req_ref.retval.unwrap()
+
+        let res = self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid];
+        let _ = enq.result.checkpoint::<REC>(res, tid, pool);
+        res
     }
 
-    fn raw_enqueue(
-        tail: &PAtomic<Node>,
-        new_node: &PAtomic<Node>,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
-        let new_node = new_node.load(Ordering::SeqCst, guard);
+    fn raw_enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
+        let new_node = POwned::new(
+            Node {
+                data: arg,
+                next: PAtomic::null(),
+            },
+            pool,
+        )
+        .into_shared(unsafe { unprotected() });
         let tail_ref = unsafe { tail.load(Ordering::SeqCst, guard).deref_mut(pool) };
         tail_ref.next.store(new_node, Ordering::SeqCst); // tail.next = new node
         tail.store(new_node, Ordering::SeqCst); // tail = new node
@@ -365,6 +403,43 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> DeqRetVal {
+        let prev = self.d_request[tid].load(Ordering::SeqCst, guard);
+        let prev_activate = if prev.is_null() {
+            false
+        } else {
+            unsafe { prev.deref(pool).activate.load(Ordering::SeqCst) }
+        };
+
+        // make new deq request
+        let req = POwned::new(
+            DeqRequestRec {
+                activate: AtomicBool::new(!prev_activate),
+            },
+            pool,
+        );
+        persist_obj(unsafe { req.deref(pool) }, true);
+
+        let req = ok_or!(
+            deq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
+            e,
+            unsafe {
+                drop(e.new.load(Ordering::Relaxed, unprotected()).into_owned());
+                e.current
+            }
+        )
+        .load(Ordering::Relaxed, guard);
+
+        // return same result if client was already finished.
+        if REC {
+            if let Some(res) = deq.result.peek(tid, pool) {
+                return res;
+            }
+        }
+
+        // register new request
+        self.d_request[tid].store(req, Ordering::SeqCst);
+
+        // perform
         self.PerformDeqReq::<REC>(deq, tid, guard, pool)
     }
 
@@ -375,33 +450,15 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> DeqRetVal {
-        let req = POwned::new(DeqRequestRec::default(), pool);
-        persist_obj(unsafe { req.deref(pool) }, true);
-
-        let my_req = ok_or!(
-            deq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
-            e,
-            unsafe {
-                drop(e.new.load(Ordering::Relaxed, unprotected()).into_owned());
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
-        let my_req_ref = unsafe { my_req.deref(pool) };
-
-        // decide enq combiner
+        // decide deq combiner
         let (lval, lockguard) = loop {
             // try to be combiner.
             let lval = match D_LOCK.try_lock::<REC>(tid) {
-                Ok(ret) => break ret, // i am combiner
+                Ok(ret) => break ret,
                 Err((lval, _)) => lval,
             };
 
-            let req_arr = self.d_state.requests.load(Ordering::SeqCst, guard);
-            let req_arr_ref = unsafe { req_arr.deref(pool) };
-            req_arr_ref[tid].store(my_req, Ordering::SeqCst);
-
-            // on-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
+            // non-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
             let backoff = Backoff::new();
             if lval % 2 == 1 {
                 while lval == D_LOCK.peek().0 {
@@ -409,64 +466,73 @@ impl Queue {
                 }
             }
 
-            if my_req_ref.deactivate.load(Ordering::SeqCst) {
+            if unsafe {
+                self.d_request[tid]
+                    .load(Ordering::SeqCst, guard)
+                    .deref(pool)
+            }
+            .activate
+            .load(Ordering::SeqCst)
+                == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
+                    .load(Ordering::SeqCst)
+            {
                 // wait until the combiner that processed my op is finished
                 let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
                 backoff.reset();
                 while deactivate_lval >= D_LOCK.peek().0 {
                     backoff.snooze();
                 }
-                return my_req_ref.retval.unwrap();
+
+                let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid];
+                let _ = deq.result.checkpoint::<REC>(res, tid, pool);
+                return res;
             }
         };
 
         // deq combiner executes the deq requests
-        let req_arr = self.d_state.requests.load(Ordering::SeqCst, guard);
-        let req_arr_ref = unsafe { req_arr.deref(pool) };
-        req_arr_ref[tid].store(my_req, Ordering::SeqCst);
-        let ind = 1 - req_arr.tag();
-        self.d_state.head[ind].store(
-            self.d_state.head[req_arr.tag()].load(Ordering::SeqCst, guard),
-            Ordering::SeqCst,
-        );
+        let ind = 1 - self.d_index.load(Ordering::SeqCst);
+        self.d_state[ind] = self.d_state[self.d_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
 
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
-            let req_q = req_arr_ref[q].load(Ordering::SeqCst, guard);
-            if !req_arr_ref[q].load(Ordering::SeqCst, guard).is_null()
-                && !unsafe { req_q.deref(pool) }
-                    .deactivate
+            if unsafe { self.d_request[q].load(Ordering::SeqCst, guard).deref(pool) }
+                .activate
+                .load(Ordering::SeqCst)
+                != self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[q]
                     .load(Ordering::SeqCst)
             {
                 let ret_val;
                 // only nodes that are persisted can be dequeued.
                 // from `OLD_TAIL`, persist is not guaranteed as it is currently enqueud.
                 if OLD_TAIL.load(Ordering::SeqCst)
-                    != self.d_state.head[ind]
+                    != self.d_state[ind]
+                        .head
                         .load(Ordering::SeqCst, guard)
                         .into_usize()
                 {
-                    ret_val = Self::raw_dequeue(&self.d_state.head[ind], guard, pool);
+                    ret_val = Self::raw_dequeue(&self.d_state[ind].head, guard, pool);
                 } else {
-                    panic!("!!!");
                     ret_val = None;
                 }
                 let q_req_ref =
-                    unsafe { req_arr_ref[q].load(Ordering::SeqCst, guard).deref_mut(pool) };
+                    unsafe { self.d_request[q].load(Ordering::SeqCst, guard).deref(pool) };
                 D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                q_req_ref.retval = Some(ret_val);
-                q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                let _ = DEQ_CNT.fetch_add(1, Ordering::SeqCst);
+                self.d_state[ind].return_val[q] = ret_val;
+                self.d_state[ind].deactivate[q]
+                    .store(q_req_ref.activate.load(Ordering::SeqCst), Ordering::SeqCst)
             }
         }
-        let new_req_arr = POwned::new(array_init(|_| PAtomic::null()), pool);
-        persist_obj(unsafe { &new_req_arr.deref(pool) }, true);
-        self.d_state
-            .requests
-            .store(new_req_arr.with_tag(ind), Ordering::SeqCst);
-        persist_obj(&*self.d_state, true);
+        persist_obj(&self.d_request, false);
+        persist_obj(&*self.d_state[ind], false);
+        sfence();
+        self.d_index.store(ind, Ordering::SeqCst);
+        persist_obj(&self.d_index, false);
+        sfence();
         drop(lockguard); // release D_LOCK
-        my_req_ref.retval.unwrap()
+
+        let res = self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid];
+        let _ = deq.result.checkpoint::<REC>(res, tid, pool);
+        res
     }
 
     fn raw_dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> DeqRetVal {
@@ -487,7 +553,7 @@ impl Queue {
 mod test {
     use std::sync::atomic::Ordering;
 
-    use crate::ds::queue_combining::{Queue, DEQ_CNT, ENQ_CNT};
+    use crate::ds::queue_pbcomb::Queue;
     use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
@@ -529,11 +595,6 @@ mod test {
                 // T1: Check results of other threads
                 1 => {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
-                    let enq_cnt = ENQ_CNT.load(Ordering::SeqCst);
-                    let deq_cnt = ENQ_CNT.load(Ordering::SeqCst);
-                    println!("enq cnt: {enq_cnt}, deq_cnt: {deq_cnt}");
-                    assert!(enq_cnt == NR_THREAD * COUNT);
-                    assert!(deq_cnt == NR_THREAD * COUNT);
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
@@ -542,10 +603,8 @@ mod test {
 
                     // Check results
                     assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
-                    assert!((2..NR_THREAD + 2).all(|tid| {
-                        println!(" RESULTS[{tid}] = {}", RESULTS[tid].load(Ordering::SeqCst));
-                        RESULTS[tid].load(Ordering::SeqCst) == COUNT
-                    }));
+                    assert!((2..NR_THREAD + 2)
+                        .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
                 // other threads: { enq; deq; }
                 _ => {
@@ -570,8 +629,8 @@ mod test {
 
     #[test]
     fn enq_deq() {
-        const FILE_NAME: &str = "combining_enq_deq.pool";
-        const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
+        const FILE_NAME: &str = "pbcomb_enq_deq.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<TestRootObj<Queue>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
