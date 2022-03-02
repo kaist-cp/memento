@@ -1,7 +1,7 @@
 use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
-use memento::ds::queue_pbcomb::*;
+use memento::ds::queue_comb::*;
 use memento::pmem::pool::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::PDefault;
@@ -32,17 +32,17 @@ impl TestQueue for Queue {
 
 /// Root obj for evaluation of MementoQueuePBComb
 #[derive(Debug)]
-pub struct TestMementoQueuePBComb {
+pub struct TestMementoQueueComb {
     queue: Queue,
 }
 
-impl Collectable for TestMementoQueuePBComb {
+impl Collectable for TestMementoQueueComb {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
 
-impl PDefault for TestMementoQueuePBComb {
+impl PDefault for TestMementoQueueComb {
     fn pdefault(pool: &PoolHandle) -> Self {
         let mut queue = Queue::pdefault(pool);
 
@@ -55,15 +55,15 @@ impl PDefault for TestMementoQueuePBComb {
     }
 }
 
-impl TestNOps for TestMementoQueuePBComb {}
+impl TestNOps for TestMementoQueueComb {}
 
 #[derive(Debug)]
-pub struct TestMementoQueuePBCombEnqDeq<const PAIR: bool> {
+pub struct TestMementoQueueCombEnqDeq<const PAIR: bool> {
     enq: CachePadded<Enqueue>,
     deq: CachePadded<Dequeue>,
 }
 
-impl<const PAIR: bool> Default for TestMementoQueuePBCombEnqDeq<PAIR> {
+impl<const PAIR: bool> Default for TestMementoQueueCombEnqDeq<PAIR> {
     fn default() -> Self {
         Self {
             enq: CachePadded::new(Enqueue::default()),
@@ -72,16 +72,16 @@ impl<const PAIR: bool> Default for TestMementoQueuePBCombEnqDeq<PAIR> {
     }
 }
 
-impl<const PAIR: bool> Collectable for TestMementoQueuePBCombEnqDeq<PAIR> {
+impl<const PAIR: bool> Collectable for TestMementoQueueCombEnqDeq<PAIR> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
 
-impl<const PAIR: bool> RootObj<TestMementoQueuePBCombEnqDeq<PAIR>> for TestMementoQueuePBComb {
+impl<const PAIR: bool> RootObj<TestMementoQueueCombEnqDeq<PAIR>> for TestMementoQueueComb {
     fn run(
         &self,
-        mmt: &mut TestMementoQueuePBCombEnqDeq<PAIR>,
+        mmt: &mut TestMementoQueueCombEnqDeq<PAIR>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,

@@ -27,7 +27,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         "memento_queue" => TestTarget::MementoQueue(kind),
         "memento_queue_lp" => TestTarget::MementoQueueLp(kind),
         "memento_queue_general" => TestTarget::MementoQueueGeneral(kind),
-        "memento_queue_pbcomb" => TestTarget::MementoQueuePBComb(kind),
+        "memento_queue_comb" => TestTarget::MementoQueueComb(kind),
         "durable_queue" => TestTarget::FriedmanDurableQueue(kind),
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
@@ -91,7 +91,7 @@ fn bench(opt: &Opt) -> f64 {
         TestTarget::MementoQueue(_)
         | TestTarget::MementoQueueLp(_)
         | TestTarget::MementoQueueGeneral(_)
-        | TestTarget::MementoQueuePBComb(_)
+        | TestTarget::MementoQueueComb(_)
         | TestTarget::FriedmanDurableQueue(_)
         | TestTarget::FriedmanLogQueue(_)
         | TestTarget::DSSQueue(_)

@@ -11,7 +11,7 @@ objs = {
             "memento_queue_general": {'data_id': '', 'label': "MSQ-mmt-cas", 'marker': 'o', 'color': 'k', 'style': '-'},
             "memento_queue_lp": {'data_id': '', 'label': "MSQ-mmt-indel", 'marker': 'd', 'color': 'k', 'style': '-'},
             "memento_queue": {'data_id': '', 'label': "MSQ-mmt-vol", 'marker': 'x', 'color': 'k', 'style': '-'},
-            "memento_queue_pbcomb": {'data_id': '', 'label': "PBcombQ-mmt", 'marker': 'v', 'color': 'k', 'style': '-'},
+            "memento_queue_comb": {'data_id': '', 'label': "CombQ-mmt", 'marker': 'v', 'color': 'k', 'style': '-'},
             'durable_queue': {'data_id': '', 'label': "DurableQ", 'marker': 's', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'data_id': '', 'label': "LogQ", 'marker': 's', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DssQ", 'marker': 's', 'color': 'orange', 'style': '--'},

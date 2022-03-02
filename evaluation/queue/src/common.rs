@@ -65,7 +65,7 @@ pub enum TestTarget {
     MementoQueue(TestKind),
     MementoQueueLp(TestKind), // link and persist
     MementoQueueGeneral(TestKind),
-    MementoQueuePBComb(TestKind), // combining
+    MementoQueueComb(TestKind), // combining
     FriedmanDurableQueue(TestKind),
     FriedmanLogQueue(TestKind),
     DSSQueue(TestKind),
@@ -232,16 +232,16 @@ pub mod queue {
                     )
                 }
             },
-            TestTarget::MementoQueuePBComb(kind) => {
+            TestTarget::MementoQueueComb(kind) => {
                 unsafe { MementoPBComb_NR_THREAD = opt.threads }; // restriction of combining iteration
                 match kind {
                     TestKind::QueuePair => get_nops::<
-                        TestMementoQueuePBComb,
-                        TestMementoQueuePBCombEnqDeq<true>,
+                        TestMementoQueueComb,
+                        TestMementoQueueCombEnqDeq<true>,
                     >(&opt.filepath, opt.threads),
                     TestKind::QueueProb(prob) => {
                         unsafe { PROB = prob };
-                        get_nops::<TestMementoQueuePBComb, TestMementoQueuePBCombEnqDeq<false>>(
+                        get_nops::<TestMementoQueueComb, TestMementoQueueCombEnqDeq<false>>(
                             &opt.filepath,
                             opt.threads,
                         )
