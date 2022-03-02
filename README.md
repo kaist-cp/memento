@@ -1,4 +1,4 @@
-# Supplementary Materials of "Exactly-Once Semantics for Persistent Lock-Free Data Structures"
+# Supplementary Materials of "Practical Detectability for Persistent Lock-Free Data Structures"
 
 ## Installation
 
