@@ -7,7 +7,7 @@
 ///
 /// let collector = Collector::new();
 ///
-/// let handle = collector.register();
+/// let handle = collector.register(None);
 /// drop(collector); // `handle` still works after dropping `collector`
 ///
 /// handle.pin().flush();
