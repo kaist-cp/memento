@@ -44,8 +44,8 @@ The directory `src/ds/` contains memento-based data structures supporting exactl
 
 #### Safe Memory Reclamation
 
-- Implementation of 'deferred persist'
-- Implementation of 'resumable critical section and de-duplicated retirement'
+- Implementation of 'deferred persist' (corresponding to section 6.1 in the extended version)
+- Implementation of 'resumable critical section and de-duplicated retirement' (corresponding to section 6.2 in the extended version)
 
 #### Others
 
