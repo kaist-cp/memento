@@ -134,7 +134,7 @@ mod tests {
             // Phase 1.
             // Thread 0 dies after holding the guard. But the guard is preserved.
             let handler = scope.spawn(move |_| {
-                let guard = unsafe { old_guard(0) };
+                let _guard = unsafe { old_guard(0) };
                 panic!();
             });
             let _ = handler.join();
@@ -165,7 +165,7 @@ mod tests {
             // If thread 0 brings back the guard and ends normally, this time it drops well without preserving the guard.
             // Now that all guards are gone, the reserved function can be called (i.e. global epoch can be advanced)
             let handler = scope.spawn(move |_| {
-                let guard = unsafe { old_guard(0) };
+                let _guard = unsafe { old_guard(0) };
             });
             let _ = handler.join();
 
@@ -176,7 +176,6 @@ mod tests {
                 .try_advance(unsafe { unprotected() });
             default_collector().global.collect(unsafe { unprotected() });
             assert!(DROPS.load(Ordering::Relaxed) != 0);
-
 
             // If you use pin instead of old_guard, you can see that elem drop is not delayed and called in phase 2
         })

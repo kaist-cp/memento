@@ -134,7 +134,7 @@ impl Guard {
     ///     // ALWAYS use `move` when sending a closure into `defer_unchecked`.
     ///     guard.defer_unchecked(move || {
     ///         println!("{}", message);
-    ///     });
+    ///     }, None);
     /// }
     /// ```
     ///
@@ -186,8 +186,8 @@ impl Guard {
     ///             println!("{} is now being deallocated.", p.deref());
     ///             // Now we have unique access to the object pointed to by `p` and can turn it
     ///             // into an `Owned`. Dropping the `Owned` will deallocate the object.
-    ///             drop(p.into_owned(), None);
-    ///         });
+    ///             drop(p.into_owned());
+    ///         }, None);
     ///     }
     /// }
     /// ```
@@ -196,18 +196,6 @@ impl Guard {
         F: FnOnce() -> R,
     {
         if let Some(local) = self.local.as_ref() {
-            // Avoid duplicate defers of the same key in the same epoch
-            if let Some(k) = key {
-                // It is duplicated If there is same key in local bag
-                if local.bag.with(|b| unsafe { &*b }.is_exist(k)) {
-                    return;
-                }
-                // It is a duplicate if there is a record that went to the global bag in the same epoch
-                if local.is_exist_pfree(k) {
-                    return;
-                }
-            }
-
             local.defer(Deferred::new(move || drop(f()), key), self);
         } else {
             drop(f());

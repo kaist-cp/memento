@@ -104,18 +104,6 @@ impl Bag {
     fn seal(self, epoch: Epoch) -> SealedBag {
         SealedBag { epoch, _bag: self }
     }
-
-    /// check if there is deferred function with `key`
-    pub(crate) fn is_exist(&self, key: usize) -> bool {
-        for d in &self.deferreds[0..self.len] {
-            if let Some(k) = d.key() {
-                if k == key {
-                    return true;
-                }
-            }
-        }
-        false
-    }
 }
 
 impl Default for Bag {
@@ -352,7 +340,7 @@ pub(crate) struct Local {
     collector: UnsafeCell<ManuallyDrop<Collector>>,
 
     /// The local bag of deferred functions.
-    pub(crate) bag: UnsafeCell<Bag>,
+    pub(crate) bag: UnsafeCell<Vec<Deferred>>,
 
     /// The number of guards keeping this participant pinned.
     guard_count: Cell<usize>,
@@ -367,9 +355,6 @@ pub(crate) struct Local {
 
     /// Deferred to be persisted locations (ptr, len)
     persists: UnsafeCell<Vec<(usize, usize)>>,
-
-    /// Set for deduplicate deferred function
-    pfree: UnsafeCell<Vec<usize>>,
 
     /// repinning or not
     pub(crate) is_repinning: Cell<bool>,
@@ -401,12 +386,11 @@ impl Local {
                 entry: Entry::default(),
                 epoch: AtomicEpoch::new(Epoch::starting()),
                 collector: UnsafeCell::new(ManuallyDrop::new(collector.clone())),
-                bag: UnsafeCell::new(Bag::new()),
+                bag: UnsafeCell::new(vec![]),
                 guard_count: Cell::new(0),
                 handle_count: Cell::new(1),
                 pin_count: Cell::new(Wrapping(0)),
                 persists: UnsafeCell::new(vec![]),
-                pfree: UnsafeCell::new(vec![]),
                 is_repinning: Cell::new(false),
             })
             .into_shared(unprotected());
@@ -483,24 +467,17 @@ impl Local {
     /// # Safety
     ///
     /// It should be safe for another thread to execute the given function.
-    pub(crate) unsafe fn defer(&self, mut deferred: Deferred, guard: &Guard) {
+    pub(crate) unsafe fn defer(&self, deferred: Deferred, _guard: &Guard) {
         let bag = self.bag.with_mut(|b| &mut *b);
-
-        while let Err(d) = bag.try_push(deferred) {
-            self.push_pfrees(bag);
-            self.global().push_bag(bag, guard);
-            deferred = d;
-        }
+        bag.push(deferred);
     }
 
     pub(crate) fn flush(&self, guard: &Guard) {
-        let bag = self.bag.with_mut(|b| unsafe { &mut *b });
-
-        if !bag.is_empty() {
-            self.push_pfrees(bag);
-            self.global().push_bag(bag, guard);
+        let mut bags = self.dedup_as_bags();
+        while !bags.is_empty() {
+            let mut bag = bags.pop().unwrap();
+            self.global().push_bag(&mut bag, guard);
         }
-
         self.global().collect(guard);
     }
 
@@ -571,8 +548,15 @@ impl Local {
         self.guard_count.set(guard_count - 1);
 
         if guard_count == 1 {
-            // Clear duplicate set
-            self.pfree.with_mut(|v| unsafe { &mut *v }.clear());
+            // De-duplicate deferred funcions
+            let bag = self.bag.with_mut(|b| unsafe { &mut *b });
+            if bag.len() >= MAX_OBJECTS {
+                let mut bags = self.dedup_as_bags();
+                while !bags.is_empty() {
+                    let mut bag = bags.pop().unwrap();
+                    self.global().push_bag(&mut bag, unsafe { unprotected() });
+                }
+            }
 
             // Persist all deferred persisted locations
             let iter = self.persists.with(|v| unsafe { &*v }.iter());
@@ -600,11 +584,17 @@ impl Local {
             let epoch = self.epoch.load(Ordering::Relaxed);
             let global_epoch = self.global().epoch.load(Ordering::Relaxed).pinned();
 
-            // Clear duplicate set
-            self.pfree.with_mut(|v| unsafe { &mut *v }.clear());
-
             // Update the local epoch only if the global epoch is greater than the local epoch.
             if epoch != global_epoch {
+                // De-duplicate deferred funcions
+                let bag = self.bag.with_mut(|b| unsafe { &mut *b });
+                if bag.len() >= MAX_OBJECTS {
+                    let mut bags = self.dedup_as_bags();
+                    while !bags.is_empty() {
+                        let mut bag = bags.pop().unwrap();
+                        self.global().push_bag(&mut bag, unsafe { unprotected() });
+                    }
+                }
                 // Persist all deferred persisted locations
                 let iter = self.persists.with(|v| unsafe { &*v }.iter());
                 for (ptr, len) in iter {
@@ -656,13 +646,17 @@ impl Local {
         // Temporarily increment handle count. This is required so that the following call to `pin`
         // doesn't call `finalize` again.
         self.handle_count.set(1);
-        unsafe {
+        {
             // Pin and move the local bag into the global queue. It's important that `push_bag`
             // doesn't defer destruction on any new garbage.
             let guard = &self.pin();
-            self.global()
-                .push_bag(self.bag.with_mut(|b| &mut *b), guard);
+            let mut bags = self.dedup_as_bags();
+            while !bags.is_empty() {
+                let mut bag = bags.pop().unwrap();
+                self.global().push_bag(&mut bag, guard);
+            }
         }
+
         // Revert the handle count back to zero.
         self.handle_count.set(0);
 
@@ -683,24 +677,31 @@ impl Local {
         }
     }
 
-    /// check if there is `key` in pfree set
-    pub(crate) fn is_exist_pfree(&self, k: usize) -> bool {
-        self.pfree
-            .with(|v| unsafe { &*v })
-            .binary_search(&k)
-            .is_ok()
-    }
+    /// De-duplicate deferred functions and make it as `Bag(s)`
+    fn dedup_as_bags(&self) -> Vec<Bag> {
+        let bag = self.bag.with_mut(|b| unsafe { &mut *b });
+        bag.dedup_by(|a, b| {
+            if a.key().is_some() && b.key().is_some() {
+                return a.key().unwrap() == b.key().unwrap();
+            }
+            false
+        });
 
-    /// push keys of deffered function in the `bag` to `pfree` set
-    pub(crate) fn push_pfrees(&self, bag: &Bag) {
-        let v = self.pfree.with_mut(|v| unsafe { &mut *v });
-        for d in &bag.deferreds[0..bag.len] {
-            if let Some(k) = d.key() {
-                if let Err(pos) = v.binary_search(&k) {
-                    v.insert(pos, k);
-                }
+        let mut bags = vec![];
+        let mut new = Bag::new();
+        while !bag.is_empty() {
+            let deferred = bag.pop().unwrap();
+            if let Err(d) = unsafe { new.try_push(deferred) } {
+                let full = mem::replace(&mut new, Bag::new());
+                bags.push(full);
+                unsafe { new.try_push(d) }.unwrap();
             }
         }
+        if !new.is_empty() {
+            bags.push(new);
+        }
+        assert!(bag.is_empty());
+        bags
     }
 
     /// push persist request to `persist` set
