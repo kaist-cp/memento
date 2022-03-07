@@ -532,6 +532,25 @@ impl<T: Default + Clone + PartialEq> SOFTList<T> {
             curr = curr_ref.next;
         }
     }
+
+    /// size
+    pub fn size(&self) -> usize {
+        let guard = unsafe { unprotected() };
+        let mut cnt = 0;
+        let mut h = unsafe {
+            self.head
+                .load(Ordering::SeqCst, guard)
+                .deref()
+                .next
+                .load(Ordering::SeqCst, guard)
+        };
+
+        while !h.is_null() {
+            cnt += 1;
+            h = unsafe { h.deref() }.next.load(Ordering::SeqCst, guard);
+        }
+        cnt
+    }
 }
 
 const FAILED: usize = 1;

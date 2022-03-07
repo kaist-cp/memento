@@ -45,18 +45,18 @@ public:
   hash_Utilization utilization()
   {
     hash_Utilization u;
-    // uint64_t count = 0;
-    // uint64_t bn = 0;
-    // for (int i = 0; i < BUCKET_NUM; i++) {
-    //   SOFTList<T>& bucket = table[i];
-    //   auto h = bucket.head->next.load();
-    //   while (h) {
-    //     bn++;
-    //     h = h->next.load();
-    //   }
-    // }
-    // auto lf = (float)bn / BUCKET_NUM;
-    // u.load_factor = (lf > 1 ? 1 : lf) * 100.0;
+    uint64_t count = 0;
+    uint64_t bn = 0;
+    for (int i = 0; i < BUCKET_NUM; i++) {
+      SOFTList<T>& bucket = table[i];
+      auto h = bucket.head->next.load();
+      while (h) {
+        bn++;
+        h = h->next.load();
+      }
+    }
+    auto lf = (float)bn / BUCKET_NUM;
+    u.load_factor = (lf > 1 ? 1 : lf) * 100.0;
     // u.utilization =
     //     (float)bn * 16 / ((sizeof(PNode<T>) + sizeof(Node<T>)) * bn) * 100.0;
     return u;

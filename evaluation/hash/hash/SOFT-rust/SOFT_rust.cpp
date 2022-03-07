@@ -41,6 +41,7 @@ extern "C"
 
     typedef struct _SOFT SOFT;
     bool search(SOFT *obj, unsigned tid, Key k, PoolHandle *pool);
+    float load_factor(SOFT *obj);
 
     typedef struct _memento SOFTMemento;
     bool run_insert(SOFTMemento *m, SOFT *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
@@ -73,9 +74,7 @@ public:
         }
         thread_ini(-1);
     }
-    ~SOFTRust(){
-        // TODO: pool close?
-    };
+    ~SOFTRust(){};
     bool hash_is_resizing()
     {
         return false;
@@ -87,6 +86,7 @@ public:
     hash_Utilization utilization()
     {
         hash_Utilization h;
+        h.load_factor = load_factor(c);
         return h;
     }
     void thread_ini(int tid)

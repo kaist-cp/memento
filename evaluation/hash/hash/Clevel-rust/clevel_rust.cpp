@@ -82,9 +82,7 @@ public:
         ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tnum + 1, pool));
         std::thread{run_resize_loop, m_resize, c, tnum, pool}.detach();
     }
-    ~CLevelMemento(){
-        // TODO: pool close?
-    };
+    ~CLevelMemento(){};
     bool hash_is_resizing()
     {
         return is_resizing(c, pool);
@@ -96,7 +94,7 @@ public:
     hash_Utilization utilization()
     {
         hash_Utilization h;
-        h.load_factor = (float)inserted / get_capacity(c, pool);
+        h.load_factor = ((float)inserted / get_capacity(c, pool)) * 100;
         return h;
     }
     void thread_ini(int tid)

@@ -122,3 +122,8 @@ pub extern "C" fn run_delete(
 pub extern "C" fn search(obj: &SOFTHash<Value>, _tid: usize, k: Key, _: &PoolHandle) -> bool {
     obj.inner.contains(k)
 }
+
+#[no_mangle]
+pub extern "C" fn load_factor(obj: &SOFTHash<Value>) -> f32 {
+    obj.inner.load_factor()
+}

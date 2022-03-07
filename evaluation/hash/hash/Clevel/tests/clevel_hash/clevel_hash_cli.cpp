@@ -48,7 +48,7 @@ public:
 	hash_Utilization utilization()
 	{
 		hash_Utilization h;
-		h.load_factor = (float)coo / ccc;
+		h.load_factor = ((float)coo / ccc) * 100;
 		return h;
 	}
 	std::string hash_name() { return "clevel"; };

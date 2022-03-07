@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sudo modprobe msr # https://github.com/sfu-dis/pibench#intel-pcm 
+sudo modprobe msr # https://github.com/sfu-dis/pibench#intel-pcm
 
 # Install dependency
 sudo apt install libpmemobj-dev -y
@@ -14,7 +14,9 @@ pip3 install --user pandas matplotlib
 make clean
 make -j
 
-# # Recompile Dash with `DA_FLAGS=-DCOUNTING` to evaluate the load factor 
+# # Recompile Dash and Clevel to evaluate the load factor
 # make clean -C hash/Dash
+# make clean -C hash/Clevel
+# rm bin/clevel.so
 # make DA_FLAGS=-DCOUNTING -C hash/Dash -j
-# make -j
+# make CL_FLAGS=-DDEBUG_RESIZING -j

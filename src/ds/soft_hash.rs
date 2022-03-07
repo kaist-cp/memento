@@ -60,6 +60,21 @@ impl<T: 'static + Default + Clone + PartialEq> SOFTHashTable<T> {
         bucket.contains(k)
     }
 
+    /// load factor
+    pub fn load_factor(&self) -> f32 {
+        let mut nr_item = 0;
+        for bi in &self.table {
+            nr_item += bi.size();
+        }
+
+        let lf = (nr_item as f32 / BUCKET_NUM as f32) * 100.0;
+        if lf >= 100.0 {
+            100.0
+        } else {
+            lf
+        }
+    }
+
     fn get_bucket(&self, k: usize) -> &SOFTList<T> {
         let mut hasher = Murmur3Hasher::default();
         k.hash(&mut hasher);
