@@ -243,6 +243,7 @@ cfg_if! {
         const SLOTS_IN_BUCKET: usize = 8;
         const LEVEL_RATIO: usize = 2;
         const MIN_SIZE: usize = 786432;
+        // const MIN_SIZE: usize = 262144;
 
         const fn level_size_next(size: usize) -> usize {
             size * LEVEL_RATIO
