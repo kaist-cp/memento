@@ -1,4 +1,4 @@
-//! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
+//! Implementation of PBComb queue (The performance power of software combining in persistence, PPoPP '22)
 #![allow(non_snake_case)]
 use array_init::array_init;
 use core::sync::atomic::Ordering;
@@ -17,6 +17,8 @@ use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
 type Data = usize;
+
+const COMBINING_ROUNDS: usize = 20;
 
 /// restriction of combining iteration
 pub static mut NR_THREADS: usize = MAX_THREADS;
@@ -363,27 +365,38 @@ impl PBCombQueue {
         // collect the enqueued nodes here and persist them all at once
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
 
-        for q in 1..unsafe { NR_THREADS } + 1 {
-            // if `q` thread has a request that is not yet applied
-            if self.e_request[q].load_activate()
-                != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
-            {
-                // reserve persist(current tail)
-                let tail_addr = self.e_state[ind]
-                    .tail
-                    .load(Ordering::SeqCst, unsafe { unprotected() })
-                    .into_usize();
-                match to_persist.binary_search(&tail_addr) {
-                    Ok(_) => {} // no duplicate
-                    Err(idx) => to_persist.insert(idx, tail_addr),
-                }
+        for _ in 0..COMBINING_ROUNDS {
+            let mut serve_reqs = 0;
 
-                // enq
-                Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
-                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
-                self.e_state[ind].deactivate[q]
-                    .store(self.e_request[q].load_activate(), Ordering::SeqCst);
+            for q in 1..unsafe { NR_THREADS } + 1 {
+                // if `q` thread has a request that is not yet applied
+                if self.e_request[q].load_activate()
+                    != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
+                {
+                    // reserve persist(current tail)
+                    let tail_addr = self.e_state[ind]
+                        .tail
+                        .load(Ordering::SeqCst, unsafe { unprotected() })
+                        .into_usize();
+                    match to_persist.binary_search(&tail_addr) {
+                        Ok(_) => {} // no duplicate
+                        Err(idx) => to_persist.insert(idx, tail_addr),
+                    }
+
+                    // enq
+                    Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
+                    E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
+                    self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
+                    self.e_state[ind].deactivate[q]
+                        .store(self.e_request[q].load_activate(), Ordering::SeqCst);
+
+                    // count
+                    serve_reqs += 1;
+                }
+            }
+
+            if serve_reqs == 0 {
+                break;
             }
         }
         let tail_addr = self.e_state[ind]
@@ -484,8 +497,8 @@ impl PBCombQueue {
         }
 
         // deq combiner executes the deq requests
-        let ind = 1 - self.d_index.load(Ordering::SeqCst);
-        self.d_state[ind] = self.d_state[self.d_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
+        for _ in 0..COMBINING_ROUNDS {
+            let mut serve_reqs = 0;
 
         for q in 1..unsafe { NR_THREADS } + 1 {
             // if `t` thread has a request that is not yet applied
@@ -510,10 +523,14 @@ impl PBCombQueue {
                 self.d_state[ind].return_val[q] = Some(ret_val);
                 self.d_state[ind].deactivate[q]
                     .store(self.d_request[q].load_activate(), Ordering::SeqCst);
+
+                    serve_reqs += 1;
             }
         }
-        persist_obj(&self.d_request, false);
-        persist_obj(&*self.d_state[ind], false);
+            if serve_reqs == 0 {
+                break;
+            }
+        }
         sfence();
         self.d_index.store(ind, Ordering::SeqCst);
         persist_obj(&self.d_index, false);
