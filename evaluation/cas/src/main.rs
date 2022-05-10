@@ -3,7 +3,10 @@ use std::{
     path::Path,
 };
 
-use cas_eval::cas::{TestCas, TestCasMmt};
+use cas_eval::{
+    cas::{TestCas, TestCasMmt},
+    mcas::{TestMCas, TestMCasMmt},
+};
 use csv::Writer;
 use evaluation::common::{get_nops, DURATION};
 use structopt::StructOpt;
@@ -19,7 +22,7 @@ pub enum TestTarget {
 fn parse_target(target: &str) -> TestTarget {
     match target {
         "cas" => TestTarget::Cas,
-        // "mcas" => TestTarget::MCas,
+        "mcas" => TestTarget::MCas,
         // "pcas" => TestTarget::PCas,
         // "pmwcas" => TestTarget::PMwCas,
         // "rcas" => TestTarget::RCas,
@@ -74,6 +77,7 @@ fn bench(opt: &Opt) -> f64 {
 pub fn bench_cas(opt: &Opt, target: TestTarget) -> usize {
     match target {
         TestTarget::Cas => get_nops::<TestCas, TestCasMmt>(&opt.filepath, opt.threads),
+        TestTarget::MCas => get_nops::<TestMCas, TestMCasMmt>(&opt.filepath, opt.threads),
         _ => unimplemented!(),
     }
 }

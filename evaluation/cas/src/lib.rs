@@ -1,8 +1,15 @@
 use std::time::{Duration, Instant};
 
+use memento::pmem::{Collectable, GarbageCollection, PoolHandle};
+
 pub mod cas;
+pub mod mcas;
 
 struct Node;
+
+impl Collectable for Node {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
 
 pub trait TestNOps {
     // Count number of executions of `op` in `duration` seconds
