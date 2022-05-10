@@ -84,7 +84,7 @@ pub fn pick(prob: u32) -> bool {
     rand::thread_rng().gen_ratio(prob, 100)
 }
 
-fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
+pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: RootObj<M> + Send + Sync,
     M: Collectable + Default + Send + Sync,

@@ -1,0 +1,24 @@
+[package]
+name = "cas-eval"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "cas_bench"
+path = "src/main.rs"
+
+[dependencies]
+memento = { path = "../../" }
+evaluation = { path = "../queue/" }
+crossbeam-epoch = { path = "../../crossbeam-persistency/crossbeam-epoch" }
+crossbeam-utils = { path = "../../crossbeam-persistency/crossbeam-utils" }
+array-init = "2.0.0"
+structopt = "0.3"
+csv = "1.1.6"
+tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
+lazy_static = "1.4.0"
+
+[features]
+no_persist = ["memento/no_persist"]
