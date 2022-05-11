@@ -48,7 +48,7 @@ impl RootObj<TestMCasMmt> for TestMCas {
         let ops = self.test_nops(
             &|tid| {
                 let mmt = unsafe { (&*mmt.cas as *const _ as *mut Cas).as_mut() }.unwrap();
-                cas(&self.loc, mmt, tid, pool);
+                mcas(&self.loc, mmt, tid, pool)
             },
             tid,
             duration,
@@ -58,10 +58,10 @@ impl RootObj<TestMCasMmt> for TestMCas {
     }
 }
 
-fn cas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, tid: usize, pool: &PoolHandle) {
+fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, tid: usize, pool: &PoolHandle) -> bool {
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard, pool);
     let new = unsafe { PShared::from_usize(tid) }; // TODO: 다양한 new 값
-    let _ = loc.cas::<false>(old, new, mmt, tid, guard, pool);
+    loc.cas::<false>(old, new, mmt, tid, guard, pool).is_ok()
 }

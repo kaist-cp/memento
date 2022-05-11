@@ -13,7 +13,7 @@ impl Collectable for Node {
 
 pub trait TestNOps {
     // Count number of executions of `op` in `duration` seconds
-    fn test_nops<'f, F: Fn(usize)>(&self, op: &'f F, tid: usize, duration: f64) -> usize
+    fn test_nops<'f, F: Fn(usize) -> bool>(&self, op: &'f F, tid: usize, duration: f64) -> usize
     where
         &'f F: Send,
     {
@@ -21,8 +21,9 @@ pub trait TestNOps {
         let start = Instant::now();
         let dur = Duration::from_secs_f64(duration);
         while start.elapsed() < dur {
-            op(tid);
-            ops += 1;
+            if op(tid) {
+                ops += 1;
+            }
         }
         ops
     }
