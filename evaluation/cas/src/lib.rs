@@ -6,7 +6,7 @@ pub mod cas;
 pub mod mcas;
 pub mod pcas;
 
-struct Node;
+struct Node(usize); // `usize` for low tag
 
 impl Collectable for Node {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
