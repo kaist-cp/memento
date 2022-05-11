@@ -4,6 +4,7 @@ use memento::pmem::{Collectable, GarbageCollection, PoolHandle};
 
 pub mod cas;
 pub mod mcas;
+pub mod pcas;
 
 struct Node;
 
