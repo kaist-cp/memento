@@ -5,8 +5,7 @@ use core::sync::atomic::Ordering;
 use crossbeam_epoch::{unprotected, Guard};
 use crossbeam_utils::{Backoff, CachePadded};
 use memento::pepoch::atomic::Pointer;
-use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use memento::ploc::{compose_aux_bit, decompose_aux_bit};
+use memento::pepoch::{PAtomic, POwned};
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{persist_obj, pool::*, sfence, PPtr};
 use memento::PDefault;
@@ -48,33 +47,12 @@ pub enum ReturnVal {
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
-    act_seq: AtomicUsize, // 1: activate, 63: sequence number
+    activate: u32,
     valid: u32,
 }
 
 impl Collectable for RequestRec {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
-}
-
-impl RequestRec {
-    // helper function to update activate bit and sequence number atomically
-    #[inline]
-    fn store_act_seq(&self, activate: bool, seq: usize) {
-        self.act_seq
-            .store(compose_aux_bit(activate as usize, seq), Ordering::SeqCst)
-    }
-
-    #[inline]
-    fn load_seq(&self) -> usize {
-        let (_, seq) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
-        seq
-    }
-
-    #[inline]
-    fn load_activate(&self) -> bool {
-        let (act, _) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
-        act != 0
-    }
 }
 
 /// Node
@@ -98,8 +76,8 @@ impl Collectable for Node {
 #[derive(Debug)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    deactivate: [AtomicBool; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
 }
 
 impl Clone for EStateRec {
@@ -132,8 +110,8 @@ struct EThreadState {
 #[derive(Debug)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    deactivate: [AtomicBool; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
 }
 
 impl Clone for DStateRec {
@@ -346,12 +324,14 @@ impl PBCombQueue {
 impl PBCombQueue {
     fn PBQueueEnq(&mut self, arg: Data, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // request enq
+
         self.e_request[tid].func = Some(Func::ENQUEUE);
         self.e_request[tid].arg = arg;
-        self.e_request[tid].store_act_seq(!self.e_request[tid].load_activate(), seq);
+        self.e_request[tid].activate = 1 - self.e_request[tid].activate;
         if self.e_request[tid].valid == 0 {
             self.e_request[tid].valid = 1;
         }
+        sfence();
 
         // perform
         self.PerformEnqReq(tid, pool)
@@ -390,8 +370,8 @@ impl PBCombQueue {
                     .load(Ordering::SeqCst, unprotected())
                     .deref(pool)
             };
-            if self.e_request[tid].load_activate()
-                == last_state.deactivate[tid].load(Ordering::SeqCst)
+            if self.e_request[tid].activate
+                == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
             {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
                     return last_state.return_val[tid].clone().unwrap();
@@ -399,7 +379,7 @@ impl PBCombQueue {
 
                 // wait until the combiner that processed my op is finished
                 backoff.reset();
-                while (E_LOCK.load(Ordering::SeqCst) == lval + 2) {
+                while E_LOCK.load(Ordering::SeqCst) == lval + 2 {
                     backoff.snooze();
                 }
                 return last_state.return_val[tid].clone().unwrap();
@@ -419,15 +399,15 @@ impl PBCombQueue {
         .clone(); // create a copy of current state
 
         // collect the enqueued nodes here and persist them all at once
-        let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
+        let mut to_persist = tiny_vec!([usize; 1024]);
 
         for _ in 0..COMBINING_ROUNDS {
             let mut serve_reqs = 0;
 
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `q` thread has a request that is not yet applied
-                if self.e_request[q].load_activate()
-                    != new_state_ref.deactivate[q].load(Ordering::SeqCst)
+                if self.e_request[q].activate
+                    != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
                     && self.e_request[q].valid == 1
                 {
                     // reserve persist(current tail)
@@ -441,10 +421,10 @@ impl PBCombQueue {
                     }
 
                     // enq
-                    Self::enqueue(&mut new_state_ref.tail, self.e_request[q].arg, pool);
+                    Self::enqueue(&new_state_ref.tail, self.e_request[q].arg, pool);
                     new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
                     new_state_ref.deactivate[q]
-                        .store(self.e_request[q].load_activate(), Ordering::SeqCst);
+                        .store(self.e_request[q].activate == 1, Ordering::SeqCst);
 
                     // count
                     serve_reqs += 1;
@@ -518,11 +498,11 @@ impl PBCombQueue {
     fn PBQueueDnq(&mut self, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // request deq
         self.d_request[tid].func = Some(Func::DEQUEUE);
-        self.d_request[tid].store_act_seq(!self.d_request[tid].load_activate(), seq);
-
+        self.d_request[tid].activate = 1 - self.d_request[tid].activate;
         if self.d_request[tid].valid == 0 {
             self.d_request[tid].valid = 1;
         }
+        sfence();
 
         // perform
         self.PerformDeqReq(tid, pool)
@@ -562,8 +542,8 @@ impl PBCombQueue {
                     .load(Ordering::SeqCst, unprotected())
                     .deref(pool)
             };
-            if self.d_request[tid].load_activate()
-                == last_state.deactivate[tid].load(Ordering::SeqCst)
+            if self.d_request[tid].activate
+                == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
             {
                 if D_LOCK_VALUE.load(Ordering::SeqCst) == lval {
                     return last_state.return_val[tid].clone().unwrap();
@@ -571,7 +551,7 @@ impl PBCombQueue {
 
                 // wait until the combiner that processed my op is finished
                 backoff.reset();
-                while (D_LOCK.load(Ordering::SeqCst) == lval + 2) {
+                while D_LOCK.load(Ordering::SeqCst) == lval + 2 {
                     backoff.snooze();
                 }
                 return last_state.return_val[tid].clone().unwrap();
@@ -595,8 +575,8 @@ impl PBCombQueue {
 
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `t` thread has a request that is not yet applied
-                if self.d_request[q].load_activate()
-                    != new_state_ref.deactivate[q].load(Ordering::SeqCst)
+                if self.d_request[q].activate
+                    != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
                     && self.d_request[q].valid == 1
                 {
                     let ret_val;
@@ -615,7 +595,7 @@ impl PBCombQueue {
                     }
                     new_state_ref.return_val[q] = Some(ret_val);
                     new_state_ref.deactivate[q]
-                        .store(self.d_request[q].load_activate(), Ordering::SeqCst);
+                        .store(self.d_request[q].activate == 1, Ordering::SeqCst);
 
                     serve_reqs += 1;
                 }
