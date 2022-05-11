@@ -1,8 +1,9 @@
 use std::sync::atomic::Ordering;
 
-use crossbeam_epoch::{unprotected, Atomic, Guard, Pointer, Shared};
+use crossbeam_epoch::{unprotected, Guard};
 use evaluation::common::{DURATION, TOTAL_NOPS};
 use memento::{
+    pepoch::{atomic::Pointer, PAtomic, PShared},
     pmem::{Collectable, GarbageCollection, PoolHandle, RootObj},
     PDefault,
 };
@@ -10,7 +11,7 @@ use memento::{
 use crate::{Node, TestNOps};
 
 pub struct TestCas {
-    loc: Atomic<Node>,
+    loc: PAtomic<Node>,
 }
 
 impl Collectable for TestCas {
@@ -22,7 +23,7 @@ impl Collectable for TestCas {
 impl PDefault for TestCas {
     fn pdefault(_: &PoolHandle) -> Self {
         Self {
-            loc: Atomic::<_>::default(),
+            loc: Default::default(),
         }
     }
 }
@@ -54,10 +55,10 @@ impl RootObj<TestCasMmt> for TestCas {
     }
 }
 
-fn cas(loc: &Atomic<Node>, tid: usize) {
+fn cas(loc: &PAtomic<Node>, tid: usize) {
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard);
-    let new = unsafe { Shared::from_usize(tid) }; // TODO: 다양한 new 값
+    let new = unsafe { PShared::from_usize(tid) }; // TODO: 다양한 new 값
     let _ = loc.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
 }
