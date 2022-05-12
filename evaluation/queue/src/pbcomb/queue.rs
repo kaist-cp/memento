@@ -1,4 +1,4 @@
-//! Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
+//! Implementation of PBComb queue (The performance power of software combining in persistence, PPoPP '22)
 #![allow(non_snake_case)]
 use array_init::array_init;
 use core::sync::atomic::Ordering;
@@ -6,7 +6,6 @@ use crossbeam_epoch::{unprotected, Guard};
 use crossbeam_utils::{Backoff, CachePadded};
 use memento::pepoch::atomic::Pointer;
 use memento::pepoch::{PAtomic, POwned};
-use memento::ploc::{compose_aux_bit, decompose_aux_bit};
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{persist_obj, pool::*, sfence, PPtr};
 use memento::PDefault;
@@ -16,7 +15,9 @@ use tinyvec::tiny_vec;
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-type Data = usize;
+use super::Data;
+
+const COMBINING_ROUNDS: usize = 20;
 
 /// restriction of combining iteration
 pub static mut NR_THREADS: usize = MAX_THREADS;
@@ -39,39 +40,35 @@ pub enum ReturnVal {
     EnqRetVal(()),
 
     /// return value of deq
-    DeqRetVal(PPtr<Node>),
+    DeqRetVal(Data),
+}
+
+impl ReturnVal {
+    pub fn enq_retval(self) -> Option<()> {
+        match self {
+            ReturnVal::EnqRetVal(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn deq_retval(self) -> Option<Data> {
+        match self {
+            ReturnVal::DeqRetVal(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
-    act_seq: AtomicUsize, // 1: activate, 63: sequence number
+    activate: u32,
+    valid: u32,
 }
 
 impl Collectable for RequestRec {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
-}
-
-impl RequestRec {
-    // helper function to update activate bit and sequence number atomically
-    #[inline]
-    fn store_act_seq(&self, activate: bool, seq: usize) {
-        self.act_seq
-            .store(compose_aux_bit(activate as usize, seq), Ordering::SeqCst)
-    }
-
-    #[inline]
-    fn load_seq(&self) -> usize {
-        let (_, seq) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
-        seq
-    }
-
-    #[inline]
-    fn load_activate(&self) -> bool {
-        let (act, _) = decompose_aux_bit(self.act_seq.load(Ordering::SeqCst));
-        act != 0
-    }
 }
 
 /// Node
@@ -95,8 +92,8 @@ impl Collectable for Node {
 #[derive(Debug)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    deactivate: [AtomicBool; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
 }
 
 impl Clone for EStateRec {
@@ -119,12 +116,18 @@ impl Collectable for EStateRec {
     }
 }
 
+#[derive(Debug)]
+struct EThreadState {
+    state: [PAtomic<EStateRec>; 2],
+    index: AtomicUsize, // indicate what is consistent state
+}
+
 /// State of Dequeue PBComb
 #[derive(Debug)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    deactivate: [AtomicBool; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
 }
 
 impl Clone for DStateRec {
@@ -147,17 +150,23 @@ impl Collectable for DStateRec {
     }
 }
 
+#[derive(Debug)]
+struct DThreadState {
+    state: [PAtomic<DStateRec>; 2],
+    index: AtomicUsize, // indicate what is consistent state
+}
+
 // Shared volatile variables
 lazy_static::lazy_static! {
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
     /// Used by the PBQueueENQ instance of PBCOMB
-    static ref E_LOCK: AtomicUsize = AtomicUsize::new(0);
-    static ref E_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
+    static ref E_LOCK: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
+    static ref E_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 
     /// Used by the PBQueueDEQ instance of PBCOMB
-    static ref D_LOCK: AtomicUsize = AtomicUsize::new(0);
-    static ref D_DEACTIVATE_LOCK: [AtomicUsize; MAX_THREADS + 1] = array_init(|_| AtomicUsize::new(0));
+    static ref D_LOCK: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
+    static ref D_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 }
 
 /// TODO: doc
@@ -167,14 +176,17 @@ pub struct PBCombQueue {
     dummy: PPtr<Node>,
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
+    // global
     e_request: [CachePadded<RequestRec>; MAX_THREADS + 1],
-    e_state: [CachePadded<EStateRec>; 2],
-    e_index: AtomicUsize,
-
+    e_state: CachePadded<PAtomic<EStateRec>>, // global state
+    // per-thread
+    e_thread_state: [CachePadded<EThreadState>; MAX_THREADS + 1],
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
+    // global
     d_request: [CachePadded<RequestRec>; MAX_THREADS + 1],
-    d_state: [CachePadded<DStateRec>; 2],
-    d_index: AtomicUsize,
+    d_state: CachePadded<PAtomic<DStateRec>>,
+    // per-thread
+    d_thread_state: [CachePadded<DThreadState>; MAX_THREADS + 1],
 }
 
 impl Collectable for PBCombQueue {
@@ -205,23 +217,53 @@ impl PDefault for PBCombQueue {
         Self {
             dummy,
             e_request: array_init(|_| CachePadded::new(Default::default())),
-            e_state: array_init(|_| {
-                CachePadded::new(EStateRec {
+            e_state: CachePadded::new(PAtomic::new(
+                EStateRec {
                     tail: PAtomic::from(dummy),
                     return_val: array_init(|_| None),
                     deactivate: array_init(|_| AtomicBool::new(false)),
+                },
+                pool,
+            )),
+            e_thread_state: array_init(|_| {
+                CachePadded::new(EThreadState {
+                    state: array_init(|_| {
+                        PAtomic::new(
+                            EStateRec {
+                                tail: PAtomic::from(dummy),
+                                return_val: array_init(|_| None),
+                                deactivate: array_init(|_| AtomicBool::new(false)),
+                            },
+                            pool,
+                        )
+                    }),
+                    index: AtomicUsize::default(),
                 })
             }),
-            e_index: Default::default(),
             d_request: array_init(|_| CachePadded::new(Default::default())),
-            d_state: array_init(|_| {
-                CachePadded::new(DStateRec {
+            d_state: CachePadded::new(PAtomic::new(
+                DStateRec {
                     head: PAtomic::from(dummy),
                     return_val: array_init(|_| None),
                     deactivate: array_init(|_| AtomicBool::new(false)),
+                },
+                pool,
+            )),
+            d_thread_state: array_init(|_| {
+                CachePadded::new(DThreadState {
+                    state: array_init(|_| {
+                        PAtomic::new(
+                            DStateRec {
+                                head: PAtomic::from(dummy),
+                                return_val: array_init(|_| None),
+                                deactivate: array_init(|_| AtomicBool::new(false)),
+                            },
+                            pool,
+                        )
+                    }),
+                    index: AtomicUsize::default(),
                 })
             }),
-            d_index: Default::default(),
         }
     }
 }
@@ -232,7 +274,7 @@ impl PBCombQueue {
         &mut self,
         func: Func,
         arg: Data,
-        seq: usize,
+        seq: u32,
         tid: usize,
         pool: &PoolHandle,
     ) -> ReturnVal {
@@ -249,44 +291,64 @@ impl PBCombQueue {
         &mut self,
         func: Func,
         arg: Data,
-        seq: usize,
+        seq: u32,
         tid: usize,
         pool: &PoolHandle,
     ) -> ReturnVal {
+        // set OLD_TAIL if it is dummy node
+        let guard = unsafe { unprotected() };
+        let ltail = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }
+            .tail
+            .load(Ordering::SeqCst, guard);
+        let _ = OLD_TAIL.compare_exchange(
+            self.dummy.into_offset(),
+            ltail.into_usize(),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+
         match func {
             Func::ENQUEUE => {
-                // 1. check seq number and re-announce if request is not yet announced
-                if self.e_request[tid].load_seq() != seq {
-                    return self.PBQueue(func, arg, seq, tid, pool);
-                }
+                self.e_request[tid].func = Some(func);
+                self.e_request[tid].arg = arg;
+                self.e_request[tid].activate = seq % 2;
+                self.e_request[tid].valid = 1;
+                sfence();
 
-                // 2. check activate and re-execute if request is not yet applied
-                let e_state = &self.e_state[self.e_index.load(Ordering::SeqCst)];
-                if self.e_request[tid].load_activate()
-                    != e_state.deactivate[tid].load(Ordering::SeqCst)
+                // check activate and re-execute if request is not yet applied
+                if unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
+                    .load(Ordering::SeqCst)
+                    != (seq % 2 == 1)
                 {
                     return self.PerformEnqReq(tid, pool);
                 }
 
-                // 3. return value if request is already applied
-                return e_state.return_val[tid].clone().unwrap();
+                // return value if request is already applied
+                return unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }
+                    .return_val[tid]
+                    .clone()
+                    .unwrap();
             }
             Func::DEQUEUE => {
-                // 1. check seq number and re-announce if request is not yet announced
-                if self.d_request[tid].load_seq() != seq {
-                    return self.PBQueue(func, arg, seq, tid, pool);
-                }
+                self.d_request[tid].func = Some(func);
+                self.d_request[tid].arg = arg;
+                self.d_request[tid].activate = seq % 2;
+                self.d_request[tid].valid = 1;
+                sfence();
 
-                // 2. check activate and re-execute if request is not yet applied
-                let d_state = &self.d_state[self.d_index.load(Ordering::SeqCst)];
-                if self.d_request[tid].load_activate()
-                    != d_state.deactivate[tid].load(Ordering::SeqCst)
+                // check activate and re-execute if request is not yet applied
+                if unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
+                    .load(Ordering::SeqCst)
+                    != (seq % 2 == 1)
                 {
                     return self.PerformDeqReq(tid, pool);
                 }
 
-                // 3. return value if request is already applied
-                return d_state.return_val[tid].clone().unwrap();
+                // return value if request is already applied
+                return unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }
+                    .return_val[tid]
+                    .clone()
+                    .unwrap();
             }
         }
     }
@@ -294,11 +356,18 @@ impl PBCombQueue {
 
 /// Enq
 impl PBCombQueue {
-    fn PBQueueEnq(&mut self, arg: Data, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    const EMPTY: usize = usize::MAX;
+
+    fn PBQueueEnq(&mut self, arg: Data, seq: u32, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // request enq
+
         self.e_request[tid].func = Some(Func::ENQUEUE);
         self.e_request[tid].arg = arg;
-        self.e_request[tid].store_act_seq(!self.e_request[tid].load_activate(), seq);
+        self.e_request[tid].activate = 1 - self.e_request[tid].activate;
+        if self.e_request[tid].valid == 0 {
+            self.e_request[tid].valid = 1;
+        }
+        sfence();
 
         // perform
         self.PerformEnqReq(tid, pool)
@@ -332,61 +401,79 @@ impl PBCombQueue {
             while lval == E_LOCK.load(Ordering::SeqCst) {
                 backoff.snooze();
             }
-            if self.e_request[tid].load_activate()
-                == self.e_state[self.e_index.load(Ordering::SeqCst)].deactivate[tid]
-                    .load(Ordering::SeqCst)
+            let last_state = unsafe {
+                self.e_state
+                    .load(Ordering::SeqCst, unprotected())
+                    .deref(pool)
+            };
+            if self.e_request[tid].activate
+                == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
             {
-                // wait until the combiner that processed my op is finished
-                let deactivate_lval = E_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
-                backoff.reset();
-                while !(deactivate_lval < E_LOCK.load(Ordering::SeqCst)) {
-                    backoff.snooze();
+                if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
+                    return last_state.return_val[tid].clone().unwrap();
                 }
 
-                return self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
-                    .clone()
-                    .unwrap();
+                // wait until the combiner that processed my op is finished
+                backoff.reset();
+                while E_LOCK.load(Ordering::SeqCst) == lval + 2 {
+                    backoff.snooze();
+                }
+                return last_state.return_val[tid].clone().unwrap();
             }
         }
 
         // enq combiner executes the enq requests
-        let ind = 1 - self.e_index.load(Ordering::SeqCst);
-        self.e_state[ind] = self.e_state[self.e_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
-        OLD_TAIL.store(
-            self.e_state[ind]
-                .tail
-                .load(Ordering::SeqCst, unsafe { unprotected() })
-                .into_usize(),
-            Ordering::SeqCst,
-        );
+        let ind = self.e_thread_state[tid].index.load(Ordering::SeqCst);
+        let mut new_state =
+            self.e_thread_state[tid].state[ind].load(Ordering::SeqCst, unsafe { unprotected() });
+        let new_state_ref = unsafe { new_state.deref_mut(pool) };
+        *new_state_ref = unsafe {
+            self.e_state
+                .load(Ordering::SeqCst, unprotected())
+                .deref(pool)
+        }
+        .clone(); // create a copy of current state
 
         // collect the enqueued nodes here and persist them all at once
-        let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
+        let mut to_persist = tiny_vec!([usize; 1024]);
 
-        for q in 1..unsafe { NR_THREADS } + 1 {
-            // if `q` thread has a request that is not yet applied
-            if self.e_request[q].load_activate()
-                != self.e_state[ind].deactivate[q].load(Ordering::SeqCst)
-            {
-                // reserve persist(current tail)
-                let tail_addr = self.e_state[ind]
-                    .tail
-                    .load(Ordering::SeqCst, unsafe { unprotected() })
-                    .into_usize();
-                match to_persist.binary_search(&tail_addr) {
-                    Ok(_) => {} // no duplicate
-                    Err(idx) => to_persist.insert(idx, tail_addr),
+        for _ in 0..COMBINING_ROUNDS {
+            let mut serve_reqs = 0;
+
+            for q in 1..unsafe { NR_THREADS } + 1 {
+                // if `q` thread has a request that is not yet applied
+                if self.e_request[q].activate
+                    != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
+                    && self.e_request[q].valid == 1
+                {
+                    // reserve persist(current tail)
+                    let tail_addr = new_state_ref
+                        .tail
+                        .load(Ordering::SeqCst, unsafe { unprotected() })
+                        .into_usize();
+                    match to_persist.binary_search(&tail_addr) {
+                        Ok(_) => {} // no duplicate
+                        Err(idx) => to_persist.insert(idx, tail_addr),
+                    }
+
+                    // enq
+                    Self::enqueue(&new_state_ref.tail, self.e_request[q].arg, pool);
+                    new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
+                    new_state_ref.deactivate[q]
+                        .store(self.e_request[q].activate == 1, Ordering::SeqCst);
+
+                    // count
+                    serve_reqs += 1;
                 }
+            }
 
-                // enq
-                Self::enqueue(&mut self.e_state[ind].tail, self.e_request[q].arg, pool);
-                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                self.e_state[ind].return_val[q] = Some(ReturnVal::EnqRetVal(()));
-                self.e_state[ind].deactivate[q]
-                    .store(self.e_request[q].load_activate(), Ordering::SeqCst);
+            if serve_reqs == 0 {
+                break;
             }
         }
-        let tail_addr = self.e_state[ind]
+
+        // ``` final_persist_func
+        let tail_addr = new_state_ref
             .tail
             .load(Ordering::SeqCst, unsafe { unprotected() })
             .into_usize();
@@ -399,17 +486,32 @@ impl PBCombQueue {
             let node = PPtr::<Node>::from(to_persist.pop().unwrap());
             persist_obj(unsafe { node.deref(pool) }, false);
         }
-        persist_obj(&self.e_request, false);
-        persist_obj(&*self.e_state[ind], false);
+        // ```
+
+        persist_obj(new_state_ref, false);
         sfence();
-        self.e_index.store(ind, Ordering::SeqCst);
-        persist_obj(&self.e_index, false);
+
+        E_LOCK_VALUE.store(lval, Ordering::SeqCst);
+        self.e_state.store(new_state, Ordering::SeqCst);
+
+        persist_obj(&*self.e_state, false);
         sfence();
-        OLD_TAIL.store(PPtr::<Node>::null().into_offset(), Ordering::SeqCst); // clear old_tail
+
+        // ``` after_persist_func
+        OLD_TAIL.store(
+            new_state_ref
+                .tail
+                .load(Ordering::SeqCst, unsafe { unprotected() })
+                .into_usize(),
+            Ordering::SeqCst,
+        );
+        // ```
+
+        self.e_thread_state[tid]
+            .index
+            .store(1 - ind, Ordering::SeqCst);
         E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
-        self.e_state[self.e_index.load(Ordering::SeqCst)].return_val[tid]
-            .clone()
-            .unwrap()
+        new_state_ref.return_val[tid].clone().unwrap()
     }
 
     fn enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) {
@@ -429,10 +531,14 @@ impl PBCombQueue {
 
 /// Deq
 impl PBCombQueue {
-    fn PBQueueDnq(&mut self, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    fn PBQueueDnq(&mut self, seq: u32, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // request deq
         self.d_request[tid].func = Some(Func::DEQUEUE);
-        self.d_request[tid].store_act_seq(!self.d_request[tid].load_activate(), seq);
+        self.d_request[tid].activate = 1 - self.d_request[tid].activate;
+        if self.d_request[tid].valid == 0 {
+            self.d_request[tid].valid = 1;
+        }
+        sfence();
 
         // perform
         self.PerformDeqReq(tid, pool)
@@ -466,80 +572,114 @@ impl PBCombQueue {
             while lval == D_LOCK.load(Ordering::SeqCst) {
                 backoff.snooze();
             }
-            if self.d_request[tid].load_activate()
-                == self.d_state[self.d_index.load(Ordering::SeqCst)].deactivate[tid]
-                    .load(Ordering::SeqCst)
+
+            let last_state = unsafe {
+                self.d_state
+                    .load(Ordering::SeqCst, unprotected())
+                    .deref(pool)
+            };
+            if self.d_request[tid].activate
+                == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
             {
-                // wait until the combiner that processed my op is finished
-                let deactivate_lval = D_DEACTIVATE_LOCK[tid].load(Ordering::SeqCst);
-                backoff.reset();
-                while !(deactivate_lval < D_LOCK.load(Ordering::SeqCst)) {
-                    backoff.snooze();
+                if D_LOCK_VALUE.load(Ordering::SeqCst) == lval {
+                    return last_state.return_val[tid].clone().unwrap();
                 }
 
-                return self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
-                    .clone()
-                    .unwrap();
+                // wait until the combiner that processed my op is finished
+                backoff.reset();
+                while D_LOCK.load(Ordering::SeqCst) == lval + 2 {
+                    backoff.snooze();
+                }
+                return last_state.return_val[tid].clone().unwrap();
             }
         }
 
         // deq combiner executes the deq requests
-        let ind = 1 - self.d_index.load(Ordering::SeqCst);
-        self.d_state[ind] = self.d_state[self.d_index.load(Ordering::SeqCst)].clone(); // create a copy of current state
+        let ind = self.d_thread_state[tid].index.load(Ordering::SeqCst);
+        let mut new_state =
+            self.d_thread_state[tid].state[ind].load(Ordering::SeqCst, unsafe { unprotected() });
+        let new_state_ref = unsafe { new_state.deref_mut(pool) };
+        *new_state_ref = unsafe {
+            self.d_state
+                .load(Ordering::SeqCst, unprotected())
+                .deref(pool)
+        }
+        .clone(); // create a copy of current state
 
-        for q in 1..unsafe { NR_THREADS } + 1 {
-            // if `t` thread has a request that is not yet applied
-            if self.d_request[q].load_activate()
-                != self.d_state[ind].deactivate[q].load(Ordering::SeqCst)
-            {
-                let ret_val;
-                // only nodes that are persisted can be dequeued.
-                // from `OLD_TAIL`, persist is not guaranteed as it is currently enqueud.
-                if OLD_TAIL.load(Ordering::SeqCst)
-                    != self.d_state[ind]
-                        .head
-                        .load(Ordering::SeqCst, unsafe { unprotected() })
-                        .into_usize()
+        for _ in 0..COMBINING_ROUNDS {
+            let mut serve_reqs = 0;
+
+            for q in 1..unsafe { NR_THREADS } + 1 {
+                // if `t` thread has a request that is not yet applied
+                if self.d_request[q].activate
+                    != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
+                    && self.d_request[q].valid == 1
                 {
-                    let node = Self::dequeue(&self.d_state[ind].head, pool);
-                    ret_val = ReturnVal::DeqRetVal(node);
-                } else {
-                    ret_val = ReturnVal::DeqRetVal(PPtr::null());
+                    let ret_val;
+                    // only nodes that are persisted can be dequeued.
+                    // from `OLD_TAIL`, persist is not guaranteed as it is currently enqueud.
+                    if OLD_TAIL.load(Ordering::SeqCst)
+                        != new_state_ref
+                            .head
+                            .load(Ordering::SeqCst, unsafe { unprotected() })
+                            .into_usize()
+                    {
+                        let node = Self::dequeue(&new_state_ref.head, pool);
+                        ret_val = ReturnVal::DeqRetVal(node);
+                    } else {
+                        ret_val = ReturnVal::DeqRetVal(Self::EMPTY);
+                    }
+                    new_state_ref.return_val[q] = Some(ret_val);
+                    new_state_ref.deactivate[q]
+                        .store(self.d_request[q].activate == 1, Ordering::SeqCst);
+
+                    // cnt
+                    serve_reqs += 1;
                 }
-                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                self.d_state[ind].return_val[q] = Some(ret_val);
-                self.d_state[ind].deactivate[q]
-                    .store(self.d_request[q].load_activate(), Ordering::SeqCst);
+            }
+
+            if serve_reqs == 0 {
+                break;
             }
         }
-        persist_obj(&self.d_request, false);
-        persist_obj(&*self.d_state[ind], false);
+
+        persist_obj(new_state_ref, false);
         sfence();
-        self.d_index.store(ind, Ordering::SeqCst);
-        persist_obj(&self.d_index, false);
+
+        D_LOCK_VALUE.store(lval, Ordering::SeqCst);
+        self.d_state.store(new_state, Ordering::SeqCst);
+
+        persist_obj(&*self.d_state, false);
         sfence();
+
+        self.d_thread_state[tid]
+            .index
+            .store(1 - ind, Ordering::SeqCst);
         D_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
-        self.d_state[self.d_index.load(Ordering::SeqCst)].return_val[tid]
-            .clone()
-            .unwrap()
+        new_state_ref.return_val[tid].clone().unwrap()
     }
 
-    fn dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> PPtr<Node> {
-        let head_ref = unsafe { head.load(Ordering::SeqCst, unprotected()).deref(pool) };
+    fn dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> Data {
+        let head_shared = head.load(Ordering::SeqCst, unsafe { unprotected() });
+        let head_ref = unsafe { head_shared.deref(pool) };
 
         let ret = head_ref
             .next
             .load(Ordering::SeqCst, unsafe { unprotected() });
         if !ret.is_null() {
+            // TODO: 여기서 이렇게 defer_destroy 대신 drop하면 성능은 상승하는데, drop 해도되는게 맞나?
+            // ppopp 소스에는 여기서 자신들이 직접 구현한 recycleAPI를 사용함. 걔네꺼 correct한지 확인 필요
+            unsafe { drop(head_shared.into_owned()) }; // free old head node
             head.store(ret, Ordering::SeqCst);
+            return unsafe { ret.deref(pool) }.data;
         }
-        PPtr::from(ret.into_usize())
+        Self::EMPTY
     }
 }
 
 impl TestQueue for PBCombQueue {
-    type EnqInput = (usize, usize, &'static mut usize); // value, tid, sequence number
-    type DeqInput = (usize, &'static mut usize); // tid, sequence number
+    type EnqInput = (usize, usize, &'static mut u32); // value, tid, sequence number
+    type DeqInput = (usize, &'static mut u32); // tid, sequence number
 
     fn enqueue(&self, (value, tid, seq): Self::EnqInput, _: &Guard, pool: &PoolHandle) {
         // Get &mut queue
@@ -547,8 +687,8 @@ impl TestQueue for PBCombQueue {
 
         // enq
         let _ = queue.PBQueue(Func::ENQUEUE, value, *seq, tid, pool);
-        *seq += 1;
-        persist_obj(seq, true);
+        // *seq += 1;
+        // persist_obj(seq, true);
     }
 
     fn dequeue(&self, (tid, seq): Self::DeqInput, _: &Guard, pool: &PoolHandle) {
@@ -557,8 +697,8 @@ impl TestQueue for PBCombQueue {
 
         // deq
         let _ = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, pool);
-        *seq += 1;
-        persist_obj(seq, true);
+        // *seq += 1;
+        // persist_obj(seq, true);
     }
 }
 
@@ -588,8 +728,8 @@ impl TestNOps for TestPBCombQueue {}
 
 #[derive(Debug, Default)]
 pub struct TestPBCombQueueEnqDeq<const PAIR: bool> {
-    enq_seq: CachePadded<usize>,
-    deq_seq: CachePadded<usize>,
+    enq_seq: CachePadded<u32>,
+    deq_seq: CachePadded<u32>,
 }
 
 impl<const PAIR: bool> Collectable for TestPBCombQueueEnqDeq<PAIR> {
@@ -612,10 +752,8 @@ impl<const PAIR: bool> RootObj<TestPBCombQueueEnqDeq<PAIR>> for TestPBCombQueue 
 
         let ops = self.test_nops(
             &|tid, guard| {
-                let enq_seq =
-                    unsafe { (&*mmt.enq_seq as *const _ as *mut usize).as_mut() }.unwrap();
-                let deq_seq =
-                    unsafe { (&*mmt.deq_seq as *const _ as *mut usize).as_mut() }.unwrap();
+                let enq_seq = unsafe { (&*mmt.enq_seq as *const _ as *mut u32).as_mut() }.unwrap();
+                let deq_seq = unsafe { (&*mmt.deq_seq as *const _ as *mut u32).as_mut() }.unwrap();
                 let enq_input = (tid, tid, enq_seq);
                 let deq_input = (tid, deq_seq);
 
