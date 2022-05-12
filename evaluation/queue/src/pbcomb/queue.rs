@@ -667,6 +667,8 @@ impl PBCombQueue {
             .next
             .load(Ordering::SeqCst, unsafe { unprotected() });
         if !ret.is_null() {
+            // TODO: 여기서 이렇게 defer_destroy 대신 drop하면 성능은 상승하는데, drop 해도되는게 맞나?
+            // ppopp 소스에는 여기서 자신들이 직접 구현한 recycleAPI를 사용함. 걔네꺼 correct한지 확인 필요
             unsafe { drop(head_shared.into_owned()) }; // free old head node
             head.store(ret, Ordering::SeqCst);
             return unsafe { ret.deref(pool) }.data;
