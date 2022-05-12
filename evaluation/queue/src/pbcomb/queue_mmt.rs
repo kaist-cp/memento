@@ -9,9 +9,13 @@ use super::Data;
 use super::Func;
 use super::PBCombQueue;
 
+const MAX_THREADS: usize = 4;
+
 #[derive(Debug)]
 pub struct MmtQueue {
     inner: PBCombQueue,
+    enq_seq: [u32; MAX_THREADS],
+    deq_seq: [u32; MAX_THREADS],
 }
 
 impl MmtQueue {
@@ -22,22 +26,38 @@ impl MmtQueue {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
-    ) {
-        let seq_old = enq.snapshot.checkpoint::<REC>(enq.seq, tid, pool).unwrap();
+    ) -> () {
+        let seq_old = enq
+            .seq
+            .checkpoint::<REC>(self.enq_seq[tid], tid, pool)
+            .unwrap();
 
-        if REC {
-            // exactly-once { seq +=1 }
-            if enq.seq == seq_old {
-                enq.seq = seq_old + 1;
-                persist_obj(enq, true);
-            }
-            // recover: if seq%2 == deactivate { already done. return same value } else { re-execute }
-            let _ = self.inner.recover(Func::ENQUEUE, arg, enq.seq, tid, pool);
-        } else {
-            enq.seq = seq_old + 1; // e.g. seq: 0->1
-            persist_obj(enq, true);
-            let _ = self.inner.PBQueue(Func::ENQUEUE, arg, enq.seq, tid, pool); // e.g. 요청시 activate: 0->1, 완료시 deactivate: 0->1
+        // 이미 예전에 끝났던 seq라면 백업해둔 결과값 반환
+        if self.enq_seq[tid] > seq_old + 1 {
+            return enq.retval.unwrap();
         }
+
+        // 최근 seq라면 exactly-once 실행
+        let retval = {
+            if self.enq_seq[tid] == seq_old {
+                self.enq_seq[tid] = seq_old + 1;
+                persist_obj(enq, true);
+
+                // e.g. 요청시 activate: 0->1, 완료시 deactivate: 0->1
+                self.inner
+                    .PBQueue(Func::ENQUEUE, arg, self.enq_seq[tid], tid, pool)
+                    .enq_retval()
+                    .unwrap()
+            } else {
+                // seq+1인 상태로 남아있으면 recover로 (1) 실행 마무리 하던가 혹은 (2) 반환값 가져옴
+                self.inner
+                    .recover(Func::ENQUEUE, arg, self.enq_seq[tid], tid, pool)
+                    .enq_retval()
+                    .unwrap()
+            }
+        };
+        enq.retval = Some(retval);
+        return retval;
     }
 
     pub fn dequeue<const REC: bool>(
@@ -47,40 +67,46 @@ impl MmtQueue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> usize {
-        let seq_old = deq.snapshot.checkpoint::<REC>(deq.seq, tid, pool).unwrap();
+        let seq_old = deq
+            .seq
+            .checkpoint::<REC>(self.deq_seq[tid], tid, pool)
+            .unwrap();
 
-        if REC {
-            // exactly-once { seq +=1 }
-            if deq.seq == seq_old {
-                deq.seq = seq_old + 1;
-                persist_obj(deq, true);
-            }
-
-            return self
-                .inner
-                .recover(Func::DEQUEUE, tid, deq.seq, tid, pool)
-                .deq_retval()
-                .unwrap();
-        } else {
-            deq.seq = seq_old + 1;
-            persist_obj(deq, true);
-            return self
-                .inner
-                .PBQueue(Func::DEQUEUE, tid, deq.seq, tid, pool)
-                .deq_retval()
-                .unwrap();
+        // 이미 예전에 끝났던 seq라면 백업해둔 결과값 반환
+        if self.deq_seq[tid] > seq_old + 1 {
+            return deq.retval.unwrap();
         }
+
+        // 최근 seq라면 exactly-once 실행
+        let retval = {
+            if self.deq_seq[tid] == seq_old {
+                self.deq_seq[tid] = seq_old + 1;
+                persist_obj(deq, true);
+                self.inner
+                    .PBQueue(Func::DEQUEUE, tid, self.deq_seq[tid], tid, pool)
+                    .deq_retval()
+                    .unwrap()
+            } else {
+                // seq+1인 상태로 남아있으면 recover로 (1) 실행 마무리 하던가 혹은 (2) 반환값 가져옴
+                self.inner
+                    .recover(Func::DEQUEUE, tid, self.deq_seq[tid], tid, pool)
+                    .deq_retval()
+                    .unwrap()
+            }
+        };
+        deq.retval = Some(retval);
+        return retval;
     }
 }
 
 #[derive(Debug)]
 pub struct Enqueue {
-    seq: u32,
-    snapshot: Checkpoint<u32>,
+    seq: Checkpoint<u32>,
+    retval: Option<()>,
 }
 
 #[derive(Debug)]
 pub struct Dequeue {
-    seq: u32,
-    snapshot: Checkpoint<u32>,
+    seq: Checkpoint<u32>,
+    retval: Option<usize>,
 }
