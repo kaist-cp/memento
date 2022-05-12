@@ -295,42 +295,60 @@ impl PBCombQueue {
         tid: usize,
         pool: &PoolHandle,
     ) -> ReturnVal {
+        // set OLD_TAIL if it is dummy node
+        let guard = unsafe { unprotected() };
+        let ltail = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }
+            .tail
+            .load(Ordering::SeqCst, guard);
+        let _ = OLD_TAIL.compare_exchange(
+            self.dummy.into_offset(),
+            ltail.into_usize(),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+
         match func {
             Func::ENQUEUE => {
-                // // 1. check seq number and re-announce if request is not yet announced
-                // if self.e_request[tid].load_seq() != seq {
-                //     return self.PBQueue(func, arg, seq, tid, pool);
-                // }
+                self.e_request[tid].func = Some(func);
+                self.e_request[tid].arg = arg;
+                self.e_request[tid].activate = seq % 2;
+                self.e_request[tid].valid = 1;
+                sfence();
 
-                // // 2. check activate and re-execute if request is not yet applied
-                // let e_state = &self.e_state[self.e_index.load(Ordering::SeqCst)];
-                // if self.e_request[tid].load_activate()
-                //     != e_state.deactivate[tid].load(Ordering::SeqCst)
-                // {
-                //     return self.PerformEnqReq(tid, pool);
-                // }
+                // check activate and re-execute if request is not yet applied
+                if unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
+                    .load(Ordering::SeqCst)
+                    != (seq % 2 == 1)
+                {
+                    return self.PerformEnqReq(tid, pool);
+                }
 
-                // // 3. return value if request is already applied
-                // return e_state.return_val[tid].clone().unwrap();
-                todo!("ppopp'22 version")
+                // return value if request is already applied
+                return unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }
+                    .return_val[tid]
+                    .clone()
+                    .unwrap();
             }
             Func::DEQUEUE => {
-                // // 1. check seq number and re-announce if request is not yet announced
-                // if self.d_request[tid].load_seq() != seq {
-                //     return self.PBQueue(func, arg, seq, tid, pool);
-                // }
+                self.d_request[tid].func = Some(func);
+                self.d_request[tid].arg = arg;
+                self.d_request[tid].activate = seq % 2;
+                self.d_request[tid].valid = 1;
+                sfence();
 
-                // // 2. check activate and re-execute if request is not yet applied
-                // let d_state = &self.d_state[self.d_index.load(Ordering::SeqCst)];
-                // if self.d_request[tid].load_activate()
-                //     != d_state.deactivate[tid].load(Ordering::SeqCst)
-                // {
-                //     return self.PerformDeqReq(tid, pool);
-                // }
+                // check activate and re-execute if request is not yet applied
+                if unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
+                    .load(Ordering::SeqCst)
+                    != (seq % 2 == 1)
+                {
+                    return self.PerformDeqReq(tid, pool);
+                }
 
-                // // 3. return value if request is already applied
-                // return d_state.return_val[tid].clone().unwrap();
-                todo!("ppopp'22 version")
+                // return value if request is already applied
+                return unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }
+                    .return_val[tid]
+                    .clone()
+                    .unwrap();
             }
         }
     }
