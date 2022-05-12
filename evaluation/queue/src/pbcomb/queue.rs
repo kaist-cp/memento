@@ -15,7 +15,7 @@ use tinyvec::tiny_vec;
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, MAX_THREADS, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-type Data = usize;
+use super::Data;
 
 const COMBINING_ROUNDS: usize = 20;
 
@@ -40,7 +40,23 @@ pub enum ReturnVal {
     EnqRetVal(()),
 
     /// return value of deq
-    DeqRetVal(PPtr<Node>),
+    DeqRetVal(Data),
+}
+
+impl ReturnVal {
+    pub fn enq_retval(self) -> Option<()> {
+        match self {
+            ReturnVal::EnqRetVal(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn deq_retval(self) -> Option<Data> {
+        match self {
+            ReturnVal::DeqRetVal(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -258,7 +274,7 @@ impl PBCombQueue {
         &mut self,
         func: Func,
         arg: Data,
-        seq: usize,
+        seq: u32,
         tid: usize,
         pool: &PoolHandle,
     ) -> ReturnVal {
@@ -275,7 +291,7 @@ impl PBCombQueue {
         &mut self,
         func: Func,
         arg: Data,
-        seq: usize,
+        seq: u32,
         tid: usize,
         pool: &PoolHandle,
     ) -> ReturnVal {
@@ -322,7 +338,9 @@ impl PBCombQueue {
 
 /// Enq
 impl PBCombQueue {
-    fn PBQueueEnq(&mut self, arg: Data, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    const EMPTY: usize = usize::MAX;
+
+    fn PBQueueEnq(&mut self, arg: Data, seq: u32, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // request enq
 
         self.e_request[tid].func = Some(Func::ENQUEUE);
@@ -495,7 +513,7 @@ impl PBCombQueue {
 
 /// Deq
 impl PBCombQueue {
-    fn PBQueueDnq(&mut self, seq: usize, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    fn PBQueueDnq(&mut self, seq: u32, tid: usize, pool: &PoolHandle) -> ReturnVal {
         // request deq
         self.d_request[tid].func = Some(Func::DEQUEUE);
         self.d_request[tid].activate = 1 - self.d_request[tid].activate;
@@ -591,12 +609,13 @@ impl PBCombQueue {
                         let node = Self::dequeue(&new_state_ref.head, pool);
                         ret_val = ReturnVal::DeqRetVal(node);
                     } else {
-                        ret_val = ReturnVal::DeqRetVal(PPtr::null());
+                        ret_val = ReturnVal::DeqRetVal(Self::EMPTY);
                     }
                     new_state_ref.return_val[q] = Some(ret_val);
                     new_state_ref.deactivate[q]
                         .store(self.d_request[q].activate == 1, Ordering::SeqCst);
 
+                    // cnt
                     serve_reqs += 1;
                 }
             }
@@ -622,23 +641,25 @@ impl PBCombQueue {
         new_state_ref.return_val[tid].clone().unwrap()
     }
 
-    fn dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> PPtr<Node> {
-        let head_ref = unsafe { head.load(Ordering::SeqCst, unprotected()).deref(pool) };
+    fn dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> Data {
+        let head_shared = head.load(Ordering::SeqCst, unsafe { unprotected() });
+        let head_ref = unsafe { head_shared.deref(pool) };
 
         let ret = head_ref
             .next
             .load(Ordering::SeqCst, unsafe { unprotected() });
         if !ret.is_null() {
-            unsafe { drop(head.load(Ordering::SeqCst, unprotected()).into_owned()) };
+            unsafe { drop(head_shared.into_owned()) }; // free old head node
             head.store(ret, Ordering::SeqCst);
+            return unsafe { ret.deref(pool) }.data;
         }
-        PPtr::from(ret.into_usize())
+        Self::EMPTY
     }
 }
 
 impl TestQueue for PBCombQueue {
-    type EnqInput = (usize, usize, &'static mut usize); // value, tid, sequence number
-    type DeqInput = (usize, &'static mut usize); // tid, sequence number
+    type EnqInput = (usize, usize, &'static mut u32); // value, tid, sequence number
+    type DeqInput = (usize, &'static mut u32); // tid, sequence number
 
     fn enqueue(&self, (value, tid, seq): Self::EnqInput, _: &Guard, pool: &PoolHandle) {
         // Get &mut queue
@@ -687,8 +708,8 @@ impl TestNOps for TestPBCombQueue {}
 
 #[derive(Debug, Default)]
 pub struct TestPBCombQueueEnqDeq<const PAIR: bool> {
-    enq_seq: CachePadded<usize>,
-    deq_seq: CachePadded<usize>,
+    enq_seq: CachePadded<u32>,
+    deq_seq: CachePadded<u32>,
 }
 
 impl<const PAIR: bool> Collectable for TestPBCombQueueEnqDeq<PAIR> {
@@ -711,10 +732,8 @@ impl<const PAIR: bool> RootObj<TestPBCombQueueEnqDeq<PAIR>> for TestPBCombQueue 
 
         let ops = self.test_nops(
             &|tid, guard| {
-                let enq_seq =
-                    unsafe { (&*mmt.enq_seq as *const _ as *mut usize).as_mut() }.unwrap();
-                let deq_seq =
-                    unsafe { (&*mmt.deq_seq as *const _ as *mut usize).as_mut() }.unwrap();
+                let enq_seq = unsafe { (&*mmt.enq_seq as *const _ as *mut u32).as_mut() }.unwrap();
+                let deq_seq = unsafe { (&*mmt.deq_seq as *const _ as *mut u32).as_mut() }.unwrap();
                 let enq_input = (tid, tid, enq_seq);
                 let deq_input = (tid, deq_seq);
 
