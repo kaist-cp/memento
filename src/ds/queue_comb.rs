@@ -19,6 +19,8 @@ use tinyvec::tiny_vec;
 const MAX_THREADS: usize = 64;
 type Data = usize;
 
+const COMBINING_ROUNDS: usize = 20;
+
 /// restriction of combining iteration
 pub static mut NR_THREADS: usize = MAX_THREADS;
 
@@ -291,33 +293,46 @@ impl Queue {
 
         // collect the enqueued nodes here and persist them all at once
         let mut to_persist = tiny_vec!([usize; MAX_THREADS]);
-        for q in 1..unsafe { NR_THREADS } + 1 {
-            // if `q` thread has a request that is not yet applied
-            let req_q = req_arr_ref[q].load(Ordering::SeqCst, guard);
-            if !req_q.is_null()
-                && !unsafe { req_q.deref(pool) }
-                    .deactivate
-                    .load(Ordering::SeqCst)
-            {
-                // reserve persist(current tail)
-                let tail_addr = self.e_state.tail[ind]
-                    .load(Ordering::SeqCst, guard)
-                    .into_usize();
-                match to_persist.binary_search(&tail_addr) {
-                    Ok(_) => {} // no duplicate
-                    Err(idx) => to_persist.insert(idx, tail_addr),
-                }
 
-                // enq
-                let q_req_ref =
-                    unsafe { req_arr_ref[q].load(Ordering::SeqCst, guard).deref_mut(pool) };
-                Self::raw_enqueue(&self.e_state.tail[ind], &q_req_ref.arg, guard, pool);
-                E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                q_req_ref.retval = Some(());
-                q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                persist_obj(q_req_ref, false);
+        for _ in 0..COMBINING_ROUNDS {
+            let mut serve_reqs = 0;
+
+            for q in 1..unsafe { NR_THREADS } + 1 {
+                // if `q` thread has a request that is not yet applied
+                let req_q = req_arr_ref[q].load(Ordering::SeqCst, guard);
+                if !req_q.is_null()
+                    && !unsafe { req_q.deref(pool) }
+                        .deactivate
+                        .load(Ordering::SeqCst)
+                {
+                    // reserve persist(current tail)
+                    let tail_addr = self.e_state.tail[ind]
+                        .load(Ordering::SeqCst, guard)
+                        .into_usize();
+                    match to_persist.binary_search(&tail_addr) {
+                        Ok(_) => {} // no duplicate
+                        Err(idx) => to_persist.insert(idx, tail_addr),
+                    }
+
+                    // enq
+                    let q_req_ref =
+                        unsafe { req_arr_ref[q].load(Ordering::SeqCst, guard).deref_mut(pool) };
+                    Self::raw_enqueue(&self.e_state.tail[ind], &q_req_ref.arg, guard, pool);
+                    E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
+                    q_req_ref.retval = Some(());
+                    q_req_ref.deactivate.store(true, Ordering::SeqCst);
+                    persist_obj(q_req_ref, false);
+
+                    // count
+                    serve_reqs += 1;
+                }
+            }
+
+            if serve_reqs == 0 {
+                break;
             }
         }
+
         let tail_addr = self.e_state.tail[ind]
             .load(Ordering::SeqCst, guard)
             .into_usize();
@@ -429,34 +444,46 @@ impl Queue {
             Ordering::SeqCst,
         );
 
-        for q in 1..unsafe { NR_THREADS } + 1 {
-            // if `t` thread has a request that is not yet applied
-            let req_q = req_arr_ref[q].load(Ordering::SeqCst, guard);
-            if !req_arr_ref[q].load(Ordering::SeqCst, guard).is_null()
-                && !unsafe { req_q.deref(pool) }
-                    .deactivate
-                    .load(Ordering::SeqCst)
-            {
-                let ret_val;
-                // only nodes that are persisted can be dequeued.
-                // from `OLD_TAIL`, persist is not guaranteed as it is currently enqueud.
-                if OLD_TAIL.load(Ordering::SeqCst)
-                    != self.d_state.head[ind]
-                        .load(Ordering::SeqCst, guard)
-                        .into_usize()
+        for _ in 0..COMBINING_ROUNDS {
+            let mut serve_reqs = 0;
+
+            for q in 1..unsafe { NR_THREADS } + 1 {
+                // if `t` thread has a request that is not yet applied
+                let req_q = req_arr_ref[q].load(Ordering::SeqCst, guard);
+                if !req_arr_ref[q].load(Ordering::SeqCst, guard).is_null()
+                    && !unsafe { req_q.deref(pool) }
+                        .deactivate
+                        .load(Ordering::SeqCst)
                 {
-                    ret_val = Self::raw_dequeue(&self.d_state.head[ind], guard, pool);
-                } else {
-                    ret_val = None;
+                    let ret_val;
+                    // only nodes that are persisted can be dequeued.
+                    // from `OLD_TAIL`, persist is not guaranteed as it is currently enqueud.
+                    if OLD_TAIL.load(Ordering::SeqCst)
+                        != self.d_state.head[ind]
+                            .load(Ordering::SeqCst, guard)
+                            .into_usize()
+                    {
+                        ret_val = Self::raw_dequeue(&self.d_state.head[ind], guard, pool);
+                    } else {
+                        ret_val = None;
+                    }
+                    let q_req_ref =
+                        unsafe { req_arr_ref[q].load(Ordering::SeqCst, guard).deref_mut(pool) };
+                    D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
+                    q_req_ref.retval = Some(ret_val);
+                    q_req_ref.deactivate.store(true, Ordering::SeqCst);
+                    persist_obj(q_req_ref, false);
+
+                    // cnt
+                    serve_reqs += 1;
                 }
-                let q_req_ref =
-                    unsafe { req_arr_ref[q].load(Ordering::SeqCst, guard).deref_mut(pool) };
-                D_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
-                q_req_ref.retval = Some(ret_val);
-                q_req_ref.deactivate.store(true, Ordering::SeqCst);
-                persist_obj(q_req_ref, false);
+            }
+
+            if serve_reqs == 0 {
+                break;
             }
         }
+
         let new_req_arr = POwned::new(array_init(|_| PAtomic::null()), pool);
         persist_obj(unsafe { new_req_arr.deref(pool) }, true);
         self.d_state
@@ -474,6 +501,7 @@ impl Queue {
         let next = head_ref.next.load(Ordering::SeqCst, guard);
         if !next.is_null() {
             head.store(next, Ordering::SeqCst);
+            // unsafe { drop(head_shared.into_owned()) };
             unsafe { guard.defer_pdestroy(head_shared) }; // NOTE: The original implementation does not free because it returns a node rather than data.
             return Some(unsafe { next.deref(pool) }.data);
         }
