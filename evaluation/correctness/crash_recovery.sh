@@ -1,49 +1,37 @@
 #!/bin/bash
-# script for test normal run and crash/recovery run
 
-# TODO:
-# ./crash_recovery.sh => PMEM 버전 테스트
-# ./crash_recovery.sh no_persist => DRAM 버전 테스트
-
+PMEM_PATH="/mnt/pmem0"
+FEATURE="default"
+TARGETS=("queue_general")   # Test target
+CNT_NORMAL=1                        # Number of normal test
+CNT_CRASH=1                         # Number of crash test
 
 set -e
+arg=$1
+if [ "$arg" == "no_persist" ]; then
+    FEATURE="no_persist"
+    PMEM_PATH="./test"
+fi
+
 cd ../../
 cargo clean
-cargo build --tests --release --features no_persist # TODO: PMEM_version
-
-TARGETS=("queue" "queue_general") # Test Target
-CNT_NORMAL=3
-CNT_CRASH=100
+cargo build --tests --release --features=$FEATURE
+# rm -f ./target/release/deps/memento-*.d
 
 function clear() {
-    # DRAM version
-    rm -rf test
-    mkdir test
-
-    # TODO: PMEM version
+    rm -rf $PMEM_PATH/*
 }
 
 function run() {
     target=$1
-
-    # DRAM version
-    RUST_MIN_STACK=1007374182 ./target/release/deps/memento-* ds::$target::test -- --nocapture > crash_recovery_out.txt
-
-    # TODO: queue는 이렇게 해야 queue_lp, queue_general, queue_..과 한꺼번에 실행되지 않고 얘만 타겟할 수 있음
-    # RUST_MIN_STACK=1007374182 ./target/release/deps/memento-* ds::queue::test -- --nocapture
-
-    # TODO: PMEM version
-    # RUST_MIN_STACK=1007374182 cargo test --release $target -- --nocapture
+    # RUST_MIN_STACK=1007374182 ./target/release/deps/memento-* ds::$target::test -- --nocapture
+    RUST_MIN_STACK=1007374182 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture
 }
 
 function run_bg() {
     target=$1
-
-    # DRAM version
-    RUST_MIN_STACK=1007374182 ./target/release/deps/memento-* ds::$target::test -- --nocapture > crash_recovery_out.txt &
-
-    # TODO: PMEM version
-    # RUST_MIN_STACK=1007374182 cargo test --release $target -- --nocapture
+    # RUST_MIN_STACK=1007374182 ./target/release/deps/memento-* ds::$target::test -- --nocapture &
+    RUST_MIN_STACK=1007374182 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture &
 }
 
 
@@ -51,7 +39,7 @@ function run_bg() {
 for target in ${TARGETS[@]}; do
     avgtime=0 # Test 완료하는 데 걸리는 시간. crash-recovery 테스트시 이 시간 내에 crash 일으켜야함
 
-    # TODO: test normal run. 끝까지 완주 후 assert
+    # Test normal run.
     for i in $(seq 1 $CNT_NORMAL); do
         # initlaize
         echo -e "normal run $target $i/$CNT_NORMAL";
@@ -60,15 +48,10 @@ for target in ${TARGETS[@]}; do
         # run
         start=$(date +%s%N)
         run $target
-        # RUST_MIN_STACK=1007374182 cargo test --release --features no_persist $target -- --nocapture
-        echo $!
-        echo $!
-
         end=$(date +%s%N)
 
         # calculate elpased time
-        avgtime=$(($avgtime+$(($end-$start)))) # TODO: 시간 정확하지 않음
-        echo $!
+        avgtime=$(($avgtime+$(($end-$start))))
 
         # re-execute
         run $target
@@ -77,7 +60,7 @@ for target in ${TARGETS[@]}; do
     avgtime=$(($avgtime/$CNT_NORMAL))
     echo -e "avgtime: $avgtime\n"
 
-    # TODO: test full-crash and recovery. COUNT번 랜덤 crash, 복구후 이어서 끝낸 뒤 assert
+    # Test full-crash and recovery run.
     for i in $(seq 1 $CNT_CRASH); do
         # initialze
         echo -e "crash run $target $i/$CNT_CRASH";
@@ -86,24 +69,24 @@ for target in ${TARGETS[@]}; do
         # execute
         start=$(date +%s%N)
         run_bg $target
-        echo "pid=$!"
 
         # crash
-        crash_time=$((RANDOM % ($avgtime-1500000000) + 1500000000)) # 최소 1.5초 이후에 crash (최소 pool create은 끝난 다음에 crash해야함..)
-        echo "crash_time=${crash_time}ns"
+        min=$((15 * 10**8))  # 최소 1.5초 이후에 crash (pool create은 끝난 다음에 crash해야함) TODO: 1.5초가 적절한가?
+        ktime=$((RANDOM % ($avgtime-$min) + $min))
+        echo "ktime=${ktime}ns"
         while true; do
             current=$(date +%s%N)
             elapsed=$(($current-$start))
 
-            # crash_time 이후 kill(pid)
-            if [ $elapsed -gt $crash_time ]; then
-                echo "kill $!"
-                kill -9 $!
+            # 랜덤시간 이후 kill
+            if [ $elapsed -gt $ktime ]; then
+                echo "kill after $elapsed ns"
+                kill %1
                 break
             fi
         done
 
-        # re-execute: recover and keep operation, assert result
+        # re-execute
         echo "re-execute"
         run $target
     done
