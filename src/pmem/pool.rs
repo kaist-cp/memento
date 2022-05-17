@@ -122,7 +122,7 @@ impl PoolHandle {
                             // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
                             match handler.join() {
                                 Ok(_) => break,
-                                Err(_) => println!("PANIC: Root memento No.{} re-executed.", tid),
+                                Err(_) => panic!("PANIC: Root memento No.{} re-executed.", tid),
                             }
                         }
                     })
