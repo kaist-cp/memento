@@ -66,9 +66,6 @@ for target in ${TARGETS[@]}; do
 
         # calculate elpased time
         avgtime=$(($avgtime+$(($end-$start))))
-
-        # re-execute
-        run $target
     done
 
     avgtime=$(($avgtime/$CNT_NORMAL))
@@ -80,7 +77,7 @@ for target in ${TARGETS[@]}; do
         dmsg "crash run $target $i/$CNT_CRASH"
         clear
 
-        # execute
+        # run
         start=$(date +%s%N)
         run_bg $target
 
@@ -100,7 +97,7 @@ for target in ${TARGETS[@]}; do
             fi
         done
 
-        # re-execute
+        # recovery run
         sleep 5
         dmsg "recovery run $target $i/$CNT_CRASH"
         run $target
