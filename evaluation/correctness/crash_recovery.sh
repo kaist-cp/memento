@@ -3,20 +3,33 @@
 PMEM_PATH="/mnt/pmem0"
 FEATURE="default"
 TARGETS=("queue_general")   # Test target
-CNT_NORMAL=1                        # Number of normal test
-CNT_CRASH=1                         # Number of crash test
+CNT_NORMAL=5                        # Number of normal test
+CNT_CRASH=10                         # Number of crash test
+
+SCRIPT_DIR=`dirname $(realpath "$0")`
+OUT_PATH="$SCRIPT_DIR/out"
 
 set -e
 arg=$1
 if [ "$arg" == "no_persist" ]; then
     FEATURE="no_persist"
-    PMEM_PATH="./test"
+    PMEM_PATH="$SCRIPT_DIR/../../test"
 fi
 
-cd ../../
+# Initialize
+rm -rf $OUT_PATH
+mkdir -p $OUT_PATH
 cargo clean
 cargo build --tests --release --features=$FEATURE
-# rm -f ./target/release/deps/memento-*.d
+rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
+
+function dmsg() {
+    msg=$1
+    time=$(date +%m)/$(date +%d)-$(date +%H):$(date +%M)
+    echo -e "$1"
+    echo "[$time] $msg" >> $OUT_PATH/debug.out
+    echo "[$time] $msg" >> $OUT_PATH/$target.out
+}
 
 function clear() {
     rm -rf $PMEM_PATH/*
@@ -24,14 +37,14 @@ function clear() {
 
 function run() {
     target=$1
-    # RUST_MIN_STACK=1007374182 ./target/release/deps/memento-* ds::$target::test -- --nocapture
-    RUST_MIN_STACK=1007374182 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture
+    # RUST_MIN_STACK=1007374182 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture >> $OUT_PATH/$target.out
+    RUST_MIN_STACK=1007374182 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test -- --nocapture >> $OUT_PATH/$target.out
 }
 
 function run_bg() {
     target=$1
-    # RUST_MIN_STACK=1007374182 ./target/release/deps/memento-* ds::$target::test -- --nocapture &
-    RUST_MIN_STACK=1007374182 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture &
+    # RUST_MIN_STACK=1007374182 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture >> $OUT_PATH/$target.out &
+    RUST_MIN_STACK=1007374182 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test -- --nocapture & >> $OUT_PATH/$target.out
 }
 
 
@@ -42,7 +55,7 @@ for target in ${TARGETS[@]}; do
     # Test normal run.
     for i in $(seq 1 $CNT_NORMAL); do
         # initlaize
-        echo -e "normal run $target $i/$CNT_NORMAL";
+        dmsg "normal run $target $i/$CNT_NORMAL"
         clear
 
         # run
@@ -58,12 +71,12 @@ for target in ${TARGETS[@]}; do
     done
 
     avgtime=$(($avgtime/$CNT_NORMAL))
-    echo -e "avgtime: $avgtime\n"
+    dmsg "avgtime: $avgtime ns"
 
     # Test full-crash and recovery run.
     for i in $(seq 1 $CNT_CRASH); do
         # initialze
-        echo -e "crash run $target $i/$CNT_CRASH";
+        dmsg "crash run $target $i/$CNT_CRASH"
         clear
 
         # execute
@@ -71,23 +84,24 @@ for target in ${TARGETS[@]}; do
         run_bg $target
 
         # crash
-        min=$((15 * 10**8))  # 최소 1.5초 이후에 crash (pool create은 끝난 다음에 crash해야함) TODO: 1.5초가 적절한가?
+        min=$((2 * 10**9))  # 최소 2초 이후에 crash (pool create은 끝난 다음에 crash해야함) TODO: 1.5초가 적절한가?
         ktime=$((RANDOM % ($avgtime-$min) + $min))
-        echo "ktime=${ktime}ns"
+        dmsg "ktime=${ktime} ns"
         while true; do
             current=$(date +%s%N)
             elapsed=$(($current-$start))
 
             # 랜덤시간 이후 kill
             if [ $elapsed -gt $ktime ]; then
-                echo "kill after $elapsed ns"
-                kill %1
+                kill -9 %1
+                dmsg "kill after $elapsed ns"
                 break
             fi
         done
+        sleep 3
 
         # re-execute
-        echo "re-execute"
+        dmsg "recovery run $target $i/$CNT_CRASH"
         run $target
     done
 
