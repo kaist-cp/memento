@@ -15,6 +15,7 @@ evaluation = { path = "../queue/" }
 crossbeam-epoch = { path = "../../crossbeam-persistency/crossbeam-epoch" }
 crossbeam-utils = { path = "../../crossbeam-persistency/crossbeam-utils" }
 array-init = "2.0.0"
+etrace = "1.1.1"
 structopt = "0.3"
 csv = "1.1.6"
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
