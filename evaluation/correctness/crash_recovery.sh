@@ -85,7 +85,7 @@ for target in ${TARGETS[@]}; do
 
         # crash
         min=$((2 * 10**9))  # 최소 3초 이후에 crash (pool create은 끝난 다음에 crash해야함) TODO: 3초가 적절한가?
-        ktime=$(((RANDOM * RANDOM * RANDOM) % ($avgtime-$min) + $min))
+        ktime=$(((RANDOM * RANDOM * RANDOM) % ($mintime-$min) + $min))
         dmsg "ktime=${ktime} ns"
         while true; do
             current=$(date +%s%N)
@@ -94,13 +94,13 @@ for target in ${TARGETS[@]}; do
             # 랜덤시간 이후 kill
             if [ $elapsed -gt $ktime ]; then
                 kill -9 %1
-                wait %1
                 dmsg "kill after $elapsed ns"
                 break
             fi
         done
 
         # recovery run
+        sleep 2
         dmsg "recovery run $target $i/$CNT_CRASH"
         run $target
     done
