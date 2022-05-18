@@ -51,7 +51,7 @@ function run_bg() {
 
 # Run test
 for target in ${TARGETS[@]}; do
-    avgtime=0 # Test 완료하는 데 걸리는 시간. crash-recovery 테스트시 이 시간 내에 crash 일으켜야함
+    mintime=$((1000 * 10**9)) # Test 완료하는 데 걸리는 시간. crash-recovery 테스트시 이 시간 내에 crash 일으켜야함
 
     # Test normal run.
     for i in $(seq 1 $CNT_NORMAL); do
@@ -65,11 +65,13 @@ for target in ${TARGETS[@]}; do
         end=$(date +%s%N)
 
         # calculate elpased time
-        avgtime=$(($avgtime+$(($end-$start))))
+        elapsed=$(($end-$start))
+        if [ $mintime -gt $elapsed ]; then
+            mintime=$elapsed
+        fi
     done
 
-    avgtime=$(($avgtime/$CNT_NORMAL))
-    dmsg "avgtime: $avgtime ns"
+    dmsg "min test time: $mintime ns"
 
     # Test full-crash and recovery run.
     for i in $(seq 1 $CNT_CRASH); do
@@ -92,13 +94,13 @@ for target in ${TARGETS[@]}; do
             # 랜덤시간 이후 kill
             if [ $elapsed -gt $ktime ]; then
                 kill -9 %1
+                wait %1
                 dmsg "kill after $elapsed ns"
                 break
             fi
         done
 
         # recovery run
-        sleep 5
         dmsg "recovery run $target $i/$CNT_CRASH"
         run $target
     done
