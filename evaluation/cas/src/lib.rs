@@ -6,6 +6,7 @@ pub mod cas;
 pub mod mcas;
 pub mod pcas;
 
+#[derive(Default)]
 struct Node(usize); // `usize` for low tag
 
 impl Collectable for Node {
