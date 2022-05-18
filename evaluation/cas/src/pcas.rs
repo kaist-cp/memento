@@ -110,7 +110,7 @@ struct WordDescriptor {
     address: PPtr<PAtomic<PMwCasDescriptor>>, // TODO: PPtr?
     old_value: PPtr<Node>,
     new_value: PPtr<Node>,
-    mwcas_descriptor: usize,
+    mwcas_descriptor: PPtr<PMwCasDescriptor>,
 }
 
 struct PMwCasDescriptor {
@@ -133,7 +133,8 @@ impl Default for PMwCasDescriptor {
         }
     }
 }
-// TODO: CAS들은 모두 original 값을 리턴함
+
+// TODO: 실험을 위해선 (1) Descriptor에 location 쓰고 (2) Descriptor를 pmwcas에 넘길 것
 fn pmwcas(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool {
     let md_ptr = unsafe { PShared::from(md.as_pptr(pool)) };
     let mut st = SUCCEEDED;
@@ -261,7 +262,7 @@ fn install_mwcas_descriptor<'g>(
 }
 
 fn complete_install(wd: &WordDescriptor, guard: &Guard, pool: &PoolHandle) {
-    let desc = unsafe { PShared::<PMwCasDescriptor>::from_usize(wd.mwcas_descriptor) };
+    let desc = PShared::from(wd.mwcas_descriptor);
     let ptr = desc.with_high_tag(PMWCAS_FLAG | DIRTY_FLAG);
     let u = unsafe { desc.deref(pool) }.status.load(Ordering::SeqCst) == UNDECIDED;
 
