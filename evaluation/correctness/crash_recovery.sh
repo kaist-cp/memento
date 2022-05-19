@@ -52,8 +52,8 @@ function run_bg() {
 # Run test
 for target in ${TARGETS[@]}; do
     # Test normal run.
-    avgtest=0                 # Test 완료하는 데 걸리는 평균시간
-    mintest=$((1000 * 10**9)) # Test 완료하는 데 걸리는 최소시간
+    avgtest=0                 # Average test time
+    mintest=$((1000 * 10**9)) # Minimum test time
     for i in $(seq 1 $CNT_NORMAL); do
         # initlaize
         dmsg "normal run $target $i/$CNT_NORMAL"
@@ -75,8 +75,8 @@ for target in ${TARGETS[@]}; do
     dmsg "mintest: $mintest ns, avgtest: $avgtest ns"
 
     # Test full-crash and recovery run.
-    crash_min=$(($avgtest/4))  # 최소 이 시간 이후에 crash (pool create은 끝난 다음에 crash해야함) TODO: 시간 적절한기?
-    crash_max=$mintest         # 최대 이 시간 이내에 crash
+    crash_min=$(($avgtest/4))  # Minimum crash time (to guarantee crash after finishing pool creation)
+    crash_max=$mintest         # Maximum crash time
     dmsg "crash_min: $crash_min ns, crash_max: $crash_max ns"
     for i in $(seq 1 $CNT_CRASH); do
         # initialze
@@ -94,7 +94,7 @@ for target in ${TARGETS[@]}; do
             current=$(date +%s%N)
             elapsed=$(($current-$start))
 
-            # 랜덤시간 이후 kill
+            # kill after random crash time
             if [ $elapsed -gt $crashtime ]; then
                 kill -9 %1
                 dmsg "crash after $elapsed ns"
