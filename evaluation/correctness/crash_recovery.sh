@@ -51,9 +51,9 @@ function run_bg() {
 
 # Run test
 for target in ${TARGETS[@]}; do
-    mintime=$((1000 * 10**9)) # Test 완료하는 데 걸리는 시간. crash-recovery 테스트시 이 시간 내에 crash 일으켜야함
-
     # Test normal run.
+    avgtest=0                 # Test 완료하는 데 걸리는 평균시간
+    mintest=$((1000 * 10**9)) # Test 완료하는 데 걸리는 최소시간
     for i in $(seq 1 $CNT_NORMAL); do
         # initlaize
         dmsg "normal run $target $i/$CNT_NORMAL"
@@ -66,14 +66,18 @@ for target in ${TARGETS[@]}; do
 
         # calculate elpased time
         elapsed=$(($end-$start))
-        if [ $mintime -gt $elapsed ]; then
-            mintime=$elapsed
+        avgtest=$(($avgtest+$elapsed))
+        if [ $mintest -gt $elapsed ]; then
+            mintest=$elapsed
         fi
     done
-
-    dmsg "min test time: $mintime ns"
+    avgtest=$(($avgtest/$CNT_NORMAL))
+    dmsg "mintest: $mintest ns, avgtest: $avgtest ns"
 
     # Test full-crash and recovery run.
+    crash_min=$(($avgtest/4))  # 최소 이 시간 이후에 crash (pool create은 끝난 다음에 crash해야함) TODO: 시간 적절한기?
+    crash_max=$mintest         # 최대 이 시간 이내에 crash
+    dmsg "crash_min: $crash_min ns, crash_max: $crash_max ns"
     for i in $(seq 1 $CNT_CRASH); do
         # initialze
         dmsg "crash run $target $i/$CNT_CRASH"
@@ -84,17 +88,16 @@ for target in ${TARGETS[@]}; do
         run_bg $target
 
         # crash
-        min=$((2 * 10**9))  # 최소 3초 이후에 crash (pool create은 끝난 다음에 crash해야함) TODO: 3초가 적절한가?
-        ktime=$(((RANDOM * RANDOM * RANDOM) % ($mintime-$min) + $min))
-        dmsg "ktime=${ktime} ns"
+        crashtime=$(((RANDOM * RANDOM * RANDOM) % ($crash_max-$crash_min) + $crash_min))
+        dmsg "crash time=${crashtime} ns"
         while true; do
             current=$(date +%s%N)
             elapsed=$(($current-$start))
 
             # 랜덤시간 이후 kill
-            if [ $elapsed -gt $ktime ]; then
+            if [ $elapsed -gt $crashtime ]; then
                 kill -9 %1
-                dmsg "kill after $elapsed ns"
+                dmsg "crash after $elapsed ns"
                 break
             fi
         done
