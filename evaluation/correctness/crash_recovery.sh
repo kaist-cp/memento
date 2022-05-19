@@ -86,6 +86,7 @@ for target in ${TARGETS[@]}; do
         # run
         start=$(date +%s%N)
         run_bg $target
+        bg_id=$!
 
         # crash
         crashtime=$(((RANDOM * RANDOM * RANDOM) % ($crash_max-$crash_min) + $crash_min))
@@ -96,14 +97,14 @@ for target in ${TARGETS[@]}; do
 
             # kill after random crash time
             if [ $elapsed -gt $crashtime ]; then
-                kill -9 %1
+                kill -9 $bg_id || true
+                wait $bg_id || true
                 dmsg "crash after $elapsed ns"
                 break
             fi
         done
 
         # recovery run
-        sleep 2
         dmsg "recovery run $target $i/$CNT_CRASH"
         run $target
     done
