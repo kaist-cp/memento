@@ -8,6 +8,7 @@ use crossbeam_utils::CachePadded;
 use crate::{
     pepoch::{PAtomic, PShared},
     pmem::{lfence, ll::persist_obj, sfence, Collectable, GarbageCollection, PoolHandle},
+    PDefault,
 };
 
 use super::{ExecInfo, Timestamp, NR_MAX_THREADS};
@@ -32,6 +33,12 @@ impl<N: Collectable> Default for DetectableCASAtomic<N> {
         Self {
             inner: PAtomic::null(),
         }
+    }
+}
+
+impl<N: Collectable> PDefault for DetectableCASAtomic<N> {
+    fn pdefault(_: &PoolHandle) -> Self {
+        Default::default()
     }
 }
 
@@ -394,5 +401,97 @@ impl Cas {
     pub fn clear(&mut self) {
         self.checkpoint = Timestamp::from(Cas::NOT_CHECKED);
         persist_obj(&self.checkpoint, false);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        pepoch::atomic::Pointer,
+        pmem::{ralloc::Collectable, RootObj},
+        test_utils::tests::*,
+    };
+
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 100_000;
+
+    struct DetectableCas {
+        cases: [Cas; COUNT],
+    }
+
+    impl Default for DetectableCas {
+        fn default() -> Self {
+            Self {
+                cases: array_init::array_init(|_| Cas::default()),
+            }
+        }
+    }
+
+    impl Collectable for DetectableCas {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..COUNT {
+                Cas::filter(&mut m.cases[i], tid, gc, pool);
+            }
+        }
+    }
+
+    impl RootObj<DetectableCas> for TestRootObj<DetectableCASAtomic<usize>> {
+        fn run(&self, cas_test: &mut DetectableCas, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            match tid {
+                // T1: Check the execution results of other threads
+                1 => {
+                    // Wait for all other threads to finish
+                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+
+                    // Check results
+                    // TODO: Use from-old-to-new pair
+                    let mut last_tid = 0;
+                    for t in 2..NR_THREAD + 2 {
+                        let cnt = RESULTS[t].load(Ordering::SeqCst);
+                        if cnt == COUNT {
+                            continue;
+                        }
+                        assert_eq!(cnt, COUNT - 1);
+                        assert_eq!(last_tid, 0);
+                        last_tid = t;
+                    }
+                }
+                // Threads other than T1 perform CAS
+                _ => {
+                    let new = unsafe { PShared::from_usize(tid) };
+                    for i in 0..COUNT {
+                        let old = loop {
+                            let old = self.obj.load(Ordering::SeqCst, guard, pool);
+                            if self
+                                .obj
+                                .cas::<true>(old, new, &mut cas_test.cases[i], tid, guard, pool)
+                                .is_ok()
+                            {
+                                break old;
+                            }
+                        };
+
+                        // Transfer the old value to the result array
+                        // TODO: Use from-old-to-new pair
+                        let _ = RESULTS[old.into_usize()].fetch_add(1, Ordering::SeqCst);
+                    }
+
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+
+    // - We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+    // - You can check gc operation from the second time you open the pool:
+    //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
+    //   - where +2 is a pointer to Root, DetectableCASAtomic
+    #[test]
+    fn detectable_cas() {
+        const FILE_NAME: &str = "detectable_cas.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<TestRootObj<DetectableCASAtomic<usize>>, DetectableCas, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }
