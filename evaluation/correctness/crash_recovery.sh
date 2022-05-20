@@ -23,7 +23,7 @@ rm -rf $OUT_PATH
 mkdir -p $OUT_PATH
 cargo clean
 cargo build --tests --release --features=$FEATURE
-# rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
+rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
 
 function dmsg() {
     msg=$1
@@ -33,80 +33,79 @@ function dmsg() {
     echo "[$time] $msg" >> $OUT_PATH/$target.out
 }
 
-function clear() {
+function init() {
+    target=$1
+    dmsg "initialze $target"
+
+    # create new pool
     rm -rf $PMEM_PATH/*
+    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
 function run() {
     target=$1
-    RUST_MIN_STACK=1007374182 numactl --cpunodebind=0 --membind=0 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture >> $OUT_PATH/$target.out
-    # RUST_MIN_STACK=1007374182 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test -- --nocapture >> $OUT_PATH/$target.out
+    dmsg "run $target"
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
 function run_bg() {
     target=$1
-    RUST_MIN_STACK=1007374182 numactl --cpunodebind=0 --membind=0 cargo test --release --features=$FEATURE ds::$target::test -- --nocapture >> $OUT_PATH/$target.out &
-    # RUST_MIN_STACK=1007374182 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test -- --nocapture & >> $OUT_PATH/$target.out
+    dmsg "run_bg $target"
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
 }
 
 # Run test
 for target in ${TARGETS[@]}; do
     # Test normal run.
-    avgtest=0                 # Average test time
-    mintest=$((1000 * 10**9)) # Minimum test time
+    avgtest=0 # average test time
     for i in $(seq 1 $CNT_NORMAL); do
         # initlaize
         dmsg "normal run $target $i/$CNT_NORMAL"
-        clear
+        init $target
 
         # run
         start=$(date +%s%N)
         run $target
         end=$(date +%s%N)
 
-        # calculate elpased time
-        elapsed=$(($end-$start))
-        avgtest=$(($avgtest+$elapsed))
-        if [ $mintest -gt $elapsed ]; then
-            mintest=$elapsed
-        fi
+        # calculate average test time
+        avgtest=$(($avgtest+$(($end-$start))))
     done
     avgtest=$(($avgtest/$CNT_NORMAL))
-    dmsg "mintest: $mintest ns, avgtest: $avgtest ns"
+    dmsg "avgtest: $avgtest ns"
 
-    # Test full-crash and recovery run.
-    crash_min=$(($avgtest/4))  # Minimum crash time (to guarantee crash after finishing pool creation)
-    crash_max=$mintest         # Maximum crash time
-    dmsg "crash_min: $crash_min ns, crash_max: $crash_max ns"
+    # Test full crash and recovery run.
+    crash_max=$avgtest # maximum crash time
+    dmsg "maximum crash time=$crash_max ns"
     for i in $(seq 1 $CNT_CRASH); do
-        # initialze
-        dmsg "crash run $target $i/$CNT_CRASH"
-        clear
+        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
+        init $target
 
         # run
+        dmsg "-------------------------- crash run ------------------------------"
         start=$(date +%s%N)
         run_bg $target
-        bg_id=$!
 
         # crash
-        crashtime=$(((RANDOM * RANDOM * RANDOM) % ($crash_max-$crash_min) + $crash_min))
-        dmsg "crash time=${crashtime} ns"
+        crashtime=$(((RANDOM * RANDOM * RANDOM) % $crash_max))
         while true; do
             current=$(date +%s%N)
             elapsed=$(($current-$start))
 
             # kill after random crash time
             if [ $elapsed -gt $crashtime ]; then
-                kill -9 $bg_id || true
-                wait $bg_id || true
+                kill -9 %1 || true
+                wait %1 || true
                 dmsg "crash after $elapsed ns"
                 break
             fi
         done
 
         # recovery run
-        dmsg "recovery run $target $i/$CNT_CRASH"
+        dmsg "-------------------------- recovery run ---------------------------"
         run $target
+        dmsg "ok"
+        dmsg "⎿_________________________________________________________________⏌"
     done
 
     # # TODO: Test thread-crash

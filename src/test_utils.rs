@@ -124,12 +124,16 @@ pub mod tests {
         // let _ = Pool::remove(&filepath);
 
         // open pool
-        println!("[run_test] pool open");
         let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
             .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap());
-        println!("[run_test] pool open succeed");
 
         // run root memento(s)
-        pool_handle.execute::<O, M>();
+        let execute = std::env::var("POOL_EXECUTE");
+        if execute.is_ok() && execute.unwrap() == "0" {
+            println!("[run_test] no execute");
+        } else {
+            println!("[run_test] execute");
+            pool_handle.execute::<O, M>();
+        }
     }
 }
