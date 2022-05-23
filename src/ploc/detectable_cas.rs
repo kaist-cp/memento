@@ -210,13 +210,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 return old;
             }
 
-            let chk = loop {
+            let chk = 'chk: loop {
                 // get checkpoint timestamp
                 let start = exec_info.exec_time();
                 lfence();
 
                 // start spin loop
-                let out = loop {
+                loop {
                     let cur = self.inner.load(Ordering::SeqCst, guard);
 
                     // return if cur is clean. (previous chk timestamp is useless.)
@@ -227,19 +227,15 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     // if old was changed, new spin loop needs to be started.
                     if old != cur {
                         old = cur;
-                        break false;
+                        break;
                     }
 
                     // if patience is over, I have to help it.
                     let now = exec_info.exec_time();
                     if now > start + Self::PATIENCE {
-                        break true;
+                        break 'chk start;
                     }
                 };
-
-                if out {
-                    break start;
-                }
             };
 
             let winner_tid = old.tid();
