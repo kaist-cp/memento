@@ -4,4 +4,4 @@ test/
 
 !ext/ralloc/test/^liballoc.a
 Cargo.lock
-out
+out*

@@ -22,6 +22,12 @@ use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::{thread, CachePadded};
 
+#[cfg(feature = "simulate_tcrash")]
+use {
+    crate::test_utils::tests::{self_panic, UNIX_TIDS},
+    libc::{gettid, size_t, SIGUSR2},
+};
+
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
     RootObj,       // root obj
@@ -106,6 +112,13 @@ impl PoolHandle {
 
                             // run memento
                             let handler = scope.spawn(|_| {
+                                #[cfg(feature = "simulate_tcrash")]
+                                {
+                                    println!("t{tid} install `self panic` handler");
+                                    UNIX_TIDS[tid].store(unsafe { gettid() }, Ordering::SeqCst);
+                                    let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
+                                }
+
                                 let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                                 let guard = unsafe { epoch::old_guard(tid) };
@@ -121,8 +134,18 @@ impl PoolHandle {
                             // Exit on success, re-run memento on failure (i.e. crash)
                             // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
                             match handler.join() {
-                                Ok(_) => break,
-                                Err(_) => panic!("PANIC: Root memento No.{} re-executed.", tid),
+                                Ok(_) => {
+                                    #[cfg(feature = "simulate_tcrash")]
+                                    {
+                                        // Prevent being selected by `kill_random` on the main thread
+                                        UNIX_TIDS[tid].store(0, Ordering::SeqCst);
+                                    }
+                                    break;
+                                }
+                                Err(_) => {
+                                    std::thread::sleep(std::time::Duration::from_secs(1));
+                                    println!("PANIC: Root memento No.{} re-executed.", tid)
+                                }
                             }
                         }
                     })

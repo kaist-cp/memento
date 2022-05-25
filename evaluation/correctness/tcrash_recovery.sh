@@ -4,24 +4,19 @@
 PMEM_PATH="/mnt/pmem0"
 FEATURE="default"
 # TARGETS=("clevel" "elim_stack" "exchanger" "queue_comb" "queue_general" "queue_lp" "queue" "soft_hash" "soft_list" "stack" "treiber_stack")
-TARGETS=("queue" "queue_general" "queue_lp")    # Test target
-CNT_NORMAL=3                                    # Number of normal test
+# TARGETS=("queue" "queue_general" "queue_lp")    # Test target
+TARGETS=("queue_general")    # Test target
+CNT_NORMAL=1                                    # Number of normal test
 CNT_CRASH=10                                    # Number of crash test
-
-# DRAM Setting
-arg=$1
-if [ "$arg" == "no_persist" ]; then
-    PMEM_PATH="$SCRIPT_DIR/../../test"
-    FEATURE="no_persist"
-fi
 
 # Initialize
 set -e
 SCRIPT_DIR=`dirname $(realpath "$0")`
-OUT_PATH="$SCRIPT_DIR/out_fullcrash"
+OUT_PATH="$SCRIPT_DIR/out_threadcrash"
+rm -rf $OUT_PATH
 mkdir -p $OUT_PATH
 cargo clean
-cargo build --tests --release --features=$FEATURE
+cargo build --tests --release --features=simulate_tcrash
 rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
 
 function dmsg() {
@@ -44,12 +39,14 @@ function init() {
 function run() {
     target=$1
     dmsg "run $target"
+
     RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
 function run_bg() {
     target=$1
     dmsg "run_bg $target"
+
     RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
 }
 
@@ -69,47 +66,43 @@ for target in ${TARGETS[@]}; do
 
         # calculate average test time
         avgtest=$(($avgtest+$(($end-$start))))
+        # run $target
     done
     avgtest=$(($avgtest/$CNT_NORMAL))
     dmsg "avgtest: $avgtest ns"
 
-    # Test full crash and recovery run.
+    # Test thread crash and recovery run.
     crash_max=$avgtest # maximum crash time
     dmsg "maximum crash time=$crash_max ns"
     for i in $(seq 1 $CNT_CRASH); do
-        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
+        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
         init $target
 
         # run
         dmsg "-------------------------- crash run ------------------------------"
         start=$(date +%s%N)
         run_bg $target
+        pid_bg=$!
 
-        # crash
-        crashtime=$(((RANDOM * RANDOM * RANDOM) % $crash_max))
+        # thread crash
+        # TODO: many times?
+        crashtime=$(((RANDOM * RANDOM * RANDOM) % $crash_max + ($avgtest / 4)))
         while true; do
             current=$(date +%s%N)
             elapsed=$(($current-$start))
 
-            # kill after random crash time
+            # kill random thread after random crash time
             if [ $elapsed -gt $crashtime ]; then
-                kill -9 %1 || true
-                wait %1 || true
-                dmsg "crash after $elapsed ns"
+                kill -10 $pid_bg || true
+                dmsg "kill random thread after $elapsed ns"
                 break
             fi
         done
 
-        # recovery run
-        dmsg "-------------------------- recovery run ---------------------------"
-        run $target
+        # wait until finish
+        dmsg "wait $pid_bg"
+        wait $pid_bg
         dmsg "ok"
         dmsg "⎿_________________________________________________________________⏌"
     done
-
-    # # TODO: Test thread-crash
-    # for i=0; i<CNT_CRASH; i++ {
-    #    프로세스 p1이 프로세스 p0의 내부 특정 스레드만 죽일 수는 없어보임.
-    #    p0의 내부에서 thread-crash를 일으킬 스레드를 만들어야할듯
-    # }
 done

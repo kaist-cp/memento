@@ -8,8 +8,13 @@ We evaluate the correctness of data structures based on memento. We assess corre
 ./crash_recovery.sh
 ```
 
-This creates test log under `./out/`.
+This creates test log under `./out_fullcrash/`.
 
 ## Thread-crash and Recovery
 
-TODO
+```bash
+./tcrash_recovery.sh
+```
+
+This creates test log under `./out_threadcrash/`.
+

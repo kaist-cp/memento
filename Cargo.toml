@@ -16,6 +16,7 @@ use_clwb = []
 use_msync = []
 stat_print_flushes = []
 stress = []
+simulate_tcrash = ["default"]
 
 [dependencies]
 crossbeam-epoch = { path = "./crossbeam-persistency/crossbeam-epoch" }

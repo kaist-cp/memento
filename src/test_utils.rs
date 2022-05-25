@@ -12,6 +12,13 @@ pub mod tests {
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::PDefault;
 
+    #[cfg(feature = "simulate_tcrash")]
+    use {
+        crate::ploc::NR_MAX_THREADS,
+        libc::{gettid, size_t, SIGUSR1, SIGUSR2},
+        std::sync::atomic::AtomicI32,
+    };
+
     /// get path for test file
     ///
     /// e.g. "foo.pool" => "{project-path}/test/foo.pool"
@@ -105,6 +112,12 @@ pub mod tests {
             array_init::array_init(|_| AtomicUsize::new(0));
     }
 
+    #[cfg(feature = "simulate_tcrash")]
+    lazy_static! {
+        pub static ref UNIX_TIDS: [AtomicI32; NR_MAX_THREADS] =
+            array_init::array_init(|_| AtomicI32::new(0));
+    }
+
     /// run test op
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
@@ -112,6 +125,12 @@ pub mod tests {
         M: Collectable + Default + Send + Sync,
         P: AsRef<Path>,
     {
+        #[cfg(feature = "simulate_tcrash")]
+        {
+            println!("main thread install `kill_random` handler");
+            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
+        }
+
         // initialze test variables
         JOB_FINISHED.store(0, Ordering::SeqCst);
         for res in RESULTS.as_ref() {
@@ -135,5 +154,29 @@ pub mod tests {
             println!("[run_test] execute");
             pool_handle.execute::<O, M>();
         }
+    }
+
+    /// main thread handler: kill random child thread
+    #[cfg(feature = "simulate_tcrash")]
+    pub fn kill_random() {
+        let pid = unsafe { libc::getpid() };
+        let target_unix_tid = loop {
+            let rand_tid = rand::random::<usize>() % UNIX_TIDS.len();
+            let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
+            if unix_tid > pid {
+                println!("[kill_random] kill thread {rand_tid} (unix_tid: {unix_tid})");
+                break unix_tid;
+            }
+        };
+
+        unsafe {
+            let _ = libc::syscall(libc::SYS_tgkill, pid, target_unix_tid, SIGUSR2);
+        };
+    }
+
+    /// child thread handler: self panic
+    #[cfg(feature = "simulate_tcrash")]
+    pub fn self_panic(_signum: usize) {
+        panic!("[self_panic] {}", unsafe { gettid() });
     }
 }
