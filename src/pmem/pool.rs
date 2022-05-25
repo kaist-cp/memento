@@ -114,9 +114,12 @@ impl PoolHandle {
                             let handler = scope.spawn(|_| {
                                 #[cfg(feature = "simulate_tcrash")]
                                 {
-                                    println!("t{tid} install `self panic` handler");
-                                    UNIX_TIDS[tid].store(unsafe { gettid() }, Ordering::SeqCst);
+                                    let unix_tid = unsafe { gettid() };
+                                    println!(
+                                        "t{tid} install `self panic` handler (unix_tid: {unix_tid})",
+                                    );
                                     let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
+                                    UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
                                 }
 
                                 let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
