@@ -440,9 +440,6 @@ mod test {
                         assert!(res.is_some());
 
                         // Transfer the deq result to the result array
-                        // TODO:
-                        //  - thread crash simulation 가능하도록, +1 말고 "표시" 하도록 바꾸기 (HashMap 이용?). +1은 thread crash시 두 번 이상 할 수도 있어서 안됨.
-                        //  - 다른 자료구조 테스트들 또한 thread crash simulation 가능하도록 바꿔야함
                         let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
                     }
 
