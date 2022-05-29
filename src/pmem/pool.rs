@@ -7,20 +7,18 @@ use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, mem};
 
-use crate::ploc::{CASCheckpointArr, ExecInfo};
+use crate::ploc::{CASCheckpointArr, ExecInfo, NR_MAX_THREADS};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
 use crate::*;
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::{thread, CachePadded};
+use crossbeam_utils::CachePadded;
+use std::thread;
 
 #[cfg(feature = "simulate_tcrash")]
 use {crate::test_utils::tests::UNIX_TIDS, libc::gettid};
@@ -80,9 +78,10 @@ impl PoolHandle {
     ///
     /// O: root obj
     /// M: root memento(s)
+    #[allow(box_pointers)]
     pub fn execute<O, M>(&'static self)
     where
-        O: RootObj<M> + Send + Sync,
+        O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
     {
         // get root obj
@@ -95,25 +94,20 @@ impl PoolHandle {
         // get number of root memento(s)
         let nr_memento = unsafe { *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize) };
 
-        #[allow(box_pointers)]
-        thread::scope(|scope| {
-            // repeat until `tid` thread succeeds the `tid`th memento
-            let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
+        // repeat until `tid` thread succeeds the `tid`th memento
+        let mut handles = Vec::new();
+        for tid in 1..=nr_memento {
+            // get `tid`th root mement
+            let m_addr =
+                unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
 
-            for tid in 1..=nr_memento {
-                // get `tid`th root memento
-                let m_addr =
-                    unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
-                
+            let th = thread::spawn(move || {
+                let h = thread::spawn(move || {
+                    loop {
+                        self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
 
-                let _ = scope.spawn(move |_| {
-                    let started = AtomicBool::new(false);
-                    thread::scope(|scope| {
-                        loop {
-                            self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
-
-                            // run memento
-                            let handler = scope.spawn(|_| {
+                        // run memento
+                        let handler = thread::spawn(move || {
                             #[cfg(feature = "simulate_tcrash")]
                             {
                                 let unix_tid = unsafe { gettid() };
@@ -123,36 +117,44 @@ impl PoolHandle {
                                 UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
                             }
 
-                                let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
+                            let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                                let guard = unsafe { epoch::old_guard(tid) };
+                            let guard = unsafe { epoch::old_guard(tid) };
 
                             self.barrier_wait(tid, nr_memento);
 
-                                let _ = root_obj.run(root_mmt, tid, &guard, self);
-                            });
+                            let _ = root_obj.run(root_mmt, tid, &guard, self);
+                        });
 
-                            // Exit on success, re-run memento on failure (i.e. crash)
-                            // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
-                            match handler.join() {
-                                Ok(_) => {
+                        // Exit on success, re-run memento on failure (i.e. crash)
+                        // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
+                        match handler.join() {
+                            Ok(_) => {
                                 #[cfg(feature = "simulate_tcrash")]
                                 {
                                     // Prevent being selected by `kill_random` on the main thread
                                     UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
                                 }
                                 break;
-                                }
-                                Err(_) => {
-                                    std::thread::sleep(std::time::Duration::from_secs(1));
-                                    println!("PANIC: Root memento No.{} re-executed.", tid)
-                                }
+                            }
+                            Err(_) => {
+                                thread::sleep(std::time::Duration::from_secs(1));
+                                println!("PANIC: Root memento No.{} re-executed.", tid)
                             }
                         }
-                    })
-                    .unwrap();
+                    }
                 });
-            }
+                let _ = h.join();
+            });
+            handles.push(th);
+        }
+
+        while !handles.is_empty() {
+            let _ = handles.pop().unwrap().join();
+        }
+
+    }
+
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {
         let _ = BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
