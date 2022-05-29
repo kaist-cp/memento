@@ -3,9 +3,11 @@
 #[doc(hidden)]
 pub mod tests {
     use crossbeam_epoch::Guard;
+    use std::collections::HashSet;
     use std::io::Error;
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use tempfile::NamedTempFile;
 
     use crate::pmem::pool::*;
@@ -109,7 +111,9 @@ pub mod tests {
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
         pub static ref RESULTS: [AtomicUsize; 1024] =
-            array_init::array_init(|_| AtomicUsize::new(0));
+            array_init::array_init(|_| AtomicUsize::new(0)); // TODO: 모든 테스트를 RESULTS_TCRASH로 대체하고 이 변수는 삭제
+        pub static ref RESULTS_TCRASH: [Mutex<HashSet<usize>>; 1024] =
+            array_init::array_init(|_| Mutex::new(HashSet::new()));
     }
 
     #[cfg(feature = "simulate_tcrash")]
