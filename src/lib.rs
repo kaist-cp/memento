@@ -31,7 +31,6 @@
 // #![deny(unstable_features)] // Allowed due to below
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
 #![feature(generic_associated_types)] // to define fields of `Memento`
-#![feature(asm)]
 #![feature(never_type)] // to use `!`
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 #![feature(new_uninit)] // for clevel

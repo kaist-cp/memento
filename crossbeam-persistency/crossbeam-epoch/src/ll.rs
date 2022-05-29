@@ -9,6 +9,8 @@ use std::arch::x86::{_mm_mfence, _mm_sfence, clflush};
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{_mm_clflush, _mm_mfence, _mm_sfence};
 
+use core::arch::asm;
+
 /// Synchronize caches and memories and acts like a write barrier
 #[inline(always)]
 pub(crate) fn persist(ptr: usize, len: usize, fence: bool) {

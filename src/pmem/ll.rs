@@ -3,6 +3,8 @@
 //! src: https://github.com/NVSL/Corundum/blob/main/src/ll.rs
 #![allow(unused)]
 
+use std::arch::asm;
+
 pub(crate) const CACHE_LINE_SHIFT: usize = 6;
 
 #[cfg(target_arch = "x86")]
