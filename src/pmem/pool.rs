@@ -23,10 +23,7 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::{thread, CachePadded};
 
 #[cfg(feature = "simulate_tcrash")]
-use {
-    crate::test_utils::tests::{self_panic, UNIX_TIDS},
-    libc::{gettid, size_t, SIGUSR2},
-};
+use {crate::test_utils::tests::UNIX_TIDS, libc::gettid};
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
@@ -112,15 +109,14 @@ impl PoolHandle {
 
                             // run memento
                             let handler = scope.spawn(|_| {
-                                #[cfg(feature = "simulate_tcrash")]
-                                {
-                                    let unix_tid = unsafe { gettid() };
-                                    println!(
-                                        "t{tid} install `self panic` handler (unix_tid: {unix_tid})",
-                                    );
-                                    let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
-                                    UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
-                                }
+                            #[cfg(feature = "simulate_tcrash")]
+                            {
+                                let unix_tid = unsafe { gettid() };
+                                println!(
+                                    "t{tid} enable `self panic` for tcrash (unix_tid: {unix_tid})",
+                                );
+                                UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
+                            }
 
                                 let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
@@ -138,12 +134,12 @@ impl PoolHandle {
                             // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
                             match handler.join() {
                                 Ok(_) => {
-                                    #[cfg(feature = "simulate_tcrash")]
-                                    {
-                                        // Prevent being selected by `kill_random` on the main thread
-                                        UNIX_TIDS[tid].store(0, Ordering::SeqCst);
-                                    }
-                                    break;
+                                #[cfg(feature = "simulate_tcrash")]
+                                {
+                                    // Prevent being selected by `kill_random` on the main thread
+                                    UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
+                                }
+                                break;
                                 }
                                 Err(_) => {
                                     std::thread::sleep(std::time::Duration::from_secs(1));
