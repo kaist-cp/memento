@@ -32,7 +32,7 @@ pub unsafe fn old_guard(tid: usize) -> Guard {
         if let Some(handle) = COLLECTOR.find(tid) {
             // If it crashes during repin, we must ensure that there is a guard. See comments in `repin_after()`.
             if handle.is_repinning() {
-                unsafe { handle.set_guard_count(1) }
+                handle.set_guard_count(1);
             }
 
             // Creating a guard with previous context
@@ -40,8 +40,8 @@ pub unsafe fn old_guard(tid: usize) -> Guard {
 
             // Re-initialize the number of objs counted by `Local`.
             // Since all the obj (`LocalHandle`, `Guard`) derived from Local that existed before are all gone, you need to initialize the number of obj counted by local well.
-            unsafe { handle.reset_count() };
-            unsafe { handle.set_guard_count(1) };
+            handle.reset_count();
+            handle.set_guard_count(1);
             h.replace(handle);
             return guard;
         }

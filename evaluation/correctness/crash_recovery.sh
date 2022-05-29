@@ -19,6 +19,8 @@ fi
 set -e
 SCRIPT_DIR=`dirname $(realpath "$0")`
 OUT_PATH="$SCRIPT_DIR/out_fullcrash"
+rm -rf $OUT_PATH/debug.out
+rm -rf $OUT_PATH/queue_*.out
 mkdir -p $OUT_PATH
 cargo clean
 cargo build --tests --release --features=$FEATURE
