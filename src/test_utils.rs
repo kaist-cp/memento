@@ -126,7 +126,7 @@ pub mod tests {
     /// run test op
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
-        O: RootObj<M> + Send + Sync,
+        O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
         P: AsRef<Path>,
     {

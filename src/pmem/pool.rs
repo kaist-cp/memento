@@ -33,6 +33,11 @@ enum RootIdx {
     MementoStart,  // start index of root memento(s)
 }
 
+lazy_static::lazy_static! {
+    static ref BARRIER_WAIT: [AtomicBool; NR_MAX_THREADS+1] =
+        array_init::array_init(|_| AtomicBool::new(false));
+}
+
 /// PoolHandle
 ///
 /// # Example
@@ -99,7 +104,7 @@ impl PoolHandle {
                 // get `tid`th root memento
                 let m_addr =
                     unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
-                let barrier = barrier.clone();
+                
 
                 let _ = scope.spawn(move |_| {
                     let started = AtomicBool::new(false);
@@ -122,10 +127,7 @@ impl PoolHandle {
 
                                 let guard = unsafe { epoch::old_guard(tid) };
 
-                                if !started.load(Ordering::Relaxed) {
-                                    started.store(true, Ordering::Relaxed);
-                                    let _ = barrier.wait();
-                                }
+                            self.barrier_wait(tid, nr_memento);
 
                                 let _ = root_obj.run(root_mmt, tid, &guard, self);
                             });
@@ -151,8 +153,15 @@ impl PoolHandle {
                     .unwrap();
                 });
             }
-        })
-        .unwrap();
+    fn barrier_wait(&self, tid: usize, nr_memento: usize) {
+        let _ = BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
+        for other in 1..=nr_memento {
+            loop {
+                if BARRIER_WAIT[other].load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+        }
     }
 
     /// unsafe get root
