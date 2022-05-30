@@ -138,9 +138,13 @@ pub mod tests {
         }
 
         // initialze test variables
-        JOB_FINISHED.store(0, Ordering::SeqCst);
-        for res in RESULTS.as_ref() {
-            res.store(0, Ordering::SeqCst);
+        lazy_static::initialize(&JOB_FINISHED);
+        lazy_static::initialize(&RESULTS);
+        lazy_static::initialize(&RESULTS_TCRASH);
+        #[cfg(feature = "simulate_tcrash")]
+        {
+            lazy_static::initialize(&UNIX_TIDS);
+            lazy_static::initialize(&TEST_FINISHED);
         }
 
         let filepath = get_test_abs_path(pool_name);

@@ -312,6 +312,10 @@ impl Pool {
                 );
             }
 
+            // Initialize shared volatile variables
+            lazy_static::initialize(&BARRIER_WAIT);
+            epoch::init();
+
             Ok(pool)
         }
     }
@@ -387,7 +391,6 @@ impl Pool {
             let _is_gc_executed = RP_recover();
         }
 
-
         let pool = global_pool().unwrap();
         pool.exec_info.set_info();
 
@@ -397,6 +400,7 @@ impl Pool {
 
         Ok(pool)
     }
+
     /// TODO(doc)
     pub fn remove(filepath: &str) -> Result<(), Error> {
         fs::remove_file(&(filepath.to_owned() + "_basemd"))?;
