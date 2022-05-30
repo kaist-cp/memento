@@ -6,7 +6,7 @@ pub mod tests {
     use std::collections::HashSet;
     use std::io::Error;
     use std::path::Path;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
     use tempfile::NamedTempFile;
 
@@ -18,7 +18,7 @@ pub mod tests {
     use {
         crate::ploc::NR_MAX_THREADS,
         libc::{gettid, size_t, SIGUSR1, SIGUSR2},
-        std::sync::atomic::{AtomicBool, AtomicI32},
+        std::sync::atomic::{AtomicBool, AtomicI32, Ordering},
     };
 
     /// get path for test file
