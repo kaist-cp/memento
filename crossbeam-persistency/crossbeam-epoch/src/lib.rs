@@ -181,7 +181,7 @@ cfg_if! {
 cfg_if! {
     if #[cfg(feature = "std")] {
         mod default;
-        pub use self::default::{default_collector, is_pinned, pin, old_guard};
+        pub use self::default::{default_collector, is_pinned, pin, old_guard, init};
     }
 }
 

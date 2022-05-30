@@ -20,6 +20,11 @@ thread_local! {
     static HANDLE: RefCell<LocalHandle> = RefCell::new(COLLECTOR.register(None));
 }
 
+/// Initialize lazy_static
+pub fn init() {
+    lazy_static::initialize(&COLLECTOR);
+}
+
 /// Returns the guard used by the `tid` thread
 ///
 /// # Safety

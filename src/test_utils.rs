@@ -6,7 +6,7 @@ pub mod tests {
     use std::collections::HashSet;
     use std::io::Error;
     use std::path::Path;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
     use tempfile::NamedTempFile;
 
@@ -18,7 +18,7 @@ pub mod tests {
     use {
         crate::ploc::NR_MAX_THREADS,
         libc::{gettid, size_t, SIGUSR1, SIGUSR2},
-        std::sync::atomic::AtomicI32,
+        std::sync::atomic::{AtomicBool, AtomicI32, Ordering},
     };
 
     /// get path for test file
@@ -120,19 +120,21 @@ pub mod tests {
     lazy_static! {
         pub static ref UNIX_TIDS: [AtomicI32; NR_MAX_THREADS] =
             array_init::array_init(|_| AtomicI32::new(0));
+        pub static ref TEST_FINISHED: AtomicBool = AtomicBool::new(false);
     }
 
     /// run test op
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
-        O: RootObj<M> + Send + Sync,
+        O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
         P: AsRef<Path>,
     {
         #[cfg(feature = "simulate_tcrash")]
         {
-            println!("main thread install `kill_random` handler");
+            println!("Install `kill_random` and `self_panic` handler");
             let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
+            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
         }
 
         // initialze test variables
@@ -158,29 +160,38 @@ pub mod tests {
             println!("[run_test] execute");
             pool_handle.execute::<O, M>();
         }
+
+        #[cfg(feature = "simulate_tcrash")]
+        TEST_FINISHED.store(true, Ordering::SeqCst);
     }
 
     /// main thread handler: kill random child thread
     #[cfg(feature = "simulate_tcrash")]
     pub fn kill_random() {
         let pid = unsafe { libc::getpid() };
-        let target_unix_tid = loop {
+        loop {
             let rand_tid = rand::random::<usize>() % UNIX_TIDS.len();
             let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
-            if unix_tid > pid {
-                println!("[kill_random] kill thread {rand_tid} (unix_tid: {unix_tid})");
-                break unix_tid;
-            }
-        };
 
-        unsafe {
-            let _ = libc::syscall(libc::SYS_tgkill, pid, target_unix_tid, SIGUSR2);
-        };
+            if unix_tid > pid {
+                println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
+                unsafe {
+                    let _ = libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2);
+                };
+                return;
+            }
+
+            if TEST_FINISHED.load(Ordering::SeqCst) {
+                println!("[kill_random] No one killed. Because test was already finished.");
+                return;
+            }
+        }
     }
 
     /// child thread handler: self panic
     #[cfg(feature = "simulate_tcrash")]
     pub fn self_panic(_signum: usize) {
+        println!("[self_panic] {}", unsafe { gettid() });
         panic!("[self_panic] {}", unsafe { gettid() });
     }
 }

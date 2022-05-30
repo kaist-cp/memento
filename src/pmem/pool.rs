@@ -7,26 +7,21 @@ use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, mem};
 
-use crate::ploc::{CASCheckpointArr, ExecInfo};
+use crate::ploc::{CASCheckpointArr, ExecInfo, NR_MAX_THREADS};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
 use crate::*;
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::{thread, CachePadded};
+use crossbeam_utils::CachePadded;
+use std::thread;
 
 #[cfg(feature = "simulate_tcrash")]
-use {
-    crate::test_utils::tests::{self_panic, UNIX_TIDS},
-    libc::{gettid, size_t, SIGUSR2},
-};
+use {crate::test_utils::tests::UNIX_TIDS, libc::gettid};
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
@@ -34,6 +29,11 @@ enum RootIdx {
     CASCheckpoint, // cas general checkpoint
     NrMemento,     // number of root mementos
     MementoStart,  // start index of root memento(s)
+}
+
+lazy_static::lazy_static! {
+    static ref BARRIER_WAIT: [AtomicBool; NR_MAX_THREADS+1] =
+        array_init::array_init(|_| AtomicBool::new(false));
 }
 
 /// PoolHandle
@@ -78,9 +78,10 @@ impl PoolHandle {
     ///
     /// O: root obj
     /// M: root memento(s)
+    #[allow(box_pointers)]
     pub fn execute<O, M>(&'static self)
     where
-        O: RootObj<M> + Send + Sync,
+        O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
     {
         // get root obj
@@ -93,70 +94,76 @@ impl PoolHandle {
         // get number of root memento(s)
         let nr_memento = unsafe { *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize) };
 
-        #[allow(box_pointers)]
-        thread::scope(|scope| {
-            // repeat until `tid` thread succeeds the `tid`th memento
-            let barrier = Arc::new(std::sync::Barrier::new(nr_memento));
+        // repeat until `tid` thread succeeds the `tid`th memento
+        let mut handles = Vec::new();
+        for tid in 1..=nr_memento {
+            // get `tid`th root mement
+            let m_addr =
+                unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
 
-            for tid in 1..=nr_memento {
-                // get `tid`th root memento
-                let m_addr =
-                    unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
-                let barrier = barrier.clone();
+            let th = thread::spawn(move || {
+                let h = thread::spawn(move || {
+                    loop {
+                        self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
 
-                let _ = scope.spawn(move |_| {
-                    let started = AtomicBool::new(false);
-                    thread::scope(|scope| {
-                        loop {
-                            self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
+                        // run memento
+                        let handler = thread::spawn(move || {
+                            #[cfg(feature = "simulate_tcrash")]
+                            {
+                                let unix_tid = unsafe { gettid() };
+                                println!(
+                                    "t{tid} enable `self panic` for tcrash (unix_tid: {unix_tid})",
+                                );
+                                UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
+                            }
 
-                            // run memento
-                            let handler = scope.spawn(|_| {
+                            let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
+
+                            let guard = unsafe { epoch::old_guard(tid) };
+
+                            self.barrier_wait(tid, nr_memento);
+
+                            let _ = root_obj.run(root_mmt, tid, &guard, self);
+                        });
+
+                        // Exit on success, re-run memento on failure (i.e. crash)
+                        // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
+                        match handler.join() {
+                            Ok(_) => {
                                 #[cfg(feature = "simulate_tcrash")]
                                 {
-                                    let unix_tid = unsafe { gettid() };
-                                    println!(
-                                        "t{tid} install `self panic` handler (unix_tid: {unix_tid})",
-                                    );
-                                    let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
-                                    UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
+                                    // Prevent being selected by `kill_random` on the main thread
+                                    UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
                                 }
-
-                                let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
-
-                                let guard = unsafe { epoch::old_guard(tid) };
-
-                                if !started.load(Ordering::Relaxed) {
-                                    started.store(true, Ordering::Relaxed);
-                                    let _ = barrier.wait();
-                                }
-
-                                let _ = root_obj.run(root_mmt, tid, &guard, self);
-                            });
-
-                            // Exit on success, re-run memento on failure (i.e. crash)
-                            // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
-                            match handler.join() {
-                                Ok(_) => {
-                                    #[cfg(feature = "simulate_tcrash")]
-                                    {
-                                        // Prevent being selected by `kill_random` on the main thread
-                                        UNIX_TIDS[tid].store(0, Ordering::SeqCst);
-                                    }
-                                    break;
-                                }
-                                Err(_) => {
-                                    std::thread::sleep(std::time::Duration::from_secs(1));
-                                    println!("PANIC: Root memento No.{} re-executed.", tid)
-                                }
+                                break;
+                            }
+                            Err(_) => {
+                                thread::sleep(std::time::Duration::from_secs(1));
+                                println!("PANIC: Root memento No.{} re-executed.", tid)
                             }
                         }
-                    })
-                    .unwrap();
+                    }
                 });
+                let _ = h.join();
+            });
+            handles.push(th);
+        }
+
+        while !handles.is_empty() {
+            let _ = handles.pop().unwrap().join();
+        }
+
+    }
+
+    fn barrier_wait(&self, tid: usize, nr_memento: usize) {
+        let _ = BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
+        for other in 1..=nr_memento {
+            loop {
+                if BARRIER_WAIT[other].load(Ordering::SeqCst) {
+                    break;
+                }
             }
-        })
-        .unwrap();
+        }
     }
 
     /// unsafe get root
@@ -380,12 +387,16 @@ impl Pool {
             let _is_gc_executed = RP_recover();
         }
 
+
         let pool = global_pool().unwrap();
         pool.exec_info.set_info();
 
+        // Initialize shared volatile variables
+        lazy_static::initialize(&BARRIER_WAIT);
+        epoch::init();
+
         Ok(pool)
     }
-
     /// TODO(doc)
     pub fn remove(filepath: &str) -> Result<(), Error> {
         fs::remove_file(&(filepath.to_owned() + "_basemd"))?;
