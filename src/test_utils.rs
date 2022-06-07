@@ -27,8 +27,8 @@ pub(crate) mod ordo {
     // TODO: sched_setscheduler(getpid(), SCHED_FIFO, param)
     fn clock_offset(c0: usize, c1: usize) -> u64 {
         const RUNS: usize = 100;
-        let mut min = u64::MAX;
         let value = AtomicUsize::new(0);
+        let mut min = u64::MAX;
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
@@ -45,14 +45,20 @@ pub(crate) mod ordo {
                 }
             });
 
-            set_affinity(c0);
-            for _ in 0..RUNS {
-                let _ = bar0.wait();
-                let _ = bar0.wait();
-                let t = rdtscp();
-                let _ = value.compare_exchange(1, 0, Ordering::SeqCst, Ordering::SeqCst);
-                min = min.min(rdtscp() - t);
-            }
+            let h = scope.spawn(move |_| {
+                let mut min = u64::MAX;
+                set_affinity(c0);
+                for _ in 0..RUNS {
+                    let _ = bar0.wait();
+                    let _ = bar0.wait();
+                    let t = rdtscp();
+                    let _ = value_ref.compare_exchange(1, 0, Ordering::SeqCst, Ordering::SeqCst);
+                    min = min.min(rdtscp() - t);
+                }
+                min
+            });
+
+            min = h.join().unwrap();
         })
         .unwrap();
 
