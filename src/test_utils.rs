@@ -26,7 +26,7 @@ pub(crate) mod ordo {
 
     // TODO: sched_setscheduler(getpid(), SCHED_FIFO, param)
     fn clock_offset(c0: usize, c1: usize) -> u64 {
-        const RUNS: usize = 100000;
+        const RUNS: usize = 100;
         let mut min = u64::MAX;
         let value = AtomicUsize::new(0);
 
@@ -34,7 +34,7 @@ pub(crate) mod ordo {
         thread::scope(|scope| {
             let value_ref = &value;
             let bar0 = Arc::new(Barrier::new(2));
-            let bar1 = bar0.clone();
+            let bar1 = Arc::clone(&bar0);
 
             let _ = scope.spawn(move |_| {
                 set_affinity(c1);
