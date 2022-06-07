@@ -152,7 +152,6 @@ impl PoolHandle {
         while !handles.is_empty() {
             let _ = handles.pop().unwrap().join();
         }
-
     }
 
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {

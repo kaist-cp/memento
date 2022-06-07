@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_utils::CachePadded;
 
-use crate::pmem::{
+use crate::{pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
     rdtscp, PoolHandle, CACHE_LINE_SHIFT,
-};
+}, test_utils::ordo::get_ordo_boundary};
 
 use super::{CASCheckpointArr, CasInfo};
 
@@ -157,6 +157,9 @@ pub(crate) struct ExecInfo {
 
     /// Program initial time (not changed after main execution)
     pub(crate) init_time: Timestamp,
+
+    /// Global tsc offset
+    pub(crate) tsc_offset: u64,
 }
 
 impl From<&'static [CASCheckpointArr; 2]> for ExecInfo {
@@ -167,6 +170,7 @@ impl From<&'static [CASCheckpointArr; 2]> for ExecInfo {
             chk_info: Timestamp::from(0),
             cas_info: CasInfo::from(chk_ref),
             init_time: Timestamp::from(rdtscp()),
+            tsc_offset: get_ordo_boundary(),
         }
     }
 }

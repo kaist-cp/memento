@@ -212,7 +212,15 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             let chk = 'chk: loop {
                 // get checkpoint timestamp
-                let start = exec_info.exec_time();
+                let start = {
+                    let fst = exec_info.exec_time();
+                    loop {
+                        let snd = exec_info.exec_time();
+                        if fst + exec_info.tsc_offset < snd {
+                            break snd;
+                        }
+                    }
+                };
                 lfence();
 
                 // start spin loop

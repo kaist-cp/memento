@@ -1,5 +1,76 @@
 //! Utilities
 
+pub(crate) mod ordo {
+    use std::{
+        mem::{size_of, MaybeUninit},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Barrier,
+        },
+    };
+
+    use crossbeam_utils::thread;
+    use itertools::Itertools;
+    use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
+
+    use crate::pmem::rdtscp;
+
+    fn set_affinity(c: usize) {
+        unsafe {
+            let mut cpuset = MaybeUninit::<cpu_set_t>::zeroed().assume_init();
+            CPU_ZERO(&mut cpuset);
+            CPU_SET(c, &mut cpuset);
+            assert!(sched_setaffinity(0, size_of::<cpu_set_t>(), &cpuset as *const _) >= 0);
+        }
+    }
+
+    // TODO: sched_setscheduler(getpid(), SCHED_FIFO, param)
+    fn clock_offset(c0: usize, c1: usize) -> u64 {
+        const RUNS: usize = 100000;
+        let mut min = u64::MAX;
+        let value = AtomicUsize::new(0);
+
+        #[allow(box_pointers)]
+        thread::scope(|scope| {
+            let value_ref = &value;
+            let bar0 = Arc::new(Barrier::new(2));
+            let bar1 = bar0.clone();
+
+            let _ = scope.spawn(move |_| {
+                set_affinity(c1);
+                for _ in 0..RUNS {
+                    let _ = bar1.wait();
+                    let _ = value_ref.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
+                    let _ = bar1.wait();
+                }
+            });
+
+            set_affinity(c0);
+            for _ in 0..RUNS {
+                let _ = bar0.wait();
+                let _ = bar0.wait();
+                let t = rdtscp();
+                let _ = value.compare_exchange(1, 0, Ordering::SeqCst, Ordering::SeqCst);
+                min = min.min(rdtscp() - t);
+            }
+        })
+        .unwrap();
+
+        min
+    }
+
+    pub(crate) fn get_ordo_boundary() -> u64 {
+        let num_cpus = num_cpus::get();
+        let mut global_offset = 0;
+
+        for c in (0..num_cpus).combinations(2) {
+            global_offset =
+                global_offset.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])));
+        }
+        global_offset
+    }
+}
+
 #[doc(hidden)]
 pub mod tests {
     use crossbeam_epoch::Guard;

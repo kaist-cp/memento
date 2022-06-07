@@ -31,6 +31,7 @@ fasthash = "0.4.0"
 cfg-if = "1.0.0"
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
 libc = "0.2.109"
+num_cpus = "1.13.1"
 
 [dev-dependencies]
 log = "0.4.14"
