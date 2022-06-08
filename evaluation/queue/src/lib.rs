@@ -30,7 +30,6 @@
 // #![deny(unused_lifetimes)] // Allowd due to GAT
 // #![deny(unstable_features)] // Allowd due to GAT
 #![feature(generic_associated_types)]
-#![feature(asm)]
 
 pub mod compositional_pobj;
 pub mod crndm;

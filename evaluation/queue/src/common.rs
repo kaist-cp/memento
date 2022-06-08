@@ -86,7 +86,7 @@ pub fn pick(prob: u32) -> bool {
 
 pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
-    O: RootObj<M> + Send + Sync,
+    O: RootObj<M> + Send + Sync + 'static,
     M: Collectable + Default + Send + Sync,
 {
     let _ = Pool::remove(filepath);
