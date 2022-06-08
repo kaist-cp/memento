@@ -4,7 +4,7 @@ pub(crate) mod ordo {
     use std::{
         mem::{size_of, MaybeUninit},
         sync::{
-            atomic::{AtomicUsize, Ordering},
+            atomic::{Ordering, AtomicU64},
             Arc, Barrier,
         },
     };
@@ -13,7 +13,7 @@ pub(crate) mod ordo {
     use itertools::Itertools;
     use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
 
-    use crate::pmem::rdtscp;
+    use crate::pmem::{rdtscp, lfence};
 
     fn set_affinity(c: usize) {
         unsafe {
@@ -27,33 +27,40 @@ pub(crate) mod ordo {
     // TODO: sched_setscheduler(getpid(), SCHED_FIFO, param)
     fn clock_offset(c0: usize, c1: usize) -> u64 {
         const RUNS: usize = 100;
-        let value = AtomicUsize::new(0);
+        let clock = AtomicU64::new(1);
         let mut min = u64::MAX;
 
         #[allow(box_pointers)]
         thread::scope(|scope| {
-            let value_ref = &value;
+            let clock_ref = &clock;
             let bar0 = Arc::new(Barrier::new(2));
             let bar1 = Arc::clone(&bar0);
 
             let _ = scope.spawn(move |_| {
                 set_affinity(c1);
                 for _ in 0..RUNS {
-                    let _ = bar1.wait();
-                    let _ = value_ref.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
+                    while clock_ref.load(Ordering::Relaxed) != 0 {
+                        lfence();
+                    }
+                    clock_ref.store(rdtscp(), Ordering::SeqCst);
                     let _ = bar1.wait();
                 }
             });
 
             let h = scope.spawn(move |_| {
-                let mut min = u64::MAX;
                 set_affinity(c0);
+                let mut min = u64::MAX;
                 for _ in 0..RUNS {
-                    let _ = bar0.wait();
-                    let _ = bar0.wait();
-                    let t = rdtscp();
-                    let _ = value_ref.compare_exchange(1, 0, Ordering::SeqCst, Ordering::SeqCst);
+                    clock_ref.store(0, Ordering::SeqCst);
+                    let t = loop {
+                        let t = clock_ref.load(Ordering::Relaxed);
+                        if t != 0 {
+                            break t;
+                        }
+                        lfence();
+                    };
                     min = min.min(rdtscp() - t);
+                    let _ = bar0.wait();
                 }
                 min
             });
