@@ -18,7 +18,7 @@ array-init = "2.0.0"
 regex = "1.5.4"
 structopt = "0.3"
 csv = "1.1.6"
-corundum = { git = "https://github.com/NVSL/Corundum.git", rev = "2d30259" }  # 2d30259: latest commit at 2022/04/28
+corundum = { git = "https://github.com/NVSL/Corundum.git", rev = "20fc95d" }  # 20fc95d: latest commit at 2022/04/28
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
 lazy_static = "1.4.0"
 
