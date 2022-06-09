@@ -8,6 +8,10 @@ pmdk/
 *.so
 *.log
 
+get-pip.*
 benchmark-clobber
 *-v.o.*
 *_v.o.*
+*.o.*
+
+build.log
