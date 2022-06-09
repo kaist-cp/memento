@@ -36,5 +36,5 @@ fi
 g++ -O3 -o $target_path/bench_cpp $base_dir/src/main.cpp $base_dir/src/pmdk/pipe.cpp $base_dir/src/pmdk/queue.cpp -pthread -lpmemobj -std=c++17
 
 ### Clobber-NVM
-(cd ./src/clobber-nvm; sudo ./build.sh)
+(cd ./src/clobber-nvm; sudo ./build.sh) # TODO: 2번째 빌드도 느리다면 빠르게 (e.g. queue를 위한 코드 말고 전부 제거)
 (cd ./src/clobber-nvm/apps/queue/; make benchmark-clobber)

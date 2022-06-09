@@ -19,13 +19,13 @@ void queueDestroy(struct queue **q)
 }
 void doEnqueue(struct queue *q, uint64_t value, size_t vsize)
 {
-    pthread_mutex_lock(&q->lock);
+    pthread_mutex_lock(&q->lock); // Wrapper of Clobber-NVM Transaction begin
 
     // printf("lock\n");
     queue_enqueue(q, value);
     // printf("unlock\n");
 
-    pthread_mutex_unlock(&q->lock);
+    pthread_mutex_unlock(&q->lock); // Wrapper of Clobber-NVM Transaction end
 }
 uint64_t doDequeue(struct queue *q)
 {
