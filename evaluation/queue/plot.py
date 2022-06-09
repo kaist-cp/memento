@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import git
 import traceback
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 objs = {
     "queue": {
@@ -16,6 +18,7 @@ objs = {
             'log_queue': {'data_id': '', 'label': "LogQ", 'marker': 's', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DssQ", 'marker': 's', 'color': 'orange', 'style': '--'},
             'pbcomb_queue': {'data_id': '', 'label': "PBCombQ", 'marker': 's', 'color': 'red', 'style': '--'},
+            'clobber_queue': {'data_id': '', 'label': "ClobberQ", 'marker': 's', 'color': 'royalblue', 'style': '--'},
             'pmdk_queue': {'data_id': '', 'label': "PMDKQ", 'marker': 's', 'color': 'skyblue', 'style': '--'},
             'crndm_queue': {'data_id': '', 'label': "CorundumQ", 'marker': 's', 'color': 'green', 'style': '--'},
         },
