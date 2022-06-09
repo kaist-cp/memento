@@ -1,0 +1,19 @@
+# To resolve llvm build err
+
+--- llvm/projects/compiler-rt/lib/sanitizer_common/sanitizer_platform_limits_posix.cc	2018-09-06 08:19:33.000000000 +0000
++++ sanitizer_platform_limits_posix_new.cc	2022-06-09 03:19:01.713104254 +0000
+@@ -1158,10 +1158,10 @@
+ CHECK_SIZE_AND_OFFSET(ipc_perm, gid);
+ CHECK_SIZE_AND_OFFSET(ipc_perm, cuid);
+ CHECK_SIZE_AND_OFFSET(ipc_perm, cgid);
+-#if !defined(__aarch64__) || !SANITIZER_LINUX || __GLIBC_PREREQ (2, 21)
+-/* On aarch64 glibc 2.20 and earlier provided incorrect mode field.  */
+-CHECK_SIZE_AND_OFFSET(ipc_perm, mode);
+-#endif
++// #if !defined(__aarch64__) || !SANITIZER_LINUX || __GLIBC_PREREQ (2, 21)
++// /* On aarch64 glibc 2.20 and earlier provided incorrect mode field.  */
++// CHECK_SIZE_AND_OFFSET(ipc_perm, mode);
++// #endif
+
+ CHECK_TYPE_SIZE(shmid_ds);
+ CHECK_SIZE_AND_OFFSET(shmid_ds, shm_perm);

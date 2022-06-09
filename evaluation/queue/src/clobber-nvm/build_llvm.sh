@@ -54,6 +54,9 @@ if [ ! -d "compiler-rt" ]; then
     fi
     rm -f compiler-rt-${LLVM_VER}.src.tar.xz
     mv compiler-rt-${LLVM_VER}.src compiler-rt
+
+    # Resolve llvm build err
+    patch compiler-rt/lib/sanitizer_common/sanitizer_platform_limits_posix.cc ../../sanitizer_platform_limits_posix.patch #
 } 1>../../build.log 2>&1
 fi
 cd ../..
