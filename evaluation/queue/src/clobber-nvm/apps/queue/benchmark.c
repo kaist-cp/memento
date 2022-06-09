@@ -34,6 +34,7 @@ typedef struct
     char phase;
     char *tracePath;
     size_t valueSize;
+    int init_nodes;
     pthread_barrier_t *barrier;
     size_t totalOps;
 } WorkerContext;
@@ -50,110 +51,39 @@ void randomContent(char *buffer, size_t sz)
     }
 }
 
+void *worker_init_queue(void *arg)
+{
+    WorkerContext *ctx = (WorkerContext *)arg;
+
+    int init_nodes = ctx->init_nodes;
+    char *value = (char *)malloc(ctx->valueSize);
+    *value = ctx->tid;
+
+    printf("t%d start enq %d nodes\n", ctx->tid, init_nodes);
+    for (int i = 0; i < init_nodes; i++)
+    {
+        doEnqueue(ctx->queue, value, strlen(value));
+    }
+    printf("t%d finish init\n", ctx->tid);
+
+    return NULL;
+}
+
 void *worker(void *arg)
 {
     WorkerContext *ctx = (WorkerContext *)arg;
-    // TraceOp *ops = NULL;
-    // Load the trace
     ctx->totalOps = 0;
-    // FILE *trace = fopen(ctx->tracePath, "r");
-    // assert(trace != NULL);
-    // char line[255];
-    // while (fgets(line, sizeof(line), trace))
-    // {
-    //     // remove trailing new-line characters
-    //     if (line[strlen(line) - 1] == '\n')
-    //         line[strlen(line) - 1] = '\0';
-    //     if (line[strlen(line) - 1] == '\r')
-    //         line[strlen(line) - 1] = '\0';
-
-    //     char *delim = strchr(line, ' ');
-    //     if (delim == NULL)
-    //         continue;
-    //     delim[0] = '\0';
-
-    //     TraceOp *t = (TraceOp *)malloc(sizeof(TraceOp));
-    //     strcpy(t->key, delim + 1);
-    //     t->next = ops;
-    //     if (strcmp(line, "Enqueue") == 0)
-    //         t->opCode = Enqueue;
-    //     else if (strcmp(line, "Dequeue") == 0)
-    //         t->opCode = Dequeue;
-    //     else
-    //     {
-    //         fprintf(stderr, "unknown operation: %s\n", line);
-    //         free(t);
-    //         continue;
-    //     }
-    //     ops = t;
-    //     ctx->totalOps++;
-    // }
-    // fclose(trace);
-
-    // // Prepare buffers
-    // char *value = (char *)malloc(ctx->valueSize);
-    // randomContent(value, ctx->valueSize - 1);
-    // char *buffer = (char *)malloc(ctx->valueSize);
-
-    // //printf("list addr = %p \n", ctx->list);
-    // // Load half the data before measuring the load latency
-    // if (ctx->phase == 'L')
-    // {
-    //     size_t halfOps = ctx->totalOps / 2;
-    //     while (halfOps-- > 0)
-    //     {
-    //         assert(ops->opCode == Enqueue);
-    //         //printf("key = %s, value = %s \n", ops->key, value);
-
-    //         doEnqueue(ctx->queue, value, strlen(value));
-    //         // doInsert(ctx->queue, ops->key, strlen(ops->key), value, strlen(value));
-    //         TraceOp *t = ops;
-    //         ops = ops->next;
-    //         free(t);
-    //         ctx->totalOps--; // exclude from throughput measurements
-    //     }
-    // }
-
-    // // Sync with other workers
-    // pthread_barrier_wait(ctx->barrier);
-    // // Run the benchmark
-
-    // while (ops != NULL)
-    // {
-    //     switch (ops->opCode)
-    //     {
-    //     case Enqueue:
-    //         // doInsert(ctx->queue, ops->key, strlen(ops->key), value, strlen(value));
-    //         doEnqueue(ctx->queue, value, strlen(value));
-    //         break;
-    //     case Dequeue:
-    //         doDequeue(ctx->queue);
-    //         //doUpdate(ctx->list, ops->key, strlen(ops->key), value, strlen(value));
-    //         break;
-    //     }
-    //     TraceOp *t = ops;
-    //     ops = ops->next;
-    //     free(t);
-    // }
-
-    // // Clean-up
-    // free(value);
-    // free(buffer);
-
-    // Count the number of times the op is executed in `duration` seconds
+    int local_ops = 0;
+    int prob = ctx->prob;
+    char *value = (char *)malloc(ctx->valueSize);
+    *value = ctx->tid;
 
     // Sync with other workers
     pthread_barrier_wait(ctx->barrier);
 
-    char *value = (char *)malloc(ctx->valueSize);
-    *value = ctx->tid;
-
-    int local_ops = 0;
-    int prob = ctx->prob;
+    // Run the benchmark
     struct timespec begin, end;
     clock_gettime(CLOCK_REALTIME, &begin);
-    // printf("[start] %d\n", ctx->tid);
-
     if (prob == -1)
     {
         while (true)
@@ -194,16 +124,14 @@ void *worker(void *arg)
             local_ops += 1;
         }
     }
+    // Count the number of times the op is executed in `duration` seconds
     ctx->totalOps = local_ops;
-    // printf("[end] %d\n", ctx->tid);
-    // free(value);
+
+    // Clean up
+    free(value);
 
     clock_gettime(CLOCK_REALTIME, &end);
     int64_t elapsed = (end.tv_sec - begin.tv_sec) * 1E9 + (end.tv_nsec - begin.tv_nsec);
-    // long elapsed = end.tv_sec - begin.tv_sec;
-    // int64_t execTime = elapsed * 1E9;
-    // execTime += end.tv_nsec - begin.tv_nsec;
-    // fprintf(stdout, "t%d time:       %zu (%.2f ms)\n", i, execTime, execTime / 1E6);
 
     return NULL;
 }
@@ -213,7 +141,7 @@ int custom_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                           void *(*start_routine)(void *), void *arg);
 #endif
 
-uint64_t run(char workload, char phase, QueuePtrType q, int prob, int threadCount, int duration, size_t valueSize, size_t *totalOps)
+uint64_t run(char workload, char phase, QueuePtrType q, int prob, int threadCount, int duration, size_t valueSize, int init_nodes, size_t *totalOps)
 {
     pthread_barrier_t barrier;
     pthread_barrier_init(&barrier, NULL, threadCount + 1);
@@ -222,59 +150,53 @@ uint64_t run(char workload, char phase, QueuePtrType q, int prob, int threadCoun
     WorkerContext *contexts = (WorkerContext *)calloc(threadCount,
                                                       sizeof(WorkerContext));
     assert(contexts != NULL);
+
+    // Initialze queue
+    char *value = (char *)malloc(valueSize);
+    *value = 0;
+    printf("start init %d nodes\n", init_nodes);
+    for (int i = 0; i < init_nodes; i++)
+    {
+        doEnqueue(q, value, strlen(value));
+    }
+    free(value);
+    printf("finish init %d nodes\n", init_nodes);
+
+    // Run
+    printf("t0~t%d start run\n", threadCount - 1);
     for (int i = 0; i < threadCount; i++)
     {
-        // printf("[run] start worker %d\n", i);
         WorkerContext *context = &contexts[i];
-        // tracePath += workload-phase-threadCount.i
-        char pathPostfix[16], buffer[16];
-        pathPostfix[0] = workload;
-        pathPostfix[1] = '\0';
-        strcat(pathPostfix, phase == 'L' ? "-load-" : "-run-");
-        sprintf(buffer, "%d", threadCount);
-        strcat(pathPostfix, buffer);
-        strcat(pathPostfix, ".");
-        sprintf(buffer, "%d", i);
-        strcat(pathPostfix, buffer);
-
         QueuePtrAssign(context->queue, q);
-        // char *traceBuffer = (char *)malloc(strlen(tracePath) + strlen(pathPostfix) + 1);
-        // strcpy(traceBuffer, tracePath);
-        // strcat(traceBuffer, pathPostfix);
         context->tid = i;
         context->phase = phase;
-        // context->tracePath = traceBuffer;
         context->prob = prob;
         context->valueSize = valueSize;
         context->barrier = &barrier;
         context->duration = duration;
-#ifdef CUSTOM_PTHREAD_CREATE
-        custom_pthread_create(&threads[i], NULL, worker, &contexts[i]);
-#else
+        context->init_nodes = init_nodes;
         pthread_create(&threads[i], NULL, worker, &contexts[i]);
-#endif
     }
-
     struct timespec t1, t2;
     pthread_barrier_wait(&barrier);
-    clock_gettime(CLOCK_REALTIME, &t1);
+    clock_gettime(CLOCK_REALTIME, &t1); // start time
 
     if (totalOps != NULL)
         *totalOps = 0;
+    assert(totalOps != NULL);
     for (int i = 0; i < threadCount; i++)
     {
         pthread_join(threads[i], NULL);
-        if (totalOps != NULL)
-            *totalOps = *totalOps + contexts[i].totalOps; // TODO don't log or log once outside the loop
-
-        // free(contexts[i].tracePath);
+        *totalOps = *totalOps + contexts[i].totalOps;
 
         struct timespec t;
         clock_gettime(CLOCK_REALTIME, &t);
         int64_t execTime = (t.tv_sec - t1.tv_sec) * 1E9 + (t.tv_nsec - t1.tv_nsec);
     }
+    printf("t0~t%d finish run\n", threadCount - 1);
     clock_gettime(CLOCK_REALTIME, &t2);
 
+    free(value);
     free(threads);
     free(contexts);
     pthread_barrier_destroy(&barrier);
@@ -291,16 +213,33 @@ int main(int argc, char **argv)
     int threadCount = 1;
     int duration = 0;
     size_t valueSize = 64;
+    int init_nodes = 0;
     char workload = 'a';
-    bool showMops = true;
+    char *workload_q;
+    FILE *out;
 
     int opt;
-    while ((opt = getopt(argc, argv, ":p:t:d:s:rh")) != -1)
+    while ((opt = getopt(argc, argv, ":k:t:d:i:s:o:h")) != -1)
     {
         switch (opt)
         {
-        case 'p':
-            prob = (int)strtol(optarg, NULL, 10);
+        case 'k':
+            if (strcmp(optarg, "pair") == 0)
+                prob = -1;
+            else if (strcmp(optarg, "prob20") == 0)
+                prob = 20;
+            else if (strcmp(optarg, "prob50") == 0)
+                prob = 50;
+            else if (strcmp(optarg, "prob80") == 0)
+                prob = 80;
+            else
+                prob = -1;
+
+            size_t wllen = strlen(optarg);
+            workload_q = (char *)malloc(wllen + 1);
+            assert(workload_q != NULL);
+            strcpy(workload_q, optarg);
+            workload_q[wllen] = '\0';
             break;
         case 't':
             threadCount = (int)strtol(optarg, NULL, 10);
@@ -311,34 +250,42 @@ int main(int argc, char **argv)
         case 'd':
             valueSize = (size_t)strtol(optarg, NULL, 10);
             break;
-        case 'r':
-            showMops = false;
+        case 'i':
+            init_nodes = (int)strtol(optarg, NULL, 10);
+            break;
+        case 'o':
+            if (access(optarg, F_OK) != 0)
+            {
+                // file doesn't exist
+                out = fopen(optarg, "a");
+                fprintf(out, "target,");
+                fprintf(out, "bench kind,");
+                fprintf(out, "threads,");
+                fprintf(out, "duration,");
+                fprintf(out, "relaxed,");
+                fprintf(out, "init nodes,");
+                fprintf(out, "throughput\n");
+            }
+            else
+            {
+                // file exists
+                out = fopen(optarg, "a");
+            }
             break;
         case 'h':
         default:
             fprintf(stdout, "Benchmark tool for the Queue data structure.\n");
-            fprintf(stdout, "-p if -1 (pair) else (prob{n})\n");
+            fprintf(stdout, "-k  kind of workload: {pair, prob20, prob50, prob80}\n");
             fprintf(stdout, "-t  Number of worker threads\n");
             fprintf(stdout, "-s  Test duration (seconds)\n");
             fprintf(stdout, "-d  Data size (bytes) -- must by a multiple of 64\n");
+            fprintf(stdout, "-i  Number of initial nodes\n");
             fprintf(stdout, "-r  Show throughput in operations per second\n");
             fprintf(stdout, "-h  Prints this information and returns\n");
             return 0;
             break;
         }
     }
-
-    // assert(tracePath != NULL);
-    // assert(threadCount > 0 && threadCount < 64);
-    // assert(valueSize > 0 && valueSize % 64 == 0);
-
-    QueueCreate(q);
-
-    // uint64_t exTmL = run(workload, 'L', q, tracePath, threadCount, duration, valueSize, NULL);
-
-    size_t totalOps;
-    uint64_t exTmR = run(workload, 'R', q, prob, threadCount, duration, valueSize, &totalOps);
-
     fprintf(stdout, "Thread count:    %d\n", threadCount);
     fprintf(stdout, "Value size:      %zu\n", valueSize);
     fprintf(stdout, "Prob:      %d\n", prob);
@@ -350,27 +297,32 @@ int main(int argc, char **argv)
     {
         printf("Workload: prob%d\n", prob);
     }
+    printf("Initial nodes: %d\n", init_nodes);
 
-    // fprintf(stdout, "Load time:       %zu (%.2f ms)\n", exTmL, exTmL / 1E6);
+    QueueCreate(q);
+
+    // uint64_t exTmL = run(workload, 'L', q, tracePath, threadCount, duration, valueSize, NULL);
+
+    size_t totalOps;
+    uint64_t exTmR = run(workload_q, 'R', q, prob, threadCount, duration, valueSize, init_nodes, &totalOps);
+
     fprintf(stdout, "Run time:        %zu (%.2f ms)\n", exTmR, exTmR / 1E6);
 
-    if (showMops)
-    {
-        fprintf(stdout, "Throughput:      ");
-        // fprintf(stdout, "%.2f Mops/sec\n", totalOps / (exTmL / 1E3));
-    }
-    else
-    {
-        // totalOps = 1000000;
-        printf("[main] Total Ops = %zu\n", totalOps);
-        // fprintf(stdout, "Load throughput: ");
-        // fprintf(stdout, "%d Ops/sec\n", (unsigned int)(totalOps / (exTmL / 1E9)));
-        fprintf(stdout, "Run throughput:  ");
-        fprintf(stdout, "%d Ops/sec\n", (unsigned int)(totalOps / (exTmR / 1E9)));
-    }
+    unsigned int avg_ops = totalOps / duration;
 
-    // printf("[main] destroy q\n");
+    printf("Total Ops = %zu\n", totalOps);
+    fprintf(stdout, "Throughput: %d Ops/sec\n", avg_ops);
+
+    // Wrtie result
+    fprintf(out, "clobber_queue,");   // target
+    fprintf(out, "%s,", workload_q);  // kind
+    fprintf(out, "%d,", threadCount); // threads
+    fprintf(out, "%d,", duration);    // duration
+    fprintf(out, "none,");            // relaxed
+    fprintf(out, "%d,", init_nodes);  // init nodes
+    fprintf(out, "%d\n", avg_ops);    // throughput
+
     QueueDestroy(q);
-    // printf("[main] free tracePath\n");
+    fclose(out);
     return 0;
 }

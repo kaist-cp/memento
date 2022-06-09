@@ -23,10 +23,8 @@ function bench() {
     if [ "${target}" == "pmdk_queue" ]; then
         # pinning NUMA node 0
         numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $thread $TEST_DUR $init_nodes $outpath
-    elif [ "${target}" == "clobber_queue"]; then
-        # TODO use init_nodes
-        # TODO use kinds: $kind=("pair" "prob20" "prob50")... 이런식으로 오는데, 이걸 인자로 넘겨서 알맞게 실행해야함. 현재는 -p -1로 실행하면 pair, -p 50 으로 실행하면 prob50
-        PMEM_IS_PMEM_FORCE=1 numactl --cpunodebind=0 --membind=0 $dir_path/src/clobber-nvm/apps/queue/benchmark-clobber -t $thread -r -d 8 -s $TEST_DUR -p 50
+    elif [ "${target}" == "clobber_queue" ]; then
+        PMEM_IS_PMEM_FORCE=1 numactl --cpunodebind=0 --membind=0 $dir_path/src/clobber-nvm/apps/queue/benchmark-clobber -k $kind -t $thread -d 8 -s $TEST_DUR -i $init_nodes -o $outpath
     else
         numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $thread -d $TEST_DUR -i $init_nodes -o $outpath
     fi
