@@ -4,7 +4,7 @@ pub(crate) mod ordo {
     use std::{
         mem::{size_of, MaybeUninit},
         sync::{
-            atomic::{Ordering, AtomicU64},
+            atomic::{AtomicU64, Ordering},
             Arc, Barrier,
         },
     };
@@ -13,7 +13,7 @@ pub(crate) mod ordo {
     use itertools::Itertools;
     use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
 
-    use crate::pmem::{rdtscp, lfence};
+    use crate::pmem::{lfence, rdtscp};
 
     fn set_affinity(c: usize) {
         unsafe {
@@ -204,6 +204,7 @@ pub mod tests {
     lazy_static! {
         pub static ref UNIX_TIDS: [AtomicI32; NR_MAX_THREADS] =
             array_init::array_init(|_| AtomicI32::new(0));
+        pub static ref TEST_STARTED: AtomicBool = AtomicBool::new(false);
         pub static ref TEST_FINISHED: AtomicBool = AtomicBool::new(false);
     }
 
@@ -214,13 +215,6 @@ pub mod tests {
         M: Collectable + Default + Send + Sync,
         P: AsRef<Path>,
     {
-        #[cfg(feature = "simulate_tcrash")]
-        {
-            println!("Install `kill_random` and `self_panic` handler");
-            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
-            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
-        }
-
         // initialze test variables
         lazy_static::initialize(&JOB_FINISHED);
         lazy_static::initialize(&RESULTS);
@@ -228,7 +222,12 @@ pub mod tests {
         #[cfg(feature = "simulate_tcrash")]
         {
             lazy_static::initialize(&UNIX_TIDS);
+            lazy_static::initialize(&TEST_STARTED);
             lazy_static::initialize(&TEST_FINISHED);
+
+            println!("Install `kill_random` and `self_panic` handler");
+            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
+            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
         }
 
         let filepath = get_test_abs_path(pool_name);
@@ -258,6 +257,16 @@ pub mod tests {
     pub fn kill_random() {
         let pid = unsafe { libc::getpid() };
         loop {
+            // it prevents an infinity loop that occurs when the main thread receives a signal right after installing the handler but before spawning child threads.
+            if !TEST_STARTED.load(Ordering::SeqCst) {
+                println!("[kill_random] No one killed. Because test is not yet started.");
+                return;
+            }
+            if TEST_FINISHED.load(Ordering::SeqCst) {
+                println!("[kill_random] No one killed. Because test was already finished.");
+                return;
+            }
+
             let rand_tid = rand::random::<usize>() % UNIX_TIDS.len();
             let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
 
@@ -266,11 +275,6 @@ pub mod tests {
                 unsafe {
                     let _ = libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2);
                 };
-                return;
-            }
-
-            if TEST_FINISHED.load(Ordering::SeqCst) {
-                println!("[kill_random] No one killed. Because test was already finished.");
                 return;
             }
         }
