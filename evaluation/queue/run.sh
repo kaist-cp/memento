@@ -22,7 +22,9 @@ function bench() {
     rm -f $poolpath*
     if [ "${target}" == "pmdk_queue" ]; then
         # pinning NUMA node 0
-        numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $t $TEST_DUR $init_nodes $outpath
+        numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $thread $TEST_DUR $init_nodes $outpath
+    elif [ "${target}" == "clobber_queue" ]; then
+        PMEM_IS_PMEM_FORCE=1 numactl --cpunodebind=0 --membind=0 $dir_path/src/clobber-nvm/apps/queue/benchmark-clobber -k $kind -t $thread -d 8 -s $TEST_DUR -i $init_nodes -o $outpath
     else
         numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -k $kind -t $thread -d $TEST_DUR -i $init_nodes -o $outpath
     fi
@@ -75,6 +77,7 @@ for kind in pair prob20 prob50 prob80; do
     benches pbcomb_queue $kind $init_nodes
     benches pmdk_queue $kind $init_nodes
     benches crndm_queue $kind $init_nodes
+    benches clobber_queue $kind $init_nodes
 done
 
 # 3. Plot and finish
