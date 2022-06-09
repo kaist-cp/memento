@@ -1,0 +1,91 @@
+#!/bin/bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
+
+CC=$DIR/build/bin/clang
+if [ ! -f $CC ]; then
+    echo 'Unable to locate clang!' >&2
+    exit 1
+fi
+
+OPT=$DIR/build/bin/opt
+LLC=$DIR/build/bin/llc
+
+PASS=$DIR/build/lib/RollablePasses.so
+if [ ! -f $PASS ]; then
+    echo 'Unable to locate the NvmHooks pass!' >&2
+    exit 1
+fi
+
+LINK=1
+CC_OPTS='' # DUMP_LLVM_IR
+OUTPUT='' # DUMP_LLVM_IR
+SKIP=0 # DUMP_LLVM_IR
+for var in "$@"; do
+    if [[ "$var" == "conftest.c" ]]; then
+        LINK=1
+        break
+    elif [[ "$var" == "-c" ]]; then
+        LINK=0
+    elif [ $SKIP -eq 1 ]; then # DUMP_LLVM_IR
+        SKIP=0
+        OUTPUT=$var
+        CC_OPTS="$CC_OPTS -o $var.ll"
+    elif [[ "$var" == "-o" ]]; then # DUMP_LLVM_IR
+        SKIP=1
+    elif [[ "$var" == "-O2" ]]; then # DUMP_LLVM_IR
+        continue
+    else # DUMP_LLVM_IR
+        CC_OPTS="$CC_OPTS $var"
+    fi
+done
+
+OPTIONS=""
+DEBUG_OPTIONS=""
+for OPTION in $NVHFLAGS; do
+    if [[ -z "$OPTION" ]]; then
+        continue
+    fi
+
+    if [[ ! -z "$OPTIONS" ]]; then
+        OPTIONS="${OPTIONS} "
+        DEBUG_OPTIONS="${DEBUG_OPTIONS} "
+    fi
+    OPTIONS="${OPTIONS}-mllvm -${OPTION}"
+    DEBUG_OPTIONS="${DEBUG_OPTIONS}-${OPTION}=1"
+done
+
+if [[ -z "${DUMP_LLVM_IR}" ]]; then
+    DUMP_LLVM_IR=0
+fi
+
+if [ $LINK -eq 0 ]; then # do not run the pass when linking object files
+{
+    if [ $DUMP_LLVM_IR -eq 1 ]; then
+        $CC -S -emit-llvm $CC_OPTS
+        T=$?
+        if [ $T -ne 0 ]; then
+            exit $T
+        fi
+        $OPT -strip-debug -load $PASS -naivehook $DEBUG_OPTIONS -o $OUTPUT.bc < $OUTPUT.ll
+        T=$?
+        if [ $T -ne 0 ]; then
+            exit $T
+        fi
+        $OPT -strip-debug -S -load $PASS -naivehook $DEBUG_OPTIONS -o $OUTPUT.ll.2 < $OUTPUT.ll 1>/dev/null 2>&1
+        T=$?
+        if [ $T -ne 0 ]; then
+            exit $T
+        fi
+        $LLC -filetype=obj $OUTPUT.bc -o $OUTPUT
+        exit $?
+    else
+        $CC -Xclang -load -Xclang $PASS $OPTIONS $@
+        exit $?
+    fi
+} #1>>$DIR/dump.log 2>>$DIR/dump.log
+else
+{
+    $CC $@
+    exit $?
+} #1>$DIR/dump.log 2>$DIR/dump.log
+fi

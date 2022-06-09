@@ -1,0 +1,13 @@
+llvm/
+Atlas/
+build/
+pmdk/
+
+*.a
+*.o
+*.so
+*.log
+
+benchmark-clobber
+*-v.o.*
+*_v.o.*
