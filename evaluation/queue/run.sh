@@ -53,7 +53,7 @@ function benches() {
     echo ""
 }
 
-set -e
+# set -e # TODO: Clobber-NVM 종종 터지는 요인 해결되면 주석해제 `../context/context.c:108: ThreadContext *my_context(): Assertion `myContext != NULL' failed.`
 
 # 1. Setup
 PMEM_PATH=/mnt/pmem0
