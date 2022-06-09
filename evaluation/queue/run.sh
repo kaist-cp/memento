@@ -20,6 +20,13 @@ function bench() {
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
+    if [ "${target}" == "pmdk_queue" ] || [ "${target}" == "crndm_queue" ] || [ "${target}" == "clobber_queue" ] ; then
+        if [ "${kind}" != "pair" ] && [[ $t -gt 32 ]]; then
+            echo "skip test because it takes too long time to initialze queue.";
+            return
+        fi
+    fi
+
     if [ "${target}" == "pmdk_queue" ]; then
         # pinning NUMA node 0
         numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench_cpp $poolpath $target $kind $thread $TEST_DUR $init_nodes $outpath
@@ -34,12 +41,13 @@ function benches() {
     target=$1
     kind=$2
     init_nodes=$3
-    echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}, bench kind: ${kind}), init nodes: ${init_nodes} >"
     for t in ${THREADS[@]}; do
+        echo "< Running performance benchmark using $t threads (target: ${target}, workload: ${kind}, init nodes: ${init_nodes}) >"
         for ((var=1; var<=$TEST_CNT; var++)); do
             echo "test $var/$TEST_CNT...";
             bench $target $kind $t $init_nodes
         done
+        echo ""
     done
     echo "done."
     echo ""
