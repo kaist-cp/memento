@@ -59,7 +59,7 @@ pub(crate) mod ordo {
                         }
                         lfence();
                     };
-                    min = min.min(rdtscp() - t);
+                    min = min.min(rdtscp().abs_diff(t));
                     let _ = bar0.wait();
                 }
                 min
