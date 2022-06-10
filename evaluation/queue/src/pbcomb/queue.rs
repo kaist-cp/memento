@@ -687,8 +687,8 @@ impl TestQueue for PBCombQueue {
 
         // enq
         let _ = queue.PBQueue(Func::ENQUEUE, value, *seq, tid, pool);
-        // *seq += 1;
-        // persist_obj(seq, true);
+        *seq += 1;
+        persist_obj(seq, true);
     }
 
     fn dequeue(&self, (tid, seq): Self::DeqInput, _: &Guard, pool: &PoolHandle) {
@@ -697,8 +697,8 @@ impl TestQueue for PBCombQueue {
 
         // deq
         let _ = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, pool);
-        // *seq += 1;
-        // persist_obj(seq, true);
+        *seq += 1;
+        persist_obj(seq, true);
     }
 }
 
