@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use crossbeam_epoch::{unprotected, Guard};
 use crossbeam_utils::{Backoff, CachePadded};
 use memento::pepoch::atomic::Pointer;
-use memento::pepoch::{PAtomic, POwned};
+use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{persist_obj, pool::*, sfence, PPtr};
 use memento::PDefault;
@@ -80,11 +80,7 @@ pub struct Node {
 
 impl Collectable for Node {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut next = s.next.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !next.is_null() {
-            let next_ref = unsafe { next.deref_mut(pool) };
-            Collectable::mark(next_ref, tid, gc);
-        }
+        PAtomic::filter(&mut s.next, tid, gc, pool);
     }
 }
 
@@ -108,11 +104,7 @@ impl Clone for EStateRec {
 
 impl Collectable for EStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut tail = s.tail.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !tail.is_null() {
-            let tail_ref = unsafe { tail.deref_mut(pool) };
-            Collectable::mark(tail_ref, tid, gc);
-        }
+        PAtomic::filter(&mut s.tail, tid, gc, pool);
     }
 }
 
@@ -142,11 +134,7 @@ impl Clone for DStateRec {
 
 impl Collectable for DStateRec {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let mut head = s.head.load(Ordering::SeqCst, unsafe { unprotected() });
-        if !head.is_null() {
-            let head_ref = unsafe { head.deref_mut(pool) };
-            Collectable::mark(head_ref, tid, gc);
-        }
+        PAtomic::filter(&mut s.head, tid, gc, pool);
     }
 }
 
@@ -276,11 +264,12 @@ impl PBCombQueue {
         arg: Data,
         seq: u32,
         tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> ReturnVal {
         match func {
-            Func::ENQUEUE => self.PBQueueEnq(arg, seq, tid, pool),
-            Func::DEQUEUE => self.PBQueueDnq(seq, tid, pool),
+            Func::ENQUEUE => self.PBQueueEnq(arg, seq, tid, guard, pool),
+            Func::DEQUEUE => self.PBQueueDnq(seq, tid, guard, pool),
         }
     }
 
@@ -293,10 +282,10 @@ impl PBCombQueue {
         arg: Data,
         seq: u32,
         tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
     ) -> ReturnVal {
         // set OLD_TAIL if it is dummy node
-        let guard = unsafe { unprotected() };
         let ltail = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }
             .tail
             .load(Ordering::SeqCst, guard);
@@ -320,7 +309,7 @@ impl PBCombQueue {
                     .load(Ordering::SeqCst)
                     != (seq % 2 == 1)
                 {
-                    return self.PerformEnqReq(tid, pool);
+                    return self.PerformEnqReq(tid, guard, pool);
                 }
 
                 // return value if request is already applied
@@ -341,7 +330,7 @@ impl PBCombQueue {
                     .load(Ordering::SeqCst)
                     != (seq % 2 == 1)
                 {
-                    return self.PerformDeqReq(tid, pool);
+                    return self.PerformDeqReq(tid, guard, pool);
                 }
 
                 // return value if request is already applied
@@ -358,7 +347,14 @@ impl PBCombQueue {
 impl PBCombQueue {
     const EMPTY: usize = usize::MAX;
 
-    fn PBQueueEnq(&mut self, arg: Data, seq: u32, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    fn PBQueueEnq(
+        &mut self,
+        arg: Data,
+        seq: u32,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> ReturnVal {
         // request enq
 
         self.e_request[tid].func = Some(Func::ENQUEUE);
@@ -370,10 +366,10 @@ impl PBCombQueue {
         sfence();
 
         // perform
-        self.PerformEnqReq(tid, pool)
+        self.PerformEnqReq(tid, guard, pool)
     }
 
-    fn PerformEnqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    fn PerformEnqReq(&mut self, tid: usize, guard: &Guard, pool: &PoolHandle) -> ReturnVal {
         // decide enq combiner
         let mut lval;
         loop {
@@ -401,11 +397,7 @@ impl PBCombQueue {
             while lval == E_LOCK.load(Ordering::SeqCst) {
                 backoff.snooze();
             }
-            let last_state = unsafe {
-                self.e_state
-                    .load(Ordering::SeqCst, unprotected())
-                    .deref(pool)
-            };
+            let last_state = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) };
             if self.e_request[tid].activate
                 == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
             {
@@ -424,15 +416,9 @@ impl PBCombQueue {
 
         // enq combiner executes the enq requests
         let ind = self.e_thread_state[tid].index.load(Ordering::SeqCst);
-        let mut new_state =
-            self.e_thread_state[tid].state[ind].load(Ordering::SeqCst, unsafe { unprotected() });
+        let mut new_state = self.e_thread_state[tid].state[ind].load(Ordering::SeqCst, guard);
         let new_state_ref = unsafe { new_state.deref_mut(pool) };
-        *new_state_ref = unsafe {
-            self.e_state
-                .load(Ordering::SeqCst, unprotected())
-                .deref(pool)
-        }
-        .clone(); // create a copy of current state
+        *new_state_ref = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }.clone(); // create a copy of current state
 
         // collect the enqueued nodes here and persist them all at once
         let mut to_persist = tiny_vec!([usize; 1024]);
@@ -449,7 +435,7 @@ impl PBCombQueue {
                     // reserve persist(current tail)
                     let tail_addr = new_state_ref
                         .tail
-                        .load(Ordering::SeqCst, unsafe { unprotected() })
+                        .load(Ordering::SeqCst, guard)
                         .into_usize();
                     match to_persist.binary_search(&tail_addr) {
                         Ok(_) => {} // no duplicate
@@ -457,7 +443,7 @@ impl PBCombQueue {
                     }
 
                     // enq
-                    Self::enqueue(&new_state_ref.tail, self.e_request[q].arg, pool);
+                    Self::enqueue(&new_state_ref.tail, self.e_request[q].arg, guard, pool);
                     new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
                     new_state_ref.deactivate[q]
                         .store(self.e_request[q].activate == 1, Ordering::SeqCst);
@@ -475,7 +461,7 @@ impl PBCombQueue {
         // ``` final_persist_func
         let tail_addr = new_state_ref
             .tail
-            .load(Ordering::SeqCst, unsafe { unprotected() })
+            .load(Ordering::SeqCst, guard)
             .into_usize();
         match to_persist.binary_search(&tail_addr) {
             Ok(_) => {} // no duplicate
@@ -501,7 +487,7 @@ impl PBCombQueue {
         OLD_TAIL.store(
             new_state_ref
                 .tail
-                .load(Ordering::SeqCst, unsafe { unprotected() })
+                .load(Ordering::SeqCst, guard)
                 .into_usize(),
             Ordering::SeqCst,
         );
@@ -514,7 +500,7 @@ impl PBCombQueue {
         new_state_ref.return_val[tid].clone().unwrap()
     }
 
-    fn enqueue(tail: &PAtomic<Node>, arg: Data, pool: &PoolHandle) {
+    fn enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
         let new_node = POwned::new(
             Node {
                 data: arg,
@@ -522,8 +508,8 @@ impl PBCombQueue {
             },
             pool,
         )
-        .into_shared(unsafe { unprotected() });
-        let tail_ref = unsafe { tail.load(Ordering::SeqCst, unprotected()).deref_mut(pool) };
+        .into_shared(guard);
+        let tail_ref = unsafe { tail.load(Ordering::SeqCst, guard).deref_mut(pool) };
         tail_ref.next.store(new_node, Ordering::SeqCst); // tail.next = new node
         tail.store(new_node, Ordering::SeqCst); // tail = new node
     }
@@ -531,7 +517,7 @@ impl PBCombQueue {
 
 /// Deq
 impl PBCombQueue {
-    fn PBQueueDnq(&mut self, seq: u32, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    fn PBQueueDnq(&mut self, seq: u32, tid: usize, guard: &Guard, pool: &PoolHandle) -> ReturnVal {
         // request deq
         self.d_request[tid].func = Some(Func::DEQUEUE);
         self.d_request[tid].activate = 1 - self.d_request[tid].activate;
@@ -541,10 +527,10 @@ impl PBCombQueue {
         sfence();
 
         // perform
-        self.PerformDeqReq(tid, pool)
+        self.PerformDeqReq(tid, guard, pool)
     }
 
-    fn PerformDeqReq(&mut self, tid: usize, pool: &PoolHandle) -> ReturnVal {
+    fn PerformDeqReq(&mut self, tid: usize, guard: &Guard, pool: &PoolHandle) -> ReturnVal {
         // decide deq combiner
         let mut lval;
         loop {
@@ -573,11 +559,7 @@ impl PBCombQueue {
                 backoff.snooze();
             }
 
-            let last_state = unsafe {
-                self.d_state
-                    .load(Ordering::SeqCst, unprotected())
-                    .deref(pool)
-            };
+            let last_state = unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) };
             if self.d_request[tid].activate
                 == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
             {
@@ -596,15 +578,9 @@ impl PBCombQueue {
 
         // deq combiner executes the deq requests
         let ind = self.d_thread_state[tid].index.load(Ordering::SeqCst);
-        let mut new_state =
-            self.d_thread_state[tid].state[ind].load(Ordering::SeqCst, unsafe { unprotected() });
+        let mut new_state = self.d_thread_state[tid].state[ind].load(Ordering::SeqCst, guard);
         let new_state_ref = unsafe { new_state.deref_mut(pool) };
-        *new_state_ref = unsafe {
-            self.d_state
-                .load(Ordering::SeqCst, unprotected())
-                .deref(pool)
-        }
-        .clone(); // create a copy of current state
+        *new_state_ref = unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }.clone(); // create a copy of current state
 
         for _ in 0..COMBINING_ROUNDS {
             let mut serve_reqs = 0;
@@ -621,10 +597,10 @@ impl PBCombQueue {
                     if OLD_TAIL.load(Ordering::SeqCst)
                         != new_state_ref
                             .head
-                            .load(Ordering::SeqCst, unsafe { unprotected() })
+                            .load(Ordering::SeqCst, guard)
                             .into_usize()
                     {
-                        let node = Self::dequeue(&new_state_ref.head, pool);
+                        let node = Self::dequeue(&new_state_ref.head, guard, pool);
                         ret_val = ReturnVal::DeqRetVal(node);
                     } else {
                         ret_val = ReturnVal::DeqRetVal(Self::EMPTY);
@@ -659,18 +635,15 @@ impl PBCombQueue {
         new_state_ref.return_val[tid].clone().unwrap()
     }
 
-    fn dequeue(head: &PAtomic<Node>, pool: &PoolHandle) -> Data {
-        let head_shared = head.load(Ordering::SeqCst, unsafe { unprotected() });
+    fn dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> Data {
+        let head_shared = head.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head_shared.deref(pool) };
 
-        let ret = head_ref
-            .next
-            .load(Ordering::SeqCst, unsafe { unprotected() });
+        let ret = head_ref.next.load(Ordering::SeqCst, guard);
         if !ret.is_null() {
-            // TODO: 여기서 이렇게 defer_destroy 대신 drop하면 성능은 상승하는데, drop 해도되는게 맞나?
-            // ppopp 소스에는 여기서 자신들이 직접 구현한 recycleAPI를 사용함. 걔네꺼 correct한지 확인 필요
-            unsafe { drop(head_shared.into_owned()) }; // free old head node
             head.store(ret, Ordering::SeqCst);
+            // NOTE: It should not be deallocated immediately as it may crash during deq combine.
+            unsafe { guard.defer_pdestroy(head_shared) };
             return unsafe { ret.deref(pool) }.data;
         }
         Self::EMPTY
@@ -681,22 +654,22 @@ impl TestQueue for PBCombQueue {
     type EnqInput = (usize, usize, &'static mut u32); // value, tid, sequence number
     type DeqInput = (usize, &'static mut u32); // tid, sequence number
 
-    fn enqueue(&self, (value, tid, seq): Self::EnqInput, _: &Guard, pool: &PoolHandle) {
+    fn enqueue(&self, (value, tid, seq): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
         let queue = unsafe { (self as *const PBCombQueue as *mut PBCombQueue).as_mut() }.unwrap();
 
         // enq
-        let _ = queue.PBQueue(Func::ENQUEUE, value, *seq, tid, pool);
+        let _ = queue.PBQueue(Func::ENQUEUE, value, *seq, tid, guard, pool);
         *seq += 1;
         persist_obj(seq, true);
     }
 
-    fn dequeue(&self, (tid, seq): Self::DeqInput, _: &Guard, pool: &PoolHandle) {
+    fn dequeue(&self, (tid, seq): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
         let queue = unsafe { (self as *const PBCombQueue as *mut PBCombQueue).as_mut() }.unwrap();
 
         // deq
-        let _ = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, pool);
+        let _ = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, guard, pool);
         *seq += 1;
         persist_obj(seq, true);
     }
@@ -718,7 +691,7 @@ impl PDefault for TestPBCombQueue {
         let mut queue = PBCombQueue::pdefault(pool);
 
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            let _ = queue.PBQueue(Func::ENQUEUE, i, 0, 1, pool); // tid 1
+            let _ = queue.PBQueue(Func::ENQUEUE, i, 0, 1, unsafe { unprotected() }, pool);
         }
         Self { queue }
     }
