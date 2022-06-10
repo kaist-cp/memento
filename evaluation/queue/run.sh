@@ -19,7 +19,7 @@ function bench() {
     outpath=$out_path/${target}_${git_hash}.csv
     poolpath=$PMEM_PATH/${target}.pool
 
-    rm -f $poolpath*
+    rm -rf $PMEM_PATH/*
     if [ "${target}" == "pmdk_queue" ] || [ "${target}" == "crndm_queue" ] || [ "${target}" == "clobber_queue" ] ; then
         if [ "${kind}" != "pair" ] && [[ $t -gt 32 ]]; then
             echo "skip test because it takes too long time to initialze queue.";
