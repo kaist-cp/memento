@@ -27,7 +27,7 @@ pub static mut NR_THREADS: usize = MAX_THREADS;
 /// client for enqueue
 #[derive(Debug, Default)]
 pub struct Enqueue {
-    // req: Checkpoint<PAtomic<EnqRequestRec>>,
+    req: Checkpoint<PAtomic<RequestRec>>,
 }
 
 impl Collectable for Enqueue {
@@ -192,7 +192,7 @@ pub struct Queue {
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     // global
-    e_request: [CachePadded<RequestRec>; MAX_THREADS + 1],
+    e_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1],
     e_state: CachePadded<PAtomic<EStateRec>>, // global state
     // per-thread
     e_thread_state: [CachePadded<EThreadState>; MAX_THREADS + 1],
@@ -387,12 +387,37 @@ impl Queue {
     ) -> ReturnVal {
         // request enq
 
-        self.e_request[tid].func = Some(Func::ENQUEUE);
-        self.e_request[tid].arg = arg;
-        self.e_request[tid].activate = 1 - self.e_request[tid].activate;
-        if self.e_request[tid].valid == 0 {
-            self.e_request[tid].valid = 1;
-        }
+        let activate = 1 - self.e_request[tid].load(Ordering::SeqCst, guard).tag() as u32;
+        let req = POwned::new(
+            RequestRec {
+                func: Some(Func::ENQUEUE),
+                arg,
+                activate,
+                valid: 1,
+            },
+            pool,
+        );
+
+        persist_obj(unsafe { req.deref(pool) }, true);
+        let my_req = ok_or!(
+            enq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
+            e,
+            unsafe {
+                let dup_req = e.new.load(Ordering::Relaxed, guard);
+                drop(dup_req.into_owned());
+                // panic!("??");
+                e.current
+            }
+        )
+        .load(Ordering::Relaxed, guard);
+
+        // self.e_request[tid].func = Some(Func::ENQUEUE);
+        // self.e_request[tid].arg = arg;
+        // self.e_request[tid].activate = 1 - self.e_request[tid].activate;
+        // if self.e_request[tid].valid == 0 {
+        //     self.e_request[tid].valid = 1;
+        // }
+        self.e_request[tid].store(my_req.with_tag(activate as usize), Ordering::SeqCst);
         sfence();
 
         // perform
@@ -428,9 +453,12 @@ impl Queue {
                 backoff.snooze();
             }
             let last_state = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) };
-            if self.e_request[tid].activate
-                == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
-            {
+            let e_req_tid = unsafe {
+                self.e_request[tid]
+                    .load(Ordering::SeqCst, guard)
+                    .deref(pool)
+            };
+            if e_req_tid.activate == last_state.deactivate[tid].load(Ordering::SeqCst) as u32 {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
                     return last_state.return_val[tid].clone().unwrap();
                 }
@@ -458,9 +486,11 @@ impl Queue {
 
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `q` thread has a request that is not yet applied
-                if self.e_request[q].activate
-                    != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
-                    && self.e_request[q].valid == 1
+
+                let e_req_qid =
+                    unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) };
+                if e_req_qid.activate != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
+                    && e_req_qid.valid == 1
                 {
                     // reserve persist(current tail)
                     let tail_addr = new_state_ref
@@ -473,10 +503,9 @@ impl Queue {
                     }
 
                     // enq
-                    Self::enqueue(&new_state_ref.tail, self.e_request[q].arg, guard, pool);
+                    Self::enqueue(&new_state_ref.tail, e_req_qid.arg, guard, pool);
                     new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
-                    new_state_ref.deactivate[q]
-                        .store(self.e_request[q].activate == 1, Ordering::SeqCst);
+                    new_state_ref.deactivate[q].store(e_req_qid.activate == 1, Ordering::SeqCst);
 
                     // count
                     serve_reqs += 1;
