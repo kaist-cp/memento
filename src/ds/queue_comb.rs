@@ -766,7 +766,8 @@ mod test {
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
                     let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, guard, pool);
-                    // assert!(res.is_none());
+                    let v = res.deq_retval().unwrap();
+                    assert!(v == Queue::EMPTY);
 
                     // Check results
                     assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
@@ -784,11 +785,11 @@ mod test {
                             queue.PBQueueEnq::<true>(val, &mut enq_deq.enqs[i], tid, guard, pool);
 
                         let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
-                        // assert!(!res.is_none());
+                        let v = res.deq_retval().unwrap();
+                        assert!(v != Queue::EMPTY);
 
                         // send output of deq
-                        // let v = res.unwrap();
-                        // let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
+                        let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
