@@ -90,8 +90,10 @@ impl ReturnVal {
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
-    activate: u32,
+    return_val: Option<ReturnVal>, // 얘는 checkpoint 될 필요없음. req 다시 수행되도 어차피 같은 값으로 덮어쓰기 될 것
+    activate: u32,                 // thread-local하게 설정. 처음 설정된 이후 안 바뀜
     valid: u32,
+    deactivate: Checkpoint<bool>, // global state에 있는 deactivate는 combiner가 건드림으로써 계속 바뀌니, 따로 내 activate에 대응되는 값을 checkpoint
 }
 
 impl Collectable for RequestRec {
@@ -392,8 +394,12 @@ impl Queue {
             RequestRec {
                 func: Some(Func::ENQUEUE),
                 arg,
+                return_val: None,
                 activate,
                 valid: 1,
+                deactivate: Checkpoint::default(), // activate랑 반대값
+
+                                                   // deactivate: activate != 1, // activate랑 반대값
             },
             pool,
         );
@@ -421,10 +427,15 @@ impl Queue {
         sfence();
 
         // perform
-        self.PerformEnqReq(tid, guard, pool)
+        self.PerformEnqReq::<REC>(tid, guard, pool)
     }
 
-    fn PerformEnqReq(&mut self, tid: usize, guard: &Guard, pool: &PoolHandle) -> ReturnVal {
+    fn PerformEnqReq<const REC: bool>(
+        &mut self,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> ReturnVal {
         // decide enq combiner
         let mut lval;
         loop {
@@ -456,11 +467,20 @@ impl Queue {
             let e_req_tid = unsafe {
                 self.e_request[tid]
                     .load(Ordering::SeqCst, guard)
-                    .deref(pool)
+                    .deref_mut(pool)
             };
-            if e_req_tid.activate == last_state.deactivate[tid].load(Ordering::SeqCst) as u32 {
+            let deactivate = ok_or!(
+                e_req_tid.deactivate.checkpoint::<REC>(
+                    last_state.deactivate[tid].load(Ordering::SeqCst),
+                    tid,
+                    pool
+                ),
+                e,         // recovery 아니면 새로운 deactivate를 저장해서 사용
+                e.current  // recovery면 이전에 저장돼있던 deactivate 사용
+            );
+            if e_req_tid.activate == deactivate as u32 {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
-                    return last_state.return_val[tid].clone().unwrap();
+                    return e_req_tid.return_val.clone().unwrap();
                 }
 
                 // wait until the combiner that processed my op is finished
@@ -468,7 +488,7 @@ impl Queue {
                 while E_LOCK.load(Ordering::SeqCst) == lval + 2 {
                     backoff.snooze();
                 }
-                return last_state.return_val[tid].clone().unwrap();
+                return e_req_tid.return_val.clone().unwrap();
             }
         }
 
@@ -487,8 +507,13 @@ impl Queue {
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `q` thread has a request that is not yet applied
 
-                let e_req_qid =
-                    unsafe { self.e_request[q].load(Ordering::SeqCst, guard).deref(pool) };
+                let e_req_qid = unsafe {
+                    self.e_request[q]
+                        .load(Ordering::SeqCst, guard)
+                        .deref_mut(pool)
+                };
+                // TODO: req ptr를 참조해서 실행여부를 판별해도 괜찮은건가? 중간에 crash나면 deactivate가 이전값이 아니라 그대로 남아있잖아
+                // 아 이러면 안될듯. tail은 이전으로 돌아가는데 deactivate는 안돌아간다. 이때 deactivate는 state 껄로 체크해야할듯
                 if e_req_qid.activate != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
                     && e_req_qid.valid == 1
                 {
@@ -504,7 +529,9 @@ impl Queue {
 
                     // enq
                     Self::enqueue(&new_state_ref.tail, e_req_qid.arg, guard, pool);
-                    new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
+                    e_req_qid.return_val = Some(ReturnVal::EnqRetVal(()));
+                    // e_req_qid.deactivate = e_req_qid.activate == 1;
+                    // new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
                     new_state_ref.deactivate[q].store(e_req_qid.activate == 1, Ordering::SeqCst);
 
                     // count
@@ -557,7 +584,17 @@ impl Queue {
             .index
             .store(1 - ind, Ordering::SeqCst);
         E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
-        new_state_ref.return_val[tid].clone().unwrap()
+        let e_req_tid = unsafe {
+            self.e_request[tid]
+                .load(Ordering::SeqCst, guard)
+                .deref_mut(pool)
+        };
+        let _ = e_req_tid.deactivate.checkpoint::<REC>(
+            new_state_ref.deactivate[tid].load(Ordering::SeqCst),
+            tid,
+            pool,
+        );
+        e_req_tid.return_val.clone().unwrap()
     }
 
     fn enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
@@ -767,6 +804,7 @@ mod test {
                     let mut tmp_deq = Dequeue::default();
                     let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, guard, pool);
                     let v = res.deq_retval().unwrap();
+                    println!("check last deq v={v}");
                     assert!(v == Queue::EMPTY);
 
                     // Check results
@@ -786,6 +824,7 @@ mod test {
 
                         let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         let v = res.deq_retval().unwrap();
+                        // println!("deq v={v}");
                         assert!(v != Queue::EMPTY);
 
                         // send output of deq
