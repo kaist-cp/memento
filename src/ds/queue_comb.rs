@@ -92,7 +92,6 @@ struct RequestRec {
     arg: usize,
     return_val: Option<ReturnVal>, // 얘는 checkpoint 될 필요없음. req 다시 수행되도 어차피 같은 값으로 덮어쓰기 될 것
     activate: u32,                 // thread-local하게 설정. 처음 설정된 이후 안 바뀜
-    valid: u32,                    // TODO: 필요?
     deactivate: Checkpoint<u8>, // global state에 있는 deactivate는 combiner가 건드림으로써 계속 바뀌니, 따로 내 activate에 대응되는 값을 checkpoint
 }
 
@@ -399,7 +398,6 @@ impl Queue {
                 arg,
                 return_val: None,
                 activate,
-                valid: 1,
                 deactivate: Checkpoint::new(1 - activate as u8), // activate랑 반대값
             },
             pool,
@@ -496,9 +494,7 @@ impl Queue {
                         .load(Ordering::SeqCst, guard)
                         .deref_mut(pool)
                 };
-                if e_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst)
-                    && e_req_qid.valid == 1
-                {
+                if e_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst) {
                     // reserve persist(current tail)
                     let tail_addr = new_state_ref
                         .tail
@@ -610,7 +606,6 @@ impl Queue {
                 arg: tid,
                 return_val: None,
                 activate,
-                valid: 1,
                 deactivate: Checkpoint::new(1 - activate as u8), // activate랑 반대값
             },
             pool,
@@ -627,14 +622,6 @@ impl Queue {
             }
         )
         .load(Ordering::Relaxed, guard);
-
-        // // request deq
-        // self.d_request[tid].func = Some(Func::DEQUEUE);
-        // self.d_request[tid].activate = 1 - self.d_request[tid].activate;
-        // if self.d_request[tid].valid == 0 {
-        //     self.d_request[tid].valid = 1;
-        // }
-        // sfence();
 
         // register request
         let latest_req = ok_or!(
@@ -713,10 +700,7 @@ impl Queue {
                         .deref_mut(pool)
                 };
 
-                if d_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst)
-                    && d_req_qid.valid == 1
-                // TODO: valid 필요?
-                {
+                if d_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst) {
                     let ret_val;
                     // only nodes that are persisted can be dequeued.
                     // from `OLD_TAIL`, persist is not guaranteed as it is currently enqueud.
@@ -736,10 +720,6 @@ impl Queue {
                     //      combiner는 t0의 deactiavte를 global state에만 써놓고, 이는 t0이 직접 자신의 request에 옮겨담음
                     d_req_qid.return_val = Some(ret_val);
                     new_state_ref.deactivate[q].store(d_req_qid.activate as u8, Ordering::SeqCst);
-
-                    // new_state_ref.return_val[q] = Some(ret_val);
-                    // new_state_ref.deactivate[q]
-                    //     .store(self.d_request[q].activate == 1, Ordering::SeqCst);
 
                     // cnt
                     serve_reqs += 1;
