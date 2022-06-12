@@ -323,6 +323,8 @@ impl Queue {
                     E_DEACTIVATE_LOCK[q].store(lval, Ordering::SeqCst);
                     q_req_ref.retval = Some(());
                     q_req_ref.deactivate.store(true, Ordering::SeqCst);
+                    // 여기서 crash 나면 버그
+                    // e.g. t0의 req는 deactivate한게 남아있어서 재시도 안하지만, tail은 옛날로 돌아감. 즉 t0껏도 재실행해야하는데 재시도 못함
                     persist_obj(q_req_ref, false);
 
                     // count
