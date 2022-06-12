@@ -182,7 +182,7 @@ lazy_static::lazy_static! {
     static ref E_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 
     /// Used by the PBQueueDEQ instance of PBCOMB
-    static ref D_LOCK: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
+    static ref D_LOCK: CachePadded<VSpinLock> = CachePadded::new(VSpinLock::default());
     static ref D_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 }
 
@@ -609,35 +609,25 @@ impl Queue {
         sfence();
 
         // perform
-        self.PerformDeqReq(tid, guard, pool)
+        self.PerformDeqReq::<REC>(tid, guard, pool)
     }
 
-    fn PerformDeqReq(&mut self, tid: usize, guard: &Guard, pool: &PoolHandle) -> ReturnVal {
+    fn PerformDeqReq<const REC: bool>(
+        &mut self,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> ReturnVal {
         // decide deq combiner
-        let mut lval;
-        loop {
-            lval = D_LOCK.load(Ordering::SeqCst);
-
-            // odd: someone already combining.
-            // even: there is no comiber, so try to be combiner.
-            if lval % 2 == 0 {
-                match D_LOCK.compare_exchange(
-                    lval,
-                    lval.wrapping_add(1),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    Ok(_) => {
-                        lval = lval.wrapping_add(1);
-                        break; // i am combiner
-                    }
-                    Err(cur) => lval = cur,
-                }
-            }
+        let (lval, lockguard) = loop {
+            let lval = match D_LOCK.try_lock::<REC>(tid) {
+                Ok(ret) => break ret, // i am combiner
+                Err((lval, _)) => lval,
+            };
 
             // non-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
             let backoff = Backoff::new();
-            while lval == D_LOCK.load(Ordering::SeqCst) {
+            while lval == D_LOCK.peek().0 {
                 backoff.snooze();
             }
 
@@ -651,12 +641,12 @@ impl Queue {
 
                 // wait until the combiner that processed my op is finished
                 backoff.reset();
-                while D_LOCK.load(Ordering::SeqCst) == lval + 2 {
+                while D_LOCK.peek().0 == lval + 2 {
                     backoff.snooze();
                 }
                 return last_state.return_val[tid].clone().unwrap();
             }
-        }
+        };
 
         // deq combiner executes the deq requests
         let ind = self.d_thread_state[tid].index.load(Ordering::SeqCst);
@@ -713,7 +703,7 @@ impl Queue {
         self.d_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
-        D_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
+        drop(lockguard);
         new_state_ref.return_val[tid].clone().unwrap()
     }
 
