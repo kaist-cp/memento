@@ -28,6 +28,7 @@ pub static mut NR_THREADS: usize = MAX_THREADS;
 #[derive(Debug, Default)]
 pub struct Enqueue {
     req: Checkpoint<PAtomic<RequestRec>>,
+    return_val: Checkpoint<Option<ReturnVal>>,
     deactivate: Checkpoint<u8>, // global state에 있는 deactivate는 combiner가 건드림으로써 계속 바뀌니, 내 activate에 대응되는 값을 checkpoint해둠
 }
 
@@ -41,6 +42,7 @@ impl Collectable for Enqueue {
 #[derive(Debug, Default)]
 pub struct Dequeue {
     req: Checkpoint<PAtomic<RequestRec>>,
+    return_val: Checkpoint<Option<ReturnVal>>,
     deactivate: Checkpoint<u8>, // global state에 있는 deactivate는 combiner가 건드림으로써 계속 바뀌니, 내 activate에 대응되는 값을 checkpoint해둠
 }
 
@@ -52,7 +54,7 @@ impl Collectable for Dequeue {
 
 // Implementation of PBComb queue (Persistent Software Combining, Arxiv '21)
 /// function type of queue
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Func {
     /// enq
     ENQUEUE,
@@ -88,12 +90,18 @@ impl ReturnVal {
     }
 }
 
+impl Collectable for ReturnVal {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        todo!()
+    }
+}
+
 #[derive(Debug, Default)]
 struct RequestRec {
     func: Option<Func>,
     arg: usize,
-    return_val: Option<ReturnVal>, // 얘는 checkpoint 될 필요없음. req 다시 수행되도 어차피 같은 값으로 덮어쓰기 될 것
-    activate: u32,                 // thread-local하게 설정. 처음 설정된 이후 안 바뀜
+    // return_val: Option<ReturnVal>, // 얘는 checkpoint 될 필요없음. req 다시 수행되도 어차피 같은 값으로 덮어쓰기 될 것
+    activate: u32, // thread-local하게 설정. 처음 설정된 이후 안 바뀜
 }
 
 impl Collectable for RequestRec {
@@ -195,15 +203,19 @@ pub struct Queue {
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     // global
     e_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1], // TODO: more proper variable name
-    e_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1],
-    e_state: CachePadded<PAtomic<EStateRec>>, // global state
+    // e_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1],
+    e_request: [CachePadded<RequestRec>; MAX_THREADS + 1], // Fast, but incorrect
+    e_state: CachePadded<PAtomic<EStateRec>>,              // global state
     // per-thread
     e_thread_state: [CachePadded<EThreadState>; MAX_THREADS + 1],
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
     // global
     d_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1], // TODO: more proper variable name
-    d_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1], // Slow, but correct
-    // d_request: [CachePadded<RequestRec>; MAX_THREADS + 1], // Fast, but incorrect
+    // d_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1], // Slow, but correct
+    d_request_ref_addr: [CachePadded<usize>; MAX_THREADS + 1], // Slow, but correct
+    d_request_activate: [CachePadded<u32>; MAX_THREADS + 1],   // Slow, but correct
+
+    d_request: [CachePadded<RequestRec>; MAX_THREADS + 1], // Fast, but incorrect
     d_state: CachePadded<PAtomic<DStateRec>>,
     // per-thread
     d_thread_state: [CachePadded<DThreadState>; MAX_THREADS + 1],
@@ -263,6 +275,9 @@ impl PDefault for Queue {
             }),
             d_request_latest: array_init(|_| CachePadded::new(Default::default())),
             d_request: array_init(|_| CachePadded::new(Default::default())),
+            d_request_ref_addr: array_init(|_| CachePadded::new(Default::default())),
+            d_request_activate: array_init(|_| CachePadded::new(Default::default())),
+            // d_request_padding: array_init(|_| CachePadded::new(Default::default())),
             d_state: CachePadded::new(PAtomic::new(
                 DStateRec {
                     head: PAtomic::from(dummy),
@@ -290,95 +305,6 @@ impl PDefault for Queue {
     }
 }
 
-impl Queue {
-    /// normal run
-    pub fn PBQueue(
-        &mut self,
-        func: Func,
-        arg: Data,
-        seq: u32,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> ReturnVal {
-        // match func {
-        //     Func::ENQUEUE => self.PBQueueEnq(arg, seq, tid, guard, pool),
-        //     Func::DEQUEUE => self.PBQueueDnq(seq, tid, guard, pool),
-        // }
-        todo!()
-    }
-
-    /// recovery run
-    ///
-    /// Re-run enq or deq that crashed recently (exactly-once)
-    pub fn recover(
-        &mut self,
-        func: Func,
-        arg: Data,
-        seq: u32,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> ReturnVal {
-        // // set OLD_TAIL if it is dummy node
-        // let ltail = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }
-        //     .tail
-        //     .load(Ordering::SeqCst, guard);
-        // let _ = OLD_TAIL.compare_exchange(
-        //     self.dummy.into_offset(),
-        //     ltail.into_usize(),
-        //     Ordering::SeqCst,
-        //     Ordering::SeqCst,
-        // );
-
-        // match func {
-        //     Func::ENQUEUE => {
-        //         self.e_request[tid].func = Some(func);
-        //         self.e_request[tid].arg = arg;
-        //         self.e_request[tid].activate = seq % 2;
-        //         self.e_request[tid].valid = 1;
-        //         sfence();
-
-        //         // check activate and re-execute if request is not yet applied
-        //         if unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
-        //             .load(Ordering::SeqCst)
-        //             != (seq % 2 == 1)
-        //         {
-        //             return self.PerformEnqReq(tid, guard, pool);
-        //         }
-
-        //         // return value if request is already applied
-        //         return unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }
-        //             .return_val[tid]
-        //             .clone()
-        //             .unwrap();
-        //     }
-        //     Func::DEQUEUE => {
-        //         self.d_request[tid].func = Some(func);
-        //         self.d_request[tid].arg = arg;
-        //         self.d_request[tid].activate = seq % 2;
-        //         self.d_request[tid].valid = 1;
-        //         sfence();
-
-        //         // check activate and re-execute if request is not yet applied
-        //         if unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
-        //             .load(Ordering::SeqCst)
-        //             != (seq % 2 == 1)
-        //         {
-        //             return self.PerformDeqReq(tid, guard, pool);
-        //         }
-
-        //         // return value if request is already applied
-        //         return unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }
-        //             .return_val[tid]
-        //             .clone()
-        //             .unwrap();
-        //     }
-        // }
-        todo!()
-    }
-}
-
 /// Enq
 impl Queue {
     const EMPTY: usize = usize::MAX;
@@ -393,17 +319,19 @@ impl Queue {
         pool: &PoolHandle,
     ) -> ReturnVal {
         // make new request
-        let activate = 1 - self.e_request[tid].load(Ordering::SeqCst, guard).tag() as u32;
-        let req = POwned::new(
+        // let activate = 1 - self.e_request[tid].load(Ordering::SeqCst, guard).tag() as u32;
+        let activate = 1 - self.e_request[tid].activate;
+        let mut req = POwned::new(
             RequestRec {
                 func: Some(Func::ENQUEUE),
                 arg,
-                return_val: None,
+                // return_val: None,
                 activate,
             },
             pool,
         );
-        persist_obj(unsafe { req.deref(pool) }, true);
+        let my_req_ref = unsafe { req.deref_mut(pool) };
+        persist_obj(my_req_ref, true);
         let mut my_req = ok_or!(
             enq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
             e,
@@ -423,11 +351,15 @@ impl Queue {
             e.current // recovery run시에는 (combiner가 볼 req_arr에) 등록돼있던 최신 req를 재등록 (사실상 안해도 되는 작업)
         )
         .load(Ordering::Relaxed, guard);
-        self.e_request[tid].store(latest_req.with_tag(activate as usize), Ordering::SeqCst);
+        let latest_req_ref = unsafe { latest_req.deref(pool) };
+        // self.e_request[tid].store(latest_req.with_tag(activate as usize), Ordering::SeqCst);
+        self.e_request[tid].func = latest_req_ref.func;
+        self.e_request[tid].arg = latest_req_ref.arg;
+        self.e_request[tid].activate = latest_req_ref.activate;
         sfence();
 
         // perform
-        self.PerformEnqReq::<REC>(tid, enq, unsafe { my_req.deref_mut(pool) }, guard, pool)
+        self.PerformEnqReq::<REC>(tid, enq, my_req_ref, guard, pool)
     }
 
     fn PerformEnqReq<const REC: bool>(
@@ -464,7 +396,17 @@ impl Queue {
             );
             if mmt_req.activate as u8 == mmt_deactivate {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
-                    return mmt_req.return_val.clone().unwrap();
+                    let mmt_ret_val = ok_or!(
+                        enq.return_val.checkpoint::<REC>(
+                            lastest_state.return_val[tid].clone(),
+                            tid,
+                            pool
+                        ),
+                        e,
+                        e.current
+                    );
+                    return mmt_ret_val.unwrap();
+                    // return mmt_req.return_val.clone().unwrap();
                 }
 
                 // wait until the combiner that processed my op is finished
@@ -472,7 +414,17 @@ impl Queue {
                 while E_LOCK.peek().0 == lval + 2 {
                     backoff.snooze();
                 }
-                return mmt_req.return_val.clone().unwrap();
+                let mmt_ret_val = ok_or!(
+                    enq.return_val.checkpoint::<REC>(
+                        lastest_state.return_val[tid].clone(),
+                        tid,
+                        pool
+                    ),
+                    e,
+                    e.current
+                );
+                return mmt_ret_val.unwrap();
+                // return mmt_req.return_val.clone().unwrap();
             }
         };
 
@@ -491,11 +443,12 @@ impl Queue {
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `q` thread has a request that is not yet applied
 
-                let e_req_qid = unsafe {
-                    self.e_request[q]
-                        .load(Ordering::SeqCst, guard)
-                        .deref_mut(pool)
-                };
+                // let e_req_qid = unsafe {
+                //     self.e_request[q]
+                //         .load(Ordering::SeqCst, guard)
+                //         .deref_mut(pool)
+                // };
+                let e_req_qid = &mut *self.e_request[q];
                 if e_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst) {
                     // reserve persist(current tail)
                     let tail_addr = new_state_ref
@@ -512,7 +465,8 @@ impl Queue {
 
                     // e.g. combiner가 t0의 return val을 t0의 request에 직접 써주지만, t0의 deactivate는 t0의 request에 직접 써주지 않음.
                     //      combiner는 t0의 deactiavte를 global state에만 써놓고, 이는 t0이 직접 자신의 request에 옮겨담음
-                    e_req_qid.return_val = Some(ReturnVal::EnqRetVal(()));
+                    // e_req_qid.return_val = Some(ReturnVal::EnqRetVal(()));
+                    new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
                     new_state_ref.deactivate[q].store(e_req_qid.activate as u8, Ordering::SeqCst);
 
                     // count
@@ -564,15 +518,21 @@ impl Queue {
         self.e_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
-        drop(lockguard);
-
         // checkpoint deactivate of mmt-local request
         let _ = enq.deactivate.checkpoint::<REC>(
             new_state_ref.deactivate[tid].load(Ordering::SeqCst),
             tid,
             pool,
         );
-        mmt_req.return_val.clone().unwrap()
+        let mmt_ret_val = ok_or!(
+            enq.return_val
+                .checkpoint::<REC>(new_state_ref.return_val[tid].clone(), tid, pool),
+            e,
+            e.current
+        );
+        drop(lockguard);
+        return mmt_ret_val.unwrap();
+        // mmt_req.return_val.clone().unwrap()
     }
 
     fn enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
@@ -601,24 +561,16 @@ impl Queue {
         pool: &PoolHandle,
     ) -> ReturnVal {
         // make new request
-        let activate = {
-            // Slow, but correct
-            1 - self.d_request[tid].load(Ordering::SeqCst, guard).tag() as u32
-
-            // // Fast, but incorrect
-            // 1 - self.d_request[tid].activate
-        };
-
-        let req = POwned::new(
+        let mut req = POwned::new(
             RequestRec {
                 func: Some(Func::DEQUEUE),
                 arg: tid,
-                return_val: None,
-                activate,
+                activate: 1 - self.d_request[tid].activate,
             },
             pool,
         );
-        persist_obj(unsafe { req.deref(pool) }, true);
+        let req_ref = unsafe { req.deref_mut(pool) };
+        persist_obj(req_ref, true);
         let mut my_req = ok_or!(
             deq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
             e,
@@ -638,31 +590,15 @@ impl Queue {
             e.current // recovery run시에는 (combiner가 볼 req_arr에) 등록돼있던 최신 req를 재등록 (사실상 안해도 되는 작업)
         )
         .load(Ordering::Relaxed, guard);
+        let latest_req_ref = unsafe { latest_req.deref(pool) };
 
-        // 이전 껄로 덮어쓰기 하더라도, deactivate 표시 잘 되어있으면 됨. 근데 어케하지 이거
-        {
-            // Slow, but correct
-            self.d_request[tid].store(latest_req.with_tag(activate as usize), Ordering::SeqCst);
-
-            // // Fast, but incorrect
-            // self.d_request[tid].func = Some(Func::DEQUEUE);
-            // self.d_request[tid].activate = unsafe { my_req.deref(pool) }.activate;
-        }
+        self.d_request[tid].arg = latest_req_ref.arg;
+        self.d_request[tid].func = latest_req_ref.func;
+        self.d_request[tid].activate = latest_req_ref.activate;
         sfence();
 
         // perform
-        {
-            // Slow, but correct
-            self.PerformDeqReq::<REC>(tid, deq, unsafe { my_req.deref_mut(pool) }, guard, pool)
-
-            // // Fast, but incorrect
-            // let mmt_req = unsafe {
-            //     (&*self.d_request[tid] as *const _ as *mut RequestRec)
-            //         .as_mut()
-            //         .unwrap()
-            // };
-            // self.PerformDeqReq::<REC>(tid, deq, mmt_req, guard, pool)
-        }
+        self.PerformDeqReq::<REC>(tid, deq, req_ref, guard, pool)
     }
 
     fn PerformDeqReq<const REC: bool>(
@@ -700,7 +636,17 @@ impl Queue {
             );
             if mmt_req.activate as u8 == mmt_deactivate {
                 if D_LOCK_VALUE.load(Ordering::SeqCst) == lval {
-                    return mmt_req.return_val.clone().unwrap();
+                    // return mmt_req.return_val.clone().unwrap();
+                    let mmt_ret_val = ok_or!(
+                        deq.return_val.checkpoint::<REC>(
+                            lastest_state.return_val[tid].clone(),
+                            tid,
+                            pool
+                        ),
+                        e,
+                        e.current
+                    );
+                    return mmt_ret_val.unwrap();
                 }
 
                 // wait until the combiner that processed my op is finished
@@ -708,7 +654,17 @@ impl Queue {
                 while D_LOCK.peek().0 == lval + 2 {
                     backoff.snooze();
                 }
-                return mmt_req.return_val.clone().unwrap();
+                // return mmt_req.return_val.clone().unwrap();
+                let mmt_ret_val = ok_or!(
+                    deq.return_val.checkpoint::<REC>(
+                        lastest_state.return_val[tid].clone(),
+                        tid,
+                        pool
+                    ),
+                    e,
+                    e.current
+                );
+                return mmt_ret_val.unwrap();
             }
         };
 
@@ -726,15 +682,35 @@ impl Queue {
 
                 let d_req_qid = {
                     // Slow, but correct
-                    unsafe {
-                        self.d_request[q]
-                            .load(Ordering::SeqCst, guard)
-                            .deref_mut(pool)
-                    }
+                    // unsafe {
+                    //     self.d_request[q]
+                    //         .load(Ordering::SeqCst, guard)
+                    //         .deref_mut(pool)
+                    // }
 
                     // // Fast, but incorrect
-                    // &mut *self.d_request[q]
+                    &mut *self.d_request[q]
+
+                    // if let Some(addr) = unsafe {
+                    //     (*self.d_request_ref_addr[q] as *const RequestRec as *mut RequestRec)
+                    //         .as_mut()
+                    // } {
+                    //     addr
+                    // } else {
+                    //     continue;
+                    // }
+
+                    // unsafe {
+                    //     (self.d_request_ref_addr[q].load(Ordering::SeqCst) as *const RequestRec
+                    //         as *mut RequestRec)
+                    //         .as_mut()
+                    //         .unwrap()
+                    // }
                 };
+                // println!(
+                //     "[combiner] t{q} req addr: {}",
+                //     d_req_qid as *const _ as usize
+                // );
 
                 if d_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst) {
                     let ret_val;
@@ -754,7 +730,8 @@ impl Queue {
 
                     // e.g. combiner가 t0의 return val을 t0의 request에 직접 써주지만, t0의 deactivate는 t0의 request에 직접 써주지 않음.
                     //      combiner는 t0의 deactiavte를 global state에만 써놓고, 이는 t0이 직접 자신의 request에 옮겨담음
-                    d_req_qid.return_val = Some(ret_val);
+                    // d_req_qid.return_val = Some(ret_val);
+                    new_state_ref.return_val[q] = Some(ret_val);
                     new_state_ref.deactivate[q].store(d_req_qid.activate as u8, Ordering::SeqCst);
 
                     // cnt
@@ -779,7 +756,6 @@ impl Queue {
         self.d_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
-        drop(lockguard);
 
         // checkpoint deactivate of mmt-local request
         let _ = deq.deactivate.checkpoint::<REC>(
@@ -787,7 +763,16 @@ impl Queue {
             tid,
             pool,
         );
-        mmt_req.return_val.clone().unwrap()
+        let mmt_ret_val = ok_or!(
+            deq.return_val
+                .checkpoint::<REC>(new_state_ref.return_val[tid].clone(), tid, pool),
+            e,
+            e.current
+        );
+        drop(lockguard);
+
+        return mmt_ret_val.unwrap();
+        // mmt_req.return_val.clone().unwrap()
     }
 
     fn dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> Data {
