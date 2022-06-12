@@ -178,7 +178,7 @@ lazy_static::lazy_static! {
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
     /// Used by the PBQueueENQ instance of PBCOMB
-    static ref E_LOCK: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
+    static ref E_LOCK: CachePadded<VSpinLock> = CachePadded::new(VSpinLock::default());
     static ref E_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 
     /// Used by the PBQueueDEQ instance of PBCOMB
@@ -437,30 +437,15 @@ impl Queue {
         pool: &PoolHandle,
     ) -> ReturnVal {
         // decide enq combiner
-        let mut lval;
-        loop {
-            lval = E_LOCK.load(Ordering::SeqCst); // TODO: thread-recoverable lock
-
-            // odd: someone already combining.
-            // even: there is no comiber, so try to be combiner.
-            if lval % 2 == 0 {
-                match E_LOCK.compare_exchange(
-                    lval,
-                    lval.wrapping_add(1),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    Ok(_) => {
-                        lval = lval.wrapping_add(1);
-                        break; // i am combiner
-                    }
-                    Err(cur) => lval = cur,
-                }
-            }
+        let (lval, lockguard) = loop {
+            let lval = match E_LOCK.try_lock::<REC>(tid) {
+                Ok(ret) => break ret, // i am combiner
+                Err((lval, _)) => lval,
+            };
 
             // non-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
             let backoff = Backoff::new();
-            while lval == E_LOCK.load(Ordering::SeqCst) {
+            while lval == E_LOCK.peek().0 {
                 backoff.snooze();
             }
 
@@ -482,12 +467,12 @@ impl Queue {
 
                 // wait until the combiner that processed my op is finished
                 backoff.reset();
-                while E_LOCK.load(Ordering::SeqCst) == lval + 2 {
+                while E_LOCK.peek().0 == lval + 2 {
                     backoff.snooze();
                 }
                 return mmt_req.return_val.clone().unwrap();
             }
-        }
+        };
 
         // enq combiner executes the enq requests
         let ind = self.e_thread_state[tid].index.load(Ordering::SeqCst);
@@ -509,8 +494,6 @@ impl Queue {
                         .load(Ordering::SeqCst, guard)
                         .deref_mut(pool)
                 };
-                // TODO: req ptr를 참조해서 실행여부를 판별해도 괜찮은건가? 중간에 crash나면 deactivate가 이전값이 아니라 그대로 남아있잖아
-                // 아 이러면 안될듯. tail은 이전으로 돌아가는데 deactivate는 안돌아간다. 이때 deactivate는 state 껄로 체크해야할듯
                 if e_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst)
                     && e_req_qid.valid == 1
                 {
@@ -526,9 +509,10 @@ impl Queue {
 
                     // enq
                     Self::enqueue(&new_state_ref.tail, e_req_qid.arg, guard, pool);
+
+                    // e.g. combiner가 t0의 return val을 t0의 request에 직접 써주지만, t0의 deactivate는 t0의 request에 직접 써주지 않음.
+                    //      combiner는 t0의 deactiavte를 global state에만 써놓고, 이는 t0이 직접 자신의 request에 옮겨담음
                     e_req_qid.return_val = Some(ReturnVal::EnqRetVal(()));
-                    // e_req_qid.deactivate = e_req_qid.activate == 1;
-                    // new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
                     new_state_ref.deactivate[q].store(e_req_qid.activate as u8, Ordering::SeqCst);
 
                     // count
@@ -580,7 +564,7 @@ impl Queue {
         self.e_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
-        E_LOCK.store(lval.wrapping_add(1), Ordering::SeqCst);
+        drop(lockguard);
 
         // checkpoint deactivate of mmt-local request
         let _ = mmt_req.deactivate.checkpoint::<REC>(
