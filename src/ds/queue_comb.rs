@@ -28,6 +28,7 @@ pub static mut NR_THREADS: usize = MAX_THREADS;
 #[derive(Debug, Default)]
 pub struct Enqueue {
     req: Checkpoint<PAtomic<RequestRec>>,
+    deactivate: Checkpoint<u8>, // global state에 있는 deactivate는 combiner가 건드림으로써 계속 바뀌니, 내 activate에 대응되는 값을 checkpoint해둠
 }
 
 impl Collectable for Enqueue {
@@ -40,6 +41,7 @@ impl Collectable for Enqueue {
 #[derive(Debug, Default)]
 pub struct Dequeue {
     req: Checkpoint<PAtomic<RequestRec>>,
+    deactivate: Checkpoint<u8>, // global state에 있는 deactivate는 combiner가 건드림으로써 계속 바뀌니, 내 activate에 대응되는 값을 checkpoint해둠
 }
 
 impl Collectable for Dequeue {
@@ -92,7 +94,6 @@ struct RequestRec {
     arg: usize,
     return_val: Option<ReturnVal>, // 얘는 checkpoint 될 필요없음. req 다시 수행되도 어차피 같은 값으로 덮어쓰기 될 것
     activate: u32,                 // thread-local하게 설정. 처음 설정된 이후 안 바뀜
-    deactivate: Checkpoint<u8>, // global state에 있는 deactivate는 combiner가 건드림으로써 계속 바뀌니, 따로 내 activate에 대응되는 값을 checkpoint
 }
 
 impl Collectable for RequestRec {
@@ -398,7 +399,6 @@ impl Queue {
                 arg,
                 return_val: None,
                 activate,
-                deactivate: Checkpoint::new(1 - activate as u8), // activate랑 반대값
             },
             pool,
         );
@@ -426,13 +426,14 @@ impl Queue {
         sfence();
 
         // perform
-        self.PerformEnqReq::<REC>(tid, unsafe { my_req.deref_mut(pool) }, guard, pool)
+        self.PerformEnqReq::<REC>(tid, enq, unsafe { my_req.deref_mut(pool) }, guard, pool)
     }
 
     fn PerformEnqReq<const REC: bool>(
         &mut self,
         tid: usize,
-        mmt_req: &mut RequestRec,
+        enq: &mut Enqueue,
+        mmt_req: &mut RequestRec, // TODO: 얘는 지울 수 있으면 지우기
         guard: &Guard,
         pool: &PoolHandle,
     ) -> ReturnVal {
@@ -452,7 +453,7 @@ impl Queue {
             // checkpoint deactivate of mmt-local request
             let lastest_state = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) };
             let mmt_deactivate = ok_or!(
-                mmt_req.deactivate.checkpoint::<REC>(
+                enq.deactivate.checkpoint::<REC>(
                     lastest_state.deactivate[tid].load(Ordering::SeqCst),
                     tid,
                     pool
@@ -565,7 +566,7 @@ impl Queue {
         drop(lockguard);
 
         // checkpoint deactivate of mmt-local request
-        let _ = mmt_req.deactivate.checkpoint::<REC>(
+        let _ = enq.deactivate.checkpoint::<REC>(
             new_state_ref.deactivate[tid].load(Ordering::SeqCst),
             tid,
             pool,
@@ -606,7 +607,6 @@ impl Queue {
                 arg: tid,
                 return_val: None,
                 activate,
-                deactivate: Checkpoint::new(1 - activate as u8), // activate랑 반대값
             },
             pool,
         );
@@ -634,12 +634,13 @@ impl Queue {
         sfence();
 
         // perform
-        self.PerformDeqReq::<REC>(tid, unsafe { my_req.deref_mut(pool) }, guard, pool)
+        self.PerformDeqReq::<REC>(tid, deq, unsafe { my_req.deref_mut(pool) }, guard, pool)
     }
 
     fn PerformDeqReq<const REC: bool>(
         &mut self,
         tid: usize,
+        deq: &mut Dequeue,
         mmt_req: &mut RequestRec,
         guard: &Guard,
         pool: &PoolHandle,
@@ -660,7 +661,7 @@ impl Queue {
             // checkpoint deactivate of mmt-local request
             let lastest_state = unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) };
             let mmt_deactivate = ok_or!(
-                mmt_req.deactivate.checkpoint::<REC>(
+                deq.deactivate.checkpoint::<REC>(
                     lastest_state.deactivate[tid].load(Ordering::SeqCst),
                     tid,
                     pool
@@ -746,7 +747,7 @@ impl Queue {
         drop(lockguard);
 
         // checkpoint deactivate of mmt-local request
-        let _ = mmt_req.deactivate.checkpoint::<REC>(
+        let _ = deq.deactivate.checkpoint::<REC>(
             new_state_ref.deactivate[tid].load(Ordering::SeqCst),
             tid,
             pool,
