@@ -202,7 +202,8 @@ pub struct Queue {
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
     // global
     d_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1], // TODO: more proper variable name
-    d_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1],
+    d_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1], // Slow, but correct
+    // d_request: [CachePadded<RequestRec>; MAX_THREADS + 1], // Fast, but incorrect
     d_state: CachePadded<PAtomic<DStateRec>>,
     // per-thread
     d_thread_state: [CachePadded<DThreadState>; MAX_THREADS + 1],
@@ -600,7 +601,14 @@ impl Queue {
         pool: &PoolHandle,
     ) -> ReturnVal {
         // make new request
-        let activate = 1 - self.d_request[tid].load(Ordering::SeqCst, guard).tag() as u32;
+        let activate = {
+            // Slow, but correct
+            1 - self.d_request[tid].load(Ordering::SeqCst, guard).tag() as u32
+
+            // // Fast, but incorrect
+            // 1 - self.d_request[tid].activate
+        };
+
         let req = POwned::new(
             RequestRec {
                 func: Some(Func::DEQUEUE),
@@ -630,11 +638,31 @@ impl Queue {
             e.current // recovery run시에는 (combiner가 볼 req_arr에) 등록돼있던 최신 req를 재등록 (사실상 안해도 되는 작업)
         )
         .load(Ordering::Relaxed, guard);
-        self.d_request[tid].store(latest_req.with_tag(activate as usize), Ordering::SeqCst);
+
+        // 이전 껄로 덮어쓰기 하더라도, deactivate 표시 잘 되어있으면 됨. 근데 어케하지 이거
+        {
+            // Slow, but correct
+            self.d_request[tid].store(latest_req.with_tag(activate as usize), Ordering::SeqCst);
+
+            // // Fast, but incorrect
+            // self.d_request[tid].func = Some(Func::DEQUEUE);
+            // self.d_request[tid].activate = unsafe { my_req.deref(pool) }.activate;
+        }
         sfence();
 
         // perform
-        self.PerformDeqReq::<REC>(tid, deq, unsafe { my_req.deref_mut(pool) }, guard, pool)
+        {
+            // Slow, but correct
+            self.PerformDeqReq::<REC>(tid, deq, unsafe { my_req.deref_mut(pool) }, guard, pool)
+
+            // // Fast, but incorrect
+            // let mmt_req = unsafe {
+            //     (&*self.d_request[tid] as *const _ as *mut RequestRec)
+            //         .as_mut()
+            //         .unwrap()
+            // };
+            // self.PerformDeqReq::<REC>(tid, deq, mmt_req, guard, pool)
+        }
     }
 
     fn PerformDeqReq<const REC: bool>(
@@ -660,6 +688,7 @@ impl Queue {
 
             // checkpoint deactivate of mmt-local request
             let lastest_state = unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) };
+            let mmt_deactivate = lastest_state.deactivate[tid].load(Ordering::SeqCst);
             let mmt_deactivate = ok_or!(
                 deq.deactivate.checkpoint::<REC>(
                     lastest_state.deactivate[tid].load(Ordering::SeqCst),
@@ -695,10 +724,16 @@ impl Queue {
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `t` thread has a request that is not yet applied
 
-                let d_req_qid = unsafe {
-                    self.d_request[q]
-                        .load(Ordering::SeqCst, guard)
-                        .deref_mut(pool)
+                let d_req_qid = {
+                    // Slow, but correct
+                    unsafe {
+                        self.d_request[q]
+                            .load(Ordering::SeqCst, guard)
+                            .deref_mut(pool)
+                    }
+
+                    // // Fast, but incorrect
+                    // &mut *self.d_request[q]
                 };
 
                 if d_req_qid.activate as u8 != new_state_ref.deactivate[q].load(Ordering::SeqCst) {
