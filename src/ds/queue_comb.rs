@@ -194,6 +194,7 @@ pub struct Queue {
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     // global
+    e_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1], // TODO: more proper variable name
     e_request: [CachePadded<PAtomic<RequestRec>>; MAX_THREADS + 1],
     e_state: CachePadded<PAtomic<EStateRec>>, // global state
     // per-thread
@@ -233,6 +234,7 @@ impl PDefault for Queue {
 
         Self {
             dummy,
+            e_request_latest: array_init(|_| CachePadded::new(Default::default())),
             e_request: array_init(|_| CachePadded::new(Default::default())),
             e_state: CachePadded::new(PAtomic::new(
                 EStateRec {
@@ -423,7 +425,15 @@ impl Queue {
         // if self.e_request[tid].valid == 0 {
         //     self.e_request[tid].valid = 1;
         // }
-        self.e_request[tid].store(my_req.with_tag(activate as usize), Ordering::SeqCst);
+
+        let latest_req = ok_or!(
+            self.e_request_latest[tid].checkpoint::<REC>(PAtomic::from(my_req), tid, pool),
+            e,         // normal run시에는 이번에 만든 새로운 req를 combiner가 볼 req_arr에 등록
+            e.current // recovery run시에는 combiner가 볼 req_arr에 등록돼있던 최신 req를 재등록 (사실상 안해도 되는 작업)
+        )
+        .load(Ordering::Relaxed, guard);
+
+        self.e_request[tid].store(latest_req.with_tag(activate as usize), Ordering::SeqCst);
         sfence();
 
         // perform
@@ -439,7 +449,7 @@ impl Queue {
         // decide enq combiner
         let mut lval;
         loop {
-            lval = E_LOCK.load(Ordering::SeqCst);
+            lval = E_LOCK.load(Ordering::SeqCst); // TODO: thread-recoverable lock
 
             // odd: someone already combining.
             // even: there is no comiber, so try to be combiner.
