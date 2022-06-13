@@ -350,7 +350,12 @@ impl Queue {
         let (lval, lockguard) = loop {
             let lval = match E_LOCK.try_lock::<REC>(tid) {
                 Ok(ret) => break ret, // i am combiner
-                Err((lval, _)) => lval,
+                Err((lval, _)) => {
+                    if lval % 2 == 0 {
+                        continue; // fail but retry because there is no combiner
+                    }
+                    lval
+                }
             };
 
             // non-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner
@@ -559,7 +564,12 @@ impl Queue {
         let (lval, lockguard) = loop {
             let lval = match D_LOCK.try_lock::<REC>(tid) {
                 Ok(ret) => break ret, // i am combiner
-                Err((lval, _)) => lval,
+                Err((lval, _)) => {
+                    if lval % 2 == 0 {
+                        continue; // fail but retry because there is no combiner
+                    }
+                    lval
+                }
             };
 
             // non-comibner waits until the combiner unlocks the lock, and only receives the result given by the combiner

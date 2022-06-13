@@ -388,7 +388,7 @@ impl PBCombQueue {
                         lval = lval.wrapping_add(1);
                         break; // i am combiner
                     }
-                    Err(cur) => lval = cur,
+                    Err(_) => continue,
                 }
             }
 
@@ -550,7 +550,7 @@ impl PBCombQueue {
                         lval = lval.wrapping_add(1);
                         break; // i am combiner
                     }
-                    Err(cur) => lval = cur,
+                    Err(_) => continue,
                 }
             }
 
