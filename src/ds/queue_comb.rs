@@ -205,14 +205,14 @@ pub struct Queue {
 
     /// Shared non-volatile variables used by the PBQueueENQ instance of PBCOMB
     // global
-    e_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1], // TODO: more proper variable name
+    e_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1],
     e_request: [CachePadded<RequestRec>; MAX_THREADS + 1],
     e_state: CachePadded<PAtomic<EStateRec>>, // global state
     // per-thread
     e_thread_state: [CachePadded<EThreadState>; MAX_THREADS + 1],
     /// Shared non-volatile variables used by the PBQueueDEQ instance of PBCOMB
     // global
-    d_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1], // TODO: more proper variable name
+    d_request_latest: [CachePadded<Checkpoint<PAtomic<RequestRec>>>; MAX_THREADS + 1],
     d_request: [CachePadded<RequestRec>; MAX_THREADS + 1],
     d_state: CachePadded<PAtomic<DStateRec>>,
     // per-thread
@@ -304,7 +304,8 @@ impl PDefault for Queue {
 impl Queue {
     const EMPTY: usize = usize::MAX;
 
-    /// TODO:doc
+    /// enq
+    /// TODO: 함수명 그냥 enqueue로 바꾸기
     pub fn PBQueueEnq<const REC: bool>(
         &mut self,
         arg: Data,
@@ -314,13 +315,11 @@ impl Queue {
         pool: &PoolHandle,
     ) -> ReturnVal {
         // make new request
-        // let activate = 1 - self.e_request[tid].load(Ordering::SeqCst, guard).tag() as u32;
-        let activate = 1 - self.e_request[tid].activate;
         let mut req = POwned::new(
             RequestRec {
                 func: Some(Func::ENQUEUE),
                 arg,
-                activate,
+                activate: 1 - self.e_request[tid].activate,
             },
             pool,
         );
@@ -345,7 +344,6 @@ impl Queue {
         )
         .load(Ordering::Relaxed, guard);
         let latest_req_ref = unsafe { latest_req.deref(pool) };
-        // self.e_request[tid].store(latest_req.with_tag(activate as usize), Ordering::SeqCst);
         self.e_request[tid].func = latest_req_ref.func;
         self.e_request[tid].arg = latest_req_ref.arg;
         sfence(); // TODO: 이 fence 없어서 activate 먼저되면 버그. pbcomb 이거 버그인듯?
@@ -360,7 +358,7 @@ impl Queue {
         &mut self,
         tid: usize,
         enq: &mut Enqueue,
-        mmt_req: &mut RequestRec, // TODO: 얘는 지울 수 있으면 지우기
+        enq_req: &mut RequestRec, // TODO: 얘는 지울 수 있으면 지우기
         guard: &Guard,
         pool: &PoolHandle,
     ) -> ReturnVal {
@@ -379,29 +377,28 @@ impl Queue {
 
             // checkpoint deactivate of mmt-local request
             let lastest_state = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) };
-            let mmt_deactivate = ok_or!(
-                enq.deactivate.checkpoint::<REC>(
-                    lastest_state.deactivate[tid].load(Ordering::SeqCst),
-                    tid,
-                    pool
-                ),
-                e,         // recovery 아니면 새로운 deactivate를 저장하고 사용
-                e.current  // recovery면 이전에 저장했있던 deactivate를 불러옴
-            );
-            if mmt_req.activate as u8 == mmt_deactivate {
+            if enq_req.activate as u8
+                == ok_or!(
+                    enq.deactivate.checkpoint::<REC>(
+                        lastest_state.deactivate[tid].load(Ordering::SeqCst),
+                        tid,
+                        pool
+                    ),
+                    e,         // recovery 아니면 새로운 deactivate를 저장하고 사용
+                    e.current  // recovery면 이전에 저장했있던 deactivate를 불러옴
+                )
+            {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
-                    // checkpoint return value of mmt-local request
-                    let mmt_ret_val = ok_or!(
+                    return ok_or!(
                         enq.return_val.checkpoint::<REC>(
                             lastest_state.return_val[tid].clone(),
                             tid,
                             pool
                         ),
-                        e,
-                        e.current
-                    );
-                    return mmt_ret_val.unwrap();
-                    // return mmt_req.return_val.clone().unwrap();
+                        e,         // recovery 아니면 새로운 ret val를 저장하고 반환
+                        e.current  // recovery면 이전에 저장했있던 ret val를 불러와서 반환
+                    )
+                    .unwrap();
                 }
 
                 // wait until the combiner that processed my op is finished
@@ -410,7 +407,7 @@ impl Queue {
                     backoff.snooze();
                 }
                 // checkpoint return value of mmt-local request
-                let mmt_ret_val = ok_or!(
+                return ok_or!(
                     enq.return_val.checkpoint::<REC>(
                         lastest_state.return_val[tid].clone(),
                         tid,
@@ -418,8 +415,8 @@ impl Queue {
                     ),
                     e,
                     e.current
-                );
-                return mmt_ret_val.unwrap();
+                )
+                .unwrap();
             }
         };
 
@@ -505,21 +502,20 @@ impl Queue {
         self.e_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
-        // checkpoint deactivate of mmt-local request
+        // checkpoint deactivate and return value of mmt-local request
         let _ = enq.deactivate.checkpoint::<REC>(
             new_state_ref.deactivate[tid].load(Ordering::SeqCst),
             tid,
             pool,
         );
-        // checkpoint return value of mmt-local request
-        let mmt_ret_val = ok_or!(
+        let ret_val = ok_or!(
             enq.return_val
                 .checkpoint::<REC>(new_state_ref.return_val[tid].clone(), tid, pool),
             e,
             e.current
         );
         drop(lockguard);
-        return mmt_ret_val.unwrap();
+        return ret_val.unwrap();
     }
 
     fn enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
@@ -539,7 +535,8 @@ impl Queue {
 
 /// Deq
 impl Queue {
-    /// TODO: doc
+    /// deq
+    /// TODO: 함수명 그냥 dequeue로 바꾸기
     pub fn PBQueueDeq<const REC: bool>(
         &mut self,
         deq: &mut Dequeue,
@@ -577,7 +574,6 @@ impl Queue {
         )
         .load(Ordering::Relaxed, guard);
         let latest_req_ref = unsafe { latest_req.deref(pool) };
-
         self.d_request[tid].arg = latest_req_ref.arg;
         self.d_request[tid].func = latest_req_ref.func;
         sfence();
@@ -592,7 +588,7 @@ impl Queue {
         &mut self,
         tid: usize,
         deq: &mut Dequeue,
-        mmt_req: &mut RequestRec,
+        deq_req: &mut RequestRec,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> ReturnVal {
@@ -611,20 +607,20 @@ impl Queue {
 
             // checkpoint deactivate of mmt-local request
             let lastest_state = unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) };
-            let mmt_deactivate = lastest_state.deactivate[tid].load(Ordering::SeqCst);
-            let mmt_deactivate = ok_or!(
-                deq.deactivate.checkpoint::<REC>(
-                    lastest_state.deactivate[tid].load(Ordering::SeqCst),
-                    tid,
-                    pool
-                ),
-                e,         // recovery 아니면 새로운 deactivate를 저장하고 사용
-                e.current  // recovery면 이전에 저장했있던 deactivate를 불러옴
-            );
-            if mmt_req.activate as u8 == mmt_deactivate {
+            if deq_req.activate as u8
+                == ok_or!(
+                    deq.deactivate.checkpoint::<REC>(
+                        lastest_state.deactivate[tid].load(Ordering::SeqCst),
+                        tid,
+                        pool
+                    ),
+                    e,         // recovery 아니면 새로운 deactivate를 저장하고 사용
+                    e.current  // recovery면 이전에 저장했있던 deactivate를 불러옴
+                )
+            {
                 if D_LOCK_VALUE.load(Ordering::SeqCst) == lval {
                     // checkpoint return value of mmt-local request
-                    let mmt_ret_val = ok_or!(
+                    return ok_or!(
                         deq.return_val.checkpoint::<REC>(
                             lastest_state.return_val[tid].clone(),
                             tid,
@@ -632,8 +628,8 @@ impl Queue {
                         ),
                         e,
                         e.current
-                    );
-                    return mmt_ret_val.unwrap();
+                    )
+                    .unwrap();
                 }
 
                 // wait until the combiner that processed my op is finished
@@ -642,7 +638,7 @@ impl Queue {
                     backoff.snooze();
                 }
                 // checkpoint return value of mmt-local request
-                let mmt_ret_val = ok_or!(
+                return ok_or!(
                     deq.return_val.checkpoint::<REC>(
                         lastest_state.return_val[tid].clone(),
                         tid,
@@ -650,8 +646,8 @@ impl Queue {
                     ),
                     e,
                     e.current
-                );
-                return mmt_ret_val.unwrap();
+                )
+                .unwrap();
             }
         };
 
@@ -709,21 +705,20 @@ impl Queue {
             .index
             .store(1 - ind, Ordering::SeqCst);
 
-        // checkpoint deactivate of mmt-local request
+        // checkpoint deactivate and return value of mmt-local request
         let _ = deq.deactivate.checkpoint::<REC>(
             new_state_ref.deactivate[tid].load(Ordering::SeqCst),
             tid,
             pool,
         );
-        // checkpoint deactivate of mmt-local request
-        let mmt_ret_val = ok_or!(
+        let ret_val = ok_or!(
             deq.return_val
                 .checkpoint::<REC>(new_state_ref.return_val[tid].clone(), tid, pool),
             e,
             e.current
         );
         drop(lockguard);
-        return mmt_ret_val.unwrap();
+        return ret_val.unwrap();
     }
 
     fn dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> Data {
