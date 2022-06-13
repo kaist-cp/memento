@@ -478,7 +478,7 @@ impl PBCombQueue {
         sfence();
 
         E_LOCK_VALUE.store(lval, Ordering::SeqCst);
-        self.e_state.store(new_state, Ordering::SeqCst);
+        self.e_state.store(new_state, Ordering::SeqCst); // global에 박기 (commit point)
 
         persist_obj(&*self.e_state, false);
         sfence();
@@ -493,6 +493,7 @@ impl PBCombQueue {
         );
         // ```
 
+        // per-thread state의 old/new 뒤집기. 위에서 global에 박고 이건 못한채 crash나도 괜찮다. combiner는 어차피 global을 copy해오고 시작함
         self.e_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);

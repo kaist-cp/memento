@@ -18,7 +18,7 @@ impl TestQueue for Queue {
         let queue = unsafe { (self as *const _ as *mut Queue).as_mut() }.unwrap();
 
         let (value, enq_memento, tid) = input;
-        queue.PBQueueEnq::<false>(value, enq_memento, tid, guard, pool);
+        let _ = queue.PBQueueEnq::<false>(value, enq_memento, tid, guard, pool);
     }
 
     fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
@@ -49,7 +49,7 @@ impl PDefault for TestMementoQueueComb {
         let guard = epoch::pin();
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            queue.PBQueueEnq::<false>(i, &mut push_init, 1, &guard, pool);
+            let _ = queue.PBQueueEnq::<false>(i, &mut push_init, 1, &guard, pool);
         }
         Self { queue }
     }
