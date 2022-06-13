@@ -10,9 +10,9 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 objs = {
     "queue": {
         "targets": {
-            "memento_queue_general": {'data_id': '', 'label': "MSQ-mmt-cas", 'marker': 'o', 'color': 'k', 'style': '-'},
-            "memento_queue_lp": {'data_id': '', 'label': "MSQ-mmt-indel", 'marker': 'd', 'color': 'k', 'style': '-'},
-            "memento_queue": {'data_id': '', 'label': "MSQ-mmt-vol", 'marker': 'x', 'color': 'k', 'style': '-'},
+            "memento_queue_general": {'data_id': '', 'label': "MSQ-cas-mmt", 'marker': 'o', 'color': 'k', 'style': '-'},
+            "memento_queue_lp": {'data_id': '', 'label': "MSQ-indel-mmt", 'marker': 'd', 'color': 'k', 'style': '-'},
+            "memento_queue": {'data_id': '', 'label': "MSQ-vol-mmt", 'marker': 'x', 'color': 'k', 'style': '-'},
             "memento_queue_comb": {'data_id': '', 'label': "CombQ-mmt", 'marker': 'v', 'color': 'k', 'style': '-'},
             'durable_queue': {'data_id': '', 'label': "DurableQ", 'marker': 's', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'data_id': '', 'label': "LogQ", 'marker': 's', 'color': 'c', 'style': '--'},
@@ -53,11 +53,14 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.xlabel(xlabel, size='large')
     if ylabel != '':
         plt.ylabel(ylabel, size='large')
-    figpath = "{}.png".format(output)
     plt.tight_layout()
+    figpath = "{}.png".format(output)
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
-
     print(figpath)
+    figpath = "{}.svg".format(output)
+    plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
+    print(figpath)
+
     return ax
 
 
@@ -133,4 +136,6 @@ for obj in objs:
         ax = draw('Threads', ylabel,
                   plot_lines, "./out/{}".format(plot_id), 8)
     axLine, axLabel = ax.get_legend_handles_labels()
+    print(axLabel)
     draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
+    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
