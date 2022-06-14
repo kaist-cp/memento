@@ -27,25 +27,25 @@ pub static mut NR_THREADS: usize = MAX_THREADS;
 /// client for enqueue
 #[derive(Debug, Default)]
 pub struct Enqueue {
-    req: Checkpoint<PAtomic<RequestRec>>,
+    activate: Checkpoint<usize>,
 }
 
 impl Collectable for Enqueue {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut enq.req, tid, gc, pool);
+        Checkpoint::filter(&mut enq.activate, tid, gc, pool);
     }
 }
 
 /// client for dequeue
 #[derive(Debug, Default)]
 pub struct Dequeue {
-    req: Checkpoint<PAtomic<RequestRec>>,
+    activate: Checkpoint<usize>,
     return_val: Checkpoint<Option<ReturnVal>>,
 }
 
 impl Collectable for Dequeue {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut deq.req, tid, gc, pool);
+        Checkpoint::filter(&mut deq.activate, tid, gc, pool);
         Checkpoint::filter(&mut deq.return_val, tid, gc, pool);
     }
 }
@@ -304,33 +304,19 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> ReturnVal {
-        // make new request
-        let req = POwned::new(
-            RequestRec {
-                func: Some(Func::ENQUEUE),
-                arg,
-                activate: self.e_request[tid].activate + 1,
-            },
-            pool,
-        );
-        persist_obj(unsafe { req.deref(pool) }, true);
-        let my_req = ok_or!(
-            enq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
+        // make new activate for new request
+        let new_activate = self.e_request[tid].activate + 1;
+        let my_activate = ok_or!(
+            enq.activate.checkpoint::<REC>(new_activate, tid, pool),
             e,
-            unsafe {
-                let dup_req = e.new.load(Ordering::Relaxed, guard);
-                drop(dup_req.into_owned());
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+            e.current
+        );
 
         // register request
-        let my_req_ref = unsafe { my_req.deref(pool) };
-        self.e_request[tid].func = my_req_ref.func;
-        self.e_request[tid].arg = my_req_ref.arg;
+        self.e_request[tid].func = Some(Func::ENQUEUE);
+        self.e_request[tid].arg = arg;
         sfence();
-        self.e_request[tid].activate = my_req_ref.activate;
+        self.e_request[tid].activate = my_activate;
         sfence();
 
         // perform
@@ -366,7 +352,7 @@ impl Queue {
             if self.e_request[tid].activate <= lastest_state.deactivate[tid].load(Ordering::SeqCst)
             {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
-                    // enq의 retval은 항상 unit이라 내꺼 따로 구분할 필요 없음
+                    // doesn't checkpoint the return value because it is always a unit.
                     return lastest_state.return_val[tid].clone().unwrap();
                 }
 
@@ -461,7 +447,7 @@ impl Queue {
             .index
             .store(1 - ind, Ordering::SeqCst);
         drop(lockguard);
-        // enq의 retval은 항상 unit이라 내꺼 따로 구분할 필요 없음
+        // doesn't checkpoint the return value because it is always a unit.
         return new_state_ref.return_val[tid].clone().unwrap();
     }
 
@@ -491,34 +477,19 @@ impl Queue {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> ReturnVal {
-        // make new request
-        let mut req = POwned::new(
-            RequestRec {
-                func: Some(Func::DEQUEUE),
-                arg: tid,
-                activate: self.d_request[tid].activate + 1,
-            },
-            pool,
-        );
-        let req_ref = unsafe { req.deref_mut(pool) };
-        persist_obj(req_ref, true);
-        let my_req = ok_or!(
-            deq.req.checkpoint::<REC>(PAtomic::from(req), tid, pool),
+        // make new activate for new request
+        let new_activate = self.d_request[tid].activate + 1;
+        let my_activate = ok_or!(
+            deq.activate.checkpoint::<REC>(new_activate, tid, pool),
             e,
-            unsafe {
-                let dup_req = e.new.load(Ordering::Relaxed, guard);
-                drop(dup_req.into_owned());
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+            e.current
+        );
 
         // register request
-        let my_req_ref = unsafe { my_req.deref(pool) };
-        self.d_request[tid].arg = my_req_ref.arg;
-        self.d_request[tid].func = my_req_ref.func;
+        self.d_request[tid].arg = tid;
+        self.d_request[tid].func = Some(Func::DEQUEUE);
         sfence();
-        self.d_request[tid].activate = my_req_ref.activate;
+        self.d_request[tid].activate = my_activate;
         sfence();
 
         // perform
