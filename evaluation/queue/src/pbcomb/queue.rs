@@ -359,6 +359,7 @@ impl PBCombQueue {
 
         self.e_request[tid].func = Some(Func::ENQUEUE);
         self.e_request[tid].arg = arg;
+        sfence();
         self.e_request[tid].activate = 1 - self.e_request[tid].activate;
         if self.e_request[tid].valid == 0 {
             self.e_request[tid].valid = 1;
@@ -522,6 +523,7 @@ impl PBCombQueue {
         // request deq
         self.d_request[tid].func = Some(Func::DEQUEUE);
         self.d_request[tid].activate = 1 - self.d_request[tid].activate;
+        sfence();
         if self.d_request[tid].valid == 0 {
             self.d_request[tid].valid = 1;
         }
