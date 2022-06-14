@@ -655,7 +655,7 @@ impl PBCombQueue {
 
 impl TestQueue for PBCombQueue {
     type EnqInput = (usize, usize, &'static mut u32); // value, tid, sequence number
-    type DeqInput = (usize, &'static mut u32, &'static mut Option<ReturnVal>); // tid, sequence number, backup location
+    type DeqInput = (usize, &'static mut u32); // tid, sequence number
 
     fn enqueue(&self, (value, tid, seq): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
@@ -667,14 +667,12 @@ impl TestQueue for PBCombQueue {
         persist_obj(seq, true);
     }
 
-    fn dequeue(&self, (tid, seq, ret): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
+    fn dequeue(&self, (tid, seq): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
         let queue = unsafe { (self as *const PBCombQueue as *mut PBCombQueue).as_mut() }.unwrap();
 
         // deq
-        let retval = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, guard, pool);
-        *ret = Some(retval);
-        persist_obj(ret, true);
+        let _ = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, guard, pool);
         *seq += 1;
         persist_obj(seq, true);
     }
@@ -708,7 +706,6 @@ impl TestNOps for TestPBCombQueue {}
 pub struct TestPBCombQueueEnqDeq<const PAIR: bool> {
     enq_seq: CachePadded<u32>,
     deq_seq: CachePadded<u32>,
-    dea_retval: CachePadded<Option<ReturnVal>>, // backup location
 }
 
 impl<const PAIR: bool> Collectable for TestPBCombQueueEnqDeq<PAIR> {
@@ -733,12 +730,9 @@ impl<const PAIR: bool> RootObj<TestPBCombQueueEnqDeq<PAIR>> for TestPBCombQueue 
             &|tid, guard| {
                 let enq_seq = unsafe { (&*mmt.enq_seq as *const _ as *mut u32).as_mut() }.unwrap();
                 let deq_seq = unsafe { (&*mmt.deq_seq as *const _ as *mut u32).as_mut() }.unwrap();
-                let deq_retval =
-                    unsafe { (&*mmt.dea_retval as *const _ as *mut Option<ReturnVal>).as_mut() }
-                        .unwrap();
 
                 let enq_input = (tid, tid, enq_seq);
-                let deq_input = (tid, deq_seq, deq_retval);
+                let deq_input = (tid, deq_seq);
 
                 if PAIR {
                     enq_deq_pair(q, enq_input, deq_input, guard, pool);
