@@ -28,13 +28,11 @@ pub static mut NR_THREADS: usize = MAX_THREADS;
 #[derive(Debug, Default)]
 pub struct Enqueue {
     req: Checkpoint<PAtomic<RequestRec>>,
-    return_val: Checkpoint<Option<ReturnVal>>,
 }
 
 impl Collectable for Enqueue {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut enq.req, tid, gc, pool);
-        Checkpoint::filter(&mut enq.return_val, tid, gc, pool);
     }
 }
 
@@ -364,21 +362,12 @@ impl Queue {
                 backoff.snooze();
             }
 
-            // checkpoint deactivate of mmt-local request
             let lastest_state = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) };
             if self.e_request[tid].activate <= lastest_state.deactivate[tid].load(Ordering::SeqCst)
             {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
-                    return ok_or!(
-                        enq.return_val.checkpoint::<REC>(
-                            lastest_state.return_val[tid].clone(),
-                            tid,
-                            pool
-                        ),
-                        e,         // recovery 아니면 새로운 ret val를 저장하고 반환
-                        e.current  // recovery면 이전에 저장했있던 ret val를 불러와서 반환
-                    )
-                    .unwrap();
+                    // enq의 retval은 항상 unit이라 내꺼 따로 구분할 필요 없음
+                    return lastest_state.return_val[tid].clone().unwrap();
                 }
 
                 // wait until the combiner that processed my op is finished
@@ -386,17 +375,7 @@ impl Queue {
                 while E_LOCK.peek().0 == lval + 2 {
                     backoff.snooze();
                 }
-                // checkpoint return value of mmt-local request
-                return ok_or!(
-                    enq.return_val.checkpoint::<REC>(
-                        lastest_state.return_val[tid].clone(),
-                        tid,
-                        pool
-                    ),
-                    e,
-                    e.current
-                )
-                .unwrap();
+                return lastest_state.return_val[tid].clone().unwrap();
             }
         };
 
@@ -429,7 +408,6 @@ impl Queue {
                     // enq
                     Self::enqueue(&new_state_ref.tail, e_req_qid.arg, guard, pool);
 
-                    // e.g. combiner가 t0(non-combiner)의 deactiavte 및 ret val을 global state에 써놓으면, 이를 t0이 직접 자신의 mmt에 옮겨담음
                     new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
                     new_state_ref.deactivate[q].store(e_req_qid.activate, Ordering::SeqCst);
 
@@ -482,15 +460,9 @@ impl Queue {
         self.e_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
-        // checkpoint return value of mmt-local request
-        let ret_val = ok_or!(
-            enq.return_val
-                .checkpoint::<REC>(new_state_ref.return_val[tid].clone(), tid, pool),
-            e,
-            e.current
-        );
         drop(lockguard);
-        return ret_val.unwrap();
+        // enq의 retval은 항상 unit이라 내꺼 따로 구분할 필요 없음
+        return new_state_ref.return_val[tid].clone().unwrap();
     }
 
     fn enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
@@ -675,9 +647,10 @@ impl Queue {
                 .checkpoint::<REC>(new_state_ref.return_val[tid].clone(), tid, pool),
             e,
             e.current
-        );
+        )
+        .unwrap();
         drop(lockguard);
-        return ret_val.unwrap();
+        return ret_val;
     }
 
     fn dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> Data {
