@@ -107,7 +107,7 @@ const FAILED: usize = 4;
 
 #[derive(Default, Clone)]
 struct WordDescriptor {
-    address: PPtr<PAtomic<PMwCasDescriptor>>,
+    address: PPtr<PAtomic<PMwCasDescriptor>>, // @seungmin: 이 포인터 타입이 PMwCASDescriptor인 이유?
     old_value: PPtr<Node>,
     new_value: PPtr<Node>,
     mwcas_descriptor: PPtr<PMwCasDescriptor>,
@@ -174,6 +174,11 @@ impl RootObj<TestPMwCasMmt> for TestPMwCas {
 }
 
 fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
+    // NOTE: pmwcas github benchmark
+    // 1. descriptor를 할당하고 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L187)
+    // 2. descriptor에 랜덤한 CAS n개를 예약한 후 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L190)
+    // 3. descriptor 실행 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L194)
+
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard);
