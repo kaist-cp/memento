@@ -6,7 +6,7 @@ use std::{
 use cas_eval::{
     cas::{TestCas, TestCasMmt},
     mcas::{TestMCas, TestMCasMmt},
-    pcas::{TestPCas, TestPCasMmt},
+    pcas::{TestPCas, TestPCasMmt, TestPMwCas, TestPMwCasMmt},
 };
 use csv::Writer;
 use evaluation::common::{get_nops, DURATION};
@@ -25,7 +25,7 @@ fn parse_target(target: &str) -> TestTarget {
         "cas" => TestTarget::Cas,
         "mcas" => TestTarget::MCas,
         "pcas" => TestTarget::PCas,
-        // "pmwcas" => TestTarget::PMwCas,
+        "pmwcas" => TestTarget::PMwCas,
         // "rcas" => TestTarget::RCas,
         _ => unreachable!("invalid target"),
     }
@@ -80,6 +80,7 @@ pub fn bench_cas(opt: &Opt, target: TestTarget) -> usize {
         TestTarget::Cas => get_nops::<TestCas, TestCasMmt>(&opt.filepath, opt.threads),
         TestTarget::MCas => get_nops::<TestMCas, TestMCasMmt>(&opt.filepath, opt.threads),
         TestTarget::PCas => get_nops::<TestPCas, TestPCasMmt>(&opt.filepath, opt.threads),
+        TestTarget::PMwCas => get_nops::<TestPMwCas, TestPMwCasMmt>(&opt.filepath, opt.threads),
         _ => unimplemented!(),
     }
 }

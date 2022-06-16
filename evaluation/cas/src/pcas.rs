@@ -107,7 +107,7 @@ const FAILED: usize = 4;
 
 #[derive(Default, Clone)]
 struct WordDescriptor {
-    address: PPtr<PAtomic<PMwCasDescriptor>>, // @seungmin: 이 포인터 타입이 PMwCASDescriptor인 이유?
+    address: PPtr<PAtomic<PMwCasDescriptor>>, // TODO: PMwCASDescriptor가 아닌 Node를 가리켜야함
     old_value: PPtr<Node>,
     new_value: PPtr<Node>,
     mwcas_descriptor: PPtr<PMwCasDescriptor>,
@@ -164,10 +164,10 @@ impl Collectable for TestPMwCasMmt {
 }
 
 impl RootObj<TestPMwCasMmt> for TestPMwCas {
-    fn run(&self, _: &mut TestPMwCasMmt, tid: usize, _: &Guard, _: &PoolHandle) {
+    fn run(&self, _: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
 
-        let ops = self.test_nops(&|tid| pcas(&self.loc, tid), tid, duration);
+        let ops = self.test_nops(&|tid| pmwcas(&self.loc, tid, pool), tid, duration);
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
     }
@@ -184,7 +184,7 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     let old = loc.load(Ordering::SeqCst, guard);
     let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
 
-    let mut desc = PMwCasDescriptor::default(); // TODO: ploc에서 만들어져야 함
+    let mut desc = PMwCasDescriptor::default(); // TODO: ploc에서 만들어져야 함. 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
     unsafe {
         desc.words[0] = WordDescriptor {
             address: PPtr::from(loc.as_pptr(pool).into_offset()),
@@ -194,7 +194,7 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
         };
     }
 
-    persistent_cas(loc, old, new, guard).is_ok()
+    pmwcas_inner(&desc, guard, pool)
 }
 
 // TODO: 실험을 위해선 (1) Descriptor에 location 쓰고 (2) Descriptor를 pmwcas에 넘길 것

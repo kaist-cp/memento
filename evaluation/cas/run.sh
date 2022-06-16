@@ -53,6 +53,7 @@ show_cfg
 benches cas
 benches mcas
 benches pcas
+benches pmwcas
 
 # 3. Plot and finish
 python3 plot.py
