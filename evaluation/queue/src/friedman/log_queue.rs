@@ -210,10 +210,8 @@ impl<T: Clone> LogQueue<T> {
                         persist_obj(&next_ref.log_remove, true);
                         let log_remove = next_ref.log_remove.load(Ordering::SeqCst, guard);
                         let log_remove_ref = unsafe { log_remove.deref(pool) };
-                        log_remove_ref.node.store(
-                            first_ref.next.load(Ordering::SeqCst, guard),
-                            Ordering::SeqCst,
-                        );
+                        let val = first_ref.next.load(Ordering::SeqCst, guard);
+                        log_remove_ref.node.store(val, Ordering::SeqCst);
                         persist_obj(&log_remove_ref.node, true);
 
                         let _ = self.head.compare_exchange(
@@ -230,10 +228,8 @@ impl<T: Clone> LogQueue<T> {
                         persist_obj(&next_ref.log_remove, true);
                         let log_remove = next_ref.log_remove.load(Ordering::SeqCst, guard);
                         let log_remove_ref = unsafe { log_remove.deref(pool) };
-                        log_remove_ref.node.store(
-                            first_ref.next.load(Ordering::SeqCst, guard),
-                            Ordering::SeqCst,
-                        );
+                        let val = first_ref.next.load(Ordering::SeqCst, guard);
+                        log_remove_ref.node.store(val, Ordering::SeqCst);
                         persist_obj(&log_remove_ref.node, true);
 
                         let _ = self.head.compare_exchange(
