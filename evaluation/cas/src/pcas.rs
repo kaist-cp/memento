@@ -48,8 +48,6 @@ impl RootObj<TestPCasMmt> for TestPCas {
 
         let (ops, failed) = self.test_nops(&|tid| pcas(&self.loc, tid), tid, duration);
 
-        println!("ops: {ops}, failed: {failed}");
-
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
         let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
     }
@@ -69,10 +67,10 @@ const RDCSS_FLAG: usize = 4;
 
 fn pcas_read<'g>(address: &PAtomic<Node>, guard: &'g Guard) -> PShared<'g, Node> {
     let word = address.load(Ordering::SeqCst, guard);
-    if word.tag() & DIRTY_FLAG != 0 {
+    if word.high_tag() & DIRTY_FLAG != 0 {
         persist(address, word, guard);
     }
-    word.with_tag(0)
+    word.with_high_tag(0)
 }
 
 fn persistent_cas<'g>(
@@ -86,7 +84,7 @@ fn persistent_cas<'g>(
     // Conduct the CAS with dirty bit set on new value
     address.compare_exchange(
         old_value,
-        new_value.with_tag(DIRTY_FLAG),
+        new_value.with_high_tag(DIRTY_FLAG),
         Ordering::SeqCst,
         Ordering::SeqCst,
         guard,
@@ -95,9 +93,11 @@ fn persistent_cas<'g>(
 
 fn persist<T>(address: &PAtomic<T>, value: PShared<T>, guard: &Guard) {
     persist_obj(address, true);
+
+    // NOTE: PMWCAS_FLAG는 남겨둔 채 DIRTY_FLAG만 떼야함 e.g. L22 on Algorithm 2
     let _ = address.compare_exchange(
         value,
-        value.with_tag(0).with_high_tag(0), // TODO: (1) dirty tag 위치 통일(현재 pcas는 low tag로 표시, pmwcas는 high 태그로 표시), (2) dirty flag만 떼야하는 데 다른 flag도 떼지는 건 아닌가?
+        value.with_high_tag(value.high_tag() & !DIRTY_FLAG),
         Ordering::SeqCst,
         Ordering::SeqCst,
         guard,
