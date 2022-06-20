@@ -186,8 +186,14 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
 
     let guard = unsafe { unprotected() };
 
-    let old = loc.load(Ordering::SeqCst, guard);
-    let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
+    // NOTE: valid한 value값만 old로 넣어야함. PMwCAS 중간값(태그 붙여져있는 descriptor 주소 값)을 넣으면 pmwcas helping으로 무한 recursion.
+    // let old = loop {
+    //     let old = loc.load(Ordering::SeqCst, guard);
+    //     if old.is_null() || old.tid() != 0 {
+    //         break old;
+    //     }
+    // };
+    let old = pmwcas_read(loc, tid, guard, pool);
 
     // NOTE: with_tid(tid)로 value 구분해야함. from_usize(tid)하면 low tag 혹은 offset으로 섞여 들어가게됨.
     let new = unsafe { PShared::<Node>::from_usize(0) }.with_tid(tid); // TODO: 다양한 new 값
@@ -206,7 +212,6 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     pmwcas_inner(desc_ref, guard, pool)
 }
 
-// TODO: 실험을 위해선 (1) Descriptor에 location 쓰고 (2) Descriptor를 pmwcas에 넘길 것
 fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool {
     let md_ptr = unsafe { PShared::from(md.as_pptr(pool)) };
     let mut st = SUCCEEDED;
@@ -360,4 +365,34 @@ fn complete_install(wd: &WordDescriptor, guard: &Guard, pool: &PoolHandle) {
         unsafe { PShared::from_usize(wd.old_value.into_usize()) }
     };
     let _ = target.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
+}
+
+fn pmwcas_read<'g>(
+    address: &PAtomic<Node>,
+    tid: usize,
+    guard: &'g Guard,
+    pool: &PoolHandle,
+) -> PShared<'g, Node> {
+    loop {
+        let mut v = address.load(Ordering::SeqCst, guard);
+        let mut tag = v.high_tag();
+        if tag & RDCSS_FLAG != 0 {
+            let v_addr = unsafe { PShared::from_usize(v.into_usize()).deref(pool) };
+            complete_install(v_addr, guard, pool);
+            continue;
+        }
+
+        if tag & DIRTY_FLAG != 0 {
+            persist(address, v, guard);
+            tag &= !DIRTY_FLAG;
+            v = v.with_high_tag(tag);
+        }
+
+        if tag & PMWCAS_FLAG != 0 {
+            let v_addr = unsafe { PShared::from_usize(v.into_usize()).deref(pool) };
+            pmwcas(v_addr, tid, pool);
+            continue;
+        }
+        return v;
+    }
 }
