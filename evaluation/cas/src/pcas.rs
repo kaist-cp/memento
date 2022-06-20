@@ -82,6 +82,7 @@ fn persistent_cas<'g>(
     guard: &'g Guard,
 ) -> Result<PShared<'g, Node>, CompareExchangeError<'g, Node, PShared<'g, Node>>> {
     let _ = pcas_read(address, guard); // TODO: pcas_read 반환값을 old_value를 넣어주는 게 지당하지 않나? 이러면 낮은 스레드에서는 pcas가 더 높아짐.
+
     // Conduct the CAS with dirty bit set on new value
     address.compare_exchange(
         old_value,
@@ -96,7 +97,7 @@ fn persist<T>(address: &PAtomic<T>, value: PShared<T>, guard: &Guard) {
     persist_obj(address, true);
     let _ = address.compare_exchange(
         value,
-        value.with_tag(0), // TODO: dirty flag만 떼야하는 데 0으로 바꾸면 다른 flag도 떼지는 건 아닌가? hig tag/low tag로 구분이 되어있는건가?
+        value.with_tag(0).with_high_tag(0), // TODO: (1) dirty tag 위치 통일(현재 pcas는 low tag로 표시, pmwcas는 high 태그로 표시), (2) dirty flag만 떼야하는 데 다른 flag도 떼지는 건 아닌가?
         Ordering::SeqCst,
         Ordering::SeqCst,
         guard,
@@ -272,6 +273,7 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
             continue;
         }
 
+        // TODO: cur_st가 아닌 md.status.load로 확인해야하는 거 아닌가? md.status를 여러 스레드가 만질 수 있는거 아님?
         let v = if cur_st == SUCCEEDED {
             w.new_value
         } else {
