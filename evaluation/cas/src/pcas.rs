@@ -1,12 +1,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossbeam_epoch::{unprotected, Guard};
-use etrace::ok_or;
 use evaluation::common::{DURATION, TOTAL_NOPS};
 use memento::{
     pepoch::{
         atomic::{CompareExchangeError, Pointer},
-        PAtomic, PShared,
+        PAtomic, POwned, PShared,
     },
     pmem::{persist_obj, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle, RootObj},
     PDefault,
@@ -188,17 +187,18 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     let old = loc.load(Ordering::SeqCst, guard);
     let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
 
-    let mut desc = PMwCasDescriptor::default(); // TODO: ploc에서 만들어져야 함. 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
+    let mut desc = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard); // TODO: ploc에서 만들어져야 함. 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
+    let mut desc_ref = unsafe { desc.deref_mut(pool) };
     unsafe {
-        desc.words[0] = WordDescriptor {
+        desc_ref.words[0] = WordDescriptor {
             address: PPtr::from(loc.as_pptr(pool).into_offset()),
-            old_value: old.deref(pool).as_pptr(pool),
-            new_value: new.deref(pool).as_pptr(pool),
-            mwcas_descriptor: desc.as_pptr(pool),
+            old_value: old.as_ptr(),
+            new_value: new.as_ptr(),
+            mwcas_descriptor: desc.as_ptr(),
         };
     }
 
-    pmwcas_inner(&desc, guard, pool)
+    pmwcas_inner(&desc_ref, guard, pool)
 }
 
 // TODO: 실험을 위해선 (1) Descriptor에 location 쓰고 (2) Descriptor를 pmwcas에 넘길 것
