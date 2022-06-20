@@ -108,14 +108,15 @@ const UNDECIDED: usize = 0;
 const SUCCEEDED: usize = 2;
 const FAILED: usize = 4;
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 struct WordDescriptor {
-    address: PPtr<PAtomic<PMwCasDescriptor>>, // TODO: PMwCASDescriptor가 아닌 Node를 가리켜야함
-    old_value: PPtr<Node>,
-    new_value: PPtr<Node>,
-    mwcas_descriptor: PPtr<PMwCasDescriptor>,
+    address: PPtr<PAtomic<PMwCasDescriptor>>, // TODO: type 정리: 현재 `PMwCasDescriptor`는 더미타입. 실제 로직상 address는 `Node`, `WordDescriptor`, `PMwCasDescriptor` 3가지를 다 가리킬 수 있음.
+    old_value: PShared<'static, Node>,
+    new_value: PShared<'static, Node>,
+    mwcas_descriptor: PShared<'static, PMwCasDescriptor>,
 }
 
+#[derive(Debug)]
 struct PMwCasDescriptor {
     status: AtomicUsize,
     count: usize,
@@ -190,16 +191,19 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
 
     // NOTE: with_tid(tid)로 value 구분해야함. from_usize(tid)하면 low tag 혹은 offset으로 섞여 들어가게됨.
     let new = unsafe { PShared::<Node>::from_usize(0) }.with_tid(tid); // TODO: 다양한 new 값
+
+    let desc = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard); // TODO: 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
+    let mut desc_ref = unsafe { desc.clone().deref_mut(pool) };
     unsafe {
         desc_ref.words[0] = WordDescriptor {
             address: PPtr::from(loc.as_pptr(pool).into_offset()),
-            old_value: old.as_ptr(),
-            new_value: new.as_ptr(),
-            mwcas_descriptor: desc.as_ptr(),
+            old_value: old,
+            new_value: new,
+            mwcas_descriptor: desc,
         };
     }
 
-    pmwcas_inner(&desc_ref, guard, pool)
+    pmwcas_inner(desc_ref, guard, pool)
 }
 
 // TODO: 실험을 위해선 (1) Descriptor에 location 쓰고 (2) Descriptor를 pmwcas에 넘길 것
@@ -218,7 +222,7 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
             let rval_high = rval.high_tag();
             let old = w.old_value;
 
-            if rval.into_usize() == old.into_offset() {
+            if rval.into_usize() == old.into_usize() {
                 // Descriptor successfully installed
                 continue 'out;
             } else if rval_high & PMWCAS_FLAG != 0 {
@@ -278,7 +282,7 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
         } else {
             w.old_value
         };
-        let v = unsafe { PShared::from_usize(v.into_offset()) };
+        let v = unsafe { PShared::from_usize(v.into_usize()) };
         let expected = md_ptr.with_high_tag(PMWCAS_FLAG | DIRTY_FLAG);
         let target = unsafe { w.address.deref(pool) };
         let rval = if let Err(e) = target.compare_exchange(
@@ -310,9 +314,9 @@ fn install_mwcas_descriptor<'g>(
         unsafe { PShared::from_usize(wd.as_pptr(pool).into_offset()) }.with_high_tag(RDCSS_FLAG);
     let val = loop {
         let target = unsafe { wd.address.deref(pool) };
-        let expected = unsafe { PShared::from_usize(wd.old_value.into_offset()) };
+        let expected = unsafe { PShared::from_usize(wd.old_value.into_usize()) };
         let val = if let Err(e) = target.compare_exchange(
-            unsafe { PShared::from_usize(wd.old_value.into_offset()) },
+            unsafe { PShared::from_usize(wd.old_value.into_usize()) },
             ptr,
             Ordering::SeqCst,
             Ordering::SeqCst,
@@ -332,7 +336,7 @@ fn install_mwcas_descriptor<'g>(
         complete_install(cur, guard, pool);
     };
 
-    if val.into_usize() == wd.old_value.into_offset() {
+    if val.into_usize() == wd.old_value.into_usize() {
         // # Successfully installed the RDCSS descriptor
         complete_install(wd, guard, pool);
     }
@@ -341,9 +345,11 @@ fn install_mwcas_descriptor<'g>(
 }
 
 fn complete_install(wd: &WordDescriptor, guard: &Guard, pool: &PoolHandle) {
-    let desc = PShared::from(wd.mwcas_descriptor);
-    let ptr = desc.with_high_tag(PMWCAS_FLAG | DIRTY_FLAG);
-    let u = unsafe { desc.deref(pool) }.status.load(Ordering::SeqCst) == UNDECIDED;
+    let ptr = wd.mwcas_descriptor.with_high_tag(PMWCAS_FLAG | DIRTY_FLAG);
+    let u = unsafe { wd.mwcas_descriptor.deref(pool) }
+        .status
+        .load(Ordering::SeqCst)
+        == UNDECIDED;
 
     let target = unsafe { wd.address.deref(pool) };
     let old =
@@ -351,7 +357,7 @@ fn complete_install(wd: &WordDescriptor, guard: &Guard, pool: &PoolHandle) {
     let new = if u {
         ptr
     } else {
-        unsafe { PShared::from_usize(wd.old_value.into_offset()) }
+        unsafe { PShared::from_usize(wd.old_value.into_usize()) }
     };
     let _ = target.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
 }
