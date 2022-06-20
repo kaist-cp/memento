@@ -18,7 +18,7 @@ function bench() {
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
-    numactl --cpunodebind=0 --membind=0 $dir_path/target/release/cas_bench -f $poolpath -a $target -t $thread -d $TEST_DUR -o $outpath
+    RUST_MIN_STACK=5073741824 numactl --cpunodebind=0 --membind=0 $dir_path/target/release/cas_bench -f $poolpath -a $target -t $thread -d $TEST_DUR -o $outpath
 }
 
 function benches() {
@@ -39,8 +39,8 @@ set -e
 # 1. Setup
 PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
-TEST_CNT=1            # test cnt per 1 bench
-TEST_DUR=5           # test duration
+TEST_CNT=5            # test cnt per 1 bench
+TEST_DUR=10           # test duration
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
