@@ -1,5 +1,5 @@
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::AtomicUsize,
     time::{Duration, Instant},
 };
 
@@ -34,7 +34,6 @@ pub trait TestNOps {
         let start = Instant::now();
         let dur = Duration::from_secs_f64(duration);
         while start.elapsed() < dur {
-            println!("[start op]");
             if op(tid) {
                 ops += 1;
             } else {

@@ -77,12 +77,13 @@ fn bench(opt: &Opt) -> f64 {
     println!("avg ops: {}", avg_ops);
     println!("avg failed: {}", avg_failed);
 
-    if opt.threads == 1 {
-        assert!(
-            TOTAL_NOPS_FAILED.load(Ordering::SeqCst) == 0,
-            "스레드 한 개인데 CAS 실패 발생"
-        );
-    } else {
+    // if opt.threads == 1 {
+    //     assert!(
+    //         TOTAL_NOPS_FAILED.load(Ordering::SeqCst) == 0,
+    //         "스레드 한 개인데 CAS 실패 발생"
+    //     );
+    // }
+    if opt.threads != 1 {
         assert!(
             TOTAL_NOPS_FAILED.load(Ordering::SeqCst) != 0,
             "스레드 여러 개인데 CAS 전부 성공"
