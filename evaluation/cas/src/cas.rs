@@ -8,7 +8,7 @@ use memento::{
     PDefault,
 };
 
-use crate::{Node, TestNOps};
+use crate::{Node, TestNOps, TOTAL_NOPS_FAILED};
 
 pub struct TestCas {
     loc: PAtomic<Node>,
@@ -43,9 +43,10 @@ impl RootObj<TestCasMmt> for TestCas {
     fn run(&self, _: &mut TestCasMmt, tid: usize, _: &Guard, _: &PoolHandle) {
         let duration = unsafe { DURATION };
 
-        let ops = self.test_nops(&|tid| cas(&self.loc, tid), tid, duration);
+        let (ops, failed) = self.test_nops(&|tid| cas(&self.loc, tid), tid, duration);
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+        let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
     }
 }
 

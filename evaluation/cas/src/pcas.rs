@@ -12,7 +12,7 @@ use memento::{
     PDefault,
 };
 
-use crate::{Node, TestNOps};
+use crate::{Node, TestNOps, TOTAL_NOPS_FAILED};
 
 pub struct TestPCas {
     loc: PAtomic<Node>,
@@ -47,9 +47,12 @@ impl RootObj<TestPCasMmt> for TestPCas {
     fn run(&self, _: &mut TestPCasMmt, tid: usize, _: &Guard, _: &PoolHandle) {
         let duration = unsafe { DURATION };
 
-        let ops = self.test_nops(&|tid| pcas(&self.loc, tid), tid, duration);
+        let (ops, failed) = self.test_nops(&|tid| pcas(&self.loc, tid), tid, duration);
+
+        println!("ops: {ops}, failed: {failed}");
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+        let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
     }
 }
 
@@ -79,7 +82,7 @@ fn persistent_cas<'g>(
     new_value: PShared<'g, Node>,
     guard: &'g Guard,
 ) -> Result<PShared<'g, Node>, CompareExchangeError<'g, Node, PShared<'g, Node>>> {
-    let _ = pcas_read(address, guard);
+    let _ = pcas_read(address, guard); // TODO: pcas_read 반환값을 old_value를 넣어주는 게 지당하지 않나? 이러면 낮은 스레드에서는 pcas가 더 높아짐.
     // Conduct the CAS with dirty bit set on new value
     address.compare_exchange(
         old_value,
@@ -94,7 +97,7 @@ fn persist<T>(address: &PAtomic<T>, value: PShared<T>, guard: &Guard) {
     persist_obj(address, true);
     let _ = address.compare_exchange(
         value,
-        value.with_tag(0),
+        value.with_tag(0), // TODO: dirty flag만 떼야하는 데 0으로 바꾸면 다른 flag도 떼지는 건 아닌가? hig tag/low tag로 구분이 되어있는건가?
         Ordering::SeqCst,
         Ordering::SeqCst,
         guard,
@@ -167,9 +170,10 @@ impl RootObj<TestPMwCasMmt> for TestPMwCas {
     fn run(&self, _: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
 
-        let ops = self.test_nops(&|tid| pmwcas(&self.loc, tid, pool), tid, duration);
+        let (ops, failed) = self.test_nops(&|tid| pmwcas(&self.loc, tid, pool), tid, duration);
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+        let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
     }
 }
 

@@ -10,7 +10,7 @@ use memento::{
     PDefault,
 };
 
-use crate::{Node, TestNOps};
+use crate::{Node, TestNOps, TOTAL_NOPS_FAILED};
 
 pub struct TestMCas {
     loc: DetectableCASAtomic<Node>,
@@ -45,7 +45,7 @@ impl RootObj<TestMCasMmt> for TestMCas {
     fn run(&self, mmt: &mut TestMCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
 
-        let ops = self.test_nops(
+        let (ops, failed) = self.test_nops(
             &|tid| {
                 let mmt = unsafe { (&*mmt.cas as *const _ as *mut Cas).as_mut() }.unwrap();
                 mcas(&self.loc, mmt, tid, pool)
@@ -55,6 +55,7 @@ impl RootObj<TestMCasMmt> for TestMCas {
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
+        let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
     }
 }
 

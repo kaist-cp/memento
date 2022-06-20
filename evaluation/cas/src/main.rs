@@ -1,12 +1,14 @@
 use std::{
     fs::{create_dir_all, File, OpenOptions},
     path::Path,
+    sync::atomic::Ordering,
 };
 
 use cas_eval::{
     cas::{TestCas, TestCasMmt},
     mcas::{TestMCas, TestMCasMmt},
     pcas::{TestPCas, TestPCasMmt, TestPMwCas, TestPMwCasMmt},
+    TOTAL_NOPS_FAILED,
 };
 use csv::Writer;
 use evaluation::common::{get_nops, DURATION};
@@ -71,7 +73,21 @@ fn bench(opt: &Opt) -> f64 {
     let target = parse_target(&opt.target);
     let nops = bench_cas(opt, target);
     let avg_ops = (nops as f64) / opt.duration;
+    let avg_failed = (TOTAL_NOPS_FAILED.load(Ordering::SeqCst) as f64) / opt.duration;
     println!("avg ops: {}", avg_ops);
+    println!("avg failed: {}", avg_failed);
+
+    if opt.threads == 1 {
+        assert!(
+            TOTAL_NOPS_FAILED.load(Ordering::SeqCst) == 0,
+            "스레드 한 개인데 CAS 실패 발생"
+        );
+    } else {
+        assert!(
+            TOTAL_NOPS_FAILED.load(Ordering::SeqCst) != 0,
+            "스레드 여러 개인데 CAS 전부 성공"
+        );
+    }
     avg_ops
 }
 
