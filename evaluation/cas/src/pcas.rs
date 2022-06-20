@@ -188,7 +188,7 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     let old = loc.load(Ordering::SeqCst, guard);
     let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
 
-    let mut desc = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard); // TODO: ploc에서 만들어져야 함. 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
+    let mut desc = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard); // TODO: 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
     let mut desc_ref = unsafe { desc.deref_mut(pool) };
     unsafe {
         desc_ref.words[0] = WordDescriptor {
@@ -273,8 +273,7 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
             continue;
         }
 
-        // TODO: cur_st가 아닌 md.status.load로 확인해야하는 거 아닌가? md.status를 여러 스레드가 만질 수 있는거 아님?
-        let v = if cur_st == SUCCEEDED {
+        let v = if md.status.load(Ordering::SeqCst) == SUCCEEDED {
             w.new_value
         } else {
             w.old_value
@@ -299,7 +298,7 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
         persist(target, v, guard);
     }
 
-    cur_st == SUCCEEDED
+    md.status.load(Ordering::SeqCst) == SUCCEEDED
 }
 
 fn install_mwcas_descriptor<'g>(
