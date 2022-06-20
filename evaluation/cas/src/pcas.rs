@@ -207,6 +207,10 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
     let mut st = SUCCEEDED;
 
     'out: for w in md.words.iter() {
+        if w.mwcas_descriptor.is_null() {
+            continue;
+        }
+
         // (in sorted order on md.words.address)
         loop {
             let rval = install_mwcas_descriptor(w, guard, pool);
@@ -234,6 +238,10 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
     // Persist all target words if Phase 1 succeeded
     if st == SUCCEEDED {
         for w in md.words.iter() {
+            if w.mwcas_descriptor.is_null() {
+                continue;
+            }
+
             persist(
                 unsafe { w.address.deref(pool) },
                 md_ptr.with_high_tag(PMWCAS_FLAG | DIRTY_FLAG),
@@ -243,16 +251,15 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
     }
 
     // Finalize the MwCAS’s status
-    let mut cur_st = ok_or!(
-        md.status.compare_exchange(
-            UNDECIDED,
-            st | DIRTY_FLAG,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ),
-        e,
-        e
-    );
+    let mut cur_st = match md.status.compare_exchange(
+        UNDECIDED,
+        st | DIRTY_FLAG,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    ) {
+        Ok(_) => (st | DIRTY_FLAG),
+        Err(e) => e,
+    };
     if cur_st & DIRTY_FLAG != 0 {
         persist_obj(&md.status, true);
         cur_st &= !DIRTY_FLAG;
@@ -261,6 +268,10 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
 
     // Install the final values
     for w in md.words.iter() {
+        if w.mwcas_descriptor.is_null() {
+            continue;
+        }
+
         let v = if cur_st == SUCCEEDED {
             w.new_value
         } else {
@@ -334,7 +345,8 @@ fn complete_install(wd: &WordDescriptor, guard: &Guard, pool: &PoolHandle) {
     let u = unsafe { desc.deref(pool) }.status.load(Ordering::SeqCst) == UNDECIDED;
 
     let target = unsafe { wd.address.deref(pool) };
-    let old = unsafe { PShared::from_usize(wd as *const _ as _) }.with_high_tag(RDCSS_FLAG);
+    let old =
+        unsafe { PShared::from_usize(wd.as_pptr(pool).into_offset()) }.with_high_tag(RDCSS_FLAG);
     let new = if u {
         ptr
     } else {
