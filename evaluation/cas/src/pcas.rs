@@ -57,7 +57,9 @@ fn pcas(loc: &PAtomic<Node>, tid: usize) -> bool {
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard);
-    let new = unsafe { PShared::from_usize(0) }.with_tid(tid); // TODO: 다양한 new 값
+
+    // NOTE: low tag 사용할거면 with_tid(tid)로 value 구분해야함. from_usize(tid)하면 low tag 혹은 offset으로 섞여 들어가게됨.
+    let new = unsafe { PShared::from_usize(tid) }; // TODO: 다양한 new 값
     persistent_cas(loc, old, new, guard).is_ok()
 }
 
@@ -194,9 +196,7 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     //     }
     // };
     let old = pmwcas_read(loc, tid, guard, pool);
-
-    // NOTE: with_tid(tid)로 value 구분해야함. from_usize(tid)하면 low tag 혹은 offset으로 섞여 들어가게됨.
-    let new = unsafe { PShared::<Node>::from_usize(0) }.with_tid(tid); // TODO: 다양한 new 값
+    let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
 
     let desc = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard); // TODO: 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
     let mut desc_ref = unsafe { desc.clone().deref_mut(pool) };
