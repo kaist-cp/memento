@@ -7,10 +7,10 @@ import git
 objs = {
     "cas": {
         "targets": {
-            "cas": {'data_id': '', 'label': "CAS", 'marker': 'o', 'color': 'red', 'style': '-'},
+            # "cas": {'data_id': '', 'label': "CAS", 'marker': 'o', 'color': 'red', 'style': '-'},
             "mcas": {'data_id': '', 'label': "mmt-CAS", 'marker': 'd', 'color': 'k', 'style': '-'},
             "pcas": {'data_id': '', 'label': "PCAS", 'marker': 'x', 'color': 'green', 'style': '-'},
-            "pmwcas": {'data_id': '', 'label': "PMwCAS", 'marker': 'x', 'color': 'read', 'style': '-'},
+            "pmwcas": {'data_id': '', 'label': "PMwCAS", 'marker': 'x', 'color': 'red', 'style': '-'},
         },
     },
 }
@@ -44,7 +44,10 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     figpath = "{}.png".format(output)
     plt.tight_layout()
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
-
+    print(figpath)
+    figpath = "{}.svg".format(output)
+    plt.tight_layout()
+    plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
     print(figpath)
     return ax
 
@@ -117,3 +120,4 @@ for obj in objs:
 
     axLine, axLabel = ax.get_legend_handles_labels()
     draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
+    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
