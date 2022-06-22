@@ -11,10 +11,10 @@ use memento::{
     PDefault,
 };
 
-use crate::{Node, TestNOps, TOTAL_NOPS_FAILED};
+use crate::{cas_random_loc, Locations, Node, TestNOps, TestableCas, TOTAL_NOPS_FAILED};
 
 pub struct TestPCas {
-    loc: PAtomic<Node>,
+    locs: Locations<PAtomic<Node>>,
 }
 
 impl Collectable for TestPCas {
@@ -24,14 +24,23 @@ impl Collectable for TestPCas {
 }
 
 impl PDefault for TestPCas {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            loc: Default::default(),
+            locs: Locations::pdefault(pool),
         }
     }
 }
 
 impl TestNOps for TestPCas {}
+
+impl TestableCas for TestPCas {
+    type Input = usize; // tid
+    type Location = PAtomic<Node>;
+
+    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, _: &PoolHandle) -> bool {
+        pcas(loc, tid)
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct TestPCasMmt {}
@@ -43,10 +52,16 @@ impl Collectable for TestPCasMmt {
 }
 
 impl RootObj<TestPCasMmt> for TestPCas {
-    fn run(&self, _: &mut TestPCasMmt, tid: usize, _: &Guard, _: &PoolHandle) {
+    fn run(&self, _: &mut TestPCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
 
-        let (ops, failed) = self.test_nops(&|tid| pcas(&self.loc, tid), tid, duration);
+        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
+
+        let (ops, failed) = self.test_nops(
+            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
+            tid,
+            duration,
+        );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
         let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
