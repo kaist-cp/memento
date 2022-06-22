@@ -61,7 +61,14 @@ fn setup() -> (Opt, Writer<File>) {
                 .unwrap();
             let mut output = csv::Writer::from_writer(f);
             output
-                .write_record(&["target", "threads", "duration", "throughput"])
+                .write_record(&[
+                    "target",
+                    "threads",
+                    "duration",
+                    "throughput",
+                    "physical memory usage",
+                    "virtual memory usage",
+                ])
                 .unwrap();
             output.flush().unwrap();
             output
@@ -70,15 +77,22 @@ fn setup() -> (Opt, Writer<File>) {
     (opt, output)
 }
 
+use memory_stats::memory_stats;
+
 //  the throughput (op execution/s) when using `nr_thread` threads
-fn bench(opt: &Opt) -> f64 {
+fn bench(opt: &Opt) -> (f64, usize, usize) {
     println!("bench {}: {} threads", opt.target, opt.threads);
     let target = parse_target(&opt.target);
     let nops = bench_cas(opt, target);
     let avg_ops = (nops as f64) / opt.duration;
     let avg_failed = (TOTAL_NOPS_FAILED.load(Ordering::SeqCst) as f64) / opt.duration;
+    let mem_usage = memory_stats().expect("Couldn't get the current memory usage :(");
     println!("avg ops: {}", avg_ops);
     println!("avg failed: {}", avg_failed);
+    println!(
+        "memory usage: {}(physical), {}(virtual)",
+        mem_usage.physical_mem, mem_usage.virtual_mem
+    );
 
     // if opt.threads == 1 {
     //     assert!(
@@ -92,7 +106,7 @@ fn bench(opt: &Opt) -> f64 {
             "스레드 여러 개인데 CAS 전부 성공"
         );
     }
-    avg_ops
+    (avg_ops, mem_usage.physical_mem, mem_usage.virtual_mem)
 }
 
 pub fn bench_cas(opt: &Opt, target: TestTarget) -> usize {
@@ -132,7 +146,7 @@ pub struct Opt {
 
 fn main() {
     let (opt, mut output) = setup();
-    let avg_mops = bench(&opt);
+    let (avg_mops, phyiscal_mem_usage, virtual_mem_usage) = bench(&opt);
 
     // Write result
     output
@@ -141,6 +155,8 @@ fn main() {
             opt.threads.to_string(),
             opt.duration.to_string(),
             avg_mops.to_string(),
+            phyiscal_mem_usage.to_string(),
+            virtual_mem_usage.to_string(),
         ])
         .unwrap();
     output.flush().unwrap();

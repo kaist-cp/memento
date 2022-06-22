@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_utils::CachePadded;
 use evaluation::common::{DURATION, MAX_THREADS, TOTAL_NOPS};
 use memento::{
     pepoch::PAtomic,
@@ -34,7 +35,7 @@ impl TestNOps for TestNRLCas {}
 
 #[derive(Default, Debug)]
 pub struct TestNRLCasMmt {
-    value: PAtomic<usize>,
+    value: CachePadded<PAtomic<usize>>,
     // TODO: value를 구분하기 위한 per-thread seq num 추가.
     //
     // - "Our recoverable read-write object algorithm assumes that all values
@@ -49,7 +50,7 @@ pub struct TestNRLCasMmt {
 impl PDefault for TestNRLCasMmt {
     fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            value: PAtomic::new(0, pool),
+            value: CachePadded::new(PAtomic::new(0, pool)),
         }
     }
 }

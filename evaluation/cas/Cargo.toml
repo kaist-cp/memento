@@ -20,6 +20,7 @@ structopt = "0.3"
 csv = "1.1.6"
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
 lazy_static = "1.4.0"
+memory-stats = "1.0.0"
 
 [features]
 no_persist = ["memento/no_persist"]
