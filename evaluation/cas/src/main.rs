@@ -9,7 +9,7 @@ use cas_eval::{
     mcas::{TestMCas, TestMCasMmt},
     nrlcas::{TestNRLCas, TestNRLCasMmt},
     pcas::{TestPCas, TestPCasMmt, TestPMwCas, TestPMwCasMmt},
-    TOTAL_NOPS_FAILED,
+    CONTENTION_WIDTH, TOTAL_NOPS_FAILED,
 };
 use csv::Writer;
 use evaluation::common::{get_nops, DURATION};
@@ -64,6 +64,7 @@ fn setup() -> (Opt, Writer<File>) {
                 .write_record(&[
                     "target",
                     "threads",
+                    "contention",
                     "duration",
                     "throughput",
                     "physical memory usage",
@@ -81,7 +82,10 @@ use memory_stats::memory_stats;
 
 //  the throughput (op execution/s) when using `nr_thread` threads
 fn bench(opt: &Opt) -> (f64, usize, usize) {
-    println!("bench {}: {} threads", opt.target, opt.threads);
+    println!(
+        "bench {}: {} threads, {} contention",
+        opt.target, opt.threads, opt.contention
+    );
     let target = parse_target(&opt.target);
     let nops = bench_cas(opt, target);
     let avg_ops = (nops as f64) / opt.duration;
@@ -110,6 +114,7 @@ fn bench(opt: &Opt) -> (f64, usize, usize) {
 }
 
 pub fn bench_cas(opt: &Opt, target: TestTarget) -> usize {
+    unsafe { CONTENTION_WIDTH = opt.contention };
     match target {
         TestTarget::Cas => get_nops::<TestCas, TestCasMmt>(&opt.filepath, opt.threads),
         TestTarget::MCas => get_nops::<TestMCas, TestMCasMmt>(&opt.filepath, opt.threads),
@@ -135,6 +140,10 @@ pub struct Opt {
     #[structopt(short, long)]
     pub threads: usize,
 
+    /// contention width
+    #[structopt(short, long, default_value = "1")]
+    pub contention: usize,
+
     /// test duration
     #[structopt(short, long, default_value = "5")]
     pub duration: f64,
@@ -153,6 +162,7 @@ fn main() {
         .write_record(&[
             opt.target,
             opt.threads.to_string(),
+            opt.contention.to_string(),
             opt.duration.to_string(),
             avg_mops.to_string(),
             phyiscal_mem_usage.to_string(),

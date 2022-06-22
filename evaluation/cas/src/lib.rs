@@ -11,6 +11,7 @@ pub mod nrlcas;
 pub mod pcas;
 
 pub static TOTAL_NOPS_FAILED: AtomicUsize = AtomicUsize::new(0);
+pub static mut CONTENTION_WIDTH: usize = 1;
 
 #[derive(Debug, Default)]
 struct Node(usize); // `usize` for low tag
