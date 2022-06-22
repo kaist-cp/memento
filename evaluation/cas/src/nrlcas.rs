@@ -27,7 +27,6 @@ impl PDefault for TestNRLCas {
             loc: Default::default(),
             loc_r: array_init::array_init(|_| array_init::array_init(|_| Default::default())),
         }
-        // todo!("array_init")
     }
 }
 
@@ -90,6 +89,7 @@ fn nrl_cas_inner<'g>(
     guard: &Guard,
     pool: &PoolHandle,
 ) -> bool {
+    // Check old
     let old_p = shared.loc.load(Ordering::SeqCst, guard);
     if !old_p.is_null() {
         let (id, val) = (old_p.tid(), unsafe { old_p.deref(pool) });
@@ -102,18 +102,15 @@ fn nrl_cas_inner<'g>(
         }
     }
 
+    // Make new
     let mut new_p = local.value.load(Ordering::SeqCst, guard); // TODO: seq로 value 구분
     unsafe { *(new_p.deref_mut(pool)) = new_value };
+    let new_p = new_p.with_tid(tid);
 
+    // CAS
     let res = shared
         .loc
-        .compare_exchange(
-            old_p,
-            new_p.with_tid(tid),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            guard,
-        )
+        .compare_exchange(old_p, new_p, Ordering::SeqCst, Ordering::SeqCst, guard)
         .is_ok();
     persist_obj(&shared.loc, true);
     res
