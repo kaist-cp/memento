@@ -326,6 +326,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         };
 
+        // TODO: Maybe we don't need to checkpoint `head`. Because it shouldn't be stable.
         let chk = ok_or!(
             try_deq.head_next.checkpoint::<REC>(
                 (PAtomic::from(head), PAtomic::from(next)),
