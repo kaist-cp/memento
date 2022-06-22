@@ -156,7 +156,7 @@ impl Default for PMwCasDescriptor {
 }
 
 pub struct TestPMwCas {
-    loc: PAtomic<Node>,
+    locs: Locations<PAtomic<Node>>,
 }
 
 impl Collectable for TestPMwCas {
@@ -166,14 +166,23 @@ impl Collectable for TestPMwCas {
 }
 
 impl PDefault for TestPMwCas {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            loc: Default::default(),
+            locs: Locations::pdefault(pool),
         }
     }
 }
 
 impl TestNOps for TestPMwCas {}
+
+impl TestableCas for TestPMwCas {
+    type Location = PAtomic<Node>;
+    type Input = usize; // tid
+
+    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, pool: &PoolHandle) -> bool {
+        pmwcas(loc, tid, pool)
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct TestPMwCasMmt {}
@@ -187,8 +196,13 @@ impl Collectable for TestPMwCasMmt {
 impl RootObj<TestPMwCasMmt> for TestPMwCas {
     fn run(&self, _: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
+        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
 
-        let (ops, failed) = self.test_nops(&|tid| pmwcas(&self.loc, tid, pool), tid, duration);
+        let (ops, failed) = self.test_nops(
+            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
+            tid,
+            duration,
+        );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
         let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
