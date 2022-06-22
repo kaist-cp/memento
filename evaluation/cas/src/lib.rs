@@ -1,9 +1,16 @@
 use std::{
-    sync::atomic::AtomicUsize,
+    mem::MaybeUninit,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
-use memento::pmem::{Collectable, GarbageCollection, PoolHandle};
+use crossbeam_epoch::Guard;
+use memento::{
+    pepoch::{PAtomic, POwned},
+    pmem::{Collectable, GarbageCollection, PoolHandle},
+    PDefault,
+};
+use rand::Rng;
 
 pub mod cas;
 pub mod mcas;
@@ -14,10 +21,46 @@ pub static TOTAL_NOPS_FAILED: AtomicUsize = AtomicUsize::new(0);
 pub static mut CONTENTION_WIDTH: usize = 1;
 
 #[derive(Debug, Default)]
-struct Node(usize); // `usize` for low tag
+pub struct Node(usize); // `usize` for low tag
 
 impl Collectable for Node {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
+#[inline]
+pub fn pick_range(min: usize, max: usize) -> usize {
+    rand::thread_rng().gen_range(min..max)
+}
+
+struct Locations<T> {
+    locs: PAtomic<[MaybeUninit<T>]>, // Vec located in persistent heap
+}
+
+impl<T> Collectable for Locations<T> {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
+        todo!()
+    }
+}
+
+impl<T: Default> PDefault for Locations<T> {
+    fn pdefault(pool: &PoolHandle) -> Self {
+        let mut locs = POwned::<[MaybeUninit<T>]>::init(unsafe { CONTENTION_WIDTH }, pool);
+        let locs_ref = unsafe { locs.deref_mut(pool) };
+        for i in 0..unsafe { CONTENTION_WIDTH } {
+            locs_ref[i].write(Default::default());
+        }
+        assert_eq!(unsafe { CONTENTION_WIDTH }, locs_ref.len());
+
+        Self {
+            locs: PAtomic::from(locs),
+        }
+    }
+}
+
+impl<T: Default> Locations<T> {
+    fn as_ref<'g>(&self, guard: &'g Guard, pool: &'g PoolHandle) -> &'g [MaybeUninit<T>] {
+        unsafe { self.locs.load(Ordering::SeqCst, guard).deref(pool) }
+    }
 }
 
 pub trait TestNOps {
@@ -45,4 +88,28 @@ pub trait TestNOps {
 
         (ops, failed)
     }
+}
+
+pub trait TestableCas {
+    type Input;
+    type Location;
+
+    fn cas(
+        &self,
+        input: Self::Input,
+        loc: &Self::Location,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> bool;
+}
+
+pub fn cas_random_loc<C: TestableCas>(
+    cas: &C,
+    input: C::Input,
+    locs: &[MaybeUninit<C::Location>],
+    guard: &Guard,
+    pool: &PoolHandle,
+) -> bool {
+    let ix = pick_range(0, unsafe { CONTENTION_WIDTH });
+    cas.cas(input, unsafe { locs[ix].assume_init_ref() }, guard, pool)
 }
