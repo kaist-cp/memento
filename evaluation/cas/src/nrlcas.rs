@@ -3,18 +3,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_epoch::{unprotected, Guard};
 use evaluation::common::{DURATION, MAX_THREADS, TOTAL_NOPS};
 use memento::{
-    pepoch::{
-        atomic::{CompareExchangeError, Pointer},
-        PAtomic, POwned, PShared,
-    },
-    pmem::{persist_obj, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle, RootObj},
+    pepoch::PAtomic,
+    pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj},
     PDefault,
 };
 
-use crate::{Node, TestNOps, TOTAL_NOPS_FAILED};
-
-// type Id = usize;
-// type Value = usize;
+use crate::{TestNOps, TOTAL_NOPS_FAILED};
 
 pub struct TestNRLCas {
     loc: PAtomic<usize>,                              // C: val with tid tag
@@ -88,8 +82,6 @@ fn nrl_cas(tid: usize, shared: &TestNRLCas, local: &TestNRLCasMmt, pool: &PoolHa
 }
 
 fn nrl_cas_inner<'g>(
-    // loc: &PAtomic<usize>,
-    // loc_r: &[[AtomicUsize; MAX_THREADS]; MAX_THREADS],
     old_value: usize,
     new_value: usize,
     tid: usize,
@@ -110,14 +102,18 @@ fn nrl_cas_inner<'g>(
         }
     }
 
-    let new_p = POwned::new(new_value, pool).with_tid(tid); // TODO: seq로 value 구분
-
-    // let mut new_p = local.value.load(Ordering::SeqCst, guard);
-    // unsafe { *(new_p.deref_mut(pool)) = new_value };
+    let mut new_p = local.value.load(Ordering::SeqCst, guard); // TODO: seq로 value 구분
+    unsafe { *(new_p.deref_mut(pool)) = new_value };
 
     let res = shared
         .loc
-        .compare_exchange(old_p, new_p, Ordering::SeqCst, Ordering::SeqCst, guard)
+        .compare_exchange(
+            old_p,
+            new_p.with_tid(tid),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            guard,
+        )
         .is_ok();
     persist_obj(&shared.loc, true);
     res
