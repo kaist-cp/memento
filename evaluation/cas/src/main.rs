@@ -101,15 +101,16 @@ fn bench(opt: &Opt) -> (f64, usize, usize) {
     // if opt.threads == 1 {
     //     assert!(
     //         TOTAL_NOPS_FAILED.load(Ordering::SeqCst) == 0,
-    //         "스레드 한 개인데 CAS 실패 발생"
+    //         "multiple threads but fail CAS"
     //     );
     // }
-    if opt.threads != 1 {
-        assert!(
-            TOTAL_NOPS_FAILED.load(Ordering::SeqCst) != 0,
-            "스레드 여러 개인데 CAS 전부 성공"
-        );
-    }
+    // if opt.threads != 1 {
+    //     assert!(
+    //         TOTAL_NOPS_FAILED.load(Ordering::SeqCst) != 0,
+    //         "multiple threads but success all CASs"
+    //     );
+    // }
+
     (avg_ops, mem_usage.physical_mem, mem_usage.virtual_mem)
 }
 
