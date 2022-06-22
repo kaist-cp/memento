@@ -7,6 +7,7 @@ use std::{
 use cas_eval::{
     cas::{TestCas, TestCasMmt},
     mcas::{TestMCas, TestMCasMmt},
+    nrlcas::{TestNRLCas, TestNRLCasMmt},
     pcas::{TestPCas, TestPCasMmt, TestPMwCas, TestPMwCasMmt},
     TOTAL_NOPS_FAILED,
 };
@@ -19,6 +20,7 @@ pub enum TestTarget {
     MCas,
     PCas,
     PMwCas,
+    NRLCas,
     RCas,
 }
 
@@ -28,6 +30,7 @@ fn parse_target(target: &str) -> TestTarget {
         "mcas" => TestTarget::MCas,
         "pcas" => TestTarget::PCas,
         "pmwcas" => TestTarget::PMwCas,
+        "nrlcas" => TestTarget::NRLCas,
         // "rcas" => TestTarget::RCas,
         _ => unreachable!("invalid target"),
     }
@@ -98,7 +101,8 @@ pub fn bench_cas(opt: &Opt, target: TestTarget) -> usize {
         TestTarget::MCas => get_nops::<TestMCas, TestMCasMmt>(&opt.filepath, opt.threads),
         TestTarget::PCas => get_nops::<TestPCas, TestPCasMmt>(&opt.filepath, opt.threads),
         TestTarget::PMwCas => get_nops::<TestPMwCas, TestPMwCasMmt>(&opt.filepath, opt.threads),
-        _ => unimplemented!(),
+        TestTarget::NRLCas => get_nops::<TestNRLCas, TestNRLCasMmt>(&opt.filepath, opt.threads),
+        TestTarget::RCas => todo!(),
     }
 }
 

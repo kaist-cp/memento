@@ -7,6 +7,7 @@ use memento::pmem::{Collectable, GarbageCollection, PoolHandle};
 
 pub mod cas;
 pub mod mcas;
+pub mod nrlcas;
 pub mod pcas;
 
 pub static TOTAL_NOPS_FAILED: AtomicUsize = AtomicUsize::new(0);

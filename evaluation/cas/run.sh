@@ -54,6 +54,7 @@ benches cas
 benches mcas
 benches pcas
 benches pmwcas
+benches nrlcas
 
 # 3. Plot and finish
 python3 plot.py
