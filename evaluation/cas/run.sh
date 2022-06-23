@@ -15,7 +15,7 @@ function bench() {
     thread=$2
     contention=$3
 
-    outpath=$out_path/${target}_${git_hash}.csv
+    outpath=$out_path/${target}_contention${contention}_${git_hash}.csv
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
