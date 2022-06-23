@@ -126,3 +126,9 @@ pub trait PDefault: Collectable {
     /// Persistent default using pool to allocate persistent object
     fn pdefault(pool: &PoolHandle) -> Self;
 }
+
+impl PDefault for usize {
+    fn pdefault(_: &PoolHandle) -> Self {
+        Default::default()
+    }
+}

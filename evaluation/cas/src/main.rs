@@ -9,7 +9,7 @@ use cas_eval::{
     mcas::{TestMCas, TestMCasMmt},
     nrlcas::{TestNRLCas, TestNRLCasMmt},
     pcas::{TestPCas, TestPCasMmt, TestPMwCas, TestPMwCasMmt},
-    CONTENTION_WIDTH, TOTAL_NOPS_FAILED,
+    CONTENTION_WIDTH, NR_THREADS, TOTAL_NOPS_FAILED,
 };
 use csv::Writer;
 use evaluation::common::{get_nops, DURATION};
@@ -116,6 +116,7 @@ fn bench(opt: &Opt) -> (f64, usize, usize) {
 
 pub fn bench_cas(opt: &Opt, target: TestTarget) -> usize {
     unsafe { CONTENTION_WIDTH = opt.contention };
+    unsafe { NR_THREADS = opt.threads };
     match target {
         TestTarget::Cas => get_nops::<TestCas, TestCasMmt>(&opt.filepath, opt.threads),
         TestTarget::MCas => get_nops::<TestMCas, TestMCasMmt>(&opt.filepath, opt.threads),
