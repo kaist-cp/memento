@@ -74,8 +74,6 @@ fn pcas(loc: &PAtomic<Node>, tid: usize) -> bool {
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard);
-
-    // NOTE: low tag 사용할거면 with_tid(tid)로 value 구분해야함. from_usize(tid)하면 low tag 혹은 offset으로 섞여 들어가게됨.
     let new = unsafe { PShared::from_usize(tid) }; // TODO: 다양한 new 값
     persistent_cas(loc, old, new, guard).is_ok()
 }
@@ -113,7 +111,6 @@ fn persistent_cas<'g>(
 fn persist<T>(address: &PAtomic<T>, value: PShared<T>, guard: &Guard) {
     persist_obj(address, true);
 
-    // NOTE: PMWCAS_FLAG는 남겨둔 채 DIRTY_FLAG만 떼야함 e.g. L22 on Algorithm 2
     let _ = address.compare_exchange(
         value,
         value.with_high_tag(value.high_tag() & !DIRTY_FLAG),

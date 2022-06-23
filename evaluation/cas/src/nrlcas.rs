@@ -9,8 +9,8 @@ use memento::{
 };
 
 use crate::{
-    cas_random_loc, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, NR_THREADS,
-    TOTAL_NOPS_FAILED,
+    cas_random_loc, pick_range, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH,
+    NR_THREADS, TOTAL_NOPS_FAILED,
 };
 
 pub struct NRLLoc {
@@ -25,7 +25,10 @@ impl Collectable for NRLLoc {
 impl PDefault for NRLLoc {
     fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            c: Default::default(),
+            c: PAtomic::from(
+                unsafe { PShared::from_usize(0) }
+                    .with_tid(pick_range(1, unsafe { NR_THREADS } + 1)),
+            ),
             r: PFixedVec::new(unsafe { NR_THREADS } + 1, pool),
         }
     }
