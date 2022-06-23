@@ -11,10 +11,12 @@ use memento::{
     PDefault,
 };
 
-use crate::{cas_random_loc, Locations, Node, TestNOps, TestableCas, TOTAL_NOPS_FAILED};
+use crate::{
+    cas_random_loc, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, TOTAL_NOPS_FAILED,
+};
 
 pub struct TestPCas {
-    locs: Locations<PAtomic<Node>>,
+    locs: PFixedVec<PAtomic<Node>>,
 }
 
 impl Collectable for TestPCas {
@@ -26,7 +28,7 @@ impl Collectable for TestPCas {
 impl PDefault for TestPCas {
     fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            locs: Locations::pdefault(pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
         }
     }
 }
@@ -159,7 +161,7 @@ impl Default for PMwCasDescriptor {
 }
 
 pub struct TestPMwCas {
-    locs: Locations<PAtomic<Node>>,
+    locs: PFixedVec<PAtomic<Node>>,
 }
 
 impl Collectable for TestPMwCas {
@@ -171,7 +173,7 @@ impl Collectable for TestPMwCas {
 impl PDefault for TestPMwCas {
     fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            locs: Locations::pdefault(pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
         }
     }
 }

@@ -32,34 +32,37 @@ pub fn pick_range(min: usize, max: usize) -> usize {
     rand::thread_rng().gen_range(min..max)
 }
 
-struct Locations<T> {
-    locs: PAtomic<[MaybeUninit<T>]>, // Vec located in persistent heap
+/// A fixed-size vec with each item in the persistent heap
+struct PFixedVec<T> {
+    items: PAtomic<[MaybeUninit<T>]>,
 }
 
-impl<T> Collectable for Locations<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
+impl<T> Collectable for PFixedVec<T> {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
-impl<T: Default> PDefault for Locations<T> {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let mut locs = POwned::<[MaybeUninit<T>]>::init(unsafe { CONTENTION_WIDTH }, pool);
+impl<T: PDefault> PFixedVec<T> {
+    fn new(size: usize, pool: &PoolHandle) -> Self {
+        let mut locs = POwned::<[MaybeUninit<T>]>::init(size, pool);
         let locs_ref = unsafe { locs.deref_mut(pool) };
-        for i in 0..unsafe { CONTENTION_WIDTH } {
-            locs_ref[i].write(Default::default());
+        for i in 0..size {
+            locs_ref[i].write(T::pdefault(pool));
         }
-        assert_eq!(unsafe { CONTENTION_WIDTH }, locs_ref.len());
+        assert_eq!(size, locs_ref.len());
 
         Self {
-            locs: PAtomic::from(locs),
+            items: PAtomic::from(locs),
         }
     }
 }
 
-impl<T: Default> Locations<T> {
+impl<T> PFixedVec<T> {
     fn as_ref<'g>(&self, guard: &'g Guard, pool: &'g PoolHandle) -> &'g [MaybeUninit<T>] {
-        unsafe { self.locs.load(Ordering::SeqCst, guard).deref(pool) }
+        unsafe { self.items.load(Ordering::SeqCst, guard).deref(pool) }
+    }
+
+    fn as_mut<'g>(&self, guard: &'g Guard, pool: &'g PoolHandle) -> &'g mut [MaybeUninit<T>] {
+        unsafe { self.items.load(Ordering::SeqCst, guard).deref_mut(pool) }
     }
 }
 

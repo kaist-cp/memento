@@ -25,19 +25,17 @@ impl Default for NRLLoc {
 }
 
 pub struct TestNRLCas {
-    locs: Locations<NRLLoc>,
+    locs: PFixedVec<NRLLoc>,
 }
 
 impl Collectable for TestNRLCas {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl PDefault for TestNRLCas {
     fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            locs: Locations::pdefault(pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
         }
     }
 }
