@@ -134,11 +134,14 @@ struct WordDescriptor {
 }
 
 #[derive(Debug)]
-struct PMwCasDescriptor {
+pub struct PMwCasDescriptor {
     status: AtomicUsize,
     count: usize,
     words: [WordDescriptor; 4],
 }
+
+unsafe impl Send for PMwCasDescriptor {}
+unsafe impl Sync for PMwCasDescriptor {}
 
 impl Default for PMwCasDescriptor {
     fn default() -> Self {
@@ -177,15 +180,23 @@ impl TestNOps for TestPMwCas {}
 
 impl TestableCas for TestPMwCas {
     type Location = PAtomic<Node>;
-    type Input = usize; // tid
+    type Input = (usize, PShared<'static, PMwCasDescriptor>); // tid, descriptor
 
-    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, pool: &PoolHandle) -> bool {
-        pmwcas(loc, tid, pool)
+    fn cas(
+        &self,
+        (tid, md): Self::Input,
+        loc: &Self::Location,
+        _: &Guard,
+        pool: &PoolHandle,
+    ) -> bool {
+        pmwcas(loc, md, tid, pool)
     }
 }
 
 #[derive(Default, Debug)]
-pub struct TestPMwCasMmt {}
+pub struct TestPMwCasMmt {
+    md: PAtomic<PMwCasDescriptor>,
+}
 
 impl Collectable for TestPMwCasMmt {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
@@ -193,13 +204,24 @@ impl Collectable for TestPMwCasMmt {
     }
 }
 
+impl PDefault for TestPMwCasMmt {
+    fn pdefault(pool: &PoolHandle) -> Self {
+        Self {
+            md: PAtomic::new(PMwCasDescriptor::default(), pool),
+        }
+    }
+}
+
 impl RootObj<TestPMwCasMmt> for TestPMwCas {
-    fn run(&self, _: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, local: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
-        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
+        let locs_ref = self.locs.as_ref(unsafe { unprotected() }, pool);
 
         let (ops, failed) = self.test_nops(
-            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
+            &|tid| {
+                let md = local.md.load(Ordering::SeqCst, unsafe { unprotected() });
+                cas_random_loc(self, (tid, md), locs_ref, unsafe { unprotected() }, pool)
+            },
             tid,
             duration,
         );
@@ -209,36 +231,34 @@ impl RootObj<TestPMwCasMmt> for TestPMwCas {
     }
 }
 
-fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
+fn pmwcas(
+    loc: &PAtomic<Node>,
+    md: PShared<'static, PMwCasDescriptor>,
+    tid: usize,
+    pool: &PoolHandle,
+) -> bool {
     // NOTE: pmwcas github benchmark
     // 1. descriptor를 할당하고 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L187)
     // 2. descriptor에 랜덤한 CAS n개를 예약한 후 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L190)
     // 3. descriptor 실행 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L194)
 
     let guard = unsafe { unprotected() };
-
-    // NOTE: valid한 value값만 old로 넣어야함. PMwCAS 중간값(태그 붙여져있는 descriptor 주소 값)을 넣으면 pmwcas helping으로 무한 recursion.
-    // let old = loop {
-    //     let old = loc.load(Ordering::SeqCst, guard);
-    //     if old.is_null() || old.tid() != 0 {
-    //         break old;
-    //     }
-    // };
     let old = pmwcas_read(loc, tid, guard, pool);
     let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
 
-    let desc = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard); // TODO: 매번 새로 alloc할 것인가? 아니면 memento와 공평하게 재활용할 것인가?
-    let mut desc_ref = unsafe { desc.clone().deref_mut(pool) };
-    unsafe {
-        desc_ref.words[0] = WordDescriptor {
-            address: PPtr::from(loc.as_pptr(pool).into_offset()),
-            old_value: old,
-            new_value: new,
-            mwcas_descriptor: desc,
-        };
-    }
+    // clear
+    let mut md_ref = unsafe { md.clone().deref_mut(pool) };
+    *md_ref = PMwCasDescriptor::default();
 
-    pmwcas_inner(desc_ref, guard, pool)
+    // Add new entry
+    md_ref.words[0] = WordDescriptor {
+        address: PPtr::from(unsafe { loc.as_pptr(pool) }.into_offset()),
+        old_value: old,
+        new_value: new,
+        mwcas_descriptor: md,
+    };
+
+    pmwcas_inner(md_ref, guard, pool)
 }
 
 fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool {
@@ -419,7 +439,7 @@ fn pmwcas_read<'g>(
 
         if tag & PMWCAS_FLAG != 0 {
             let v_addr = unsafe { PShared::from_usize(v.into_usize()).deref(pool) };
-            pmwcas(v_addr, tid, pool);
+            pmwcas_inner(v_addr, guard, pool);
             continue;
         }
         return v;
