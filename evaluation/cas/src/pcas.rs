@@ -182,23 +182,15 @@ impl TestNOps for TestPMwCas {}
 
 impl TestableCas for TestPMwCas {
     type Location = PAtomic<Node>;
-    type Input = (usize, PShared<'static, PMwCasDescriptor>); // tid, descriptor
+    type Input = usize; // tid
 
-    fn cas(
-        &self,
-        (tid, md): Self::Input,
-        loc: &Self::Location,
-        _: &Guard,
-        pool: &PoolHandle,
-    ) -> bool {
-        pmwcas(loc, md, tid, pool)
+    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, pool: &PoolHandle) -> bool {
+        pmwcas(loc, tid, pool)
     }
 }
 
 #[derive(Default, Debug)]
-pub struct TestPMwCasMmt {
-    md: PAtomic<PMwCasDescriptor>,
-}
+pub struct TestPMwCasMmt {}
 
 impl Collectable for TestPMwCasMmt {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
@@ -206,24 +198,13 @@ impl Collectable for TestPMwCasMmt {
     }
 }
 
-impl PDefault for TestPMwCasMmt {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        Self {
-            md: PAtomic::new(PMwCasDescriptor::default(), pool),
-        }
-    }
-}
-
 impl RootObj<TestPMwCasMmt> for TestPMwCas {
-    fn run(&self, local: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
         let locs_ref = self.locs.as_ref(unsafe { unprotected() }, pool);
 
         let (ops, failed) = self.test_nops(
-            &|tid| {
-                let md = local.md.load(Ordering::SeqCst, unsafe { unprotected() });
-                cas_random_loc(self, (tid, md), locs_ref, unsafe { unprotected() }, pool)
-            },
+            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
             tid,
             duration,
         );
@@ -233,24 +214,19 @@ impl RootObj<TestPMwCasMmt> for TestPMwCas {
     }
 }
 
-fn pmwcas(
-    loc: &PAtomic<Node>,
-    md: PShared<'static, PMwCasDescriptor>,
-    tid: usize,
-    pool: &PoolHandle,
-) -> bool {
+fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     // NOTE: pmwcas github benchmark
     // 1. descriptor를 할당하고 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L187)
     // 2. descriptor에 랜덤한 CAS n개를 예약한 후 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L190)
     // 3. descriptor 실행 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L194)
 
     let guard = unsafe { unprotected() };
-    let old = pmwcas_read(loc, tid, guard, pool);
+    let old = pmwcas_read(loc, guard, pool);
     let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
 
     // clear
+    let md = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard);
     let mut md_ref = unsafe { md.clone().deref_mut(pool) };
-    *md_ref = PMwCasDescriptor::default();
 
     // Add new entry
     md_ref.words[0] = WordDescriptor {
@@ -420,7 +396,6 @@ fn complete_install(wd: &WordDescriptor, guard: &Guard, pool: &PoolHandle) {
 
 fn pmwcas_read<'g>(
     address: &PAtomic<Node>,
-    tid: usize,
     guard: &'g Guard,
     pool: &PoolHandle,
 ) -> PShared<'g, Node> {
