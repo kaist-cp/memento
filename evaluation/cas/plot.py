@@ -8,7 +8,7 @@ objs = {
     "cas": {
         "targets": {
             # "cas": {'data_id': '', 'label': "CAS", 'marker': 'o', 'color': 'red', 'style': '-'},
-            "mcas": {'data_id': '', 'label': "mmt-CAS", 'marker': 'd', 'color': 'k', 'style': '-'},
+            "mcas": {'data_id': '', 'label': "CAS-mmt", 'marker': 'd', 'color': 'k', 'style': '-'},
             "pcas": {'data_id': '', 'label': "PCAS", 'marker': 'x', 'color': 'green', 'style': '-'},
             "pmwcas": {'data_id': '', 'label': "PMwCAS", 'marker': 'x', 'color': 'red', 'style': '-'},
             "nrlcas": {'data_id': '', 'label': "NrlCAS", 'marker': 'x', 'color': 'orange', 'style': '-'},
