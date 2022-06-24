@@ -221,7 +221,7 @@ fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     let old = pmwcas_read(loc, guard, pool);
     let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
 
-    // clear
+    // Allocate new descriptor
     let md = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard);
     let mut md_ref = unsafe { md.clone().deref_mut(pool) };
 

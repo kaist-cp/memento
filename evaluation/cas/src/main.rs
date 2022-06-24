@@ -93,24 +93,7 @@ fn bench(opt: &Opt) -> (f64, usize, usize) {
     let mem_usage = memory_stats().expect("Couldn't get the current memory usage :(");
     println!("avg ops: {}", avg_ops);
     println!("avg failed: {}", avg_failed);
-    println!(
-        "memory usage: {}(physical), {}(virtual)",
-        mem_usage.physical_mem, mem_usage.virtual_mem
-    );
-
-    // if opt.threads == 1 {
-    //     assert!(
-    //         TOTAL_NOPS_FAILED.load(Ordering::SeqCst) == 0,
-    //         "multiple threads but fail CAS"
-    //     );
-    // }
-    // if opt.threads != 1 {
-    //     assert!(
-    //         TOTAL_NOPS_FAILED.load(Ordering::SeqCst) != 0,
-    //         "multiple threads but success all CASs"
-    //     );
-    // }
-
+    println!("memory usage: {}", mem_usage.physical_mem);
     (avg_ops, mem_usage.physical_mem, mem_usage.virtual_mem)
 }
 

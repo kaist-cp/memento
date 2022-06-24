@@ -53,8 +53,8 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     return ax
 
 
-def draw_column(column_name, column_label):
-    for contention in [1, 100, 1000000]:
+def draw_column(column_name, column_label, contentions):
+    for contention in contentions:
         for obj in objs:
             targets = objs[obj]['targets']
 
@@ -128,5 +128,5 @@ def draw_column(column_name, column_label):
             draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
 
 
-draw_column('throughput', 'Throughput (M op/s)')
-draw_column('physical memory usage', 'Memory Usage (M bytes)')
+draw_column('throughput', 'Throughput (M op/s)', [1, 1000, 1000000])
+draw_column('physical memory usage', 'Memory Usage (M bytes)', [1000000])
