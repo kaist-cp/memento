@@ -13,21 +13,24 @@ function show_cfg() {
 function bench() {
     target=$1
     thread=$2
+    contention=$3
 
-    outpath=$out_path/${target}_${git_hash}.csv
+    outpath=$out_path/${target}_contention${contention}_${git_hash}.csv
     poolpath=$PMEM_PATH/${target}.pool
 
     rm -f $poolpath*
-    RUST_MIN_STACK=5073741824 numactl --cpunodebind=0 --membind=0 $dir_path/target/release/cas_bench -f $poolpath -a $target -t $thread -d $TEST_DUR -o $outpath
+    RUST_MIN_STACK=5073741824 numactl --cpunodebind=0 --membind=0 $dir_path/target/release/cas_bench -f $poolpath -a $target -t $thread -c $contention -d $TEST_DUR -o $outpath
 }
 
 function benches() {
     target=$1
-    echo "< Running performance benchmark through using thread 1~${MAX_THREADS} (target: ${target}) >"
-    for t in ${THREADS[@]}; do
-        for ((var=1; var<=$TEST_CNT; var++)); do
-            echo "test $var/$TEST_CNT...";
-            bench $target $t
+    echo "< Bench ${target} >"
+    for c in ${CONTENTIONS[@]}; do
+        for t in ${THREADS[@]}; do
+            for ((var=1; var<=$TEST_CNT; var++)); do
+                echo "test $var/$TEST_CNT...";
+                bench $target $t $c
+            done
         done
     done
     echo "done."
@@ -39,6 +42,7 @@ set -e
 # 1. Setup
 PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
+CONTENTIONS=(1 100 1000000) # TODO: 100M?
 TEST_CNT=5            # test cnt per 1 bench
 TEST_DUR=10           # test duration
 

@@ -53,72 +53,80 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     return ax
 
 
-for obj in objs:
-    targets = objs[obj]['targets']
+def draw_column(column_name, column_label, contentions):
+    for contention in contentions:
+        for obj in objs:
+            targets = objs[obj]['targets']
 
-    # preprocess data
-    data = pd.DataFrame()
-    for t in targets:
+            # preprocess data
+            data = pd.DataFrame()
+            for t in targets:
 
-        data_id = objs[obj]['targets'][t]['data_id']
+                data_id = objs[obj]['targets'][t]['data_id']
 
-        repo = git.Repo(search_parent_directories=True)
-        data_path = ''
-        for commit in repo.iter_commits():
-            data_path = "./out/{}_{}.csv".format(t, commit.hexsha[:7])
-            if exists(data_path):
-                break
-        if data_id != '':
-            data_path = "./out/{}_{}.csv".format(t, data_id)
+                repo = git.Repo(search_parent_directories=True)
+                data_path = ''
+                for commit in repo.iter_commits():
+                    data_path = "./out/{}_contention{}_{}.csv".format(
+                        t, contention, commit.hexsha[:7])
+                    if exists(data_path):
+                        break
+                if data_id != '':
+                    data_path = "./out/{}_contention{}_{}.csv".format(
+                        t, contention, data_id)
 
-        print("read {} for target {}".format(data_path, t))
-        data = data.append(pd.read_csv(data_path))
+                print("read {} for target {}".format(data_path, t))
+                data = data.append(pd.read_csv(data_path))
 
-    # get stddev
-    stddev = data.groupby(['target', 'threads'])['throughput'].std(
-        ddof=0).div(pow(10, 6)).reset_index(name='stddev')
-    stddev = stddev.groupby(['target'])[
-        'stddev'].apply(list).reset_index(name="stddev")
+            # get stddev
+            stddev = data.groupby(['target', 'threads'])[column_name].std(
+                ddof=0).div(pow(10, 6)).reset_index(name='stddev')
+            stddev = stddev.groupby(['target'])[
+                'stddev'].apply(list).reset_index(name="stddev")
 
-    # get throughput
-    data = data.groupby(['target', 'threads'])[
-        'throughput'].mean().div(pow(10, 6)).reset_index(name='throughput')
-    threads = np.array(list(set(data['threads'])))
-    data = data.groupby(['target'])['throughput'].apply(
-        list).reset_index(name="throughput")
+            # get values of "column_name"
+            data = data.groupby(['target', 'threads'])[
+                column_name].mean().div(pow(10, 6)).reset_index(name=column_name)
+            threads = np.array(list(set(data['threads'])))
+            data = data.groupby(['target'])[column_name].apply(
+                list).reset_index(name=column_name)
 
-    # draw graph.
+            # draw graph.
 
-    plot_id = "{}-throughput".format(obj)
-    plot_lines = []
+            plot_id = "{}-{}-ct{}".format(obj, column_name, contention)
+            plot_lines = []
 
-    # Gathering info
-    for t in targets:
-        label = targets[t]['label']
-        shape = targets[t]['marker']
-        color = targets[t]['color']
-        style = targets[t]['style']
-        marker = targets[t]['marker']
-        throughputs = data[(data['target'] == t)]
-        stddev_t = stddev[(stddev['target'] == t)]
+            # Gathering info
+            for t in targets:
+                label = targets[t]['label']
+                shape = targets[t]['marker']
+                color = targets[t]['color']
+                style = targets[t]['style']
+                marker = targets[t]['marker']
+                column_values = data[(data['target'] == t)]
+                stddev_t = stddev[(stddev['target'] == t)]
 
-        if throughputs.empty:
-            continue
-        throughputs = list(throughputs['throughput'])[0]
-        stddev_t = list(stddev_t['stddev'])[0]
+                if column_values.empty:
+                    continue
+                column_values = list(column_values[column_name])[0]
+                stddev_t = list(stddev_t['stddev'])[0]
 
-        if len(threads) > len(throughputs):
-            gap = len(threads)-len(throughputs)
-            throughputs += [None]*gap
-            stddev_t += [0]*gap
-        plot_lines.append({'x': threads, 'y': throughputs,
-                           'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style': style})
+                if len(threads) > len(column_values):
+                    gap = len(threads)-len(column_values)
+                    column_values += [None]*gap
+                    stddev_t += [0]*gap
+                plot_lines.append({'x': threads, 'y': column_values,
+                                   'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style': style})
 
-    # Draw
-    ylabel = 'Throughput (M op/s)'
-    ax = draw('Threads', ylabel,
-              plot_lines, "./out/{}".format(plot_id), 8)
+            # Draw
+            ylabel = column_label
+            ax = draw('Threads', ylabel,
+                      plot_lines, "./out/{}".format(plot_id), 8)
 
-    axLine, axLabel = ax.get_legend_handles_labels()
-    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
-    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
+            axLine, axLabel = ax.get_legend_handles_labels()
+            draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
+            draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
+
+
+draw_column('throughput', 'Throughput (M op/s)', [1, 1000, 1000000])
+draw_column('physical memory usage', 'Memory Usage (M bytes)', [1000000])

@@ -1,41 +1,74 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::{unprotected, Guard};
-use evaluation::common::{DURATION, MAX_THREADS, TOTAL_NOPS};
+use evaluation::common::{DURATION, TOTAL_NOPS};
 use memento::{
-    pepoch::PAtomic,
+    pepoch::{atomic::Pointer, PAtomic, PShared},
     pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj},
     PDefault,
 };
 
-use crate::{TestNOps, TOTAL_NOPS_FAILED};
+use crate::{
+    cas_random_loc, pick_range, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH,
+    NR_THREADS, TOTAL_NOPS_FAILED,
+};
 
-pub struct TestNRLCas {
-    loc: PAtomic<usize>,                              // C: val with tid tag
-    loc_r: [[AtomicUsize; MAX_THREADS]; MAX_THREADS], // R: [N][N]  // TODO: loc 하나당 r 하나
+pub struct NRLLoc {
+    c: PAtomic<Node>,               // C: location (val with tid tag)
+    r: PFixedVec<PFixedVec<usize>>, // R: msgs for location [N][N]
 }
 
-impl Collectable for TestNRLCas {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+impl Collectable for NRLLoc {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
+impl PDefault for NRLLoc {
+    fn pdefault(pool: &PoolHandle) -> Self {
+        Self {
+            c: PAtomic::from(
+                unsafe { PShared::from_usize(0) }
+                    .with_tid(pick_range(1, unsafe { NR_THREADS } + 1)),
+            ),
+            r: PFixedVec::new(unsafe { NR_THREADS } + 1, pool),
+        }
     }
 }
 
+impl PDefault for PFixedVec<usize> {
+    fn pdefault(pool: &PoolHandle) -> Self {
+        PFixedVec::new(unsafe { NR_THREADS } + 1, pool)
+    }
+}
+
+pub struct TestNRLCas {
+    locs: PFixedVec<NRLLoc>,
+}
+
+impl Collectable for TestNRLCas {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
 impl PDefault for TestNRLCas {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            loc: Default::default(),
-            loc_r: array_init::array_init(|_| array_init::array_init(|_| Default::default())),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
         }
-        // todo!("array_init")
     }
 }
 
 impl TestNOps for TestNRLCas {}
 
+impl TestableCas for TestNRLCas {
+    type Input = usize; // tid
+    type Location = NRLLoc;
+
+    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, pool: &PoolHandle) -> bool {
+        nrl_cas(loc, tid, pool)
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct TestNRLCasMmt {
-    value: PAtomic<usize>,
     // TODO: value를 구분하기 위한 per-thread seq num 추가.
     //
     // - "Our recoverable read-write object algorithm assumes that all values
@@ -47,14 +80,6 @@ pub struct TestNRLCasMmt {
     // and does not require special treatment."
 }
 
-impl PDefault for TestNRLCasMmt {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        Self {
-            value: PAtomic::new(0, pool),
-        }
-    }
-}
-
 impl Collectable for TestNRLCasMmt {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
@@ -62,10 +87,15 @@ impl Collectable for TestNRLCasMmt {
 }
 
 impl RootObj<TestNRLCasMmt> for TestNRLCas {
-    fn run(&self, local: &mut TestNRLCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut TestNRLCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
+        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
 
-        let (ops, failed) = self.test_nops(&|tid| nrl_cas(tid, &self, local, pool), tid, duration);
+        let (ops, failed) = self.test_nops(
+            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
+            tid,
+            duration,
+        );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
         let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);
@@ -74,51 +104,60 @@ impl RootObj<TestNRLCasMmt> for TestNRLCas {
 
 const NULL: usize = 0;
 
-fn nrl_cas(tid: usize, shared: &TestNRLCas, local: &TestNRLCasMmt, pool: &PoolHandle) -> bool {
+fn nrl_cas(loc: &NRLLoc, tid: usize, pool: &PoolHandle) -> bool {
     let guard = unsafe { unprotected() };
-    let old = nrl_read(shared, guard, pool);
+    let old = nrl_read(loc, guard);
     let new = tid; // TODO: 다양한 new 값
-    nrl_cas_inner(old, new, tid, shared, local, guard, pool)
+    nrl_cas_inner(old, new, loc, tid, guard, pool)
 }
 
-fn nrl_cas_inner<'g>(
-    old_value: usize,
-    new_value: usize,
+fn nrl_cas_inner(
+    old: usize,
+    new: usize,
+    loc: &NRLLoc,
     tid: usize,
-    shared: &TestNRLCas,
-    local: &TestNRLCasMmt,
     guard: &Guard,
     pool: &PoolHandle,
 ) -> bool {
-    let old_p = shared.loc.load(Ordering::SeqCst, guard);
-    if !old_p.is_null() {
-        let (id, val) = (old_p.tid(), unsafe { old_p.deref(pool) });
-        if *val != old_value {
-            return false;
-        }
-        if id != NULL {
-            shared.loc_r[id][tid].store(*val, Ordering::SeqCst);
-            persist_obj(&shared.loc_r[id][tid], true);
-        }
+    // Check old
+    let old_p = loc.c.load(Ordering::SeqCst, guard);
+    let (id, val) = decompose(old_p);
+    if val != old {
+        return false;
+    }
+    if id != NULL {
+        let r = loc.r.as_ref(guard, pool);
+        let r_id = unsafe { r[id].assume_init_ref() }.as_mut(guard, pool);
+        r_id[tid].write(val);
+        persist_obj(&r_id[tid], true);
     }
 
-    let mut new_p = local.value.load(Ordering::SeqCst, guard); // TODO: seq로 value 구분
-    unsafe { *(new_p.deref_mut(pool)) = new_value };
-
-    let res = shared
-        .loc
+    // CAS
+    let res = loc
+        .c
         .compare_exchange(
             old_p,
-            new_p.with_tid(tid),
+            compose(tid, new),
             Ordering::SeqCst,
             Ordering::SeqCst,
             guard,
         )
         .is_ok();
-    persist_obj(&shared.loc, true);
+    persist_obj(&loc.c, true);
     res
 }
 
-fn nrl_read(shared: &TestNRLCas, guard: &Guard, pool: &PoolHandle) -> usize {
-    *unsafe { shared.loc.load(Ordering::SeqCst, guard).deref(pool) }
+fn nrl_read(loc: &NRLLoc, guard: &Guard) -> usize {
+    let (_id, value) = decompose(loc.c.load(Ordering::SeqCst, guard));
+    value
+}
+
+// from (id, value) to ptr
+fn compose(tid: usize, value: usize) -> PShared<'static, Node> {
+    unsafe { PShared::from_usize(value) }.with_tid(tid) // TODO: seq로 value 구분
+}
+
+// from ptr to (id, value)
+fn decompose(ptr: PShared<Node>) -> (usize, usize) {
+    (ptr.tid(), ptr.with_tid(NULL).into_usize())
 }

@@ -8,10 +8,12 @@ use memento::{
     PDefault,
 };
 
-use crate::{Node, TestNOps, TOTAL_NOPS_FAILED};
+use crate::{
+    cas_random_loc, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, TOTAL_NOPS_FAILED,
+};
 
 pub struct TestCas {
-    loc: PAtomic<Node>,
+    locs: PFixedVec<PAtomic<Node>>,
 }
 
 impl Collectable for TestCas {
@@ -21,14 +23,23 @@ impl Collectable for TestCas {
 }
 
 impl PDefault for TestCas {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(pool: &PoolHandle) -> Self {
         Self {
-            loc: Default::default(),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
         }
     }
 }
 
 impl TestNOps for TestCas {}
+
+impl TestableCas for TestCas {
+    type Location = PAtomic<Node>;
+    type Input = usize; // mmt, tid
+
+    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, _: &PoolHandle) -> bool {
+        cas(loc, tid)
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct TestCasMmt {}
@@ -40,10 +51,15 @@ impl Collectable for TestCasMmt {
 }
 
 impl RootObj<TestCasMmt> for TestCas {
-    fn run(&self, _: &mut TestCasMmt, tid: usize, _: &Guard, _: &PoolHandle) {
+    fn run(&self, _: &mut TestCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
         let duration = unsafe { DURATION };
+        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
 
-        let (ops, failed) = self.test_nops(&|tid| cas(&self.loc, tid), tid, duration);
+        let (ops, failed) = self.test_nops(
+            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
+            tid,
+            duration,
+        );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);
         let _ = TOTAL_NOPS_FAILED.fetch_add(failed, Ordering::SeqCst);

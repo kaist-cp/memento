@@ -24,6 +24,7 @@ use crate::ploc::{aux_bits, compose_aux_bit, NR_AUX_BITS, POS_AUX_BITS};
 use crate::pmem::{
     global_pool, ll::persist_obj, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection,
 };
+use crate::PDefault;
 use crossbeam_epoch::unprotected;
 use crossbeam_utils::atomic::AtomicConsume;
 use std::alloc;
@@ -1109,6 +1110,11 @@ impl<T: Collectable> Collectable for PAtomic<T> {
     }
 }
 
+impl<T: Collectable> PDefault for PAtomic<T> {
+    fn pdefault(_: &PoolHandle) -> Self {
+        Default::default()
+    }
+}
 /// A trait for either `POwned` or `PShared` pointers.
 pub trait Pointer<T: ?Sized + Pointable> {
     /// Returns the machine representation of the pointer.
