@@ -42,7 +42,7 @@ set -e
 # 1. Setup
 PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
-CONTENTIONS=(1 100 1000000) # TODO: 100M?
+CONTENTIONS=(1 1000 1000000)
 TEST_CNT=5            # test cnt per 1 bench
 TEST_DUR=10           # test duration
 
