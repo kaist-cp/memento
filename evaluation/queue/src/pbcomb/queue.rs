@@ -88,8 +88,8 @@ impl Collectable for Node {
 #[derive(Debug)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
-    deactivate: [AtomicBool; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
+    deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
 impl Clone for EStateRec {
@@ -118,8 +118,8 @@ struct EThreadState {
 #[derive(Debug)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
-    deactivate: [AtomicBool; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
+    deactivate: [AtomicBool; MAX_THREADS + 1],
 }
 
 impl Clone for DStateRec {
@@ -350,7 +350,7 @@ impl PBCombQueue {
     fn PBQueueEnq(
         &mut self,
         arg: Data,
-        seq: u32,
+        _seq: u32,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
@@ -479,7 +479,7 @@ impl PBCombQueue {
         sfence();
 
         E_LOCK_VALUE.store(lval, Ordering::SeqCst);
-        self.e_state.store(new_state, Ordering::SeqCst); // global에 박기 (commit point)
+        self.e_state.store(new_state, Ordering::SeqCst); // commit point
 
         persist_obj(&*self.e_state, false);
         sfence();
@@ -494,7 +494,7 @@ impl PBCombQueue {
         );
         // ```
 
-        // per-thread state의 old/new 뒤집기. 위에서 global에 박고 이건 못한채 crash나도 괜찮다. combiner는 어차피 global을 copy해오고 시작함
+        // Flip old/new of per-thread state.
         self.e_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
@@ -519,7 +519,7 @@ impl PBCombQueue {
 
 /// Deq
 impl PBCombQueue {
-    fn PBQueueDnq(&mut self, seq: u32, tid: usize, guard: &Guard, pool: &PoolHandle) -> ReturnVal {
+    fn PBQueueDnq(&mut self, _seq: u32, tid: usize, guard: &Guard, pool: &PoolHandle) -> ReturnVal {
         // request deq
         self.d_request[tid].func = Some(Func::DEQUEUE);
         self.d_request[tid].activate = 1 - self.d_request[tid].activate;

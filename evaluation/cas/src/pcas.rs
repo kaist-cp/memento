@@ -74,7 +74,7 @@ fn pcas(loc: &PAtomic<Node>, tid: usize) -> bool {
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard);
-    let new = unsafe { PShared::from_usize(tid) }; // TODO: 다양한 new 값
+    let new = unsafe { PShared::from_usize(tid) }; // TODO: various new value
     persistent_cas(loc, old, new, guard).is_ok()
 }
 
@@ -96,7 +96,7 @@ fn persistent_cas<'g>(
     new_value: PShared<'g, Node>,
     guard: &'g Guard,
 ) -> Result<PShared<'g, Node>, CompareExchangeError<'g, Node, PShared<'g, Node>>> {
-    let _ = pcas_read(address, guard); // TODO: pcas_read 반환값을 old_value를 넣어주는 게 지당하지 않나? 이러면 낮은 스레드에서는 pcas가 더 높아짐.
+    let _ = pcas_read(address, guard);
 
     // Conduct the CAS with dirty bit set on new value
     address.compare_exchange(
@@ -213,13 +213,13 @@ impl RootObj<TestPMwCasMmt> for TestPMwCas {
 
 fn pmwcas(loc: &PAtomic<Node>, tid: usize, pool: &PoolHandle) -> bool {
     // NOTE: pmwcas github benchmark
-    // 1. descriptor를 할당하고 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L187)
-    // 2. descriptor에 랜덤한 CAS n개를 예약한 후 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L190)
-    // 3. descriptor 실행 (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L194)
+    // 1. Allocate new descriptor (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L187)
+    // 2. Reserve CAS on descriptor (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L190)
+    // 3. Run descriptor (https://github.com/microsoft/pmwcas/blob/master/src/benchmarks/mwcas_benchmark.cc#L194)
 
     let guard = unsafe { unprotected() };
     let old = pmwcas_read(loc, guard, pool);
-    let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: 다양한 new 값
+    let new = unsafe { PShared::<Node>::from_usize(tid) }; // TODO: various new value
 
     // Allocate new descriptor
     let md = POwned::new(PMwCasDescriptor::default(), pool).into_shared(guard);

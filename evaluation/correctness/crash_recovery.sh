@@ -108,10 +108,4 @@ for target in ${TARGETS[@]}; do
         dmsg "ok"
         dmsg "⎿_________________________________________________________________⏌"
     done
-
-    # # TODO: Test thread-crash
-    # for i=0; i<CNT_CRASH; i++ {
-    #    프로세스 p1이 프로세스 p0의 내부 특정 스레드만 죽일 수는 없어보임.
-    #    p0의 내부에서 thread-crash를 일으킬 스레드를 만들어야할듯
-    # }
 done

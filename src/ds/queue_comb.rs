@@ -122,8 +122,8 @@ impl Collectable for Node {
 #[derive(Debug)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
-    deactivate: [AtomicUsize; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
+    deactivate: [AtomicUsize; MAX_THREADS + 1],
 }
 
 impl Clone for EStateRec {
@@ -152,8 +152,8 @@ struct EThreadState {
 #[derive(Debug)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
-    return_val: [Option<ReturnVal>; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
-    deactivate: [AtomicUsize; MAX_THREADS + 1], // TODO: 실험 스레드 수만큼만 동적할당. 그래야 이 state를 persist할 때의 비용 낭비를 줄임
+    return_val: [Option<ReturnVal>; MAX_THREADS + 1],
+    deactivate: [AtomicUsize; MAX_THREADS + 1],
 }
 
 impl Clone for DStateRec {
@@ -295,8 +295,7 @@ impl Queue {
     const EMPTY: usize = usize::MAX;
 
     /// enq
-    /// TODO: 함수명 그냥 enqueue로 바꾸기
-    pub fn PBQueueEnq<const REC: bool>(
+    pub fn comb_enqueue<const REC: bool>(
         &mut self,
         arg: Data,
         enq: &mut Enqueue,
@@ -320,10 +319,10 @@ impl Queue {
         sfence();
 
         // perform
-        self.PerformEnqReq::<REC>(tid, enq, guard, pool)
+        self.perform_enqueue_req::<REC>(tid, enq, guard, pool)
     }
 
-    fn PerformEnqReq<const REC: bool>(
+    fn perform_enqueue_req<const REC: bool>(
         &mut self,
         tid: usize,
         enq: &mut Enqueue,
@@ -392,7 +391,7 @@ impl Queue {
                     }
 
                     // enq
-                    Self::enqueue(&new_state_ref.tail, e_req_qid.arg, guard, pool);
+                    Self::enqueue_raw(&new_state_ref.tail, e_req_qid.arg, guard, pool);
 
                     new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
                     new_state_ref.deactivate[q].store(e_req_qid.activate, Ordering::SeqCst);
@@ -407,7 +406,6 @@ impl Queue {
             }
         }
 
-        // ``` final_persist_func
         let tail_addr = new_state_ref
             .tail
             .load(Ordering::SeqCst, guard)
@@ -421,18 +419,16 @@ impl Queue {
             let node = PPtr::<Node>::from(to_persist.pop().unwrap());
             persist_obj(unsafe { node.deref(pool) }, false);
         }
-        // ```
 
         persist_obj(new_state_ref, false);
         sfence();
 
         E_LOCK_VALUE.store(lval, Ordering::SeqCst);
-        self.e_state.store(new_state, Ordering::SeqCst); // global에 박기 (commit point)
+        self.e_state.store(new_state, Ordering::SeqCst); // commit point
 
         persist_obj(&*self.e_state, false);
         sfence();
 
-        // ``` after_persist_func
         OLD_TAIL.store(
             new_state_ref
                 .tail
@@ -440,9 +436,8 @@ impl Queue {
                 .into_usize(),
             Ordering::SeqCst,
         );
-        // ```
 
-        // per-thread state의 old/new 뒤집기. 위에서 global에 박고 이건 못한채 crash나도 괜찮다. combiner는 어차피 global을 copy해오고 시작함
+        // Flip old/new of per-thread state.
         self.e_thread_state[tid]
             .index
             .store(1 - ind, Ordering::SeqCst);
@@ -451,7 +446,7 @@ impl Queue {
         return new_state_ref.return_val[tid].clone().unwrap();
     }
 
-    fn enqueue(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
+    fn enqueue_raw(tail: &PAtomic<Node>, arg: Data, guard: &Guard, pool: &PoolHandle) {
         let new_node = POwned::new(
             Node {
                 data: arg,
@@ -461,16 +456,15 @@ impl Queue {
         )
         .into_shared(guard);
         let tail_ref = unsafe { tail.load(Ordering::SeqCst, guard).deref_mut(pool) };
-        tail_ref.next.store(new_node, Ordering::SeqCst); // tail.next = new node
-        tail.store(new_node, Ordering::SeqCst); // tail = new node
+        tail_ref.next.store(new_node, Ordering::SeqCst);
+        tail.store(new_node, Ordering::SeqCst);
     }
 }
 
 /// Deq
 impl Queue {
     /// deq
-    /// TODO: 함수명 그냥 dequeue로 바꾸기
-    pub fn PBQueueDeq<const REC: bool>(
+    pub fn comb_dequeue<const REC: bool>(
         &mut self,
         deq: &mut Dequeue,
         tid: usize,
@@ -493,10 +487,10 @@ impl Queue {
         sfence();
 
         // perform
-        self.PerformDeqReq::<REC>(tid, deq, guard, pool)
+        self.perform_dequeue_req::<REC>(tid, deq, guard, pool)
     }
 
-    fn PerformDeqReq<const REC: bool>(
+    fn perform_dequeue_req<const REC: bool>(
         &mut self,
         tid: usize,
         deq: &mut Dequeue,
@@ -580,7 +574,7 @@ impl Queue {
                             .load(Ordering::SeqCst, guard)
                             .into_usize()
                     {
-                        let node = Self::dequeue(&new_state_ref.head, guard, pool);
+                        let node = Self::dequeue_raw(&new_state_ref.head, guard, pool);
                         ret_val = ReturnVal::DeqRetVal(node);
                     } else {
                         ret_val = ReturnVal::DeqRetVal(Self::EMPTY);
@@ -624,7 +618,7 @@ impl Queue {
         return ret_val;
     }
 
-    fn dequeue(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> Data {
+    fn dequeue_raw(head: &PAtomic<Node>, guard: &Guard, pool: &PoolHandle) -> Data {
         let head_shared = head.load(Ordering::SeqCst, guard);
         let head_ref = unsafe { head_shared.deref(pool) };
 
@@ -687,7 +681,7 @@ mod test {
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
-                    let res = queue.PBQueueDeq::<true>(&mut tmp_deq, tid, guard, pool);
+                    let res = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
                     let v = res.deq_retval().unwrap();
                     println!("check last deq v={v}");
                     assert!(v == Queue::EMPTY);
@@ -705,9 +699,10 @@ mod test {
                     for i in 0..COUNT {
                         let val = tid;
                         let _ =
-                            queue.PBQueueEnq::<true>(val, &mut enq_deq.enqs[i], tid, guard, pool);
+                            queue.comb_enqueue::<true>(val, &mut enq_deq.enqs[i], tid, guard, pool);
 
-                        let res = queue.PBQueueDeq::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
+                        let res =
+                            queue.comb_dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         let v = res.deq_retval().unwrap();
                         // println!("deq v={v}");
                         assert!(v != Queue::EMPTY);

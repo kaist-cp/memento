@@ -81,6 +81,6 @@ fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, tid: usize, pool: &PoolH
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard, pool);
-    let new = unsafe { PShared::from_usize(tid) }; // TODO: 다양한 new 값 // TODO: from_usize(tid)로 넣으면 offset과 tid 태그로 섞여서 생성되는데 이래도 괜찮나?
+    let new = unsafe { PShared::from_usize(tid) }; // TODO: various new value
     loc.cas::<false>(old, new, mmt, tid, guard, pool).is_ok()
 }

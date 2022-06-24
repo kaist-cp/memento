@@ -96,7 +96,6 @@ struct queuenode *queuenode_new(uint64_t value)
     {
         node->value = value;
         node->next = NULL;
-        // memcpy(node->value, value, strlen(value)); // TODO: 필요?
     }
     return node;
 }

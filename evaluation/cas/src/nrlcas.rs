@@ -69,7 +69,7 @@ impl TestableCas for TestNRLCas {
 
 #[derive(Default, Debug)]
 pub struct TestNRLCasMmt {
-    // TODO: value를 구분하기 위한 per-thread seq num 추가.
+    // TODO: Add per-thread sequence number to distinguish each value.
     //
     // - "Our recoverable read-write object algorithm assumes that all values
     // written to the object are distinct. This assumption can be easily
@@ -107,7 +107,7 @@ const NULL: usize = 0;
 fn nrl_cas(loc: &NRLLoc, tid: usize, pool: &PoolHandle) -> bool {
     let guard = unsafe { unprotected() };
     let old = nrl_read(loc, guard);
-    let new = tid; // TODO: 다양한 new 값
+    let new = tid; // TODO: various new value
     nrl_cas_inner(old, new, loc, tid, guard, pool)
 }
 
@@ -154,7 +154,7 @@ fn nrl_read(loc: &NRLLoc, guard: &Guard) -> usize {
 
 // from (id, value) to ptr
 fn compose(tid: usize, value: usize) -> PShared<'static, Node> {
-    unsafe { PShared::from_usize(value) }.with_tid(tid) // TODO: seq로 value 구분
+    unsafe { PShared::from_usize(value) }.with_tid(tid) // TODO: distinguish each value using per-thread seq
 }
 
 // from ptr to (id, value)

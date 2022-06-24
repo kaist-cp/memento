@@ -70,7 +70,7 @@ fn cas(loc: &PAtomic<Node>, tid: usize) -> bool {
     let guard = unsafe { unprotected() };
 
     let old = loc.load(Ordering::SeqCst, guard);
-    let new = unsafe { PShared::from_usize(tid) }; // TODO: 다양한 new 값
+    let new = unsafe { PShared::from_usize(tid) }; // TODO: various new value
     loc.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard)
         .is_ok()
 }
