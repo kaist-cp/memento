@@ -73,7 +73,7 @@ impl RootObj<TestPCasMmt> for TestPCas {
 fn pcas(loc: &PAtomic<Node>, tid: usize) -> bool {
     let guard = unsafe { unprotected() };
 
-    let old = loc.load(Ordering::SeqCst, guard);
+    let old = pcas_read(loc, guard);
     let new = unsafe { PShared::from_usize(tid) }; // TODO: various new value
     persistent_cas(loc, old, new, guard).is_ok()
 }
