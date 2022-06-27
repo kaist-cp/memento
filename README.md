@@ -1,4 +1,4 @@
-# Supplementary Materials of "Practical Detectability for Persistent Lock-Free Data Structures"
+# Supplementary Materials of "Composing Detectably Persistent Lock-Free Data Structures"
 
 ## Installation
 
@@ -40,12 +40,12 @@ The directory `src/ds/` contains memento-based data structures supporting exactl
 - `src/ds/elim_stack.rs`: An elimination-backoff stack combining our memento-based treiber stack and exchanger.
 - `src/ds/soft_list.rs` (and `src/ds/soft_hash.rs`): SOFT list (and hash table). We convert original SOFT list (and hash table, respectively.) to one using mementos.
 - `src/ds/clevel.rs`: A memento-based Clevel extensible hash table. We convert original Clevel to one using mementos.
-- `src/ds/queue_pbcomb.rs`: A memento-based PBQueue which is a queue using combining technique. We convert original PBQueue to one using mementos.
+- `src/ds/queue_comb.rs`: A memento-based queue which uses a combining technique. We convert original PBQueue to one using mementos.
 
 #### Safe Memory Reclamation
 
-- Implementation of 'deferred persist' (corresponding to section 6.1 in the extended version)
-- Implementation of 'resumable critical section and de-duplicated retirement' (corresponding to section 6.2 in the extended version)
+- Implementation of 'deferred persist' (corresponding to section 7.1 in the extended version)
+- Implementation of 'resumable critical section and de-duplicated retirement' (corresponding to section 7.2 in the extended version)
 
 #### Others
 

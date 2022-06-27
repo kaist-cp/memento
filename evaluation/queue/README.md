@@ -17,17 +17,17 @@ You can run a single benchamrk,
 
 ```bash
 ./build.sh
-./target/release/bench -f <filepath> -a <target> -k <kind> -t <threads> -o <output>
+./target/release/bench -f <filepath> -a <target> -k <kind> -t <threads> -i <init_nodes> -o <output>
 ```
 
 where
-- `target`: memento_queue (MSQ-mmt-vol at paper), memento_queue_lp (MSQ-mmt-indel at paper), memento_queue_general (MSQ-mmt at paper), memento_queue_comb (CombQ-mmt at paper), durable_queue, log_queue, dss_queue, pbcomb_queue, crndm_queue
+- `target`: memento_queue (MSQ-mmt-vol at paper), memento_queue_lp (MSQ-mmt-indel at paper), memento_queue_general (MSQ-cas-mmt at paper), memento_queue_comb (CombQ-mmt at paper), durable_queue, log_queue, dss_queue, pbcomb_queue, crndm_queue
 - `kind`: pair (enq-deq pair), prob{n} (n% probability enq or 100-n% deq)
 
 For example, following command measure the throughput of `mmt` queue with `pair` workload, when using `16` threads.
 
 ```bash
-./target/release/bench -f /mnt/pmem0/mmt.pool -a memento_queue -k pair -t 16 -o ./out/mmt.csv
+./target/release/bench -f /mnt/pmem0/mmt.pool -a memento_queue -k pair -t 16 -i 0 -o ./out/mmt.csv
 ```
 
 - This creates raw CSV data under `./out/mmt.csv`.
@@ -40,13 +40,22 @@ For detailed usage information,
 ./target/release/bench -h
 ```
 
-### Benchmarking PMDK queue
+### Benchmarking PMDK and Clobber-NVM queue
 
-We implement separate benchmark to evaluate PMDK queue since we could't import PMDK library to our Rust based benchmark. You can run a single benchmark for PMDK queue with following command.
+To run a single benchmark for PMDK and Clobber-NVM queues, you should use separate executables with the following commands.
+
+For PMDK queue:
 
 ```bash
 ./build.sh
-./target/release/bench_cpp <filepath> <target> <kind> <threads> <duration> <init_nodes> <output>
+./target/release/bench_cpp <filepath> <target> <kind> <threads> <duration> <init_nodes> <output> # <target> should be "pmdk_queue"
 ```
 
-Usage is same with above, but `target` only for "pmdk_queue"
+For Clobber-NVM queue:
+
+```bash
+./build.sh
+PMEM_IS_PMEM_FORCE=1 ./src/clobber-nvm/apps/queue/benchmark-clobber -k <kind> -t <threads> -d 8 -s <duration> -i <init_nodes> -o <output>
+```
+
+
