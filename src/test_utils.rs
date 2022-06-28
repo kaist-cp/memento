@@ -278,8 +278,8 @@ pub mod tests {
             // Start test
             let handle = std::thread::spawn(move || {
                 // initialze test variables
-                println!("Initialze test variables (unix_tid: {unix_tid})");
                 let unix_tid = unsafe { libc::gettid() };
+                println!("Initialze test variables (unix_tid: {unix_tid})");
                 lazy_static::initialize(&JOB_FINISHED);
                 lazy_static::initialize(&RESULTS);
                 lazy_static::initialize(&RESULTS_TCRASH);
