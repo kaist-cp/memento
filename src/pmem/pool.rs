@@ -121,27 +121,38 @@ impl PoolHandle {
                                     ));
                                 }
                             }
-
-                            let _d_prev = Dummy {
-                                msg: "created before old_guard",
-                            };
+                            #[cfg(feature = "simulate_tcrash")]
+                            {
+                                let _d_prev = Dummy {
+                                    msg: "created before old_guard",
+                                };
+                            }
 
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                             let guard = unsafe { epoch::old_guard(tid) };
 
-                            let _d_after = Dummy {
-                                msg: "created after old_guard",
-                            };
+                            #[cfg(feature = "simulate_tcrash")]
+                            {
+                                let unix_tid = unsafe { libc::gettid() };
+                                println!("t{tid} pass old_guard (unix_tid: {unix_tid})");
+                                std::io::stdout().flush().unwrap();
+                                let _d_after = Dummy {
+                                    msg: "created after old_guard",
+                                };
+                            }
 
                             self.barrier_wait(tid, nr_memento);
 
                             #[cfg(feature = "simulate_tcrash")]
                             {
                                 let unix_tid = unsafe { libc::gettid() };
+                                println!("t{tid} pass barrier (unix_tid: {unix_tid})");
+                                std::io::stdout().flush().unwrap();
                                 println!(
                                     "t{tid} enable `self panic` for tcrash (unix_tid: {unix_tid})",
                                 );
+                                std::io::stdout().flush().unwrap();
                                 UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
                             }
 
