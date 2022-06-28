@@ -426,9 +426,7 @@ impl Drop for Guard {
         if std::thread::panicking() {
             let unix_tid = unsafe { libc::gettid() };
             println!("[Guard::drop] start (unix_tid: {unix_tid})");
-            eprintln!("[Guard::drop] start (unix_tid: {unix_tid})");
             let _ = std::io::stdout().flush();
-            let _ = std::io::stderr().flush();
         }
         if let Some(local) = unsafe { self.local.as_ref() } {
             // A guard with an owner prevents it from being dropped when a thread panic occurs.

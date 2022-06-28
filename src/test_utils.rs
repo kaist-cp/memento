@@ -229,7 +229,6 @@ pub mod tests {
                     Err(_) => {
                         let unix_tid = unsafe { libc::gettid() };
                         println!("poison mutex (unix_tid: {unix_tid})");
-                        eprintln!("poison mutex (unix_tid: {unix_tid})");
                         self.clear_poison()
                     }
                 }
@@ -263,7 +262,7 @@ pub mod tests {
         {
             // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
             std::panic::set_hook(Box::new(|info| {
-                panic_dmsg(&format!("thread panicked at {}", info.location().unwrap()));
+                panic_dmsg("thread panicked");
             }));
 
             // Install signal handler
@@ -375,9 +374,9 @@ pub mod tests {
     pub fn panic_dmsg(msg: &str) {
         if std::thread::panicking() {
             println!("{msg}");
-            eprintln!("{msg}");
+            // eprintln!("{msg}");
             let _ = std::io::stdout().flush();
-            let _ = std::io::stderr().flush();
+            // let _ = std::io::stderr().flush();
         }
     }
 }

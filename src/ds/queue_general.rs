@@ -416,7 +416,7 @@ mod test {
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<(usize, usize, usize)>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             let unix_tid = unsafe { gettid() };
-            println!("[run] t{tid} start (unix_tid: {unix_tid})");
+            // println!("[run] t{tid} start (unix_tid: {unix_tid})");
             // thread::sleep(std::time::Duration::from_secs_f64(0.5));
 
             match tid {
@@ -425,7 +425,7 @@ mod test {
                     // Wait for all other threads to finish
                     let mut cnt = 0;
                     while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {
-                        if cnt > 1000 {
+                        if cnt > 300 {
                             println!("Stop testing. Maybe there is a bug...");
                             std::process::exit(1);
                         }
@@ -482,7 +482,7 @@ mod test {
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
-            println!("[run] t{tid} finish (unix_tid: {unix_tid})");
+            // println!("[run] t{tid} finish (unix_tid: {unix_tid})");
         }
     }
 

@@ -40,7 +40,7 @@ function init() {
     # create new pool
     rm -rf $PMEM_PATH/*
     # RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
-    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
+    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out
 }
 
 function run() {
@@ -48,7 +48,7 @@ function run() {
     dmsg "run $target"
 
     # RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out
 }
 
 function run_bg() {
@@ -56,7 +56,7 @@ function run_bg() {
     dmsg "run_bg $target"
 
     # RUST_BACKTRACE=0 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
-    RUST_BACKTRACE=0 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out &
 }
 
 # Run test
