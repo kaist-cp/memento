@@ -410,7 +410,7 @@ mod test {
         }
     }
 
-    impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<(usize, usize)>> {
+    impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<(usize, usize, usize)>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
                 // T1: Check the execution results of other threads
