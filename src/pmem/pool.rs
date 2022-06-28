@@ -114,6 +114,7 @@ impl PoolHandle {
                             let guard = unsafe { epoch::old_guard(tid) };
 
                             self.barrier_wait(tid, nr_memento);
+
                             #[cfg(feature = "simulate_tcrash")]
                             {
                                 let unix_tid = unsafe { libc::gettid() };
@@ -155,6 +156,10 @@ impl PoolHandle {
     }
 
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {
+        // To guarantee that Ralloc's thread-local free list `TCache` was initialized before the thread crashed.
+        #[cfg(feature = "simulate_tcrash")]
+        let _dummy_alloc = self.alloc::<usize>();
+
         let _ = BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
             loop {

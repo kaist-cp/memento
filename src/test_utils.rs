@@ -328,6 +328,8 @@ pub mod tests {
     #[cfg(feature = "simulate_tcrash")]
     pub fn kill_random() {
         let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::gettid() };
+        println!("[kill_random] Pick one thread to kill. (unix_pid: {pid}, unix_tid: {tid})");
         loop {
             // it prevents an infinity loop that occurs when the main thread receives a signal right after installing the handler but before spawning child threads.
             if !TEST_STARTED.load(Ordering::SeqCst) {
@@ -342,7 +344,7 @@ pub mod tests {
             let rand_tid = rand::random::<usize>() % UNIX_TIDS.len();
             let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
 
-            if unix_tid > pid {
+            if rand_tid > 1 && unix_tid > pid {
                 println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
                 unsafe {
                     let _ = libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2);
