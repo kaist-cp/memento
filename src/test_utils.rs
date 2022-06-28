@@ -88,7 +88,7 @@ pub(crate) mod ordo {
 pub mod tests {
     use crossbeam_epoch::Guard;
     use std::collections::HashMap;
-    use std::io::Error;
+    use std::io::{Error, Write};
     use std::path::Path;
     use std::sync::atomic::AtomicUsize;
     use std::sync::{Mutex, MutexGuard};
@@ -101,7 +101,7 @@ pub mod tests {
     #[cfg(feature = "simulate_tcrash")]
     use {
         crate::ploc::NR_MAX_THREADS,
-        libc::{gettid, size_t, SIGUSR1, SIGUSR2},
+        libc::{size_t, SIGUSR1, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32, Ordering},
     };
 
@@ -357,7 +357,8 @@ pub mod tests {
     /// child thread handler: self panic
     #[cfg(feature = "simulate_tcrash")]
     pub fn self_panic(_signum: usize) {
-        println!("[self_panic] {}", unsafe { gettid() });
-        panic!("[self_panic] {}", unsafe { gettid() });
+        // NOTE: Don't put the msg in panic macro. It often makes the thread blocked for unknown reason.
+        println!("[self_panic] {}", unsafe { libc::gettid() });
+        panic!();
     }
 }
