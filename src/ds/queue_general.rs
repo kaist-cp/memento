@@ -417,7 +417,6 @@ mod test {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             let unix_tid = unsafe { gettid() };
             println!("[run] t{tid} start (unix_tid: {unix_tid})");
-            std::io::stdout().flush().unwrap();
             // thread::sleep(std::time::Duration::from_secs_f64(0.5));
 
             match tid {
@@ -484,7 +483,6 @@ mod test {
                 }
             }
             println!("[run] t{tid} finish (unix_tid: {unix_tid})");
-            std::io::stdout().flush().unwrap();
         }
     }
 

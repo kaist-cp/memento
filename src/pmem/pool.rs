@@ -136,7 +136,6 @@ impl PoolHandle {
                             {
                                 let unix_tid = unsafe { libc::gettid() };
                                 println!("t{tid} pass old_guard (unix_tid: {unix_tid})");
-                                std::io::stdout().flush().unwrap();
                                 let _d_after = Dummy {
                                     msg: "created after old_guard",
                                 };
@@ -147,12 +146,9 @@ impl PoolHandle {
                             #[cfg(feature = "simulate_tcrash")]
                             {
                                 let unix_tid = unsafe { libc::gettid() };
-                                println!("t{tid} pass barrier (unix_tid: {unix_tid})");
-                                std::io::stdout().flush().unwrap();
                                 println!(
-                                    "t{tid} enable `self panic` for tcrash (unix_tid: {unix_tid})",
+                                    "t{tid} pass barrier and enable `self panic` for tcrash (unix_tid: {unix_tid})",
                                 );
-                                std::io::stdout().flush().unwrap();
                                 UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
                             }
 

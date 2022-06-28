@@ -32,9 +32,13 @@ while true; do
         # Save log
         cp -r $src $dest_dir/bug$bug_cnt
         cp -r $SCRIPT_DIR/repeat.out $dest_dir/bug$bug_cnt/repeat.out
+
+        # clear
         rm $SCRIPT_DIR/repeat.out
+        pkill -9 memento*
 
         # Next
+        i=0
         bug_cnt=$(($bug_cnt+1))
     fi
 done
