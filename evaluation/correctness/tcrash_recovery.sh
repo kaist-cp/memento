@@ -6,8 +6,8 @@ FEATURE="default"
 # TARGETS=("clevel" "elim_stack" "exchanger" "queue_comb" "queue_general" "queue_lp" "queue" "soft_hash" "soft_list" "stack" "treiber_stack")
 # TARGETS=("queue" "queue_general" "queue_lp")    # Test target
 TARGETS=("queue_general")    # Test target
-CNT_NORMAL=1                                    # Number of normal test
-CNT_CRASH=10                                    # Number of crash test
+CNT_NORMAL=1                                   # Number of normal test
+CNT_CRASH=100                                    # Number of crash test
 
 # Initialize
 set -e
@@ -16,8 +16,14 @@ OUT_PATH="$SCRIPT_DIR/out_threadcrash"
 rm -rf $OUT_PATH
 mkdir -p $OUT_PATH
 cargo clean
-cargo build --tests --release --features=simulate_tcrash
-rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
+
+# Use original std
+# cargo build --tests --release --features=simulate_tcrash
+# rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
+
+# Use Customized std
+cargo +nightly-2022-05-26 build --tests --release --features=simulate_tcrash -Z build-std --target=x86_64-unknown-linux-gnu
+rm -f $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-*.d
 
 function dmsg() {
     msg=$1
@@ -33,21 +39,24 @@ function init() {
 
     # create new pool
     rm -rf $PMEM_PATH/*
-    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
+    # RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
+    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
 function run() {
     target=$1
     dmsg "run $target"
 
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
+    # RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
 function run_bg() {
     target=$1
     dmsg "run_bg $target"
 
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
+    # RUST_BACKTRACE=0 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
+    RUST_BACKTRACE=0 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
 }
 
 # Run test

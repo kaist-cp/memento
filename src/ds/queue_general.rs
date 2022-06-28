@@ -381,9 +381,8 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for QueueGeneral<T> {}
 
 #[cfg(test)]
 mod test {
-    use std::thread;
-
     use libc::gettid;
+    use std::{io::Write, thread};
 
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
@@ -484,7 +483,7 @@ mod test {
                 }
             }
             println!("[run] t{tid} finish (unix_tid: {unix_tid})");
-            // std::io::stdout().flush().unwrap();
+            std::io::stdout().flush().unwrap();
         }
     }
 
