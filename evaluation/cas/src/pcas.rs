@@ -126,7 +126,7 @@ const FAILED: usize = 4;
 
 #[derive(Debug, Default, Clone)]
 struct WordDescriptor {
-    address: PPtr<PAtomic<PMwCasDescriptor>>, // TODO: type 정리: 현재 `PMwCasDescriptor`는 더미타입. 실제 로직상 address는 `Node`, `WordDescriptor`, `PMwCasDescriptor` 3가지를 다 가리킬 수 있음.
+    address: PPtr<PAtomic<PMwCasDescriptor>>, // Note: `PMwCasDescriptor` is dummy type. `address` can point to one of `Node`, `WordDescriptor`, or `PMwCasDescriptor`.
     old_value: PShared<'static, Node>,
     new_value: PShared<'static, Node>,
     mwcas_descriptor: PShared<'static, PMwCasDescriptor>,

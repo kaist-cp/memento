@@ -195,7 +195,7 @@ pub mod tests {
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
         pub static ref RESULTS: [AtomicUsize; 1024] =
-            array_init::array_init(|_| AtomicUsize::new(0)); // TODO: 모든 테스트를 RESULTS_TCRASH로 대체하고 이 변수는 삭제
+            array_init::array_init(|_| AtomicUsize::new(0)); // TODO: Replace it with `RESULTS_TCRASH` for all tests and removes it.
         pub static ref RESULTS_TCRASH: [Mutex<HashSet<usize>>; 1024] =
             array_init::array_init(|_| Mutex::new(HashSet::new()));
     }
