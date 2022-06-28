@@ -37,9 +37,4 @@ while true; do
         # Next
         bug_cnt=$(($bug_cnt+1))
     fi
-
-    # sleep 0.1
-    if [ $i -eq 10 ]; then
-        break
-    fi
 done
