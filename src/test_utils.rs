@@ -209,27 +209,64 @@ pub mod tests {
     }
 
     /// run test op
+    #[allow(box_pointers)]
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
         O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
-        P: AsRef<Path>,
+        P: AsRef<Path> + Send + Sync + 'static,
     {
-        // initialze test variables
-        lazy_static::initialize(&JOB_FINISHED);
-        lazy_static::initialize(&RESULTS);
-        lazy_static::initialize(&RESULTS_TCRASH);
-        #[cfg(feature = "simulate_tcrash")]
+        #[cfg(not(feature = "simulate_tcrash"))]
         {
-            lazy_static::initialize(&UNIX_TIDS);
-            lazy_static::initialize(&TEST_STARTED);
-            lazy_static::initialize(&TEST_FINISHED);
-
-            println!("Install `kill_random` and `self_panic` handler");
-            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
-            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
+            run_test_inner::<O, M, P>(pool_name, pool_len, nr_memento);
         }
 
+        #[cfg(feature = "simulate_tcrash")]
+        {
+            // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
+            std::panic::set_hook(Box::new(|info| {
+                panic_dmsg(&format!("thread panicked at {}", info.location().unwrap()));
+            }));
+
+            // Install signal handler
+            println!(
+                "Install `kill_random` and `self_panic` handler (unix_tid: {}, unix_pid: {})",
+                unsafe { libc::gettid() },
+                unsafe { libc::getpid() }
+            );
+            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
+            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
+
+            // Start test
+            let handle = std::thread::spawn(move || {
+                // initialze test variables
+                println!("Initialze test variables (unix_tid: {unix_tid})");
+                let unix_tid = unsafe { libc::gettid() };
+                lazy_static::initialize(&JOB_FINISHED);
+                lazy_static::initialize(&RESULTS);
+                lazy_static::initialize(&RESULTS_TCRASH);
+                lazy_static::initialize(&UNIX_TIDS);
+                lazy_static::initialize(&TEST_STARTED);
+                lazy_static::initialize(&TEST_FINISHED);
+
+                TEST_STARTED.store(true, Ordering::SeqCst);
+
+                println!("Start test (unix_tid: {unix_tid})");
+                run_test_inner::<O, M, P>(pool_name, pool_len, nr_memento);
+                println!("Finish test (unix_tid: {unix_tid})");
+
+                TEST_FINISHED.store(true, Ordering::SeqCst);
+            });
+            let _ = handle.join();
+        }
+    }
+
+    pub fn run_test_inner<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
+    where
+        O: RootObj<M> + Send + Sync + 'static,
+        M: Collectable + Default + Send + Sync,
+        P: AsRef<Path> + Send + Sync + 'static,
+    {
         let filepath = get_test_abs_path(pool_name);
 
         // remove pool
@@ -247,9 +284,6 @@ pub mod tests {
             println!("[run_test] execute");
             pool_handle.execute::<O, M>();
         }
-
-        #[cfg(feature = "simulate_tcrash")]
-        TEST_FINISHED.store(true, Ordering::SeqCst);
     }
 
     /// main thread handler: kill random child thread

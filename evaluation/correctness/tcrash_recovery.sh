@@ -72,7 +72,9 @@ for target in ${TARGETS[@]}; do
     dmsg "avgtest: $avgtest ns"
 
     # Test thread crash and recovery run.
+    crash_min=$(($avgtest / 3))        # minimum crash time
     crash_max=$avgtest # maximum crash time
+    dmsg "minimum crash time=$crash_min ns"
     dmsg "maximum crash time=$crash_max ns"
     for i in $(seq 1 $CNT_CRASH); do
         dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
@@ -86,14 +88,14 @@ for target in ${TARGETS[@]}; do
 
         # thread crash
         # TODO: many times?
-        crashtime=$(((RANDOM * RANDOM * RANDOM) % $crash_max + ($avgtest / 4)))
+        crashtime=$(shuf -i $crash_min-$crash_max -n 1)
         while true; do
             current=$(date +%s%N)
             elapsed=$(($current-$start))
 
             # kill random thread after random crash time
             if [ $elapsed -gt $crashtime ]; then
-                kill -10 $pid_bg || true
+                $SCRIPT_DIR/tgkill -10 $pid_bg $pid_bg || true
                 dmsg "kill random thread after $elapsed ns"
                 break
             fi

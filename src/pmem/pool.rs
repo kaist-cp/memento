@@ -15,16 +15,14 @@ use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
+use crate::test_utils::tests::panic_dmsg;
 use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use std::thread;
 
 #[cfg(feature = "simulate_tcrash")]
-use {
-    crate::test_utils::tests::{TEST_STARTED, UNIX_TIDS},
-    libc::gettid,
-};
+use crate::test_utils::tests::UNIX_TIDS;
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
@@ -105,29 +103,25 @@ impl PoolHandle {
                 unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
 
             let th = thread::spawn(move || {
-                #[cfg(feature = "simulate_tcrash")]
-                TEST_STARTED.store(true, Ordering::SeqCst);
-
                 let h = thread::spawn(move || {
                     loop {
                         self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
 
                         // run memento
                         let handler = thread::spawn(move || {
-                            #[cfg(feature = "simulate_tcrash")]
-                            {
-                                let unix_tid = unsafe { gettid() };
-                                println!(
-                                    "t{tid} enable `self panic` for tcrash (unix_tid: {unix_tid})",
-                                );
-                                UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
-                            }
-
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                             let guard = unsafe { epoch::old_guard(tid) };
 
                             self.barrier_wait(tid, nr_memento);
+                            #[cfg(feature = "simulate_tcrash")]
+                            {
+                                let unix_tid = unsafe { libc::gettid() };
+                                println!(
+                                    "t{tid} enable `self panic` for tcrash (unix_tid: {unix_tid})",
+                                );
+                                UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
+                            }
 
                             let _ = root_obj.run(root_mmt, tid, &guard, self);
 
