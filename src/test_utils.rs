@@ -87,11 +87,11 @@ pub(crate) mod ordo {
 #[doc(hidden)]
 pub mod tests {
     use crossbeam_epoch::Guard;
-    use std::collections::HashSet;
+    use std::collections::HashMap;
     use std::io::Error;
     use std::path::Path;
     use std::sync::atomic::AtomicUsize;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, MutexGuard};
     use tempfile::NamedTempFile;
 
     use crate::pmem::pool::*;
@@ -190,14 +190,52 @@ pub mod tests {
         }
     }
 
+    // #[allow(warnings)]
+    // pub(crate) fn calculate_hash<T: Hash>(t: &T) -> usize {
+    //     let mut s = DefaultHasher::new();
+    //     t.hash(&mut s);
+    //     s.finish() as usize
+    // }
+
+    #[allow(warnings)]
+    pub(crate) fn get_value(tid: usize, seq: usize) -> usize {
+        seq * 100 + tid
+    }
+
     use lazy_static::lazy_static;
 
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
         pub static ref RESULTS: [AtomicUsize; 1024] =
+<<<<<<< HEAD
             array_init::array_init(|_| AtomicUsize::new(0)); // TODO: Replace it with `RESULTS_TCRASH` for all tests and removes it.
         pub static ref RESULTS_TCRASH: [Mutex<HashSet<usize>>; 1024] =
             array_init::array_init(|_| Mutex::new(HashSet::new()));
+=======
+            array_init::array_init(|_| AtomicUsize::new(0)); // TODO: 모든 테스트를 RESULTS_TCRASH로 대체하고 이 변수는 삭제
+        pub static ref RESULTS_TCRASH: Mutex<HashMap<(usize, usize), usize>> =
+            Mutex::new(HashMap::new()); // (tid, op seq) -> value
+    }
+
+    pub trait Poisonable<T> {
+        fn lock_poisonable(&self) -> MutexGuard<'_, T>;
+    }
+
+    impl<T> Poisonable<T> for Mutex<T> {
+        fn lock_poisonable(&self) -> MutexGuard<'_, T> {
+            loop {
+                match self.lock() {
+                    Ok(guard) => return guard,
+                    Err(_) => {
+                        let unix_tid = unsafe { libc::gettid() };
+                        println!("poison mutex (unix_tid: {unix_tid})");
+                        eprintln!("poison mutex (unix_tid: {unix_tid})");
+                        self.clear_poison()
+                    }
+                }
+            }
+        }
+>>>>>>> queue_general tcrash: overwrite시엔 결과 같아야함.
     }
 
     #[cfg(feature = "simulate_tcrash")]

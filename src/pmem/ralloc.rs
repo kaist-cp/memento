@@ -160,6 +160,14 @@ pub trait Collectable: Sized {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle);
 }
 
+impl<T: Collectable, U: Collectable, Z: Collectable> Collectable for (T, U, Z) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        T::filter(&mut s.0, tid, gc, pool);
+        U::filter(&mut s.1, tid, gc, pool);
+        Z::filter(&mut s.2, tid, gc, pool);
+    }
+}
+
 impl<T: Collectable, U: Collectable> Collectable for (T, U) {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         T::filter(&mut s.0, tid, gc, pool);
