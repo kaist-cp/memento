@@ -354,11 +354,30 @@ pub mod tests {
         }
     }
 
+    struct A {}
+    impl Drop for A {
+        fn drop(&mut self) {
+            panic_dmsg(&format!("A::drop (unix_tid: {})", unsafe {
+                libc::gettid()
+            }));
+        }
+    }
     /// child thread handler: self panic
     #[cfg(feature = "simulate_tcrash")]
     pub fn self_panic(_signum: usize) {
+        let _a = A {};
+        let _b = A {};
         // NOTE: Don't put the msg in panic macro. It often makes the thread blocked for unknown reason.
         println!("[self_panic] {}", unsafe { libc::gettid() });
         panic!();
+    }
+
+    pub fn panic_dmsg(msg: &str) {
+        if std::thread::panicking() {
+            println!("{msg}");
+            eprintln!("{msg}");
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+        }
     }
 }

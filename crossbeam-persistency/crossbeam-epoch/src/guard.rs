@@ -1,5 +1,6 @@
 use core::fmt;
 use core::mem;
+use std::io::Write;
 
 use scopeguard::defer;
 
@@ -422,6 +423,13 @@ impl Guard {
 impl Drop for Guard {
     #[inline]
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            let unix_tid = unsafe { libc::gettid() };
+            println!("[Guard::drop] start (unix_tid: {unix_tid})");
+            eprintln!("[Guard::drop] start (unix_tid: {unix_tid})");
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+        }
         if let Some(local) = unsafe { self.local.as_ref() } {
             // A guard with an owner prevents it from being dropped when a thread panic occurs.
             if local.owner().is_some() && std::thread::panicking() {

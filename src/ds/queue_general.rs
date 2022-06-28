@@ -381,6 +381,10 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for QueueGeneral<T> {}
 
 #[cfg(test)]
 mod test {
+    use std::thread;
+
+    use libc::gettid;
+
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
@@ -412,13 +416,30 @@ mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<(usize, usize, usize)>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let unix_tid = unsafe { gettid() };
+            // println!("[run] t{tid} start (unix_tid: {unix_tid})");
+            // thread::sleep(std::time::Duration::from_secs_f64(0.5));
+
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
                     // Wait for all other threads to finish
+                    let mut cnt = 0;
                     while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {
+                        if cnt > 100 {
+                            println!("Stop testing. Maybe there is a bug...");
+                            std::process::exit(1);
+                        }
+
+                        println!(
+                            "[run] t{tid} JOB_FINISHED: {} (unix_tid: {unix_tid}, cnt: {cnt})",
+                            JOB_FINISHED.load(Ordering::SeqCst)
+                        );
                         thread::sleep(std::time::Duration::from_secs_f64(0.1));
+                        cnt += 1;
                     }
+
+                    println!("[run] t{tid} pass the busy lock (unix_tid: {unix_tid})");
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<(usize, usize, usize)>::default();
@@ -462,6 +483,8 @@ mod test {
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
+            println!("[run] t{tid} finish (unix_tid: {unix_tid})");
+            // std::io::stdout().flush().unwrap();
         }
     }
 

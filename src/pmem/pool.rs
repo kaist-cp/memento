@@ -4,7 +4,7 @@
 
 use std::alloc::Layout;
 use std::ffi::{c_void, CString};
-use std::io::Error;
+use std::io::{Error, Write};
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -109,9 +109,30 @@ impl PoolHandle {
 
                         // run memento
                         let handler = thread::spawn(move || {
+                            struct Dummy {
+                                msg: &'static str,
+                            }
+                            impl Drop for Dummy {
+                                fn drop(&mut self) {
+                                    panic_dmsg(&format!(
+                                        "Dummy::drop (msg: {}, unix_tid: {})",
+                                        self.msg,
+                                        unsafe { libc::gettid() }
+                                    ));
+                                }
+                            }
+
+                            let _d_prev = Dummy {
+                                msg: "created before old_guard",
+                            };
+
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                             let guard = unsafe { epoch::old_guard(tid) };
+
+                            let _d_after = Dummy {
+                                msg: "created after old_guard",
+                            };
 
                             self.barrier_wait(tid, nr_memento);
 
@@ -415,13 +436,17 @@ impl Pool {
 
     #[inline]
     fn alloc(&self, size: usize) -> *mut u8 {
+        panic_dmsg("[pool::alloc] start");
         let addr_abs = unsafe { RP_malloc(size as u64) };
+        panic_dmsg("[pool::alloc] finish");
         addr_abs as *mut u8
     }
 
     #[inline]
     fn free(&self, ptr: *mut u8) {
+        panic_dmsg("[pool::free] start");
         unsafe { RP_free(ptr as *mut c_void) }
+        panic_dmsg("[pool::free] finish");
     }
 }
 
