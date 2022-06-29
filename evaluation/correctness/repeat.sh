@@ -21,7 +21,6 @@ while true; do
     $SCRIPT_DIR/tcrash_recovery.sh
 
     ext=$?
-    dmsg "ext: $ext"
     if [ $ext -ne 0 ]; then
         dmsg "exit with code $ext!"
 

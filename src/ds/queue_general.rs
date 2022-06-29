@@ -482,7 +482,6 @@ mod test {
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
-            // println!("[run] t{tid} finish (unix_tid: {unix_tid})");
         }
     }
 

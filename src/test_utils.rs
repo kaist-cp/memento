@@ -94,8 +94,8 @@ pub mod tests {
     use std::sync::{Mutex, MutexGuard};
     use tempfile::NamedTempFile;
 
-    use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
+    use crate::pmem::{pool::*, rdtscp};
     use crate::PDefault;
 
     #[cfg(feature = "simulate_tcrash")]
@@ -228,7 +228,7 @@ pub mod tests {
                     Ok(guard) => return guard,
                     Err(_) => {
                         let unix_tid = unsafe { libc::gettid() };
-                        println!("poison mutex (unix_tid: {unix_tid})");
+                        // println!("poison mutex (unix_tid: {unix_tid})");
                         self.clear_poison()
                     }
                 }
@@ -262,15 +262,16 @@ pub mod tests {
         {
             // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
             std::panic::set_hook(Box::new(|info| {
-                panic_dmsg("thread panicked");
+                // panic_dmsg("thread panicked");
+                // panic_dmsg(&format!("thread panicked at {}", info.location().unwrap(),));
             }));
 
             // Install signal handler
-            println!(
-                "Install `kill_random` and `self_panic` handler (unix_tid: {}, unix_pid: {})",
-                unsafe { libc::gettid() },
-                unsafe { libc::getpid() }
-            );
+            // println!(
+            //     "Install `kill_random` and `self_panic` handler (unix_tid: {}, unix_pid: {})",
+            //     unsafe { libc::gettid() },
+            //     unsafe { libc::getpid() }
+            // );
             let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
             let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
 
@@ -278,7 +279,7 @@ pub mod tests {
             let handle = std::thread::spawn(move || {
                 // initialze test variables
                 let unix_tid = unsafe { libc::gettid() };
-                println!("Initialze test variables (unix_tid: {unix_tid})");
+                // println!("Initialze test variables (unix_tid: {unix_tid})");
                 lazy_static::initialize(&JOB_FINISHED);
                 lazy_static::initialize(&RESULTS);
                 lazy_static::initialize(&RESULTS_TCRASH);
@@ -288,9 +289,9 @@ pub mod tests {
 
                 TEST_STARTED.store(true, Ordering::SeqCst);
 
-                println!("Start test (unix_tid: {unix_tid})");
+                // println!("Start test (unix_tid: {unix_tid})");
                 run_test_inner::<O, M, P>(pool_name, pool_len, nr_memento);
-                println!("Finish test (unix_tid: {unix_tid})");
+                // println!("Finish test (unix_tid: {unix_tid})");
 
                 TEST_FINISHED.store(true, Ordering::SeqCst);
             });
@@ -316,9 +317,10 @@ pub mod tests {
         // run root memento(s)
         let execute = std::env::var("POOL_EXECUTE");
         if execute.is_ok() && execute.unwrap() == "0" {
-            println!("[run_test] no execute");
+            // println!("[run_test] no execute");
         } else {
-            println!("[run_test] execute");
+            // println!("[run_test] execute");
+            // std::io::stdout().flush();
             pool_handle.execute::<O, M>();
         }
     }
@@ -328,24 +330,25 @@ pub mod tests {
     pub fn kill_random() {
         let pid = unsafe { libc::getpid() };
         let tid = unsafe { libc::gettid() };
-        println!("[kill_random] Pick one thread to kill. (unix_pid: {pid}, unix_tid: {tid})");
+        // println!("[kill_random] Pick one thread to kill. (unix_pid: {pid}, unix_tid: {tid})");
         loop {
             // it prevents an infinity loop that occurs when the main thread receives a signal right after installing the handler but before spawning child threads.
             if !TEST_STARTED.load(Ordering::SeqCst) {
-                println!("[kill_random] No one killed. Because test is not yet started.");
+                // println!("[kill_random] No one killed. Because test is not yet started.");
                 return;
             }
             if TEST_FINISHED.load(Ordering::SeqCst) {
-                println!("[kill_random] No one killed. Because test was already finished.");
+                // println!("[kill_random] No one killed. Because test was already finished.");
                 return;
             }
 
-            let rand_tid = rand::random::<usize>() % UNIX_TIDS.len();
+            let rand_tid = rdtscp() as usize % UNIX_TIDS.len();
             let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
 
             if rand_tid > 1 && unix_tid > pid {
-                println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
+                // println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
                 unsafe {
+                    // TODO: https://man7.org/linux/man-pages/man7/signal-safety.7.html. pthread_kill로 바꿔보기
                     let _ = libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2);
                 };
                 return;
@@ -353,30 +356,36 @@ pub mod tests {
         }
     }
 
-    struct A {}
-    impl Drop for A {
-        fn drop(&mut self) {
-            panic_dmsg(&format!("A::drop (unix_tid: {})", unsafe {
-                libc::gettid()
-            }));
-        }
-    }
-    /// child thread handler: self panic
+    /// child thread handler: self pani
+    #[allow(box_pointers)]
     #[cfg(feature = "simulate_tcrash")]
     pub fn self_panic(_signum: usize) {
-        let _a = A {};
-        let _b = A {};
         // NOTE: Don't put the msg in panic macro. It often makes the thread blocked for unknown reason.
-        println!("[self_panic] {}", unsafe { libc::gettid() });
-        panic!();
+        // println!("[pthread_exit] {}", unsafe { libc::gettid() });
+        // panic!();
+        // TODO: https://man7.org/linux/man-pages/man7/signal-safety.7.html
+        let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
+        // let b = unsafe { libc::pthread_cancel(0)};
+        // std::panic::resume_unwind(Box::new(0));
     }
 
     pub fn panic_dmsg(msg: &str) {
         if std::thread::panicking() {
-            println!("{msg}");
+            // println!("{msg}");
             // eprintln!("{msg}");
-            let _ = std::io::stdout().flush();
+            // let _ = std::io::stdout().flush();
             // let _ = std::io::stderr().flush();
+        }
+    }
+
+    struct A {}
+    impl Drop for A {
+        fn drop(&mut self) {
+            // panic_dmsg(&format!("A::drop (unix_tid: {})", unsafe {
+            //     libc::gettid()
+            // }));
+
+            // println!("A::drop (unix_tid: {})", unsafe { libc::gettid() });
         }
     }
 }

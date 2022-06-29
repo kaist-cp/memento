@@ -108,67 +108,88 @@ impl PoolHandle {
                         self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
 
                         // run memento
-                        let handler = thread::spawn(move || {
-                            struct Dummy {
-                                msg: &'static str,
-                            }
-                            impl Drop for Dummy {
-                                fn drop(&mut self) {
-                                    panic_dmsg(&format!(
-                                        "Dummy::drop (msg: {}, unix_tid: {})",
-                                        self.msg,
-                                        unsafe { libc::gettid() }
-                                    ));
-                                }
-                            }
-                            #[cfg(feature = "simulate_tcrash")]
-                            {
-                                let _d_prev = Dummy {
-                                    msg: "created before old_guard",
-                                };
-                            }
+                        struct Args<O: 'static> {
+                            m_addr: usize,
+                            tid: usize,
+                            nr_memento: usize,
+                            pool_handle: &'static PoolHandle,
+                            root_obj: &'static O,
+                        }
 
+                        extern "C" fn thread_start<O, M>(arg: *mut c_void) -> *mut c_void
+                        where
+                            O: RootObj<M> + Send + Sync + 'static,
+                            M: Collectable + Default + Send + Sync,
+                        {
+                            // Decompose arguments
+                            let args = unsafe { (arg as *mut Args<O>).as_mut() }.unwrap();
+                            let (m_addr, tid, nr_memento, pool_handle, root_obj) = (
+                                args.m_addr,
+                                args.tid,
+                                args.nr_memento,
+                                args.pool_handle,
+                                args.root_obj,
+                            );
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
+                            // Old Guard
                             let guard = unsafe { epoch::old_guard(tid) };
 
+                            // Barrier
+                            pool_handle.barrier_wait(tid, nr_memento);
+
+                            // Run
                             #[cfg(feature = "simulate_tcrash")]
                             {
-                                let unix_tid = unsafe { libc::gettid() };
-                                println!("t{tid} pass old_guard (unix_tid: {unix_tid})");
-                                let _d_after = Dummy {
-                                    msg: "created after old_guard",
-                                };
+                                // println!("t{tid} pass barrier and enable `self panic` for tcrash (unix_tid: {unix_tid})");
+                                UNIX_TIDS[tid].store(unsafe { libc::gettid() }, Ordering::SeqCst);
                             }
 
-                            self.barrier_wait(tid, nr_memento);
-
-                            #[cfg(feature = "simulate_tcrash")]
-                            {
-                                let unix_tid = unsafe { libc::gettid() };
-                                println!(
-                                    "t{tid} pass barrier and enable `self panic` for tcrash (unix_tid: {unix_tid})",
-                                );
-                                UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
-                            }
-
-                            let _ = root_obj.run(root_mmt, tid, &guard, self);
+                            let _ = root_obj.run(root_mmt, tid, &guard, pool_handle);
 
                             #[cfg(feature = "simulate_tcrash")]
                             {
                                 // Prevent being selected by `kill_random` on the main thread
                                 UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
                             }
-                        });
+                            ptr::null_mut()
+                        }
 
-                        // Exit on success, re-run memento on failure (i.e. crash)
+                        let mut native: libc::pthread_t = unsafe { mem::zeroed() };
+                        let attr: libc::pthread_attr_t = unsafe { mem::zeroed() };
+                        let mut args = Args {
+                            m_addr,
+                            tid,
+                            nr_memento,
+                            pool_handle: self,
+                            root_obj,
+                        };
+
+                        // Create
+                        unsafe {
+                            let _err = libc::pthread_create(
+                                &mut native,
+                                &attr,
+                                thread_start::<O, M>,
+                                &mut args as *const _ as *mut _,
+                            );
+                        }
+
+                        // Join: Exit on success, re-run memento on failure (i.e. crash)
                         // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
-                        match handler.join() {
-                            Ok(_) => break,
-                            Err(_) => {
+                        let mut status = ptr::null_mut();
+                        let _ = unsafe { libc::pthread_join(native, &mut status) };
+                        match status as *const _ as usize {
+                            0 => break,
+                            _ => {
                                 thread::sleep(std::time::Duration::from_secs(1));
                                 println!("PANIC: Root memento No.{} re-executed.", tid);
-                                // std::process::exit(1);
+
+                                #[cfg(feature = "simulate_tcrash")]
+                                if tid == 1 {
+                                    println!("Stop testing becuase Thread 1 panicked. Maybe there is a assertion bug...");
+                                    std::process::exit(2);
+                                }
                             }
                         }
                     }
