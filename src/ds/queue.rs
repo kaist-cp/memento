@@ -412,7 +412,7 @@ mod test {
                     // Wait for all other threads to finish
                     let unix_tid = unsafe { gettid() };
                     let mut cnt = 0;
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {
+                    while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {
                         if cnt > 300 {
                             println!("Stop testing. Maybe there is a bug...");
                             std::process::exit(1);

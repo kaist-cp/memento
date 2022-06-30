@@ -384,10 +384,7 @@ mod test {
             match tid {
                 // T1: Check results of other threads
                 1 => {
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {
-                        // println!("JOB_FINISHED: {}", JOB_FINISHED.load(Ordering::SeqCst));
-                        std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
-                    }
+                    while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {}
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();

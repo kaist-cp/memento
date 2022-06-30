@@ -110,7 +110,7 @@ pub(crate) mod tests {
                 // T1: Check the execution results of other threads
                 1 => {
                     // Wait for all other threads to finish
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+                    while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {}
 
                     // Check empty
                     let mut tmp_pop = S::Pop::default();

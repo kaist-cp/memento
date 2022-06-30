@@ -408,7 +408,7 @@ mod test {
                 // T1: Check the execution results of other threads
                 1 => {
                     // Wait for all other threads to finish
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+                    while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {}
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<(usize, usize, usize)>::default();
