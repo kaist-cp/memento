@@ -377,18 +377,18 @@ mod test {
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
+    const COUNT: usize = 20_000;
 
     struct EnqDeq {
-        enqs: [Enqueue<usize>; COUNT],
-        deqs: [Dequeue<usize>; COUNT],
+        enqs: [Enqueue<(usize, usize, usize)>; COUNT], // (tid, op seq, value)
+        deqs: [Dequeue<(usize, usize, usize)>; COUNT], // (tid, op seq, value)
     }
 
     impl Default for EnqDeq {
         fn default() -> Self {
             Self {
-                enqs: array_init::array_init(|_| Enqueue::<usize>::default()),
-                deqs: array_init::array_init(|_| Dequeue::<usize>::default()),
+                enqs: array_init::array_init(|_| Enqueue::<(usize, usize, usize)>::default()),
+                deqs: array_init::array_init(|_| Dequeue::<(usize, usize, usize)>::default()),
             }
         }
     }
@@ -402,7 +402,7 @@ mod test {
         }
     }
 
-    impl RootObj<EnqDeq> for TestRootObj<Queue<usize>> {
+    impl RootObj<EnqDeq> for TestRootObj<Queue<(usize, usize, usize)>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
                 // T1: Check the execution results of other threads
@@ -411,29 +411,41 @@ mod test {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check queue is empty
-                    let mut tmp_deq = Dequeue::<usize>::default();
+                    let mut tmp_deq = Dequeue::<(usize, usize, usize)>::default();
                     let must_none = self.obj.dequeue::<true>(&mut tmp_deq, tid, guard, pool);
                     assert!(must_none.is_none());
 
                     // Check results
-                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
-                    assert!((2..NR_THREAD + 2)
-                        .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
+                    let mut results = RESULTS_TCRASH.lock_poisonable().clone();
+                    for tid in 2..NR_THREAD + 2 {
+                        for seq in 0..COUNT {
+                            assert_eq!(results.remove(&(tid, seq)).unwrap(), tid);
+                        }
+                    }
+                    assert!(results.is_empty());
                 }
                 // Threads other than T1 perform { enq; deq; }
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ =
-                            self.obj
-                                .enqueue::<true>(tid, &mut enq_deq.enqs[i], tid, guard, pool);
+                        let _ = self.obj.enqueue::<true>(
+                            (tid, i, tid),
+                            &mut enq_deq.enqs[i],
+                            tid,
+                            guard,
+                            pool,
+                        );
                         let res = self
                             .obj
                             .dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         assert!(res.is_some());
 
                         // Transfer the deq result to the result array
-                        let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
+                        let (tid, i, value) = res.unwrap();
+                        if let Some(prev) = RESULTS_TCRASH.lock_poisonable().insert((tid, i), value)
+                        {
+                            assert_eq!(prev, value);
+                        }
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
@@ -451,6 +463,10 @@ mod test {
         const FILE_NAME: &str = "queue_lp_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<Queue<usize>>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<TestRootObj<Queue<(usize, usize, usize)>>, EnqDeq, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
     }
 }
