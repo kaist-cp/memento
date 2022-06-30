@@ -97,6 +97,7 @@ fn bench(opt: &Opt) -> f64 {
         | TestTarget::FriedmanLogQueue(_)
         | TestTarget::DSSQueue(_)
         | TestTarget::PBCombQueue(_)
+        | TestTarget::PBCombQueueFullDetectable(_)
         | TestTarget::CrndmQueue(_) => bench_queue(opt, target),
     };
     let avg_ops = (nops as f64) / opt.duration;
