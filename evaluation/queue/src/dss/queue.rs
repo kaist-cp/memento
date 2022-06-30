@@ -10,6 +10,7 @@ use memento::*;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
+#[repr(align(128))]
 struct Node<T: Clone> {
     val: MaybeUninit<T>,
     next: PAtomic<Node<T>>,
