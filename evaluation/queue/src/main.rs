@@ -32,6 +32,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         "log_queue" => TestTarget::FriedmanLogQueue(kind),
         "dss_queue" => TestTarget::DSSQueue(kind),
         "pbcomb_queue" => TestTarget::PBCombQueue(kind),
+        "pbcomb_queue_full_detectable" => TestTarget::PBCombQueueFullDetectable(kind),
         "crndm_queue" => TestTarget::CrndmQueue(kind),
         _ => unreachable!("invalid target"),
     }

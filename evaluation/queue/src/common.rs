@@ -70,6 +70,7 @@ pub enum TestTarget {
     FriedmanLogQueue(TestKind),
     DSSQueue(TestKind),
     PBCombQueue(TestKind),
+    PBCombQueueFullDetectable(TestKind),
     CrndmQueue(TestKind), // TODO: CrndmQueue -> CorundumQueue
 }
 
@@ -282,15 +283,29 @@ pub mod queue {
             TestTarget::PBCombQueue(kind) => {
                 unsafe { PBComb_NR_THREAD = opt.threads }; // restriction of combining iteration
                 match kind {
-                    TestKind::QueuePair => {
-                        get_nops::<TestPBCombQueue, TestPBCombQueueEnqDeq<true>>(
+                    TestKind::QueuePair => get_nops::<
+                        TestPBCombQueue,
+                        TestPBCombQueueEnqDeq<true, false>,
+                    >(&opt.filepath, opt.threads),
+                    TestKind::QueueProb(prob) => {
+                        unsafe { PROB = prob };
+                        get_nops::<TestPBCombQueue, TestPBCombQueueEnqDeq<false, false>>(
                             &opt.filepath,
                             opt.threads,
                         )
                     }
+                }
+            }
+            TestTarget::PBCombQueueFullDetectable(kind) => {
+                unsafe { PBComb_NR_THREAD = opt.threads }; // restriction of combining iteration
+                match kind {
+                    TestKind::QueuePair => get_nops::<
+                        TestPBCombQueue,
+                        TestPBCombQueueEnqDeq<true, true>,
+                    >(&opt.filepath, opt.threads),
                     TestKind::QueueProb(prob) => {
                         unsafe { PROB = prob };
-                        get_nops::<TestPBCombQueue, TestPBCombQueueEnqDeq<false>>(
+                        get_nops::<TestPBCombQueue, TestPBCombQueueEnqDeq<false, true>>(
                             &opt.filepath,
                             opt.threads,
                         )

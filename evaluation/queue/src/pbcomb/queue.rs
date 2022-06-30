@@ -656,7 +656,7 @@ impl PBCombQueue {
 
 impl TestQueue for PBCombQueue {
     type EnqInput = (usize, usize, &'static mut u32); // value, tid, sequence number
-    type DeqInput = (usize, &'static mut u32); // tid, sequence number
+    type DeqInput = (usize, &'static mut u32, bool, &'static mut Option<usize>); // tid, sequence number, flag for full detectable, return value for full detectable
 
     fn enqueue(&self, (value, tid, seq): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
@@ -668,14 +668,20 @@ impl TestQueue for PBCombQueue {
         persist_obj(seq, true);
     }
 
-    fn dequeue(&self, (tid, seq): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
+    fn dequeue(&self, (tid, seq, fd, retval): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
         let queue = unsafe { (self as *const PBCombQueue as *mut PBCombQueue).as_mut() }.unwrap();
 
         // deq
-        let _ = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, guard, pool);
+        let ret = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, guard, pool);
         *seq += 1;
         persist_obj(seq, true);
+
+        // Backup retrun value if it is fully detectable.
+        if fd {
+            *retval = ret.deq_retval();
+            persist_obj(retval, true);
+        }
     }
 }
 
@@ -704,21 +710,24 @@ impl PDefault for TestPBCombQueue {
 impl TestNOps for TestPBCombQueue {}
 
 #[derive(Debug, Default)]
-pub struct TestPBCombQueueEnqDeq<const PAIR: bool> {
+pub struct TestPBCombQueueEnqDeq<const PAIR: bool, const FD: bool> {
     enq_seq: CachePadded<u32>,
     deq_seq: CachePadded<u32>,
+    deq_retval: CachePadded<Option<usize>>,
 }
 
-impl<const PAIR: bool> Collectable for TestPBCombQueueEnqDeq<PAIR> {
+impl<const PAIR: bool, const FD: bool> Collectable for TestPBCombQueueEnqDeq<PAIR, FD> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
 
-impl<const PAIR: bool> RootObj<TestPBCombQueueEnqDeq<PAIR>> for TestPBCombQueue {
+impl<const PAIR: bool, const FD: bool> RootObj<TestPBCombQueueEnqDeq<PAIR, FD>>
+    for TestPBCombQueue
+{
     fn run(
         &self,
-        mmt: &mut TestPBCombQueueEnqDeq<PAIR>,
+        mmt: &mut TestPBCombQueueEnqDeq<PAIR, FD>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
@@ -731,9 +740,12 @@ impl<const PAIR: bool> RootObj<TestPBCombQueueEnqDeq<PAIR>> for TestPBCombQueue 
             &|tid, guard| {
                 let enq_seq = unsafe { (&*mmt.enq_seq as *const _ as *mut u32).as_mut() }.unwrap();
                 let deq_seq = unsafe { (&*mmt.deq_seq as *const _ as *mut u32).as_mut() }.unwrap();
+                let deq_retval =
+                    unsafe { (&*mmt.deq_retval as *const _ as *mut Option<usize>).as_mut() }
+                        .unwrap();
 
                 let enq_input = (tid, tid, enq_seq);
-                let deq_input = (tid, deq_seq);
+                let deq_input = (tid, deq_seq, FD, deq_retval);
 
                 if PAIR {
                     enq_deq_pair(q, enq_input, deq_input, guard, pool);
