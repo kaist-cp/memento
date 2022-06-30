@@ -342,7 +342,9 @@ mod test {
     use std::sync::atomic::Ordering;
 
     use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
-    use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
+    use crate::test_utils::tests::{
+        run_test, Poisonable, TestRootObj, JOB_FINISHED, RESULTS, RESULTS_TCRASH,
+    };
     use crossbeam_epoch::Guard;
 
     use super::{CombiningQueue, Dequeue, Enqueue};
@@ -388,34 +390,55 @@ mod test {
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
-                    let v = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
-                    assert!(v == CombiningQueue::EMPTY);
+                    let res = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
+                    let (_, _, value) = decompose(res);
+                    assert!(value == CombiningQueue::EMPTY);
 
                     // Check results
-                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
-                    assert!((2..NR_THREAD + 2).all(|tid| {
-                        println!(" RESULTS[{tid}] = {}", RESULTS[tid].load(Ordering::SeqCst));
-                        RESULTS[tid].load(Ordering::SeqCst) == COUNT
-                    }));
+                    let mut results = RESULTS_TCRASH.lock_poisonable().clone();
+                    for tid in 2..NR_THREAD + 2 {
+                        for seq in 0..COUNT {
+                            assert_eq!(results.remove(&(tid, seq)).unwrap(), tid);
+                        }
+                    }
+                    assert!(results.is_empty());
                 }
                 // other threads: { enq; deq; }
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ =
-                            queue.comb_enqueue::<true>(tid, &mut enq_deq.enqs[i], tid, guard, pool);
+                        let _ = queue.comb_enqueue::<true>(
+                            compose(tid, i, tid),
+                            &mut enq_deq.enqs[i],
+                            tid,
+                            guard,
+                            pool,
+                        );
 
-                        let v = queue.comb_dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
-                        assert!(v != CombiningQueue::EMPTY);
+                        let res =
+                            queue.comb_dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
+                        let (tid, i, value) = decompose(res);
+                        assert!(value != CombiningQueue::EMPTY);
 
-                        // send output of deq
-                        let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
+                        // Transfer the deq result to the result array
+                        if let Some(prev) = RESULTS_TCRASH.lock_poisonable().insert((tid, i), value)
+                        {
+                            assert_eq!(prev, value);
+                        }
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
+    }
+
+    fn compose(tid: usize, seq: usize, value: usize) -> usize {
+        seq * 10000 + tid * 100 + value
+    }
+
+    fn decompose(value: usize) -> (usize, usize, usize) {
+        (value / 10000, (value / 100) % 100, value % 100)
     }
 
     #[test]
