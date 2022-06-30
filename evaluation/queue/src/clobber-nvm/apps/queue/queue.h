@@ -16,7 +16,7 @@ struct queuenode
         uint64_t value;
         // char *value;
         struct queuenode *next;
-};
+} __attribute((aligned(128)));
 
 // void queue_init(struct sk_link *link);
 // void queue_add(struct sk_link *link, struct sk_link *prev);

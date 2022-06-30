@@ -6,6 +6,7 @@ use corundum::{default::*, ptr::Ptr};
 use crossbeam_utils::thread;
 
 #[derive(Debug, Default)]
+#[repr(align(128))]
 struct Node {
     val: usize, // TODO: generic
     next: Option<Ptr<Node, P>>,

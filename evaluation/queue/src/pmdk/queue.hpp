@@ -21,7 +21,7 @@ class queue
     {
         p<int> value; // TODO: generic
         persistent_ptr<node> next;
-    };
+    } __attribute((aligned(128)));
 
 private:
     pmem::obj::mutex pmutex;
