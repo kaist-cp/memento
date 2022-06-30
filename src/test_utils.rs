@@ -209,11 +209,7 @@ pub mod tests {
             loop {
                 match self.lock() {
                     Ok(guard) => return guard,
-                    Err(_) => {
-                        let unix_tid = unsafe { libc::gettid() };
-                        // println!("poison mutex (unix_tid: {unix_tid})");
-                        self.clear_poison()
-                    }
+                    Err(_) => self.clear_poison(),
                 }
             }
         }
@@ -369,5 +365,13 @@ pub mod tests {
 
             // println!("A::drop (unix_tid: {})", unsafe { libc::gettid() });
         }
+    }
+
+    pub(crate) fn compose(tid: usize, seq: usize, value: usize) -> usize {
+        seq * 10000 + tid * 100 + value
+    }
+
+    pub(crate) fn decompose(value: usize) -> (usize, usize, usize) {
+        (value / 10000, (value / 100) % 100, value % 100)
     }
 }

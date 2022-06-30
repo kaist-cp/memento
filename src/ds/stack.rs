@@ -118,24 +118,36 @@ pub(crate) mod tests {
                     assert!(must_none.is_none());
 
                     // Check results
-                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
-                    assert!((2..NR_THREAD + 2)
-                        .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
+                    let mut results = RESULTS_TCRASH.lock_poisonable().clone();
+                    for tid in 2..NR_THREAD + 2 {
+                        for seq in 0..COUNT {
+                            assert_eq!(results.remove(&(tid, seq)).unwrap(), tid);
+                        }
+                    }
+                    assert!(results.is_empty());
                 }
                 // Threads other than T1 perform { push; pop; }
                 _ => {
                     // push; pop;
                     for i in 0..COUNT {
-                        let _ =
-                            self.obj
-                                .push::<true>(tid, &mut push_pop.pushes[i], tid, guard, pool);
+                        let _ = self.obj.push::<true>(
+                            compose(tid, i, tid),
+                            &mut push_pop.pushes[i],
+                            tid,
+                            guard,
+                            pool,
+                        );
                         let res = self
                             .obj
                             .pop::<true>(&mut push_pop.pops[i], tid, guard, pool);
                         assert!(res.is_some());
 
                         // Transfer the pop result to the result array
-                        let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
+                        let (tid, i, value) = decompose(res.unwrap());
+                        if let Some(prev) = RESULTS_TCRASH.lock_poisonable().insert((tid, i), value)
+                        {
+                            assert_eq!(prev, value);
+                        }
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

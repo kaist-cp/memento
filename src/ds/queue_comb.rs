@@ -343,7 +343,8 @@ mod test {
 
     use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{
-        run_test, Poisonable, TestRootObj, JOB_FINISHED, RESULTS, RESULTS_TCRASH,
+        compose, decompose, run_test, Poisonable, TestRootObj, JOB_FINISHED, RESULTS,
+        RESULTS_TCRASH,
     };
     use crossbeam_epoch::Guard;
 
@@ -431,14 +432,6 @@ mod test {
                 }
             }
         }
-    }
-
-    fn compose(tid: usize, seq: usize, value: usize) -> usize {
-        seq * 10000 + tid * 100 + value
-    }
-
-    fn decompose(value: usize) -> (usize, usize, usize) {
-        (value / 10000, (value / 100) % 100, value % 100)
     }
 
     #[test]
