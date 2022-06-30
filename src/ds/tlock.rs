@@ -1,4 +1,4 @@
-//! volatile thread-recoverable spin lock
+//! Thread-recoverable spin lock
 use core::sync::atomic::Ordering;
 use std::sync::atomic::AtomicUsize;
 
@@ -27,13 +27,13 @@ fn decompose_aux_bit(data: usize) -> (usize, usize) {
     )
 }
 
-/// volatile thread-recoverable spin lock
+/// thread-recoverable spin lock
 #[derive(Debug, Default)]
-pub struct VSpinLock {
+pub struct ThreadRecoverableSpinLock {
     inner: AtomicUsize, // 55:lock sequence (even:no owner), 9:tid
 }
 
-impl VSpinLock {
+impl ThreadRecoverableSpinLock {
     const RELEASED: usize = 0;
 
     /// Try lock
@@ -44,20 +44,26 @@ impl VSpinLock {
         &self,
         tid: usize,
     ) -> Result<(usize, SpinLockGuard<'_>), (usize, usize)> {
-        let (_seq, _tid) = decompose_aux_bit(self.inner.load(Ordering::Acquire));
+        let current = self.inner.load(Ordering::Relaxed);
+        let (_seq, _tid) = decompose_aux_bit(current);
+
         if REC && tid == _tid {
             return Ok((_seq, SpinLockGuard { lock: self }));
         }
 
+        if _tid != Self::RELEASED {
+            return Err((_seq, _tid));
+        }
+
         self.inner
             .compare_exchange(
-                compose_aux_bit(_seq, Self::RELEASED),
+                current,
                 compose_aux_bit(_seq + 1, tid),
-                Ordering::SeqCst,
                 Ordering::Acquire,
+                Ordering::Relaxed,
             )
             .map(|_| (_seq + 1, SpinLockGuard { lock: self }))
-            .map_err(decompose_aux_bit)
+            .map_err(|_| (_seq, _tid))
     }
 
     /// lock
@@ -75,7 +81,7 @@ impl VSpinLock {
     ///
     /// return (seq, tid)
     pub fn peek(&self) -> (usize, usize) {
-        decompose_aux_bit(self.inner.load(Ordering::SeqCst))
+        decompose_aux_bit(self.inner.load(Ordering::Acquire))
     }
 
     unsafe fn unlock(&self) {
@@ -88,7 +94,7 @@ impl VSpinLock {
 /// SpinLock Guard
 #[derive(Debug)]
 pub struct SpinLockGuard<'a> {
-    lock: &'a VSpinLock,
+    lock: &'a ThreadRecoverableSpinLock,
 }
 
 impl Drop for SpinLockGuard<'_> {

@@ -1,7 +1,7 @@
 //! Detectable Combining queue
 #![allow(non_snake_case)]
 #![allow(warnings)]
-use crate::ds::spin_lock_volatile::VSpinLock;
+use crate::ds::tlock::ThreadRecoverableSpinLock;
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::Checkpoint;
@@ -184,11 +184,11 @@ lazy_static::lazy_static! {
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
     /// Used by the PBQueueENQ instance of PBCOMB
-    static ref E_LOCK: CachePadded<VSpinLock> = CachePadded::new(VSpinLock::default());
+    static ref E_LOCK: CachePadded<ThreadRecoverableSpinLock> = CachePadded::new(ThreadRecoverableSpinLock::default());
     static ref E_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 
     /// Used by the PBQueueDEQ instance of PBCOMB
-    static ref D_LOCK: CachePadded<VSpinLock> = CachePadded::new(VSpinLock::default());
+    static ref D_LOCK: CachePadded<ThreadRecoverableSpinLock> = CachePadded::new(ThreadRecoverableSpinLock::default());
     static ref D_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 }
 

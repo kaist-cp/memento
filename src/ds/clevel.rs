@@ -27,7 +27,7 @@ use crate::pmem::{
 };
 use crate::PDefault;
 
-use super::spin_lock_volatile::VSpinLock;
+use super::tlock::ThreadRecoverableSpinLock;
 
 const TINY_VEC_CAPACITY: usize = 8;
 
@@ -392,7 +392,7 @@ impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
 #[derive(Debug)]
 pub struct ClevelInner<K, V: Collectable> {
     context: PAtomic<Context<K, V>>,
-    add_level_lock: VSpinLock,
+    add_level_lock: ThreadRecoverableSpinLock,
 }
 
 impl<K, V: Collectable> Collectable for ClevelInner<K, V> {
@@ -420,7 +420,7 @@ impl<K, V: Collectable> PDefault for ClevelInner<K, V> {
                 },
                 pool,
             ),
-            add_level_lock: VSpinLock::default(),
+            add_level_lock: ThreadRecoverableSpinLock::default(),
         }
     }
 }
