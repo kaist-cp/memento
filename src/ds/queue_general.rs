@@ -18,6 +18,7 @@ pub struct TryFail;
 
 /// Queue node
 #[derive(Debug)]
+#[repr(align(128))]
 pub struct Node<T: Collectable> {
     data: MaybeUninit<T>,
     next: DetectableCASAtomic<Self>,
