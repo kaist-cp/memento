@@ -220,15 +220,15 @@ impl<T: Default + Clone + Collectable> Default for Checkpoint<T> {
 
 impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
     fn filter(chk: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        let idx = chk.max_idx();
+        let (_, latest) = chk.stale_latest_idx();
 
         // Record the one with max timestamp among checkpoints
-        if chk.saved[idx].1 > pool.exec_info.chk_info {
-            pool.exec_info.chk_info = chk.saved[idx].1;
+        if chk.saved[latest].1 > pool.exec_info.chk_info {
+            pool.exec_info.chk_info = chk.saved[latest].1;
         }
 
-        if chk.saved[idx].1.time() > 0 {
-            T::filter(&mut chk.saved[idx].0, tid, gc, pool);
+        if chk.saved[latest].1.time() > 0 {
+            T::filter(&mut chk.saved[latest].0, tid, gc, pool);
         }
     }
 }
@@ -260,18 +260,18 @@ where
             }
         }
 
-        let idx = self.min_idx();
+        let (stale, _) = self.stale_latest_idx();
 
         // Normal run
         let t = Timestamp::from(pool.exec_info.exec_time());
         if std::mem::size_of::<(T, Timestamp)>() <= 1 << CACHE_LINE_SHIFT {
-            self.saved[idx] = CachePadded::new((new.clone(), t));
-            persist_obj(&*self.saved[idx], true);
+            self.saved[stale] = CachePadded::new((new.clone(), t));
+            persist_obj(&*self.saved[stale], true);
         } else {
-            self.saved[idx].0 = new.clone();
-            persist_obj(&self.saved[idx].0, true);
-            self.saved[idx].1 = t;
-            persist_obj(&self.saved[idx].1, true);
+            self.saved[stale].0 = new.clone();
+            persist_obj(&self.saved[stale].0, true);
+            self.saved[stale].1 = t;
+            persist_obj(&self.saved[stale].1, true);
         }
 
         pool.exec_info.local_max_time[tid].store(t.into(), Ordering::Relaxed);
@@ -286,30 +286,21 @@ where
     }
 
     #[inline]
-    fn min_idx(&self) -> usize {
-        if self.saved[0].1 <= self.saved[1].1 {
-            0
+    fn stale_latest_idx(&self) -> (usize, usize) {
+        if self.saved[0].1 < self.saved[1].1 {
+            (0, 1)
         } else {
-            1
-        }
-    }
-
-    #[inline]
-    fn max_idx(&self) -> usize {
-        if self.saved[0].1 > self.saved[1].1 {
-            0
-        } else {
-            1
+            (1, 0)
         }
     }
 
     /// Peek
     pub fn peek(&self, tid: usize, pool: &PoolHandle) -> Option<T> {
-        let idx = self.max_idx();
+        let (_, latest) = self.stale_latest_idx();
 
-        if self.is_valid(idx, tid, pool) {
-            pool.exec_info.local_max_time[tid].store(self.saved[idx].1.into(), Ordering::Relaxed);
-            Some((self.saved[idx].0).clone())
+        if self.is_valid(latest, tid, pool) {
+            pool.exec_info.local_max_time[tid].store(self.saved[latest].1.into(), Ordering::Relaxed);
+            Some((self.saved[latest].0).clone())
         } else {
             None
         }
