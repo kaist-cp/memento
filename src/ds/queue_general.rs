@@ -415,14 +415,11 @@ mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<(usize, usize, usize)>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let unix_tid = unsafe { gettid() };
-            // println!("[run] t{tid} start (unix_tid: {unix_tid})");
-            // thread::sleep(std::time::Duration::from_secs_f64(0.5));
-
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
                     // Wait for all other threads to finish
+                    let unix_tid = unsafe { gettid() };
                     let mut cnt = 0;
                     while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {
                         if cnt > 300 {
@@ -449,7 +446,7 @@ mod test {
                     let mut results = RESULTS_TCRASH.lock_poisonable().clone();
                     for tid in 2..NR_THREAD + 2 {
                         for seq in 0..COUNT {
-                            assert_eq!(results.remove(&(tid, seq)).unwrap(), get_value(tid, seq));
+                            assert_eq!(results.remove(&(tid, seq)).unwrap(), tid);
                         }
                     }
                     assert!(results.is_empty());
@@ -457,23 +454,22 @@ mod test {
                 // Threads other than T1 perform { enq; deq; }
                 _ => {
                     // enq; deq;
-                    for seq in 0..COUNT {
+                    for i in 0..COUNT {
                         let _ = self.obj.enqueue::<true>(
-                            (tid, seq, get_value(tid, seq)), // value = hash((tid, seq))
-                            &mut enq_deq.enqs[seq],
+                            (tid, i, tid),
+                            &mut enq_deq.enqs[i],
                             tid,
                             guard,
                             pool,
                         );
-                        let res =
-                            self.obj
-                                .dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
+                        let res = self
+                            .obj
+                            .dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         assert!(res.is_some());
 
                         // Transfer the deq result to the result array
-                        let (tid, seq, value) = res.unwrap();
-                        if let Some(prev) =
-                            RESULTS_TCRASH.lock_poisonable().insert((tid, seq), value)
+                        let (tid, i, value) = res.unwrap();
+                        if let Some(prev) = RESULTS_TCRASH.lock_poisonable().insert((tid, i), value)
                         {
                             assert_eq!(prev, value);
                         }

@@ -190,18 +190,6 @@ pub mod tests {
         }
     }
 
-    // #[allow(warnings)]
-    // pub(crate) fn calculate_hash<T: Hash>(t: &T) -> usize {
-    //     let mut s = DefaultHasher::new();
-    //     t.hash(&mut s);
-    //     s.finish() as usize
-    // }
-
-    #[allow(warnings)]
-    pub(crate) fn get_value(tid: usize, seq: usize) -> usize {
-        seq * 100 + tid
-    }
-
     use lazy_static::lazy_static;
 
     lazy_static! {
