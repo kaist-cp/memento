@@ -73,6 +73,7 @@ impl Collectable for RequestRec {
 
 /// Node
 #[derive(Debug)]
+#[repr(align(128))]
 pub struct Node {
     data: Data,
     next: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
