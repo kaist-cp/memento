@@ -93,6 +93,32 @@ impl Collectable for ReturnVal {
         // no-op
     }
 }
+
+#[derive(Debug, Default)]
+struct RequestRec {
+    func: Option<Func>,
+    arg: usize,
+    activate: usize,
+}
+
+impl Collectable for RequestRec {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
+/// Node
+#[derive(Debug)]
+#[repr(align(128))]
+pub struct Node {
+    data: Data,
+    next: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
+}
+
+impl Collectable for Node {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        PAtomic::filter(&mut s.next, tid, gc, pool);
+    }
+}
+
 /// State of Enqueue PBComb
 #[derive(Debug)]
 struct EStateRec {
@@ -168,7 +194,7 @@ lazy_static::lazy_static! {
 
 /// Detectable Combining Queue
 #[derive(Debug)]
-pub struct CombiningQueue {
+pub struct Queue {
     /// Shared non-volatile variables
     dummy: PPtr<Node>,
 
@@ -186,7 +212,7 @@ pub struct CombiningQueue {
     d_thread_state: [CachePadded<DThreadState>; MAX_THREADS + 1],
 }
 
-impl Collectable for CombiningQueue {
+impl Collectable for Queue {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         assert!(s.dummy.is_null());
         Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
@@ -201,7 +227,7 @@ impl Collectable for CombiningQueue {
     }
 }
 
-impl PDefault for CombiningQueue {
+impl PDefault for Queue {
     fn pdefault(pool: &PoolHandle) -> Self {
         let dummy = pool.alloc::<Node>();
         let dummy_ref = unsafe { dummy.deref_mut(pool) };
@@ -266,7 +292,7 @@ impl PDefault for CombiningQueue {
 }
 
 /// Enq
-impl CombiningQueue {
+impl Queue {
     const EMPTY: usize = usize::MAX;
 
     /// enq
@@ -437,7 +463,7 @@ impl CombiningQueue {
 }
 
 /// Deq
-impl CombiningQueue {
+impl Queue {
     /// deq
     pub fn comb_dequeue<const REC: bool>(
         &mut self,
@@ -616,7 +642,7 @@ mod test {
     use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
     use crossbeam_epoch::Guard;
 
-    use super::{CombiningQueue, Dequeue, Enqueue};
+    use super::{Dequeue, Enqueue, Queue};
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
@@ -644,10 +670,10 @@ mod test {
         }
     }
 
-    impl RootObj<EnqDeq> for TestRootObj<CombiningQueue> {
+    impl RootObj<EnqDeq> for TestRootObj<Queue> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             // Get &mut queue
-            let queue = unsafe { (&self.obj as *const _ as *mut CombiningQueue).as_mut() }.unwrap();
+            let queue = unsafe { (&self.obj as *const _ as *mut Queue).as_mut() }.unwrap();
 
             match tid {
                 // T1: Check results of other threads
@@ -659,7 +685,7 @@ mod test {
                     let res = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
                     let v = res.deq_retval().unwrap();
                     println!("check last deq v={v}");
-                    assert!(v == CombiningQueue::EMPTY);
+                    assert!(v == Queue::EMPTY);
 
                     // Check results
                     assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
@@ -680,7 +706,7 @@ mod test {
                             queue.comb_dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
                         let v = res.deq_retval().unwrap();
                         // println!("deq v={v}");
-                        assert!(v != CombiningQueue::EMPTY);
+                        assert!(v != Queue::EMPTY);
 
                         // send output of deq
                         let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
@@ -697,6 +723,6 @@ mod test {
         const FILE_NAME: &str = "combining_enq_deq.pool";
         const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<CombiningQueue>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
+        run_test::<TestRootObj<Queue>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 }
