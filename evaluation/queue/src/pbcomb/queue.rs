@@ -7,7 +7,7 @@ use crossbeam_utils::{Backoff, CachePadded};
 use memento::pepoch::atomic::Pointer;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
-use memento::pmem::{persist_obj, pool::*, sfence, PPtr};
+use memento::pmem::{mfence, persist_obj, pool::*, sfence, PPtr};
 use memento::PDefault;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use tinyvec::tiny_vec;
@@ -301,9 +301,10 @@ impl PBCombQueue {
             Func::ENQUEUE => {
                 self.e_request[tid].func = Some(func);
                 self.e_request[tid].arg = arg;
+                mfence();
                 self.e_request[tid].activate = seq % 2;
                 self.e_request[tid].valid = 1;
-                sfence();
+                mfence();
 
                 // check activate and re-execute if request is not yet applied
                 if unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
@@ -322,9 +323,10 @@ impl PBCombQueue {
             Func::DEQUEUE => {
                 self.d_request[tid].func = Some(func);
                 self.d_request[tid].arg = arg;
+                mfence();
                 self.d_request[tid].activate = seq % 2;
                 self.d_request[tid].valid = 1;
-                sfence();
+                mfence();
 
                 // check activate and re-execute if request is not yet applied
                 if unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
@@ -360,12 +362,12 @@ impl PBCombQueue {
 
         self.e_request[tid].func = Some(Func::ENQUEUE);
         self.e_request[tid].arg = arg;
-        sfence();
+        mfence();
         self.e_request[tid].activate = 1 - self.e_request[tid].activate;
         if self.e_request[tid].valid == 0 {
             self.e_request[tid].valid = 1;
         }
-        sfence();
+        mfence();
 
         // perform
         self.PerformEnqReq(tid, guard, pool)
@@ -524,11 +526,11 @@ impl PBCombQueue {
         // request deq
         self.d_request[tid].func = Some(Func::DEQUEUE);
         self.d_request[tid].activate = 1 - self.d_request[tid].activate;
-        sfence();
+        mfence();
         if self.d_request[tid].valid == 0 {
             self.d_request[tid].valid = 1;
         }
-        sfence();
+        mfence();
 
         // perform
         self.PerformDeqReq(tid, guard, pool)
