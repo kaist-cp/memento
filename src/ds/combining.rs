@@ -1,6 +1,7 @@
 //! Detectable Combining queue
 #![allow(non_snake_case)]
 #![allow(warnings)]
+#![allow(missing_docs)]
 use crate::ds::tlock::ThreadRecoverableSpinLock;
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned, PShared};
@@ -32,8 +33,8 @@ pub static mut NR_THREADS: usize = MAX_THREADS;
 #[derive(Debug)]
 #[repr(align(128))]
 pub struct Node {
-    data: Data,
-    next: PAtomic<Node>,
+    pub data: Data,
+    pub next: PAtomic<Node>,
 }
 
 impl Collectable for Node {
@@ -45,32 +46,56 @@ impl Collectable for Node {
 /// TODO: doc
 pub trait Combinable {
     /// TODO: doc
-    fn checkpoint_activate(&self, activate: usize) -> usize;
+    fn checkpoint_activate<const REC: bool>(
+        &mut self,
+        activate: usize,
+        tid: usize,
+        pool: &PoolHandle,
+    ) -> usize;
 
     /// TODO: doc
-    fn checkpoint_return_value(&self, return_value: usize) -> usize;
+    fn checkpoint_return_value<const REC: bool>(
+        &mut self,
+        return_value: usize,
+        tid: usize,
+        pool: &PoolHandle,
+    ) -> usize;
 }
 
 /// TODO: doc
 #[derive(Debug)]
 pub struct CombStateRec {
-    state: *mut c_void, // The actual data of the state e.g. tail for enqueue, head for dequeue
-    return_value: [usize; MAX_THREADS],
-    deactivate: [AtomicUsize; MAX_THREADS],
+    pub data: PAtomic<c_void>, // The actual data of the state e.g. tail for enqueue, head for dequeue
+    return_value: [usize; MAX_THREADS + 1],
+    deactivate: [AtomicUsize; MAX_THREADS + 1],
     // TODO: flex?
+}
+
+impl CombStateRec {
+    pub fn new<T>(data: PAtomic<T>) -> Self {
+        // let a = unsafe { (&data as *const _ as *const PAtomic<c_void>).read() }
+        Self {
+            data: unsafe { (&data as *const _ as *const PAtomic<c_void>).read() },
+            return_value: array_init(|_| Default::default()),
+            deactivate: array_init(|_| Default::default()),
+        }
+    }
 }
 
 impl Clone for CombStateRec {
     fn clone(&self) -> Self {
-        todo!()
+        Self {
+            data: self.data.clone(),
+            return_value: array_init(|i| self.return_value[i]),
+            deactivate: array_init(|i| AtomicUsize::new(self.deactivate[i].load(Ordering::SeqCst))),
+        }
     }
 }
 
 /// TODO: doc
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct CombRequest {
     arg: AtomicUsize,
-    operation: u64,
     activate: AtomicUsize,
 }
 
@@ -78,16 +103,36 @@ pub struct CombRequest {
 #[allow(missing_debug_implementations)]
 pub struct CombStruct {
     // General func for additional behavior: e.g. persist enqueued nodes
-    final_persist_func: Option<&'static dyn Fn(&CombStruct)>,
-    after_persist_func: Option<&'static dyn Fn(&CombStruct)>,
+    final_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
+    after_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
 
     // Variables located at volatile location
     lock: &'static CachePadded<ThreadRecoverableSpinLock>,
     lock_value: &'static CachePadded<AtomicUsize>,
 
     // Variables located at persistent location
-    request: [CachePadded<CombRequest>; MAX_THREADS], // TODO: pointer?
-    pstate: CachePadded<PAtomic<CombStateRec>>,       // TODO: PAtomic<CombStateRec>?
+    request: [CachePadded<CombRequest>; MAX_THREADS + 1], // TODO: pointer?
+    pub pstate: CachePadded<PAtomic<CombStateRec>>,       // TODO: PAtomic<CombStateRec>?
+}
+
+impl CombStruct {
+    pub fn new(
+        final_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
+        after_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
+        lock: &'static CachePadded<ThreadRecoverableSpinLock>,
+        lock_value: &'static CachePadded<AtomicUsize>,
+        request: [CachePadded<CombRequest>; MAX_THREADS + 1],
+        pstate: CachePadded<PAtomic<CombStateRec>>,
+    ) -> Self {
+        Self {
+            final_persist_func,
+            after_persist_func,
+            lock,
+            lock_value,
+            request,
+            pstate,
+        }
+    }
 }
 
 /// TODO: doc
@@ -97,6 +142,15 @@ pub struct CombThreadState {
     state: [PAtomic<CombStateRec>; 2],
 }
 
+impl CombThreadState {
+    pub fn new<T>(data: PAtomic<T>, pool: &PoolHandle) -> Self {
+        Self {
+            index: Default::default(),
+            state: array_init(|_| PAtomic::new(CombStateRec::new(data.clone()), pool)),
+        }
+    }
+}
+
 /// TODO: doc
 #[derive(Debug)]
 pub struct Combining {}
@@ -104,13 +158,14 @@ pub struct Combining {}
 impl Combining {
     /// TODO: doc
     // TODO: generalize return value
+    // TODO: retval option?
     pub fn apply_op<const REC: bool, M: Combinable>(
-        &self,
-        mmt: &M,
+        // &self,
+        mmt: &mut M,
         s: &CombStruct,
         st_thread: &CombThreadState,
-        sfunc: &dyn Fn(*mut c_void, usize, usize) -> usize,
-        arg: usize,
+        sfunc: &dyn Fn(&PAtomic<c_void>, usize, usize, &Guard, &PoolHandle) -> usize,
+        arg: usize, // TODO: option?
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
@@ -118,7 +173,11 @@ impl Combining {
         // Register request
         s.request[tid].arg.store(arg, Ordering::SeqCst);
         s.request[tid].activate.store(
-            mmt.checkpoint_activate(s.request[tid].activate.load(Ordering::SeqCst) + 1),
+            mmt.checkpoint_activate::<REC>(
+                s.request[tid].activate.load(Ordering::SeqCst) + 1,
+                tid,
+                pool,
+            ),
             Ordering::SeqCst,
         );
 
@@ -126,11 +185,14 @@ impl Combining {
         loop {
             match s.lock.try_lock::<REC>(tid) {
                 Ok((lval, lockguard)) => {
-                    return self
-                        .do_combine(lval, lockguard, mmt, s, st_thread, sfunc, tid, guard, pool)
+                    return Self::do_combine::<REC, _>(
+                        lval, lockguard, mmt, s, st_thread, sfunc, tid, guard, pool,
+                    )
                 }
                 Err((lval, _)) => {
-                    if let Ok(retval) = self.do_non_combine(lval, mmt, s, tid, guard, pool) {
+                    if let Ok(retval) =
+                        Self::do_non_combine::<REC, _>(lval, mmt, s, tid, guard, pool)
+                    {
                         return retval;
                     }
                 }
@@ -138,14 +200,14 @@ impl Combining {
         }
     }
 
-    fn do_combine<M: Combinable>(
-        &self,
+    fn do_combine<const REC: bool, M: Combinable>(
+        // &self,
         lval: usize,
         lockguard: SpinLockGuard<'_>,
-        mmt: &M,
+        mmt: &mut M,
         s: &CombStruct,
         st_thread: &CombThreadState,
-        sfunc: &dyn Fn(*mut c_void, usize, usize) -> usize, // (state, arg, tid) -> return value
+        sfunc: &dyn Fn(&PAtomic<c_void>, usize, usize, &Guard, &PoolHandle) -> usize, // (state, arg, tid) -> return value
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
@@ -164,9 +226,11 @@ impl Combining {
                 let t_activate = s.request[t].activate.load(Ordering::SeqCst);
                 if t_activate > new_state_ref.deactivate[t].load(Ordering::SeqCst) {
                     new_state_ref.return_value[t] = sfunc(
-                        new_state_ref.state,
+                        &new_state_ref.data,
                         s.request[t].arg.load(Ordering::SeqCst),
                         tid,
+                        guard,
+                        pool,
                     );
                     new_state_ref.deactivate[t].store(t_activate, Ordering::SeqCst);
 
@@ -182,7 +246,7 @@ impl Combining {
 
         // e.g. enqueue: persist all enqueued node
         if let Some(func) = s.final_persist_func {
-            func(s);
+            func(s, guard, pool);
         }
 
         // Persist new state
@@ -197,21 +261,22 @@ impl Combining {
 
         // e.g. enqueue: update old tail
         if let Some(func) = s.after_persist_func {
-            func(s);
+            func(s, guard, pool);
         }
 
         st_thread.index.store(1 - ind, Ordering::SeqCst);
 
         // checkpoint return value of mmt-local request
-        let ret_val = mmt.checkpoint_return_value(new_state_ref.return_value[tid].clone());
+        let ret_val =
+            mmt.checkpoint_return_value::<REC>(new_state_ref.return_value[tid].clone(), tid, pool);
         drop(lockguard);
         return ret_val;
     }
 
-    fn do_non_combine<M: Combinable>(
-        &self,
+    fn do_non_combine<const REC: bool, M: Combinable>(
+        // &self,
         lval: usize,
-        mmt: &M,
+        mmt: &mut M,
         s: &CombStruct,
         tid: usize,
         guard: &Guard,
@@ -231,7 +296,11 @@ impl Combining {
         {
             if s.lock_value.load(Ordering::SeqCst) == lval {
                 // checkpoint return value of mmt-local request
-                return Ok(mmt.checkpoint_return_value(lastest_state.return_value[tid].clone()));
+                return Ok(mmt.checkpoint_return_value::<REC>(
+                    lastest_state.return_value[tid].clone(),
+                    tid,
+                    pool,
+                ));
             }
 
             // wait until the combiner that processed my op is finished
@@ -240,7 +309,11 @@ impl Combining {
                 backoff.snooze();
             }
             // checkpoint return value of mmt-local request
-            return Ok(mmt.checkpoint_return_value(lastest_state.return_value[tid].clone()));
+            return Ok(mmt.checkpoint_return_value::<REC>(
+                lastest_state.return_value[tid].clone(),
+                tid,
+                pool,
+            ));
         }
 
         Err(())
