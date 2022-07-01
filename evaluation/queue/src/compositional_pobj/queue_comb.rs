@@ -3,7 +3,7 @@
 use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
-use memento::ds::queue_comb::*;
+use memento::ds::combining::queue_comb::*;
 use memento::pmem::pool::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::PDefault;

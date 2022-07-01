@@ -18,17 +18,9 @@ use libc::c_void;
 use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use tinyvec::{tiny_vec, TinyVec};
 
-use super::combining::{CombStateRec, CombStruct, CombThreadState, Combinable, Combining, Node};
+use super::{CombStateRec, CombStruct, CombThreadState, Combinable, Combining, Node};
 
-const MAX_THREADS: usize = 64;
-type Data = usize;
-
-const COMBINING_ROUNDS: usize = 20;
-
-/// restriction of combining iteration
-pub static mut NR_THREADS: usize = MAX_THREADS;
-
-/// client for enqueue
+/// memento for enqueue
 #[derive(Debug, Default)]
 pub struct Enqueue {
     activate: Checkpoint<usize>,
@@ -64,7 +56,7 @@ impl Collectable for Enqueue {
     }
 }
 
-/// client for dequeue
+/// memento for dequeue
 #[derive(Debug, Default)]
 pub struct Dequeue {
     activate: Checkpoint<usize>,
@@ -107,6 +99,8 @@ impl Collectable for Dequeue {
 }
 
 // Shared volatile variables
+static mut NEW_NODES: Option<TinyVec<[usize; 1024]>> = None;
+
 lazy_static::lazy_static! {
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
@@ -119,16 +113,28 @@ lazy_static::lazy_static! {
     static ref D_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 }
 
-static mut NEW_NODES: Option<TinyVec<[usize; 1024]>> = None;
-
-struct EnqueueStruct {
-    inner: CachePadded<CombStruct>,
+struct EnqueueCombStruct {
     tail: CachePadded<PAtomic<Node>>,
+    inner: CachePadded<CombStruct>,
 }
 
-struct DequeueStruct {
-    inner: CachePadded<CombStruct>,
+impl Collectable for EnqueueCombStruct {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut *s.tail, tid, gc, pool);
+        Collectable::filter(&mut *s.inner, tid, gc, pool);
+    }
+}
+
+struct DequeueCombStruct {
     head: CachePadded<PAtomic<Node>>,
+    inner: CachePadded<CombStruct>,
+}
+
+impl Collectable for DequeueCombStruct {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut *s.head, tid, gc, pool);
+        Collectable::filter(&mut *s.inner, tid, gc, pool);
+    }
 }
 
 /// Detectable Combining Queue
@@ -138,13 +144,13 @@ pub struct CombiningQueue {
     /// Shared non-volatile variables
     dummy: PPtr<Node>,
 
-    // Shared non-volatile variables used by the Enqueue
-    enqueue_struct: CachePadded<EnqueueStruct>,
-    enqueue_thread_state: CachePadded<CombThreadState>, // TODO: cachepadded 하는 게 맞나?
+    // Shared non-volatile variables used by Enqueue
+    enqueue_struct: CachePadded<EnqueueCombStruct>,
+    enqueue_thread_state: CachePadded<CombThreadState>,
 
-    // Shared non-volatile variables used by the Dequeue
-    dequeue_struct: CachePadded<DequeueStruct>,
-    dequeue_thread_state: CachePadded<CombThreadState>, // TODO: cachepadded 하는 게 맞나?
+    // Shared non-volatile variables used by Dequeue
+    dequeue_struct: CachePadded<DequeueCombStruct>,
+    dequeue_thread_state: CachePadded<CombThreadState>,
 }
 
 unsafe impl Sync for CombiningQueue {}
@@ -152,17 +158,22 @@ unsafe impl Send for CombiningQueue {}
 
 impl Collectable for CombiningQueue {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // assert!(s.dummy.is_null());
-        // Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
+        assert!(s.dummy.is_null());
+        Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
+        Collectable::filter(&mut *s.enqueue_struct, tid, gc, pool);
+        Collectable::filter(&mut *s.enqueue_thread_state, tid, gc, pool);
+        Collectable::filter(&mut *s.dequeue_struct, tid, gc, pool);
+        Collectable::filter(&mut *s.dequeue_thread_state, tid, gc, pool);
 
-        // for t in 1..MAX_THREADS + 1 {
-        //     Collectable::filter(&mut *s.e_request[t], tid, gc, pool);
-        //     Collectable::filter(&mut *s.d_request[t], tid, gc, pool);
-        // }
-
-        // // initialize global volatile variable manually
-        // OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
-        todo!()
+        // initialize global volatile variables
+        OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
+        unsafe {
+            NEW_NODES = Some(tiny_vec!());
+        }
+        lazy_static::initialize(&E_LOCK);
+        lazy_static::initialize(&E_LOCK_VALUE);
+        lazy_static::initialize(&D_LOCK);
+        lazy_static::initialize(&D_LOCK_VALUE);
     }
 }
 
@@ -178,39 +189,40 @@ impl PDefault for CombiningQueue {
         unsafe {
             NEW_NODES = Some(tiny_vec!());
         }
+        lazy_static::initialize(&E_LOCK);
+        lazy_static::initialize(&E_LOCK_VALUE);
+        lazy_static::initialize(&D_LOCK);
+        lazy_static::initialize(&D_LOCK_VALUE);
 
-        let enqueue_struct = EnqueueStruct {
-            inner: CachePadded::new(CombStruct::new(
-                Some(&Self::persist_new_nodes), // persist new nodes
-                Some(&Self::update_old_tail),   // update old tail
-                &*E_LOCK,
-                &*E_LOCK_VALUE,
-                array_init(|_| CachePadded::new(Default::default())),
-                CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
-            )),
-            tail: CachePadded::new(PAtomic::from(dummy)),
-        };
-
-        let dequeue_struct = DequeueStruct {
-            inner: CachePadded::new(CombStruct::new(
-                None,
-                None,
-                &*D_LOCK,
-                &*D_LOCK_VALUE,
-                array_init(|_| CachePadded::new(Default::default())),
-                CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
-            )),
-            head: CachePadded::new(PAtomic::from(dummy)),
-        };
-
+        // initialize persistent variables
         Self {
             dummy,
-            enqueue_struct: CachePadded::new(enqueue_struct),
+            enqueue_struct: CachePadded::new(EnqueueCombStruct {
+                inner: CachePadded::new(CombStruct::new(
+                    Some(&Self::persist_new_nodes), // persist new nodes
+                    Some(&Self::update_old_tail),   // update old tail
+                    &*E_LOCK,
+                    &*E_LOCK_VALUE,
+                    array_init(|_| CachePadded::new(Default::default())),
+                    CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
+                )),
+                tail: CachePadded::new(PAtomic::from(dummy)),
+            }),
             enqueue_thread_state: CachePadded::new(CombThreadState::new(
                 PAtomic::from(dummy), // TODO: 이게 맞나..
                 pool,
             )),
-            dequeue_struct: CachePadded::new(dequeue_struct),
+            dequeue_struct: CachePadded::new(DequeueCombStruct {
+                inner: CachePadded::new(CombStruct::new(
+                    None,
+                    None,
+                    &*D_LOCK,
+                    &*D_LOCK_VALUE,
+                    array_init(|_| CachePadded::new(Default::default())),
+                    CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
+                )),
+                head: CachePadded::new(PAtomic::from(dummy)),
+            }),
             dequeue_thread_state: CachePadded::new(CombThreadState::new(
                 PAtomic::from(dummy), // TODO: 이게 맞나..
                 pool,
@@ -219,46 +231,28 @@ impl PDefault for CombiningQueue {
     }
 }
 
+/// enq
 impl CombiningQueue {
-    const EMPTY: usize = usize::MAX;
-
-    /// enq
     pub fn comb_enqueue<const REC: bool>(
         &mut self,
-        arg: Data,
+        arg: usize,
         enq: &mut Enqueue,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> usize {
         Combining::apply_op::<REC, _>(
-            enq,
-            &self.enqueue_struct.inner,
-            &self.enqueue_thread_state,
-            &Self::enqueue_raw,
             arg,
+            (
+                &self.enqueue_struct.inner,
+                &self.enqueue_thread_state,
+                &Self::enqueue_raw,
+            ),
+            enq,
             tid,
             guard,
             pool,
         )
-    }
-
-    fn persist_new_nodes(_: &CombStruct, _: &Guard, pool: &PoolHandle) {
-        let new_nodes = unsafe { NEW_NODES.as_mut().unwrap() };
-        while !new_nodes.is_empty() {
-            let node = PPtr::<Node>::from(new_nodes.pop().unwrap());
-            persist_obj(unsafe { node.deref(pool) }, false);
-        }
-        sfence();
-    }
-
-    fn update_old_tail(str: &CombStruct, guard: &Guard, pool: &PoolHandle) {
-        // TODO: non-general 버전보다 deref 한 번 더함
-
-        let a = str.pstate.load(Ordering::SeqCst, guard);
-        let a_ref = unsafe { a.deref(pool) }; // TODO: non-general 버전보다 deref 한 번 더함
-        let tail = a_ref.data.load(Ordering::SeqCst, guard);
-        OLD_TAIL.store(tail.into_usize(), Ordering::SeqCst);
     }
 
     fn enqueue_raw(
@@ -291,10 +285,29 @@ impl CombiningQueue {
             Err(idx) => new_nodes.insert(idx, new_node_addr),
         }
 
-        0
+        0 // unit-like
     }
 
-    /// deq
+    fn persist_new_nodes(_: &CombStruct, _: &Guard, pool: &PoolHandle) {
+        let new_nodes = unsafe { NEW_NODES.as_mut().unwrap() };
+        while !new_nodes.is_empty() {
+            let node = PPtr::<Node>::from(new_nodes.pop().unwrap());
+            persist_obj(unsafe { node.deref(pool) }, false);
+        }
+        sfence();
+    }
+
+    fn update_old_tail(s: &CombStruct, guard: &Guard, pool: &PoolHandle) {
+        let latest_state = unsafe { s.pstate.load(Ordering::SeqCst, guard).deref(pool) };
+        let tail = latest_state.data.load(Ordering::SeqCst, guard);
+        OLD_TAIL.store(tail.into_usize(), Ordering::SeqCst);
+    }
+}
+
+/// deq
+impl CombiningQueue {
+    const EMPTY: usize = usize::MAX;
+
     pub fn comb_dequeue<const REC: bool>(
         &mut self,
         deq: &mut Dequeue,
@@ -303,11 +316,13 @@ impl CombiningQueue {
         pool: &PoolHandle,
     ) -> usize {
         Combining::apply_op::<REC, _>(
+            0, // unit-like
+            (
+                &self.dequeue_struct.inner,
+                &self.dequeue_thread_state,
+                &Self::dequeue_raw,
+            ),
             deq,
-            &self.dequeue_struct.inner,
-            &self.dequeue_thread_state,
-            &Self::dequeue_raw,
-            0, // TODO: option?
             tid,
             guard,
             pool,
@@ -325,7 +340,7 @@ impl CombiningQueue {
         let head_shared = head.load(Ordering::SeqCst, guard);
 
         // only nodes that persisted can be dequeued.
-        // persist of nodes from `OLD_TAIL` is not guaranteed because it is currently enqueud.
+        // nodes from 'OLD_TAIL' are not guaranteed to persist as they are currently queued.
         if OLD_TAIL.load(Ordering::SeqCst) == head_shared.into_usize() {
             return Self::EMPTY;
         }
