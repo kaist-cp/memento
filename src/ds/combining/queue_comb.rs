@@ -209,7 +209,7 @@ impl PDefault for CombiningQueue {
                 tail: CachePadded::new(PAtomic::from(dummy)),
             }),
             enqueue_thread_state: CachePadded::new(CombThreadState::new(
-                PAtomic::from(dummy), // TODO: 이게 맞나..
+                PAtomic::from(dummy),
                 pool,
             )),
             dequeue_struct: CachePadded::new(DequeueCombStruct {
@@ -224,7 +224,7 @@ impl PDefault for CombiningQueue {
                 head: CachePadded::new(PAtomic::from(dummy)),
             }),
             dequeue_thread_state: CachePadded::new(CombThreadState::new(
-                PAtomic::from(dummy), // TODO: 이게 맞나..
+                PAtomic::from(dummy),
                 pool,
             )),
         }

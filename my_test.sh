@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# TODO: 이 파일은 프로젝트에 필요없음. 테스트 용도
+
 set -e
 
 rm -rf /mnt/pmem0/*
