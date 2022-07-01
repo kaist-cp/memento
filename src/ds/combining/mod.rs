@@ -202,6 +202,10 @@ impl Combining {
                     )
                 }
                 Err((lval, _)) => {
+                    if lval % 2 == 0 {
+                        continue; // fail but retry because there is no combiner
+                    }
+
                     if let Ok(retval) =
                         Self::do_non_combine::<REC, _>(lval, s, mmt, tid, guard, pool)
                     {
