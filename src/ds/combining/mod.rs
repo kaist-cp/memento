@@ -290,11 +290,7 @@ impl Combining {
         // 3.3. release lock
         drop(lockguard);
 
-        return mmt.checkpoint_return_value::<REC>(
-            new_state_ref.return_value[tid].clone(),
-            tid,
-            pool,
-        );
+        mmt.checkpoint_return_value::<REC>(new_state_ref.return_value[tid], tid, pool)
     }
 
     /// non-combiner는 combiner가 끝나기를 기다렸다가 자신의 request가 처리됐는지 확인하고 반환
@@ -327,7 +323,7 @@ impl Combining {
             }
 
             return Ok(mmt.checkpoint_return_value::<REC>(
-                lastest_state.return_value[tid].clone(),
+                lastest_state.return_value[tid],
                 tid,
                 pool,
             ));
