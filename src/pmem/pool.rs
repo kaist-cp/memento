@@ -144,7 +144,8 @@ impl PoolHandle {
                             Ok(_) => break,
                             Err(_) => {
                                 thread::sleep(std::time::Duration::from_secs(1));
-                                println!("PANIC: Root memento No.{} re-executed.", tid)
+                                println!("PANIC: Root memento No.{} re-executed.", tid);
+                                // std::process::exit(1);
                             }
                         }
                     }

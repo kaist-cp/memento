@@ -24,6 +24,7 @@ function test_single() {
 # targets=("memento_queue" "memento_queue_general" "memento_queue_lp" "durable_queue" "log_queue")
 # targets=("durable_queue" "log_queue")
 # targets=("memento_queue_comb")
+# targets=("memento_queue_comb" "pbcomb_queue_full_detectable")
 targets=("memento_queue_comb" "pbcomb_queue")
 # kind="prob100"
 duration=5
