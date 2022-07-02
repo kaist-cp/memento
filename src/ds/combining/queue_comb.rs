@@ -131,9 +131,6 @@ impl Collectable for DequeueCombStruct {
 // #[derive(Debug)]
 #[allow(missing_debug_implementations)]
 pub struct CombiningQueue {
-    /// Shared non-volatile variables
-    dummy: PPtr<Node>,
-
     // Shared non-volatile variables used by Enqueue
     enqueue_struct: CachePadded<EnqueueCombStruct>,
     enqueue_thread_state: [CachePadded<CombThreadState>; MAX_THREADS + 1],
@@ -148,8 +145,6 @@ unsafe impl Send for CombiningQueue {}
 
 impl Collectable for CombiningQueue {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        assert!(s.dummy.is_null());
-        Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
         Collectable::filter(&mut *s.enqueue_struct, tid, gc, pool);
         for tstate in &mut s.enqueue_thread_state {
             Collectable::filter(&mut **tstate, tid, gc, pool);
@@ -160,7 +155,11 @@ impl Collectable for CombiningQueue {
         }
 
         // initialize global volatile variables
-        OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
+        let tail = s
+            .enqueue_struct
+            .tail
+            .load(Ordering::Relaxed, unsafe { unprotected() });
+        OLD_TAIL.store(tail.into_usize(), Ordering::SeqCst);
         unsafe {
             NEW_NODES = Some(tiny_vec!());
         }
@@ -186,7 +185,6 @@ impl PDefault for CombiningQueue {
 
         // initialize persistent variables
         Self {
-            dummy,
             enqueue_struct: CachePadded::new(EnqueueCombStruct {
                 inner: CachePadded::new(CombStruct::new(
                     Some(&Self::persist_new_nodes), // persist new nodes
