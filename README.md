@@ -20,7 +20,7 @@ We assume you use **Ubuntu 20.04**.
 
 ### Our Implementations
 
-#### Detectable Operations
+#### Detectable Operations for Location
 
 The directory `src/ploc/` contains memento-based detectable operations.
 
@@ -30,8 +30,9 @@ The directory `src/ploc/` contains memento-based detectable operations.
 
 #### Data Structures
 
-The directory `src/ds/` contains memento-based data structures supporting exactly-once semantics using detectable operations.
+The directory `src/ds/` contains memento-based persistent data structures supporting exactly-once semantics using detectable operations.
 
+- `src/ds/comb.rs`: A memento-based detectable combining operation. We convert original PBComb to one using mementos.
 - `src/ds/queue.rs`: A memento-based lock-free queue that uses `Insert`, `Delete` and `Checkpoint` based on Michael-Scott Queue.
 - `src/ds/queue_lp.rs`: A memento-based lock-free queue that uses `Insert`, `Delete` and `Checkpoint`. The difference from `queue.rs` is that this queue uses general `link-persist`technique rather than exploits DS-specific invariant for issuing less flushes when loading shared pointer.
 - `src/ds/queue_general.rs`: A memento-based lock-free queue that uses `DetectableCas` and `Checkpoint` based on Michael-Scott Queue.
@@ -40,7 +41,7 @@ The directory `src/ds/` contains memento-based data structures supporting exactl
 - `src/ds/elim_stack.rs`: An elimination-backoff stack combining our memento-based treiber stack and exchanger.
 - `src/ds/soft_list.rs` (and `src/ds/soft_hash.rs`): SOFT list (and hash table). We convert original SOFT list (and hash table, respectively.) to one using mementos.
 - `src/ds/clevel.rs`: A memento-based Clevel extensible hash table. We convert original Clevel to one using mementos.
-- `src/ds/queue_comb.rs`: A memento-based queue which uses a combining technique. We convert original PBQueue to one using mementos.
+- `src/ds/queue_comb.rs`: A memento-based combining queue that uses `Combining` operation.
 
 #### Safe Memory Reclamation
 

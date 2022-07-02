@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+#![allow(missing_debug_implementations)]
 use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
@@ -9,13 +11,13 @@ use memento::PDefault;
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
-impl TestQueue for Queue {
+impl TestQueue for CombiningQueue {
     type EnqInput = (usize, &'static mut Enqueue, usize); // value, memento, id
     type DeqInput = (&'static mut Dequeue, usize); // memento, tid
 
     fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
-        let queue = unsafe { (self as *const _ as *mut Queue).as_mut() }.unwrap();
+        let queue = unsafe { (self as *const _ as *mut CombiningQueue).as_mut() }.unwrap();
 
         let (value, enq_memento, tid) = input;
         let _ = queue.comb_enqueue::<false>(value, enq_memento, tid, guard, pool);
@@ -23,7 +25,7 @@ impl TestQueue for Queue {
 
     fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
         // Get &mut queue
-        let queue = unsafe { (self as *const _ as *mut Queue).as_mut() }.unwrap();
+        let queue = unsafe { (self as *const _ as *mut CombiningQueue).as_mut() }.unwrap();
 
         let (deq_memento, tid) = input;
         let _ = queue.comb_dequeue::<false>(deq_memento, tid, guard, pool);
@@ -31,9 +33,9 @@ impl TestQueue for Queue {
 }
 
 /// Root obj for evaluation of MementoQueuePBComb
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct TestMementoQueueComb {
-    queue: Queue,
+    queue: CombiningQueue,
 }
 
 impl Collectable for TestMementoQueueComb {
@@ -44,7 +46,7 @@ impl Collectable for TestMementoQueueComb {
 
 impl PDefault for TestMementoQueueComb {
     fn pdefault(pool: &PoolHandle) -> Self {
-        let mut queue = Queue::pdefault(pool);
+        let mut queue = CombiningQueue::pdefault(pool);
 
         let guard = epoch::pin();
         let mut push_init = Enqueue::default();
@@ -57,7 +59,7 @@ impl PDefault for TestMementoQueueComb {
 
 impl TestNOps for TestMementoQueueComb {}
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct TestMementoQueueCombEnqDeq<const PAIR: bool> {
     enq: CachePadded<Enqueue>,
     deq: CachePadded<Dequeue>,

@@ -191,6 +191,10 @@ impl Collectable for bool {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
+impl Collectable for c_void {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
 impl<T: Collectable> Collectable for Option<T> {
     fn filter(opt: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         let v = some_or!(opt, return);
