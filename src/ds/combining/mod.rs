@@ -87,7 +87,9 @@ impl Clone for CombStateRec {
         Self {
             data: self.data.clone(),
             return_value: array_init(|i| self.return_value[i]),
-            deactivate: array_init(|i| AtomicUsize::new(self.deactivate[i].load(Ordering::SeqCst))),
+            deactivate: array_init(|i| {
+                AtomicUsize::new(self.deactivate[i].load(Ordering::Relaxed))
+            }),
         }
     }
 }
@@ -178,14 +180,14 @@ impl Combining {
         pool: &PoolHandle,
     ) -> usize {
         // Register request
-        s.request[tid].arg.store(arg, Ordering::SeqCst);
+        s.request[tid].arg.store(arg, Ordering::Relaxed);
         s.request[tid].activate.store(
             mmt.checkpoint_activate::<REC>(
-                s.request[tid].activate.load(Ordering::SeqCst) + 1,
+                s.request[tid].activate.load(Ordering::Relaxed) + 1,
                 tid,
                 pool,
             ),
-            Ordering::SeqCst,
+            Ordering::Release,
         );
 
         // Do
@@ -237,26 +239,26 @@ impl Combining {
         pool: &PoolHandle,
     ) -> usize {
         // 1. 준비
-        let ind = st_thread.index.load(Ordering::SeqCst);
-        let mut new_state = st_thread.state[ind].load(Ordering::SeqCst, guard);
+        let ind = st_thread.index.load(Ordering::Relaxed);
+        let mut new_state = st_thread.state[ind].load(Ordering::Relaxed, guard);
         let new_state_ref = unsafe { new_state.deref_mut(pool) };
-        *new_state_ref = unsafe { s.pstate.load(Ordering::SeqCst, guard).deref(pool) }.clone(); // create a copy of current state
+        *new_state_ref = unsafe { s.pstate.load(Ordering::Relaxed, guard).deref(pool) }.clone(); // create a copy of current state
 
         // 2. 처리
         for _ in 0..COMBINING_ROUNDS {
             let mut serve_reqs = 0;
 
             for t in 1..unsafe { NR_THREADS } + 1 {
-                let t_activate = s.request[t].activate.load(Ordering::SeqCst);
-                if t_activate > new_state_ref.deactivate[t].load(Ordering::SeqCst) {
+                let t_activate = s.request[t].activate.load(Ordering::Acquire);
+                if t_activate > new_state_ref.deactivate[t].load(Ordering::Relaxed) {
                     new_state_ref.return_value[t] = sfunc(
                         &new_state_ref.data,
-                        s.request[t].arg.load(Ordering::SeqCst),
+                        s.request[t].arg.load(Ordering::Relaxed),
                         tid,
                         guard,
                         pool,
                     );
-                    new_state_ref.deactivate[t].store(t_activate, Ordering::SeqCst);
+                    new_state_ref.deactivate[t].store(t_activate, Ordering::Release);
 
                     // cnt
                     serve_reqs += 1;
@@ -275,8 +277,8 @@ impl Combining {
         persist_obj(new_state_ref, true);
 
         // 3.1 업데이트한 per-thread state를 global에 최신 state로서 박아넣음
-        s.lock_value.store(lval, Ordering::SeqCst); // non-combiner의 버그 방지를 위함
-        s.pstate.store(new_state, Ordering::SeqCst);
+        s.lock_value.store(lval, Ordering::Release); // non-combiner의 버그 방지를 위함
+        s.pstate.store(new_state, Ordering::Release);
         persist_obj(&*s.pstate, true);
 
         // e.g. enqueue: update old tail
@@ -285,7 +287,7 @@ impl Combining {
         }
 
         // 3.2. per-thread index 뒤집기
-        st_thread.index.store(1 - ind, Ordering::SeqCst);
+        st_thread.index.store(1 - ind, Ordering::Relaxed);
 
         // 3.3. release lock
         drop(lockguard);
@@ -308,14 +310,14 @@ impl Combining {
         while lval == s.lock.peek().0 {
             backoff.snooze();
         }
-        let lastest_state = unsafe { s.pstate.load(Ordering::SeqCst, guard).deref(pool) };
+        let lastest_state = unsafe { s.pstate.load(Ordering::Acquire, guard).deref(pool) };
 
         // 자신의 request가 처리됐는지 확인
-        if s.request[tid].activate.load(Ordering::SeqCst)
-            <= lastest_state.deactivate[tid].load(Ordering::SeqCst)
+        if s.request[tid].activate.load(Ordering::Relaxed)
+            <= lastest_state.deactivate[tid].load(Ordering::Acquire)
         {
             // 자신의 request가 처리됐지만 처리해준 combiner가 아직 안끝났다면 끝날때까지 기다렸다가 결과 반환
-            if s.lock_value.load(Ordering::SeqCst) != lval {
+            if s.lock_value.load(Ordering::Acquire) != lval {
                 backoff.reset();
                 while s.lock.peek().0 == lval + 2 {
                     backoff.snooze();
