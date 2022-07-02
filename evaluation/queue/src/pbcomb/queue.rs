@@ -86,21 +86,11 @@ impl Collectable for Node {
 }
 
 /// State of Enqueue PBComb
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EStateRec {
     tail: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
     return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
-}
-
-impl Clone for EStateRec {
-    fn clone(&self) -> Self {
-        Self {
-            tail: self.tail.clone(),
-            return_val: self.return_val.clone(),
-            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
-        }
-    }
+    deactivate: [bool; MAX_THREADS + 1],
 }
 
 impl Collectable for EStateRec {
@@ -116,21 +106,11 @@ struct EThreadState {
 }
 
 /// State of Dequeue PBComb
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DStateRec {
     head: PAtomic<Node>, // NOTE: Atomic type to restrict reordering. We use this likes plain pointer.
     return_val: [Option<ReturnVal>; MAX_THREADS + 1],
-    deactivate: [AtomicBool; MAX_THREADS + 1],
-}
-
-impl Clone for DStateRec {
-    fn clone(&self) -> Self {
-        Self {
-            head: self.head.clone(),
-            return_val: self.return_val.clone(),
-            deactivate: array_init(|i| AtomicBool::new(self.deactivate[i].load(Ordering::SeqCst))),
-        }
-    }
+    deactivate: [bool; MAX_THREADS + 1],
 }
 
 impl Collectable for DStateRec {
@@ -209,8 +189,8 @@ impl PDefault for PBCombQueue {
             e_state: CachePadded::new(PAtomic::new(
                 EStateRec {
                     tail: PAtomic::from(dummy),
-                    return_val: array_init(|_| None),
-                    deactivate: array_init(|_| AtomicBool::new(false)),
+                    return_val: array_init(|_| Default::default()),
+                    deactivate: array_init(|_| Default::default()),
                 },
                 pool,
             )),
@@ -220,8 +200,8 @@ impl PDefault for PBCombQueue {
                         PAtomic::new(
                             EStateRec {
                                 tail: PAtomic::from(dummy),
-                                return_val: array_init(|_| None),
-                                deactivate: array_init(|_| AtomicBool::new(false)),
+                                return_val: array_init(|_| Default::default()),
+                                deactivate: array_init(|_| Default::default()),
                             },
                             pool,
                         )
@@ -233,8 +213,8 @@ impl PDefault for PBCombQueue {
             d_state: CachePadded::new(PAtomic::new(
                 DStateRec {
                     head: PAtomic::from(dummy),
-                    return_val: array_init(|_| None),
-                    deactivate: array_init(|_| AtomicBool::new(false)),
+                    return_val: array_init(|_| Default::default()),
+                    deactivate: array_init(|_| Default::default()),
                 },
                 pool,
             )),
@@ -244,8 +224,8 @@ impl PDefault for PBCombQueue {
                         PAtomic::new(
                             DStateRec {
                                 head: PAtomic::from(dummy),
-                                return_val: array_init(|_| None),
-                                deactivate: array_init(|_| AtomicBool::new(false)),
+                                return_val: array_init(|_| Default::default()),
+                                deactivate: array_init(|_| Default::default()),
                             },
                             pool,
                         )
@@ -308,7 +288,6 @@ impl PBCombQueue {
 
                 // check activate and re-execute if request is not yet applied
                 if unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
-                    .load(Ordering::SeqCst)
                     != (seq % 2 == 1)
                 {
                     return self.PerformEnqReq(tid, guard, pool);
@@ -330,7 +309,6 @@ impl PBCombQueue {
 
                 // check activate and re-execute if request is not yet applied
                 if unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) }.deactivate[tid]
-                    .load(Ordering::SeqCst)
                     != (seq % 2 == 1)
                 {
                     return self.PerformDeqReq(tid, guard, pool);
@@ -402,9 +380,7 @@ impl PBCombQueue {
                 backoff.snooze();
             }
             let last_state = unsafe { self.e_state.load(Ordering::SeqCst, guard).deref(pool) };
-            if self.e_request[tid].activate
-                == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
-            {
+            if self.e_request[tid].activate == last_state.deactivate[tid] as u32 {
                 if E_LOCK_VALUE.load(Ordering::SeqCst) == lval {
                     return last_state.return_val[tid].clone().unwrap();
                 }
@@ -432,8 +408,7 @@ impl PBCombQueue {
 
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `q` thread has a request that is not yet applied
-                if self.e_request[q].activate
-                    != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
+                if self.e_request[q].activate != new_state_ref.deactivate[q] as u32
                     && self.e_request[q].valid == 1
                 {
                     // reserve persist(current tail)
@@ -449,8 +424,7 @@ impl PBCombQueue {
                     // enq
                     Self::enqueue(&new_state_ref.tail, self.e_request[q].arg, guard, pool);
                     new_state_ref.return_val[q] = Some(ReturnVal::EnqRetVal(()));
-                    new_state_ref.deactivate[q]
-                        .store(self.e_request[q].activate == 1, Ordering::SeqCst);
+                    new_state_ref.deactivate[q] = self.e_request[q].activate == 1;
 
                     // count
                     serve_reqs += 1;
@@ -566,9 +540,7 @@ impl PBCombQueue {
             }
 
             let last_state = unsafe { self.d_state.load(Ordering::SeqCst, guard).deref(pool) };
-            if self.d_request[tid].activate
-                == last_state.deactivate[tid].load(Ordering::SeqCst) as u32
-            {
+            if self.d_request[tid].activate == last_state.deactivate[tid] as u32 {
                 if D_LOCK_VALUE.load(Ordering::SeqCst) == lval {
                     return last_state.return_val[tid].clone().unwrap();
                 }
@@ -593,8 +565,7 @@ impl PBCombQueue {
 
             for q in 1..unsafe { NR_THREADS } + 1 {
                 // if `t` thread has a request that is not yet applied
-                if self.d_request[q].activate
-                    != new_state_ref.deactivate[q].load(Ordering::SeqCst) as u32
+                if self.d_request[q].activate != new_state_ref.deactivate[q] as u32
                     && self.d_request[q].valid == 1
                 {
                     let ret_val;
@@ -612,8 +583,7 @@ impl PBCombQueue {
                         ret_val = ReturnVal::DeqRetVal(Self::EMPTY);
                     }
                     new_state_ref.return_val[q] = Some(ret_val);
-                    new_state_ref.deactivate[q]
-                        .store(self.d_request[q].activate == 1, Ordering::SeqCst);
+                    new_state_ref.deactivate[q] = self.d_request[q].activate == 1;
 
                     // cnt
                     serve_reqs += 1;
