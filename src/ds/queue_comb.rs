@@ -1,25 +1,22 @@
 //! Detectable Combining queue
-#![allow(non_snake_case)]
-#![allow(warnings)]
-use crate::ds::combining::combining_lock::CombiningLock;
-use crate::ds::tlock::ThreadRecoverableSpinLock;
+#![allow(missing_docs)]
+use crate::ds::comb::combining_lock::CombiningLock;
 use crate::pepoch::atomic::Pointer;
-use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned};
 use crate::ploc::Checkpoint;
-use crate::pmem::{
-    global_pool, persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle,
-};
+use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
 use crossbeam_epoch::Guard;
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::CachePadded;
 use etrace::ok_or;
-use lazy_static::__Deref;
 use libc::c_void;
-use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tinyvec::{tiny_vec, TinyVec};
 
-use super::{CombStateRec, CombStruct, CombThreadState, Combinable, Combining, Node, MAX_THREADS};
+use super::comb::{
+    CombStateRec, CombStruct, CombThreadState, Combinable, Combining, Node, MAX_THREADS,
+};
 
 /// memento for enqueue
 #[derive(Debug, Default)]
@@ -28,7 +25,7 @@ pub struct Enqueue {
 }
 
 impl Combinable for Enqueue {
-    fn checkpoint_activate<const REC: bool>(
+    fn chk_activate<const REC: bool>(
         &mut self,
         activate: usize,
         tid: usize,
@@ -41,11 +38,11 @@ impl Combinable for Enqueue {
         )
     }
 
-    fn peek_return_value(&mut self) -> usize {
+    fn peek_retval(&mut self) -> usize {
         0 // unit-like
     }
 
-    fn backup_return_value(&mut self, return_value: usize) {
+    fn backup_retval(&mut self, _: usize) {
         // no-op
     }
 }
@@ -64,7 +61,7 @@ pub struct Dequeue {
 }
 
 impl Combinable for Dequeue {
-    fn checkpoint_activate<const REC: bool>(
+    fn chk_activate<const REC: bool>(
         &mut self,
         activate: usize,
         tid: usize,
@@ -77,11 +74,11 @@ impl Combinable for Dequeue {
         )
     }
 
-    fn peek_return_value(&mut self) -> usize {
+    fn peek_retval(&mut self) -> usize {
         *self.return_val
     }
 
-    fn backup_return_value(&mut self, return_value: usize) {
+    fn backup_retval(&mut self, return_value: usize) {
         *self.return_val = return_value;
         persist_obj(&*self.return_val, true);
     }
@@ -242,7 +239,7 @@ impl CombiningQueue {
     fn enqueue_raw(
         tail: &PAtomic<c_void>,
         arg: usize,
-        tid: usize,
+        _: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> usize {
@@ -315,8 +312,8 @@ impl CombiningQueue {
 
     fn dequeue_raw(
         head: &PAtomic<c_void>,
-        arg: usize,
-        tid: usize,
+        _: usize,
+        _: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> usize {

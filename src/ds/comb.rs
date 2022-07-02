@@ -1,6 +1,5 @@
 //! Detectable Combining queue
 #![allow(missing_docs)]
-pub mod queue_comb;
 use crate::pepoch::PAtomic;
 use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle};
 use array_init::array_init;
@@ -11,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use self::combining_lock::CombiningLock;
 
-const MAX_THREADS: usize = 64;
+pub const MAX_THREADS: usize = 64;
 const COMBINING_ROUNDS: usize = 20;
 
 /// restriction of combining iteration
@@ -33,16 +32,17 @@ impl Collectable for Node {
 
 /// Trait for Memento
 pub trait Combinable {
-    fn checkpoint_activate<const REC: bool>(
+    // checkpoint activate of request
+    fn chk_activate<const REC: bool>(
         &mut self,
         activate: usize,
         tid: usize,
         pool: &PoolHandle,
     ) -> usize;
 
-    fn peek_return_value(&mut self) -> usize;
+    fn peek_retval(&mut self) -> usize;
 
-    fn backup_return_value(&mut self, return_value: usize);
+    fn backup_retval(&mut self, return_value: usize);
 }
 
 /// request obj
@@ -75,8 +75,8 @@ impl CombStateRec {
 }
 
 impl Collectable for CombStateRec {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // Collectable::filter(&mut s.data, tid, gc, pool); // TODO: void 어케 마크하지? c_void 대신 T로?
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut s.data, tid, gc, pool);
     }
 }
 
@@ -119,8 +119,8 @@ impl Collectable for CombThreadState {
 #[allow(missing_debug_implementations)]
 pub struct CombStruct {
     // General func for additional behavior: e.g. persist enqueued nodes
-    final_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
-    after_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
+    final_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
+    after_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
 
     // Variables located at volatile location
     lock: &'static CachePadded<CombiningLock>,
@@ -141,15 +141,15 @@ impl Collectable for CombStruct {
 
 impl CombStruct {
     pub fn new(
-        final_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
-        after_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
+        final_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
+        after_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
         lock: &'static CachePadded<CombiningLock>,
         request: [CachePadded<CombRequest>; MAX_THREADS + 1],
         pstate: CachePadded<PAtomic<CombStateRec>>,
     ) -> Self {
         Self {
-            final_persist_func,
-            after_persist_func,
+            final_func,
+            after_func,
             lock,
             request,
             pstate,
@@ -174,7 +174,7 @@ impl Combining {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> usize {
-        let activate = mmt.checkpoint_activate::<REC>(
+        let activate = mmt.chk_activate::<REC>(
             s.request[tid].activate.load(Ordering::Relaxed) + 1,
             tid,
             pool,
@@ -185,7 +185,7 @@ impl Combining {
             let latest_state = unsafe { s.pstate.load(Ordering::Acquire, guard).deref(pool) };
             let deactivate = latest_state.deactivate[tid].load(Ordering::Relaxed);
             if activate < deactivate {
-                return mmt.peek_return_value();
+                return mmt.peek_retval();
             }
             if activate == deactivate {
                 return latest_state.return_value[tid];
@@ -263,7 +263,7 @@ impl Combining {
         }
 
         // e.g. enqueue: persist all enqueued node
-        if let Some(func) = s.final_persist_func {
+        if let Some(func) = s.final_func {
             func(s, guard, pool);
         }
         persist_obj(new_state_ref, true);
@@ -273,7 +273,7 @@ impl Combining {
         persist_obj(&*s.pstate, true);
 
         // e.g. enqueue: update old tail
-        if let Some(func) = s.after_persist_func {
+        if let Some(func) = s.after_func {
             func(s, guard, pool);
         }
 
@@ -284,7 +284,7 @@ impl Combining {
         unsafe { s.lock.unlock(new_state_ref as *const _ as usize) };
 
         let retval = new_state_ref.return_value[tid];
-        mmt.backup_return_value(retval);
+        mmt.backup_retval(retval);
         retval
     }
 
@@ -313,7 +313,7 @@ impl Combining {
             <= lastest_state.deactivate[tid].load(Ordering::Acquire)
         {
             let retval = lastest_state.return_value[tid];
-            mmt.backup_return_value(retval);
+            mmt.backup_retval(retval);
             return Ok(retval);
         }
 
@@ -321,7 +321,7 @@ impl Combining {
     }
 }
 
-mod combining_lock {
+pub mod combining_lock {
     //! Thread-recoverable lock for combining
     use core::sync::atomic::Ordering;
     use std::sync::atomic::AtomicUsize;
