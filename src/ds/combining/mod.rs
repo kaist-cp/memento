@@ -1,7 +1,6 @@
 //! Detectable Combining queue
 #![allow(missing_docs)]
 pub mod queue_comb;
-use crate::ds::tlock::*;
 use crate::pepoch::PAtomic;
 use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle};
 use array_init::array_init;
@@ -9,6 +8,8 @@ use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
 use libc::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use self::combining_lock::CombiningLock;
 
 const MAX_THREADS: usize = 64;
 const COMBINING_ROUNDS: usize = 20;
@@ -125,8 +126,7 @@ pub struct CombStruct {
     after_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
 
     // Variables located at volatile location
-    lock: &'static CachePadded<ThreadRecoverableSpinLock>,
-    lock_value: &'static CachePadded<AtomicUsize>,
+    lock: &'static CachePadded<CombiningLock>,
 
     // Variables located at persistent location
     request: [CachePadded<CombRequest>; MAX_THREADS + 1], // per-thread requests
@@ -146,8 +146,7 @@ impl CombStruct {
     pub fn new(
         final_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
         after_persist_func: Option<&'static dyn Fn(&CombStruct, &Guard, &PoolHandle)>,
-        lock: &'static CachePadded<ThreadRecoverableSpinLock>,
-        lock_value: &'static CachePadded<AtomicUsize>,
+        lock: &'static CachePadded<CombiningLock>,
         request: [CachePadded<CombRequest>; MAX_THREADS + 1],
         pstate: CachePadded<PAtomic<CombStateRec>>,
     ) -> Self {
@@ -155,7 +154,6 @@ impl CombStruct {
             final_persist_func,
             after_persist_func,
             lock,
-            lock_value,
             request,
             pstate,
         }
@@ -193,24 +191,11 @@ impl Combining {
         // Do
         loop {
             match s.lock.try_lock::<REC>(tid) {
-                Ok(l) => {
-                    return Self::do_combine::<REC, _>(
-                        l,
-                        (s, st_thread, sfunc),
-                        mmt,
-                        tid,
-                        guard,
-                        pool,
-                    )
+                Ok(_) => {
+                    return Self::do_combine::<REC, _>((s, st_thread, sfunc), mmt, tid, guard, pool)
                 }
-                Err((lval, _)) => {
-                    if lval % 2 == 0 {
-                        continue; // fail but retry because there is no combiner
-                    }
-
-                    if let Ok(retval) =
-                        Self::do_non_combine::<REC, _>(lval, s, mmt, tid, guard, pool)
-                    {
+                Err(_) => {
+                    if let Ok(retval) = Self::do_non_combine::<REC, _>(s, mmt, tid) {
                         return retval;
                     }
                 }
@@ -227,7 +212,6 @@ impl Combining {
     ///     3.2. pt.index = 1 - pt.index
     ///     3.3. release lock
     fn do_combine<const REC: bool, M: Combinable>(
-        (lval, lockguard): (usize, SpinLockGuard<'_>),
         (s, st_thread, sfunc): (
             &CombStruct,
             &CombThreadState,
@@ -277,7 +261,6 @@ impl Combining {
         persist_obj(new_state_ref, true);
 
         // 3.1 업데이트한 per-thread state를 global에 최신 state로서 박아넣음
-        s.lock_value.store(lval, Ordering::Release); // non-combiner의 버그 방지를 위함
         s.pstate.store(new_state, Ordering::Release);
         persist_obj(&*s.pstate, true);
 
@@ -289,8 +272,8 @@ impl Combining {
         // 3.2. per-thread index 뒤집기
         st_thread.index.store(1 - ind, Ordering::Relaxed);
 
-        // 3.3. release lock
-        drop(lockguard);
+        // 3.3. release lock with new state
+        unsafe { s.lock.unlock(new_state_ref as *const _ as usize) };
 
         mmt.checkpoint_return_value::<REC>(new_state_ref.return_value[tid], tid, pool)
     }
@@ -298,39 +281,123 @@ impl Combining {
     /// non-combiner는 combiner가 끝나기를 기다렸다가 자신의 request가 처리됐는지 확인하고 반환
     fn do_non_combine<const REC: bool, M: Combinable>(
         // &self,
-        lval: usize,
         s: &CombStruct,
         mmt: &mut M,
         tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
     ) -> Result<usize, ()> {
         // wait until the combiner unlocks the lock
         let backoff = Backoff::new();
-        while lval == s.lock.peek().0 {
+        let mut combined_ptr;
+        let mut combined_tid;
+        loop {
+            (combined_ptr, combined_tid) = s.lock.peek();
+            if combined_tid == 0 {
+                break;
+            }
             backoff.snooze();
         }
-        let lastest_state = unsafe { s.pstate.load(Ordering::Acquire, guard).deref(pool) };
 
         // 자신의 request가 처리됐는지 확인
+        let lastest_state = unsafe { (combined_ptr as *const CombStateRec).as_ref().unwrap() };
         if s.request[tid].activate.load(Ordering::Relaxed)
             <= lastest_state.deactivate[tid].load(Ordering::Acquire)
         {
-            // 자신의 request가 처리됐지만 처리해준 combiner가 아직 안끝났다면 끝날때까지 기다렸다가 결과 반환
-            if s.lock_value.load(Ordering::Acquire) != lval {
-                backoff.reset();
-                while s.lock.peek().0 == lval + 2 {
-                    backoff.snooze();
-                }
-            }
-
-            return Ok(mmt.checkpoint_return_value::<REC>(
-                lastest_state.return_value[tid],
-                tid,
-                pool,
-            ));
-        }
 
         Err(())
+    }
+}
+
+mod combining_lock {
+    //! Thread-recoverable lock for combining
+    use core::sync::atomic::Ordering;
+    use std::sync::atomic::AtomicUsize;
+
+    use crossbeam_utils::Backoff;
+
+    use crate::impl_left_bits;
+
+    // Auxiliary Bits
+    // aux bits: MSB 55-bit in 64-bit
+    // Used for:
+    // - Comb: Indicating ptr of combined state
+    pub(crate) const POS_AUX_BITS: u32 = 0;
+    pub(crate) const NR_AUX_BITS: u32 = 55;
+    impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
+
+    #[inline]
+    fn compose_aux_bit(aux: usize, data: usize) -> usize {
+        (aux_bits() & (aux.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
+    }
+
+    #[inline]
+    fn decompose_aux_bit(data: usize) -> (usize, usize) {
+        (
+            (data & aux_bits()).rotate_left(POS_AUX_BITS + NR_AUX_BITS),
+            !aux_bits() & data,
+        )
+    }
+
+    /// thread-recoverable spin lock
+    #[derive(Debug, Default)]
+    pub struct CombiningLock {
+        inner: AtomicUsize, // 55:ptr of state, 9:tid occupying the lock
+    }
+
+    impl CombiningLock {
+        const PTR_NULL: usize = 0;
+        const RELEASED: usize = 0;
+
+        /// Try lock
+        ///
+        /// return Ok: (seq, guard)
+        /// return Err: (seq, tid)
+        pub fn try_lock<const REC: bool>(&self, tid: usize) -> Result<(), (usize, usize)> {
+            let current = self.inner.load(Ordering::Relaxed);
+            let (_ptr, _tid) = decompose_aux_bit(current);
+
+            if REC && tid == _tid {
+                return Ok(());
+            }
+
+            if _tid != Self::RELEASED {
+                return Err((_ptr, _tid));
+            }
+
+            self.inner
+                .compare_exchange(
+                    current,
+                    compose_aux_bit(Self::PTR_NULL, tid),
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .map(|_| ())
+                .map_err(|_| (_ptr, _tid))
+        }
+
+        /// lock
+        pub fn lock<const REC: bool>(&self, tid: usize) -> () {
+            let backoff = Backoff::new();
+            loop {
+                if let Ok(ret) = self.try_lock::<REC>(tid) {
+                    return ret;
+                }
+                backoff.snooze();
+            }
+        }
+
+        /// peek
+        ///
+        /// return (ptr, tid)
+        pub fn peek(&self) -> (usize, usize) {
+            decompose_aux_bit(self.inner.load(Ordering::Acquire))
+        }
+
+        /// unlock
+        ///
+        /// unlock the lock with given ptr
+        pub unsafe fn unlock(&self, ptr: usize) {
+            self.inner
+                .store(compose_aux_bit(ptr, Self::RELEASED), Ordering::Release);
+        }
     }
 }

@@ -1,6 +1,7 @@
 //! Detectable Combining queue
 #![allow(non_snake_case)]
 #![allow(warnings)]
+use crate::ds::combining::combining_lock::CombiningLock;
 use crate::ds::tlock::ThreadRecoverableSpinLock;
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned, PShared};
@@ -94,7 +95,6 @@ impl Combinable for Dequeue {
 impl Collectable for Dequeue {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut deq.activate, tid, gc, pool);
-        Checkpoint::filter(&mut deq.return_val, tid, gc, pool);
     }
 }
 
@@ -104,13 +104,8 @@ static mut NEW_NODES: Option<TinyVec<[usize; 1024]>> = None;
 lazy_static::lazy_static! {
     static ref OLD_TAIL: AtomicUsize = AtomicUsize::new(0);
 
-    /// Used by the PBQueueENQ instance of PBCOMB
-    static ref E_LOCK: CachePadded<ThreadRecoverableSpinLock> = CachePadded::new(ThreadRecoverableSpinLock::default());
-    static ref E_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
-
-    /// Used by the PBQueueDEQ instance of PBCOMB
-    static ref D_LOCK: CachePadded<ThreadRecoverableSpinLock> = CachePadded::new(ThreadRecoverableSpinLock::default());
-    static ref D_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
+    static ref E_LOCK: CachePadded<CombiningLock> = CachePadded::new(Default::default());
+    static ref D_LOCK: CachePadded<CombiningLock> = CachePadded::new(Default::default());
 }
 
 struct EnqueueCombStruct {
@@ -175,9 +170,7 @@ impl Collectable for CombiningQueue {
             NEW_NODES = Some(tiny_vec!());
         }
         lazy_static::initialize(&E_LOCK);
-        lazy_static::initialize(&E_LOCK_VALUE);
         lazy_static::initialize(&D_LOCK);
-        lazy_static::initialize(&D_LOCK_VALUE);
     }
 }
 
@@ -194,9 +187,7 @@ impl PDefault for CombiningQueue {
             NEW_NODES = Some(tiny_vec!());
         }
         lazy_static::initialize(&E_LOCK);
-        lazy_static::initialize(&E_LOCK_VALUE);
         lazy_static::initialize(&D_LOCK);
-        lazy_static::initialize(&D_LOCK_VALUE);
 
         // initialize persistent variables
         Self {
@@ -206,7 +197,6 @@ impl PDefault for CombiningQueue {
                     Some(&Self::persist_new_nodes), // persist new nodes
                     Some(&Self::update_old_tail),   // update old tail
                     &*E_LOCK,
-                    &*E_LOCK_VALUE,
                     array_init(|_| CachePadded::new(Default::default())),
                     CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
                 )),
@@ -220,7 +210,6 @@ impl PDefault for CombiningQueue {
                     None,
                     None,
                     &*D_LOCK,
-                    &*D_LOCK_VALUE,
                     array_init(|_| CachePadded::new(Default::default())),
                     CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
                 )),
