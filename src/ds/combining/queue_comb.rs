@@ -18,7 +18,7 @@ use libc::c_void;
 use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use tinyvec::{tiny_vec, TinyVec};
 
-use super::{CombStateRec, CombStruct, CombThreadState, Combinable, Combining, Node};
+use super::{CombStateRec, CombStruct, CombThreadState, Combinable, Combining, Node, MAX_THREADS};
 
 /// memento for enqueue
 #[derive(Debug, Default)]
@@ -146,11 +146,11 @@ pub struct CombiningQueue {
 
     // Shared non-volatile variables used by Enqueue
     enqueue_struct: CachePadded<EnqueueCombStruct>,
-    enqueue_thread_state: CachePadded<CombThreadState>,
+    enqueue_thread_state: [CachePadded<CombThreadState>; MAX_THREADS + 1],
 
     // Shared non-volatile variables used by Dequeue
     dequeue_struct: CachePadded<DequeueCombStruct>,
-    dequeue_thread_state: CachePadded<CombThreadState>,
+    dequeue_thread_state: [CachePadded<CombThreadState>; MAX_THREADS + 1],
 }
 
 unsafe impl Sync for CombiningQueue {}
@@ -161,9 +161,13 @@ impl Collectable for CombiningQueue {
         assert!(s.dummy.is_null());
         Collectable::mark(unsafe { s.dummy.deref_mut(pool) }, tid, gc);
         Collectable::filter(&mut *s.enqueue_struct, tid, gc, pool);
-        Collectable::filter(&mut *s.enqueue_thread_state, tid, gc, pool);
+        for tstate in &mut s.enqueue_thread_state {
+            Collectable::filter(&mut **tstate, tid, gc, pool);
+        }
         Collectable::filter(&mut *s.dequeue_struct, tid, gc, pool);
-        Collectable::filter(&mut *s.dequeue_thread_state, tid, gc, pool);
+        for tstate in &mut s.dequeue_thread_state {
+            Collectable::filter(&mut **tstate, tid, gc, pool);
+        }
 
         // initialize global volatile variables
         OLD_TAIL.store(s.dummy.into_offset(), Ordering::SeqCst);
@@ -208,10 +212,9 @@ impl PDefault for CombiningQueue {
                 )),
                 tail: CachePadded::new(PAtomic::from(dummy)),
             }),
-            enqueue_thread_state: CachePadded::new(CombThreadState::new(
-                PAtomic::from(dummy),
-                pool,
-            )),
+            enqueue_thread_state: array_init(|_| {
+                CachePadded::new(CombThreadState::new(PAtomic::from(dummy), pool))
+            }),
             dequeue_struct: CachePadded::new(DequeueCombStruct {
                 inner: CachePadded::new(CombStruct::new(
                     None,
@@ -223,10 +226,9 @@ impl PDefault for CombiningQueue {
                 )),
                 head: CachePadded::new(PAtomic::from(dummy)),
             }),
-            dequeue_thread_state: CachePadded::new(CombThreadState::new(
-                PAtomic::from(dummy),
-                pool,
-            )),
+            dequeue_thread_state: array_init(|_| {
+                CachePadded::new(CombThreadState::new(PAtomic::from(dummy), pool))
+            }),
         }
     }
 }
@@ -245,7 +247,7 @@ impl CombiningQueue {
             arg,
             (
                 &self.enqueue_struct.inner,
-                &self.enqueue_thread_state,
+                &self.enqueue_thread_state[tid],
                 &Self::enqueue_raw,
             ),
             enq,
@@ -319,7 +321,7 @@ impl CombiningQueue {
             0, // unit-like
             (
                 &self.dequeue_struct.inner,
-                &self.dequeue_thread_state,
+                &self.dequeue_thread_state[tid],
                 &Self::dequeue_raw,
             ),
             deq,
