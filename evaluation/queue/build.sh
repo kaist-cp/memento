@@ -11,11 +11,11 @@ feature=$1
 # Install dependency
 
 ### PMDK
-# sudo apt install libpmemobj1 -y
-# sudo apt install libpmemobj-cpp-dev -y
+sudo apt install libpmemobj1 -y
+sudo apt install libpmemobj-cpp-dev -y
 
 ### Clobber-NVM
-# sudo ./src/clobber-nvm/deps.sh
+sudo ./src/clobber-nvm/deps.sh
 
 ### plot
 sudo apt install build-essential python3-pip
@@ -36,5 +36,5 @@ fi
 g++ -O3 -o $target_path/bench_cpp $base_dir/src/main.cpp $base_dir/src/pmdk/pipe.cpp $base_dir/src/pmdk/queue.cpp -pthread -lpmemobj -std=c++17
 
 ### Clobber-NVM
-# (cd ./src/clobber-nvm; sudo ./build.sh) # TODO: Make it fast for the second build. (e.g. remove everything except the code for the queue)
-# (cd ./src/clobber-nvm/apps/queue/; make benchmark-clobber)
+(cd ./src/clobber-nvm; sudo ./build.sh) # TODO: Make it fast for the second build. (e.g. remove everything except the code for the queue)
+(cd ./src/clobber-nvm/apps/queue/; make benchmark-clobber)
