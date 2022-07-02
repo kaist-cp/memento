@@ -41,13 +41,12 @@ impl Combinable for Enqueue {
         )
     }
 
-    fn checkpoint_return_value<const REC: bool>(
-        &mut self,
-        return_value: usize,
-        tid: usize,
-        pool: &PoolHandle,
-    ) -> usize {
-        return_value
+    fn peek_return_value(&mut self) -> usize {
+        0 // unit-like
+    }
+
+    fn backup_return_value(&mut self, return_value: usize) {
+        // no-op
     }
 }
 
@@ -61,7 +60,7 @@ impl Collectable for Enqueue {
 #[derive(Debug, Default)]
 pub struct Dequeue {
     activate: Checkpoint<usize>,
-    return_val: Checkpoint<usize>,
+    return_val: CachePadded<usize>,
 }
 
 impl Combinable for Dequeue {
@@ -78,17 +77,13 @@ impl Combinable for Dequeue {
         )
     }
 
-    fn checkpoint_return_value<const REC: bool>(
-        &mut self,
-        return_value: usize,
-        tid: usize,
-        pool: &PoolHandle,
-    ) -> usize {
-        ok_or!(
-            self.return_val.checkpoint::<REC>(return_value, tid, pool),
-            e,
-            e.current
-        )
+    fn peek_return_value(&mut self) -> usize {
+        *self.return_val
+    }
+
+    fn backup_return_value(&mut self, return_value: usize) {
+        *self.return_val = return_value;
+        persist_obj(&*self.return_val, true);
     }
 }
 

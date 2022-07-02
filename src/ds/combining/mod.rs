@@ -40,12 +40,9 @@ pub trait Combinable {
         pool: &PoolHandle,
     ) -> usize;
 
-    fn checkpoint_return_value<const REC: bool>(
-        &mut self,
-        return_value: usize,
-        tid: usize,
-        pool: &PoolHandle,
-    ) -> usize;
+    fn peek_return_value(&mut self) -> usize;
+
+    fn backup_return_value(&mut self, return_value: usize);
 }
 
 /// request obj
@@ -177,16 +174,27 @@ impl Combining {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> usize {
+        let activate = mmt.checkpoint_activate::<REC>(
+            s.request[tid].activate.load(Ordering::Relaxed) + 1,
+            tid,
+            pool,
+        );
+
+        // Check if my request was already performed.
+        if REC {
+            let latest_state = unsafe { s.pstate.load(Ordering::Acquire, guard).deref(pool) };
+            let deactivate = latest_state.deactivate[tid].load(Ordering::Relaxed);
+            if activate < deactivate {
+                return mmt.peek_return_value();
+            }
+            if activate == deactivate {
+                return latest_state.return_value[tid];
+            }
+        }
+
         // Register request
         s.request[tid].arg.store(arg, Ordering::Relaxed);
-        s.request[tid].activate.store(
-            mmt.checkpoint_activate::<REC>(
-                s.request[tid].activate.load(Ordering::Relaxed) + 1,
-                tid,
-                pool,
-            ),
-            Ordering::Release,
-        );
+        s.request[tid].activate.store(activate, Ordering::Release);
 
         // Do
         loop {
@@ -275,7 +283,9 @@ impl Combining {
         // 3.3. release lock with new state
         unsafe { s.lock.unlock(new_state_ref as *const _ as usize) };
 
-        mmt.checkpoint_return_value::<REC>(new_state_ref.return_value[tid], tid, pool)
+        let retval = new_state_ref.return_value[tid];
+        mmt.backup_return_value(retval);
+        retval
     }
 
     /// non-combiner는 combiner가 끝나기를 기다렸다가 자신의 request가 처리됐는지 확인하고 반환
@@ -302,6 +312,10 @@ impl Combining {
         if s.request[tid].activate.load(Ordering::Relaxed)
             <= lastest_state.deactivate[tid].load(Ordering::Acquire)
         {
+            let retval = lastest_state.return_value[tid];
+            mmt.backup_return_value(retval);
+            return Ok(retval);
+        }
 
         Err(())
     }
