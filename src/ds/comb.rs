@@ -1,4 +1,4 @@
-//! Detectable Combining queue
+//! Detectable Combining Operation
 #![allow(missing_docs)]
 use crate::pepoch::PAtomic;
 use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle};
