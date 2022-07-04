@@ -1462,6 +1462,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
         persist_obj(unsafe { slot.deref(pool) }, true);
+
+        #[cfg(feature = "clevel_alloc_lock")]
+        if let Ok(g) = alloc_lock {
+            drop(g)
+        }
+
         let slot = ok_or!(
             client
                 .node
@@ -1470,11 +1476,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             e.current
         )
         .load(Ordering::Relaxed, guard);
-
-        #[cfg(feature = "clevel_alloc_lock")]
-        if let Ok(g) = alloc_lock {
-            drop(g)
-        }
 
         let mut res = self.insert_loop::<REC>(
             context,
