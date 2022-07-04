@@ -4,7 +4,7 @@
 
 use std::alloc::Layout;
 use std::ffi::{c_void, CString};
-use std::io::{Error, Write};
+use std::io::Error;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +15,6 @@ use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
-use crate::test_utils::tests::panic_dmsg;
 use crate::*;
 use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
@@ -107,7 +106,6 @@ impl PoolHandle {
                     loop {
                         self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
 
-                        // run memento
                         struct Args<O: 'static> {
                             m_addr: usize,
                             tid: usize,
@@ -138,10 +136,9 @@ impl PoolHandle {
                             // Barrier
                             pool_handle.barrier_wait(tid, nr_memento);
 
-                            // Run
+                            // Run memento
                             #[cfg(feature = "simulate_tcrash")]
                             {
-                                // println!("t{tid} pass barrier and enable `self panic` for tcrash (unix_tid: {unix_tid})");
                                 UNIX_TIDS[tid].store(unsafe { libc::gettid() }, Ordering::SeqCst);
                             }
 
@@ -165,7 +162,7 @@ impl PoolHandle {
                             root_obj,
                         };
 
-                        // Create
+                        // Run memento
                         unsafe {
                             let _err = libc::pthread_create(
                                 &mut native,
@@ -175,8 +172,9 @@ impl PoolHandle {
                             );
                         }
 
-                        // Join: Exit on success, re-run memento on failure (i.e. crash)
-                        // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
+                        // Join
+                        // - Exit on success, re-run memento on failure
+                        // - The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
                         let mut status = ptr::null_mut();
                         let _ = unsafe { libc::pthread_join(native, &mut status) };
                         match status as *const _ as usize {
@@ -187,7 +185,7 @@ impl PoolHandle {
 
                                 #[cfg(feature = "simulate_tcrash")]
                                 if tid == 1 {
-                                    println!("Stop testing becuase Thread 1 panicked. Maybe there is a assertion bug...");
+                                    println!("Stop testing becuase Thread 1 panicked. Maybe there is a assertion bug.");
                                     std::process::exit(2);
                                 }
                             }
@@ -205,7 +203,7 @@ impl PoolHandle {
     }
 
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {
-        // To guarantee that Ralloc's thread-local free list `TCache` was initialized before the thread crashed.
+        // To guarantee that Ralloc's thread-local free list `TCache` was initialized before the thread crash simulation.
         #[cfg(feature = "simulate_tcrash")]
         let _dummy_alloc = self.alloc::<usize>();
 
@@ -464,17 +462,13 @@ impl Pool {
 
     #[inline]
     fn alloc(&self, size: usize) -> *mut u8 {
-        panic_dmsg("[pool::alloc] start");
         let addr_abs = unsafe { RP_malloc(size as u64) };
-        panic_dmsg("[pool::alloc] finish");
         addr_abs as *mut u8
     }
 
     #[inline]
     fn free(&self, ptr: *mut u8) {
-        panic_dmsg("[pool::free] start");
         unsafe { RP_free(ptr as *mut c_void) }
-        panic_dmsg("[pool::free] finish");
     }
 }
 

@@ -86,21 +86,24 @@ pub(crate) mod ordo {
 
 #[doc(hidden)]
 pub mod tests {
+    #![allow(dead_code)]
+
     use crossbeam_epoch::Guard;
     use std::collections::HashMap;
-    use std::io::{Error, Write};
+    use std::io::Error;
     use std::path::Path;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
     use tempfile::NamedTempFile;
 
+    use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
-    use crate::pmem::{pool::*, rdtscp};
     use crate::PDefault;
 
     #[cfg(feature = "simulate_tcrash")]
     use {
         crate::ploc::NR_MAX_THREADS,
+        crate::pmem::rdtscp,
         libc::{size_t, SIGUSR1, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32, Ordering},
     };
@@ -239,10 +242,7 @@ pub mod tests {
         #[cfg(feature = "simulate_tcrash")]
         {
             // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
-            std::panic::set_hook(Box::new(|info| {
-                // panic_dmsg("thread panicked");
-                // panic_dmsg(&format!("thread panicked at {}", info.location().unwrap(),));
-            }));
+            std::panic::set_hook(Box::new(|_| {}));
 
             // Install signal handler
             // println!(
@@ -298,7 +298,6 @@ pub mod tests {
             // println!("[run_test] no execute");
         } else {
             // println!("[run_test] execute");
-            // std::io::stdout().flush();
             pool_handle.execute::<O, M>();
         }
     }
@@ -326,7 +325,7 @@ pub mod tests {
             if rand_tid > 1 && unix_tid > pid {
                 // println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
                 unsafe {
-                    // TODO: https://man7.org/linux/man-pages/man7/signal-safety.7.html. pthread_kill로 바꿔보기
+                    // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
                     let _ = libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2);
                 };
                 return;
@@ -334,17 +333,12 @@ pub mod tests {
         }
     }
 
-    /// child thread handler: self pani
+    /// child thread handler: self panic
     #[allow(box_pointers)]
     #[cfg(feature = "simulate_tcrash")]
     pub fn self_panic(_signum: usize) {
-        // NOTE: Don't put the msg in panic macro. It often makes the thread blocked for unknown reason.
-        // println!("[pthread_exit] {}", unsafe { libc::gettid() });
-        // panic!();
         // TODO: https://man7.org/linux/man-pages/man7/signal-safety.7.html
         let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
-        // let b = unsafe { libc::pthread_cancel(0)};
-        // std::panic::resume_unwind(Box::new(0));
     }
 
     pub fn panic_dmsg(msg: &str) {
