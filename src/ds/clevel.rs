@@ -8,7 +8,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, MutexGuard, PoisonError};
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{self as epoch, Guard};
@@ -765,6 +765,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             },
             pool,
         );
+        persist_obj(unsafe { context_new.deref(pool) }, true);
+
+        // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯.
+        // 1. context_new를 checkpoint
+        // 2. detectable CAS for context switch
+
         loop {
             context = ok_or!(
                 self.context.compare_exchange(
@@ -792,6 +798,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                     .len()
                         >= next_level_size
                     {
+                        unsafe { guard.defer_pdestroy(context_new.into_shared(guard)) }
                         return (context, false);
                     }
 
@@ -1032,6 +1039,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 },
                 pool,
             );
+            persist_obj(unsafe { context_new.deref(pool) }, true);
+
+            // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯
+            // 1. context_new를 checkpoint
+            // 2. detectable CAS for context switch
 
             unsafe {
                 guard.defer_pdestroy(last_level);
@@ -1449,6 +1461,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let slot = POwned::new(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
+        persist_obj(unsafe { slot.deref(pool) }, true);
         let slot = ok_or!(
             client
                 .node
