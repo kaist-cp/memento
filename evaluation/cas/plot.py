@@ -3,13 +3,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import git
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 objs = {
     "cas": {
         "targets": {
             # "cas": {'data_id': '', 'label': "CAS", 'marker': 'o', 'color': 'red', 'style': '-'},
             "mcas": {'data_id': '', 'label': "CAS-mmt", 'marker': 'd', 'color': 'k', 'style': '-'},
-            "pcas": {'data_id': '', 'label': "PCAS", 'marker': 'x', 'color': 'green', 'style': '-'},
+            # "pcas": {'data_id': '', 'label': "PCAS", 'marker': 'x', 'color': 'green', 'style': '-'},
             "pmwcas": {'data_id': '', 'label': "PMwCAS", 'marker': 'x', 'color': 'red', 'style': '-'},
             "nrlcas": {'data_id': '', 'label': "NrlCAS", 'marker': 'x', 'color': 'orange', 'style': '-'},
         },
@@ -23,7 +25,7 @@ def draw_legend(line, label, figpath):
     legendFig.legend(line, label, loc='center',
                      ncol=len(line))
     legendFig.savefig(figpath, bbox_inches='tight')
-    print(figpath)
+    # print(figpath)
 
 
 def draw(xlabel, ylabel, datas, output, x_interval=4):
