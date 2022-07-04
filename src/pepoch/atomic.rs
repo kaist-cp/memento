@@ -376,6 +376,9 @@ impl<T> PAtomic<T> {
     /// let a = PAtomic::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> PAtomic<T> {
+        #[cfg(feature = "alloc_lock")]
+        let g = ALLOC_LOCK.lock();
+
         Self::init(init, pool)
     }
 }
@@ -1214,9 +1217,28 @@ impl<T> POwned<T> {
     /// let o = POwned::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> POwned<T> {
+        #[cfg(feature = "alloc_lock")]
+        let g = ALLOC_LOCK.lock();
+
         Self::init(init, pool)
     }
+
+    /// Allocates `value` on the persistent heap and persist its content and returns a new owned pointer pointing to it.
+    pub fn new_persist(init: T, pool: &PoolHandle) -> POwned<T> {
+        #[cfg(feature = "alloc_lock")]
+        let g = ALLOC_LOCK.lock();
+
+        let ptr = Self::init(init, pool);
+        persist_obj(unsafe { ptr.deref(pool) }, true);
+        ptr
+    }
 }
+
+#[cfg(feature = "alloc_lock")]
+lazy_static::lazy_static!(
+    /// global mutex to simulate sequential allocation
+    pub static ref ALLOC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+);
 
 impl<T: ?Sized + Pointable> POwned<T> {
     /// Allocates `value` on the persistent heap and returns a new owned pointer pointing to it.

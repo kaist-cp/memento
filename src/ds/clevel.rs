@@ -8,7 +8,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::sync::{mpsc, Mutex, MutexGuard, PoisonError};
+use std::sync::mpsc;
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{self as epoch, Guard};
@@ -19,7 +19,7 @@ use itertools::*;
 use libc::c_void;
 use tinyvec::*;
 
-use crate::pepoch::atomic::cut_as_high_tag_len;
+use crate::pepoch::atomic::*;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
 use crate::pmem::{
@@ -641,6 +641,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> Context<K, V
 }
 
 fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
+    #[cfg(feature = "alloc_lock")]
+    let alloc_lock = ALLOC_LOCK.lock();
+
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
@@ -757,7 +760,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
-        let mut context_new = POwned::new(
+        let mut context_new = POwned::new_persist(
             Context {
                 first_level: PAtomic::from(next_level),
                 last_level: context_ref.last_level.clone(),
@@ -765,7 +768,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             },
             pool,
         );
-        persist_obj(unsafe { context_new.deref(pool) }, true);
 
         // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯.
         // 1. context_new를 checkpoint
@@ -1031,7 +1033,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
             context_ref = unsafe { context.deref(pool) };
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
-            let mut context_new = POwned::new(
+            let mut context_new = POwned::new_persist(
                 Context {
                     first_level: first_level.into(),
                     last_level: next_level.into(),
@@ -1039,7 +1041,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 },
                 pool,
             );
-            persist_obj(unsafe { context_new.deref(pool) }, true);
 
             // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯
             // 1. context_new를 checkpoint
@@ -1450,24 +1451,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return Err(InsertError::Occupied);
         }
 
-        #[allow(unused_variables)]
-        let alloc_lock: Result<MutexGuard<'_, ()>, PoisonError<MutexGuard<'_, ()>>>;
-
-        #[cfg(feature = "clevel_alloc_lock")]
-        {
-            alloc_lock = ALLOC_LOCK.lock();
-        }
-
-        let slot = POwned::new(Slot::from((key, value)), pool)
+        let slot = POwned::new_persist(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
-        persist_obj(unsafe { slot.deref(pool) }, true);
-
-        #[cfg(feature = "clevel_alloc_lock")]
-        if let Ok(g) = alloc_lock {
-            drop(g)
-        }
-
         let slot = ok_or!(
             client
                 .node
@@ -1764,7 +1750,3 @@ mod tests {
         )
     }
 }
-
-lazy_static::lazy_static!(
-    static ref ALLOC_LOCK: Mutex<()> = Mutex::new(());
-);
