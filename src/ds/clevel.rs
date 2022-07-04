@@ -653,7 +653,7 @@ fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bu
             size * std::mem::size_of::<Bucket<K, V>>(),
         );
     }
-    persist_obj(&data_ref, true);
+    persist_obj(data_ref, true);
 
     let node = POwned::new(Node::from(PAtomic::from(data)), pool);
     persist_obj(unsafe { node.deref(pool) }, true);
@@ -760,7 +760,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
-        let mut context_new = POwned::new_persist(
+        let mut context_new = alloc_persist(
             Context {
                 first_level: PAtomic::from(next_level),
                 last_level: context_ref.last_level.clone(),
@@ -1033,7 +1033,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
             context_ref = unsafe { context.deref(pool) };
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
-            let mut context_new = POwned::new_persist(
+            let mut context_new = alloc_persist(
                 Context {
                     first_level: first_level.into(),
                     last_level: next_level.into(),
@@ -1451,7 +1451,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new_persist(Slot::from((key, value)), pool)
+        let slot = alloc_persist(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
         let slot = ok_or!(
@@ -1750,3 +1750,18 @@ mod tests {
         )
     }
 }
+
+fn alloc_persist<T>(init: T, pool: &PoolHandle) -> POwned<T> {
+    #[cfg(feature = "clevel_alloc_lock")]
+    let g = ALLOC_LOCK.lock();
+
+    let ptr = POwned::new(init, pool);
+    persist_obj(unsafe { ptr.deref(pool) }, true);
+    ptr
+}
+
+#[cfg(feature = "clevel_alloc_lock")]
+lazy_static::lazy_static!(
+    /// global mutex to simulate sequential allocation
+    pub static ref ALLOC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+);

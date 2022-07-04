@@ -21,9 +21,7 @@ use core::sync::atomic::Ordering;
 use super::Guard;
 use crate::impl_left_bits;
 use crate::ploc::{aux_bits, compose_aux_bit, NR_AUX_BITS, POS_AUX_BITS};
-use crate::pmem::{
-    global_pool, ll::persist_obj, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection,
-};
+use crate::pmem::{global_pool, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection};
 use crate::PDefault;
 use crossbeam_epoch::unprotected;
 use crossbeam_utils::atomic::AtomicConsume;
@@ -319,8 +317,6 @@ impl<T> Pointable for [MaybeUninit<T>] {
         }
         let p = ptr.deref_mut(pool);
         p.len = len;
-        persist_obj(p, true);
-
         ptr.into_offset()
     }
 
@@ -376,9 +372,6 @@ impl<T> PAtomic<T> {
     /// let a = PAtomic::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> PAtomic<T> {
-        #[cfg(feature = "alloc_lock")]
-        let g = ALLOC_LOCK.lock();
-
         Self::init(init, pool)
     }
 }
@@ -1217,28 +1210,9 @@ impl<T> POwned<T> {
     /// let o = POwned::new(1234, &pool);
     /// ```
     pub fn new(init: T, pool: &PoolHandle) -> POwned<T> {
-        #[cfg(feature = "alloc_lock")]
-        let g = ALLOC_LOCK.lock();
-
         Self::init(init, pool)
     }
-
-    /// Allocates `value` on the persistent heap and persist its content and returns a new owned pointer pointing to it.
-    pub fn new_persist(init: T, pool: &PoolHandle) -> POwned<T> {
-        #[cfg(feature = "alloc_lock")]
-        let g = ALLOC_LOCK.lock();
-
-        let ptr = Self::init(init, pool);
-        persist_obj(unsafe { ptr.deref(pool) }, true);
-        ptr
-    }
 }
-
-#[cfg(feature = "alloc_lock")]
-lazy_static::lazy_static!(
-    /// global mutex to simulate sequential allocation
-    pub static ref ALLOC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-);
 
 impl<T: ?Sized + Pointable> POwned<T> {
     /// Allocates `value` on the persistent heap and returns a new owned pointer pointing to it.
