@@ -1753,7 +1753,7 @@ mod tests {
 
 fn alloc_persist<T>(init: T, pool: &PoolHandle) -> POwned<T> {
     #[cfg(feature = "clevel_alloc_lock")]
-    let g = ALLOC_LOCK.lock();
+    let _g = ALLOC_LOCK.lock();
 
     let ptr = POwned::new(init, pool);
     persist_obj(unsafe { ptr.deref(pool) }, true);
