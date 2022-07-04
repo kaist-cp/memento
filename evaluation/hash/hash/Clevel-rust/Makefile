@@ -14,7 +14,7 @@ clevel_rust.o:clevel_rust.cpp
 
 # pmem
 do_build:
-	bash -c "cd $(CLEVEL_RUST); cargo update; cargo build --release;"
+	bash -c "cd $(CLEVEL_RUST); cargo update; cargo build --release --features alloc_lock;"
 
 # dram
 do_build_dram:

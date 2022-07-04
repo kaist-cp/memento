@@ -641,8 +641,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> Context<K, V
 }
 
 fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
-    #[cfg(feature = "alloc_lock")]
-    let alloc_lock = ALLOC_LOCK.lock();
+    #[cfg(feature = "clevel_alloc_lock")]
+    let _alloc_lock = ALLOC_LOCK.lock();
 
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, pool);
     let data_ref = unsafe { data.deref(pool) };
