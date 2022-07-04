@@ -86,12 +86,14 @@ pub(crate) mod ordo {
 
 #[doc(hidden)]
 pub mod tests {
+    #![allow(dead_code)]
+
     use crossbeam_epoch::Guard;
-    use std::collections::HashSet;
+    use std::collections::HashMap;
     use std::io::Error;
     use std::path::Path;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, MutexGuard};
     use tempfile::NamedTempFile;
 
     use crate::pmem::pool::*;
@@ -101,7 +103,8 @@ pub mod tests {
     #[cfg(feature = "simulate_tcrash")]
     use {
         crate::ploc::NR_MAX_THREADS,
-        libc::{gettid, size_t, SIGUSR1, SIGUSR2},
+        crate::pmem::rdtscp,
+        libc::{size_t, SIGUSR1, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32, Ordering},
     };
 
@@ -195,9 +198,27 @@ pub mod tests {
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
         pub static ref RESULTS: [AtomicUsize; 1024] =
-            array_init::array_init(|_| AtomicUsize::new(0)); // TODO: Replace it with `RESULTS_TCRASH` for all tests and removes it.
-        pub static ref RESULTS_TCRASH: [Mutex<HashSet<usize>>; 1024] =
-            array_init::array_init(|_| Mutex::new(HashSet::new()));
+            array_init::array_init(|_| AtomicUsize::new(0));
+        // pub static ref RESULTS_TCRASH: Mutex<HashMap<(usize, usize), usize>> =
+        //     Mutex::new(HashMap::new()); // (tid, op seq) -> value
+
+        pub static ref RESULTS_TCRASH: [Mutex<HashMap<usize, usize>>; 1024] =
+        array_init::array_init(|_| Mutex::new(HashMap::new())); // per-thread op seq -> value
+    }
+
+    pub trait Poisonable<T> {
+        fn lock_poisonable(&self) -> MutexGuard<'_, T>;
+    }
+
+    impl<T> Poisonable<T> for Mutex<T> {
+        fn lock_poisonable(&self) -> MutexGuard<'_, T> {
+            loop {
+                match self.lock() {
+                    Ok(guard) => return guard,
+                    Err(_) => self.clear_poison(),
+                }
+            }
+        }
     }
 
     #[cfg(feature = "simulate_tcrash")]
@@ -209,27 +230,62 @@ pub mod tests {
     }
 
     /// run test op
+    #[allow(box_pointers)]
     pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
     where
         O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
-        P: AsRef<Path>,
+        P: AsRef<Path> + Send + Sync + 'static,
     {
-        // initialze test variables
-        lazy_static::initialize(&JOB_FINISHED);
-        lazy_static::initialize(&RESULTS);
-        lazy_static::initialize(&RESULTS_TCRASH);
-        #[cfg(feature = "simulate_tcrash")]
+        #[cfg(not(feature = "simulate_tcrash"))]
         {
-            lazy_static::initialize(&UNIX_TIDS);
-            lazy_static::initialize(&TEST_STARTED);
-            lazy_static::initialize(&TEST_FINISHED);
-
-            println!("Install `kill_random` and `self_panic` handler");
-            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
-            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
+            run_test_inner::<O, M, P>(pool_name, pool_len, nr_memento);
         }
 
+        #[cfg(feature = "simulate_tcrash")]
+        {
+            // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
+            std::panic::set_hook(Box::new(|_| {}));
+
+            // Install signal handler
+            // println!(
+            //     "Install `kill_random` and `self_panic` handler (unix_tid: {}, unix_pid: {})",
+            //     unsafe { libc::gettid() },
+            //     unsafe { libc::getpid() }
+            // );
+            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
+            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
+
+            // Start test
+            let handle = std::thread::spawn(move || {
+                // initialze test variables
+                let unix_tid = unsafe { libc::gettid() };
+                // println!("Initialze test variables (unix_tid: {unix_tid})");
+                lazy_static::initialize(&JOB_FINISHED);
+                lazy_static::initialize(&RESULTS);
+                lazy_static::initialize(&RESULTS_TCRASH);
+                lazy_static::initialize(&UNIX_TIDS);
+                lazy_static::initialize(&TEST_STARTED);
+                lazy_static::initialize(&TEST_FINISHED);
+
+                TEST_STARTED.store(true, Ordering::SeqCst);
+
+                // println!("Start test (unix_tid: {unix_tid})");
+                run_test_inner::<O, M, P>(pool_name, pool_len, nr_memento);
+                // println!("Finish test (unix_tid: {unix_tid})");
+
+                TEST_FINISHED.store(true, Ordering::SeqCst);
+            });
+            let _ = handle.join();
+        }
+    }
+
+    pub fn run_test_inner<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
+    where
+        O: RootObj<M> + Send + Sync + 'static,
+        M: Collectable + Default + Send + Sync,
+        P: AsRef<Path> + Send + Sync + 'static,
+    {
         let filepath = get_test_abs_path(pool_name);
 
         // remove pool
@@ -242,37 +298,37 @@ pub mod tests {
         // run root memento(s)
         let execute = std::env::var("POOL_EXECUTE");
         if execute.is_ok() && execute.unwrap() == "0" {
-            println!("[run_test] no execute");
+            // println!("[run_test] no execute");
         } else {
-            println!("[run_test] execute");
+            // println!("[run_test] execute");
             pool_handle.execute::<O, M>();
         }
-
-        #[cfg(feature = "simulate_tcrash")]
-        TEST_FINISHED.store(true, Ordering::SeqCst);
     }
 
     /// main thread handler: kill random child thread
     #[cfg(feature = "simulate_tcrash")]
     pub fn kill_random() {
         let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::gettid() };
+        // println!("[kill_random] Pick one thread to kill. (unix_pid: {pid}, unix_tid: {tid})");
         loop {
             // it prevents an infinity loop that occurs when the main thread receives a signal right after installing the handler but before spawning child threads.
             if !TEST_STARTED.load(Ordering::SeqCst) {
-                println!("[kill_random] No one killed. Because test is not yet started.");
+                // println!("[kill_random] No one killed. Because test is not yet started.");
                 return;
             }
             if TEST_FINISHED.load(Ordering::SeqCst) {
-                println!("[kill_random] No one killed. Because test was already finished.");
+                // println!("[kill_random] No one killed. Because test was already finished.");
                 return;
             }
 
-            let rand_tid = rand::random::<usize>() % UNIX_TIDS.len();
+            let rand_tid = rdtscp() as usize % UNIX_TIDS.len();
             let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
 
-            if unix_tid > pid {
-                println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
+            if rand_tid > 1 && unix_tid > pid {
+                // println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
                 unsafe {
+                    // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
                     let _ = libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2);
                 };
                 return;
@@ -281,9 +337,69 @@ pub mod tests {
     }
 
     /// child thread handler: self panic
+    #[allow(box_pointers)]
     #[cfg(feature = "simulate_tcrash")]
     pub fn self_panic(_signum: usize) {
-        println!("[self_panic] {}", unsafe { gettid() });
-        panic!("[self_panic] {}", unsafe { gettid() });
+        // TODO: https://man7.org/linux/man-pages/man7/signal-safety.7.html
+        let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
+    }
+
+    /// (tid, seq, value) -> unique v
+    ///
+    /// - tid must be less than 100
+    /// - value must be less than 100
+    pub(crate) fn compose(tid: usize, seq: usize, value: usize) -> usize {
+        seq * 10000 + tid * 100 + value
+    }
+
+    /// unique v -> (tid, seq, value)
+    ///
+    /// - tid must be less than 100
+    /// - value must be less than 100
+    pub(crate) fn decompose(value: usize) -> (usize, usize, usize) {
+        (value / 10000, (value / 100) % 100, value % 100)
+    }
+
+    pub(crate) fn check_res(tid: usize, nr_wait: usize, count: usize) {
+        // Wait for all other threads to finish
+        let unix_tid = unsafe { libc::gettid() };
+        let mut cnt = 0;
+        while JOB_FINISHED.load(Ordering::SeqCst) < nr_wait {
+            if cnt > 300 {
+                println!("Stop testing. Maybe there is a bug...");
+                std::process::exit(1);
+            }
+
+            println!(
+                "[run] t{tid} JOB_FINISHED: {} (unix_tid: {unix_tid}, cnt: {cnt})",
+                JOB_FINISHED.load(Ordering::SeqCst)
+            );
+            std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
+            cnt += 1;
+        }
+        println!("[run] t{tid} pass the busy lock (unix_tid: {unix_tid})");
+
+        // Check results
+        let mut results: [HashMap<usize, usize>; 1024] =
+            array_init::array_init(|i| RESULTS_TCRASH[i].lock_poisonable().clone());
+        let mut nr_has_res = 0;
+
+        for (tid, result) in results.iter_mut().enumerate() {
+            if !result.is_empty() {
+                nr_has_res += 1;
+            }
+
+            for seq in 0..count {
+                assert_eq!(result.remove(&seq).unwrap(), tid + seq);
+            }
+            assert!(result.is_empty());
+        }
+        assert!(nr_has_res == nr_wait);
+    }
+
+    pub(crate) fn produce_res(tid: usize, seq: usize, value: usize) {
+        if let Some(prev) = RESULTS_TCRASH[tid].lock_poisonable().insert(seq, tid + seq) {
+            assert_eq!(prev, value);
+        }
     }
 }

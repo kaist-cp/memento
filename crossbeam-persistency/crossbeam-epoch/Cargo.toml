@@ -44,6 +44,7 @@ loom = ["loom-crate", "crossbeam-utils/loom"]
 cfg-if = "1"
 const_fn = { version = "0.4.4", optional = true }
 memoffset = "0.6"
+libc = "0.2.126"
 
 # Enable the use of loom for concurrency testing.
 #

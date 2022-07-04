@@ -21,10 +21,7 @@ use crossbeam_utils::CachePadded;
 use std::thread;
 
 #[cfg(feature = "simulate_tcrash")]
-use {
-    crate::test_utils::tests::{TEST_STARTED, UNIX_TIDS},
-    libc::gettid,
-};
+use crate::test_utils::tests::UNIX_TIDS;
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
@@ -105,47 +102,92 @@ impl PoolHandle {
                 unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
 
             let th = thread::spawn(move || {
-                #[cfg(feature = "simulate_tcrash")]
-                TEST_STARTED.store(true, Ordering::SeqCst);
-
                 let h = thread::spawn(move || {
                     loop {
                         self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
 
-                        // run memento
-                        let handler = thread::spawn(move || {
-                            #[cfg(feature = "simulate_tcrash")]
-                            {
-                                let unix_tid = unsafe { gettid() };
-                                println!(
-                                    "t{tid} enable `self panic` for tcrash (unix_tid: {unix_tid})",
-                                );
-                                UNIX_TIDS[tid].store(unix_tid, Ordering::SeqCst);
-                            }
+                        struct Args<O: 'static> {
+                            m_addr: usize,
+                            tid: usize,
+                            nr_memento: usize,
+                            pool_handle: &'static PoolHandle,
+                            root_obj: &'static O,
+                        }
 
+                        extern "C" fn thread_start<O, M>(arg: *mut c_void) -> *mut c_void
+                        where
+                            O: RootObj<M> + Send + Sync + 'static,
+                            M: Collectable + Default + Send + Sync,
+                        {
+                            // Decompose arguments
+                            let args = unsafe { (arg as *mut Args<O>).as_mut() }.unwrap();
+                            let (m_addr, tid, nr_memento, pool_handle, root_obj) = (
+                                args.m_addr,
+                                args.tid,
+                                args.nr_memento,
+                                args.pool_handle,
+                                args.root_obj,
+                            );
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
+                            // Old Guard
                             let guard = unsafe { epoch::old_guard(tid) };
 
-                            self.barrier_wait(tid, nr_memento);
+                            // Barrier
+                            pool_handle.barrier_wait(tid, nr_memento);
 
-                            let _ = root_obj.run(root_mmt, tid, &guard, self);
+                            // Run memento
+                            #[cfg(feature = "simulate_tcrash")]
+                            {
+                                UNIX_TIDS[tid].store(unsafe { libc::gettid() }, Ordering::SeqCst);
+                            }
+
+                            let _ = root_obj.run(root_mmt, tid, &guard, pool_handle);
 
                             #[cfg(feature = "simulate_tcrash")]
                             {
                                 // Prevent being selected by `kill_random` on the main thread
                                 UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
                             }
-                        });
+                            ptr::null_mut()
+                        }
 
-                        // Exit on success, re-run memento on failure (i.e. crash)
-                        // The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
-                        match handler.join() {
-                            Ok(_) => break,
-                            Err(_) => {
+                        let mut native: libc::pthread_t = unsafe { mem::zeroed() };
+                        let attr: libc::pthread_attr_t = unsafe { mem::zeroed() };
+                        let mut args = Args {
+                            m_addr,
+                            tid,
+                            nr_memento,
+                            pool_handle: self,
+                            root_obj,
+                        };
+
+                        // Run memento
+                        unsafe {
+                            let _err = libc::pthread_create(
+                                &mut native,
+                                &attr,
+                                thread_start::<O, M>,
+                                &mut args as *const _ as *mut _,
+                            );
+                        }
+
+                        // Join
+                        // - Exit on success, re-run memento on failure
+                        // - The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
+                        let mut status = ptr::null_mut();
+                        let _ = unsafe { libc::pthread_join(native, &mut status) };
+                        match status as *const _ as usize {
+                            0 => break,
+                            _ => {
                                 thread::sleep(std::time::Duration::from_secs(1));
                                 println!("PANIC: Root memento No.{} re-executed.", tid);
-                                // std::process::exit(1);
+
+                                #[cfg(feature = "simulate_tcrash")]
+                                if tid == 1 {
+                                    println!("Stop testing becuase Thread 1 panicked. Maybe there is a assertion bug.");
+                                    std::process::exit(2);
+                                }
                             }
                         }
                     }
@@ -161,6 +203,10 @@ impl PoolHandle {
     }
 
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {
+        // To guarantee that Ralloc's thread-local free list `TCache` was initialized before the thread crash simulation.
+        #[cfg(feature = "simulate_tcrash")]
+        let _dummy_alloc = self.alloc::<usize>();
+
         let _ = BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
             loop {

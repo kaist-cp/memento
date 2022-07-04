@@ -342,13 +342,15 @@ mod test {
     use std::sync::atomic::Ordering;
 
     use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
-    use crate::test_utils::tests::{run_test, TestRootObj, JOB_FINISHED, RESULTS};
+    use crate::test_utils::tests::{
+        check_res, compose, decompose, produce_res, run_test, TestRootObj, JOB_FINISHED,
+    };
     use crossbeam_epoch::Guard;
 
     use super::{CombiningQueue, Dequeue, Enqueue};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
+    const COUNT: usize = 20_000;
 
     struct EnqDeq {
         enqs: [Enqueue; COUNT],
@@ -381,35 +383,34 @@ mod test {
             match tid {
                 // T1: Check results of other threads
                 1 => {
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {
-                        // println!("JOB_FINISHED: {}", JOB_FINISHED.load(Ordering::SeqCst));
-                        std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
-                    }
+                    // Check results
+                    check_res(tid, NR_THREAD, COUNT);
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
-                    let v = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
-                    assert!(v == CombiningQueue::EMPTY);
-
-                    // Check results
-                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
-                    assert!((2..NR_THREAD + 2).all(|tid| {
-                        println!(" RESULTS[{tid}] = {}", RESULTS[tid].load(Ordering::SeqCst));
-                        RESULTS[tid].load(Ordering::SeqCst) == COUNT
-                    }));
+                    let res = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
+                    let (_, _, value) = decompose(res);
+                    assert!(value == CombiningQueue::EMPTY);
                 }
                 // other threads: { enq; deq; }
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
-                        let _ =
-                            queue.comb_enqueue::<true>(tid, &mut enq_deq.enqs[i], tid, guard, pool);
+                        let _ = queue.comb_enqueue::<true>(
+                            compose(tid, i, tid),
+                            &mut enq_deq.enqs[i],
+                            tid,
+                            guard,
+                            pool,
+                        );
 
-                        let v = queue.comb_dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
-                        assert!(v != CombiningQueue::EMPTY);
+                        let res =
+                            queue.comb_dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
+                        let (tid, i, value) = decompose(res);
+                        assert!(value != CombiningQueue::EMPTY);
 
-                        // send output of deq
-                        let _ = RESULTS[v].fetch_add(1, Ordering::SeqCst);
+                        // Transfer the deq result to the result array
+                        produce_res(tid, i, value);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

@@ -187,6 +187,8 @@ mod test {
 
     impl RootObj<InsertContainRemove> for TestRootObj<SOFTHashRoot> {
         fn run(&self, m: &mut InsertContainRemove, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            // TODO: implement integration test for tcrash
+
             // per-thread init
             let barrier = BARRIER.clone();
             hash_thread_ini(tid, pool);

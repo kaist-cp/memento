@@ -109,33 +109,33 @@ pub(crate) mod tests {
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
-                    // Wait for all other threads to finish
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+                    // Check results
+                    check_res(tid, NR_THREAD, COUNT);
 
                     // Check empty
                     let mut tmp_pop = S::Pop::default();
                     let must_none = self.obj.pop::<true>(&mut tmp_pop, tid, guard, pool);
                     assert!(must_none.is_none());
-
-                    // Check results
-                    assert!(RESULTS[1].load(Ordering::SeqCst) == 0);
-                    assert!((2..NR_THREAD + 2)
-                        .all(|tid| { RESULTS[tid].load(Ordering::SeqCst) == COUNT }));
                 }
                 // Threads other than T1 perform { push; pop; }
                 _ => {
                     // push; pop;
                     for i in 0..COUNT {
-                        let _ =
-                            self.obj
-                                .push::<true>(tid, &mut push_pop.pushes[i], tid, guard, pool);
+                        let _ = self.obj.push::<true>(
+                            compose(tid, i, tid),
+                            &mut push_pop.pushes[i],
+                            tid,
+                            guard,
+                            pool,
+                        );
                         let res = self
                             .obj
                             .pop::<true>(&mut push_pop.pops[i], tid, guard, pool);
                         assert!(res.is_some());
 
                         // Transfer the pop result to the result array
-                        let _ = RESULTS[res.unwrap()].fetch_add(1, Ordering::SeqCst);
+                        let (tid, i, value) = decompose(res.unwrap());
+                        produce_res(tid, i, value);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

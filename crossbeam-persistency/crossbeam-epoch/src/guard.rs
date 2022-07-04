@@ -1,5 +1,6 @@
 use core::fmt;
 use core::mem;
+use std::io::Write;
 
 use scopeguard::defer;
 
