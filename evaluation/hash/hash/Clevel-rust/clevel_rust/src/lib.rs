@@ -58,8 +58,7 @@ fn get_send(tid: usize) -> &'static Sender<()> {
 
 #[no_mangle]
 pub extern "C" fn thread_init(tid: usize) {
-    // println!("[thread_init] thread {tid} init");
-    let guards = unsafe { GUARD.get_or_insert(array_init::array_init(|_| None)) };
+    let guards = unsafe { GUARD.as_mut().unwrap() };
     guards[tid] = Some(epoch::pin());
 }
 
@@ -74,6 +73,7 @@ pub extern "C" fn pool_create(
     unsafe {
         SEND = Some(array_init::array_init(|_| send.clone()));
         RECV = Some(recv);
+        GUARD = Some(array_init::array_init(|_| None));
     }
 
     Pool::create::<ClevelInner<Key, Value>, ClevelMemento>(
