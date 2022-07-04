@@ -198,9 +198,12 @@ pub mod tests {
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
         pub static ref RESULTS: [AtomicUsize; 1024] =
-            array_init::array_init(|_| AtomicUsize::new(0)); // TODO: Replace it with `RESULTS_TCRASH` for all tests and removes it.
-        pub static ref RESULTS_TCRASH: Mutex<HashMap<(usize, usize), usize>> =
-            Mutex::new(HashMap::new()); // (tid, op seq) -> value
+            array_init::array_init(|_| AtomicUsize::new(0));
+        // pub static ref RESULTS_TCRASH: Mutex<HashMap<(usize, usize), usize>> =
+        //     Mutex::new(HashMap::new()); // (tid, op seq) -> value
+
+        pub static ref RESULTS_TCRASH: [Mutex<HashMap<usize, usize>>; 1024] =
+        array_init::array_init(|_| Mutex::new(HashMap::new())); // per-thread op seq -> value
     }
 
     pub trait Poisonable<T> {
@@ -341,31 +344,62 @@ pub mod tests {
         let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
-    pub fn panic_dmsg(msg: &str) {
-        if std::thread::panicking() {
-            // println!("{msg}");
-            // eprintln!("{msg}");
-            // let _ = std::io::stdout().flush();
-            // let _ = std::io::stderr().flush();
-        }
-    }
-
-    struct A {}
-    impl Drop for A {
-        fn drop(&mut self) {
-            // panic_dmsg(&format!("A::drop (unix_tid: {})", unsafe {
-            //     libc::gettid()
-            // }));
-
-            // println!("A::drop (unix_tid: {})", unsafe { libc::gettid() });
-        }
-    }
-
+    /// (tid, seq, value) -> unique v
+    ///
+    /// - tid must be less than 100
+    /// - value must be less than 100
     pub(crate) fn compose(tid: usize, seq: usize, value: usize) -> usize {
         seq * 10000 + tid * 100 + value
     }
 
+    /// unique v -> (tid, seq, value)
+    ///
+    /// - tid must be less than 100
+    /// - value must be less than 100
     pub(crate) fn decompose(value: usize) -> (usize, usize, usize) {
         (value / 10000, (value / 100) % 100, value % 100)
+    }
+
+    pub(crate) fn check_res(tid: usize, nr_wait: usize, count: usize) {
+        // Wait for all other threads to finish
+        let unix_tid = unsafe { libc::gettid() };
+        let mut cnt = 0;
+        while JOB_FINISHED.load(Ordering::SeqCst) < nr_wait {
+            if cnt > 300 {
+                println!("Stop testing. Maybe there is a bug...");
+                std::process::exit(1);
+            }
+
+            println!(
+                "[run] t{tid} JOB_FINISHED: {} (unix_tid: {unix_tid}, cnt: {cnt})",
+                JOB_FINISHED.load(Ordering::SeqCst)
+            );
+            std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
+            cnt += 1;
+        }
+        println!("[run] t{tid} pass the busy lock (unix_tid: {unix_tid})");
+
+        // Check results
+        let mut results: [HashMap<usize, usize>; 1024] =
+            array_init::array_init(|i| RESULTS_TCRASH[i].lock_poisonable().clone());
+        let mut nr_has_res = 0;
+
+        for (tid, result) in results.iter_mut().enumerate() {
+            if !result.is_empty() {
+                nr_has_res += 1;
+            }
+
+            for seq in 0..count {
+                assert_eq!(result.remove(&seq).unwrap(), tid + seq);
+            }
+            assert!(result.is_empty());
+        }
+        assert!(nr_has_res == nr_wait);
+    }
+
+    pub(crate) fn produce_res(tid: usize, seq: usize, value: usize) {
+        if let Some(prev) = RESULTS_TCRASH[tid].lock_poisonable().insert(seq, tid + seq) {
+            assert_eq!(prev, value);
+        }
     }
 }

@@ -109,22 +109,13 @@ pub(crate) mod tests {
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
-                    // Wait for all other threads to finish
-                    while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {}
+                    // Check results
+                    check_res(tid, NR_THREAD, COUNT);
 
                     // Check empty
                     let mut tmp_pop = S::Pop::default();
                     let must_none = self.obj.pop::<true>(&mut tmp_pop, tid, guard, pool);
                     assert!(must_none.is_none());
-
-                    // Check results
-                    let mut results = RESULTS_TCRASH.lock_poisonable().clone();
-                    for tid in 2..NR_THREAD + 2 {
-                        for seq in 0..COUNT {
-                            assert_eq!(results.remove(&(tid, seq)).unwrap(), tid);
-                        }
-                    }
-                    assert!(results.is_empty());
                 }
                 // Threads other than T1 perform { push; pop; }
                 _ => {
@@ -144,10 +135,7 @@ pub(crate) mod tests {
 
                         // Transfer the pop result to the result array
                         let (tid, i, value) = decompose(res.unwrap());
-                        if let Some(prev) = RESULTS_TCRASH.lock_poisonable().insert((tid, i), value)
-                        {
-                            assert_eq!(prev, value);
-                        }
+                        produce_res(tid, i, value);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

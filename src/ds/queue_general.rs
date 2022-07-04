@@ -381,9 +381,6 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for QueueGeneral<T> {}
 
 #[cfg(test)]
 mod test {
-    use libc::gettid;
-    use std::{io::Write, thread};
-
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
@@ -418,38 +415,13 @@ mod test {
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
-                    // Wait for all other threads to finish
-                    let unix_tid = unsafe { gettid() };
-                    let mut cnt = 0;
-                    while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {
-                        if cnt > 300 {
-                            println!("Stop testing. Maybe there is a bug...");
-                            std::process::exit(1);
-                        }
-
-                        println!(
-                            "[run] t{tid} JOB_FINISHED: {} (unix_tid: {unix_tid}, cnt: {cnt})",
-                            JOB_FINISHED.load(Ordering::SeqCst)
-                        );
-                        thread::sleep(std::time::Duration::from_secs_f64(0.1));
-                        cnt += 1;
-                    }
-
-                    println!("[run] t{tid} pass the busy lock (unix_tid: {unix_tid})");
+                    // Check results
+                    check_res(tid, NR_THREAD, COUNT);
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::<(usize, usize, usize)>::default();
                     let must_none = self.obj.dequeue::<true>(&mut tmp_deq, tid, guard, pool);
                     assert!(must_none.is_none());
-
-                    // Check results
-                    let mut results = RESULTS_TCRASH.lock_poisonable().clone();
-                    for tid in 2..NR_THREAD + 2 {
-                        for seq in 0..COUNT {
-                            assert_eq!(results.remove(&(tid, seq)).unwrap(), tid);
-                        }
-                    }
-                    assert!(results.is_empty());
                 }
                 // Threads other than T1 perform { enq; deq; }
                 _ => {
@@ -469,10 +441,7 @@ mod test {
 
                         // Transfer the deq result to the result array
                         let (tid, i, value) = res.unwrap();
-                        if let Some(prev) = RESULTS_TCRASH.lock_poisonable().insert((tid, i), value)
-                        {
-                            assert_eq!(prev, value);
-                        }
+                        produce_res(tid, i, value);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

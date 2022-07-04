@@ -343,15 +343,14 @@ mod test {
 
     use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
     use crate::test_utils::tests::{
-        compose, decompose, run_test, Poisonable, TestRootObj, JOB_FINISHED, RESULTS,
-        RESULTS_TCRASH,
+        check_res, compose, decompose, produce_res, run_test, TestRootObj, JOB_FINISHED,
     };
     use crossbeam_epoch::Guard;
 
     use super::{CombiningQueue, Dequeue, Enqueue};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
+    const COUNT: usize = 20_000;
 
     struct EnqDeq {
         enqs: [Enqueue; COUNT],
@@ -384,22 +383,14 @@ mod test {
             match tid {
                 // T1: Check results of other threads
                 1 => {
-                    while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {}
+                    // Check results
+                    check_res(tid, NR_THREAD, COUNT);
 
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
                     let res = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
                     let (_, _, value) = decompose(res);
                     assert!(value == CombiningQueue::EMPTY);
-
-                    // Check results
-                    let mut results = RESULTS_TCRASH.lock_poisonable().clone();
-                    for tid in 2..NR_THREAD + 2 {
-                        for seq in 0..COUNT {
-                            assert_eq!(results.remove(&(tid, seq)).unwrap(), tid);
-                        }
-                    }
-                    assert!(results.is_empty());
                 }
                 // other threads: { enq; deq; }
                 _ => {
@@ -419,10 +410,7 @@ mod test {
                         assert!(value != CombiningQueue::EMPTY);
 
                         // Transfer the deq result to the result array
-                        if let Some(prev) = RESULTS_TCRASH.lock_poisonable().insert((tid, i), value)
-                        {
-                            assert_eq!(prev, value);
-                        }
+                        produce_res(tid, i, value);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
