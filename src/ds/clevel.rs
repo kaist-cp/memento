@@ -1438,6 +1438,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return Err(InsertError::Occupied);
         }
 
+        #[allow(unused_variables)]
+        let alloc_lock: Result<MutexGuard<'_, ()>, PoisonError<MutexGuard<'_, ()>>>;
+
+        #[cfg(feature = "clevel_alloc_lock")]
+        {
+            alloc_lock = ALLOC_LOCK.lock();
+        }
+
         let slot = POwned::new(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
@@ -1449,6 +1457,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             e.current
         )
         .load(Ordering::Relaxed, guard);
+
+        #[cfg(feature = "clevel_alloc_lock")]
+        if let Ok(g) = alloc_lock {
+            drop(g)
+        }
 
         let mut res = self.insert_loop::<REC>(
             context,
@@ -1737,3 +1750,7 @@ mod tests {
         )
     }
 }
+
+lazy_static::lazy_static!(
+    static ref ALLOC_LOCK: Mutex<()> = Mutex::new(());
+);
