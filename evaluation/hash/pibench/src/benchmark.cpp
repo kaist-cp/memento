@@ -200,16 +200,19 @@ namespace PiBench
   void benchmark_t::run() noexcept
   {
     bool is_resizing = tree_->hash_is_resizing();
-    while (true)
+    if (opt_.read_ratio == 1)
     {
-      std::cout << "is_resizing: " << is_resizing << std::endl;
-      if (!is_resizing)
+      while (true)
       {
-        break;
+        std::cout << "is_resizing: " << is_resizing << std::endl;
+        if (!is_resizing)
+        {
+          break;
+        }
+        std::cout << "resizing not yet finished. sleep 5sc.." << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        is_resizing = tree_->hash_is_resizing();
       }
-      std::cout << "resizing not yet finished. sleep 5sc.." << std::endl;
-      std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-      is_resizing = tree_->hash_is_resizing();
     }
     std::cout << "running..." << std::endl;
     stopwatch_t swt;
