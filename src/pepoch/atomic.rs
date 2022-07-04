@@ -21,9 +21,7 @@ use core::sync::atomic::Ordering;
 use super::Guard;
 use crate::impl_left_bits;
 use crate::ploc::{aux_bits, compose_aux_bit, NR_AUX_BITS, POS_AUX_BITS};
-use crate::pmem::{
-    global_pool, ll::persist_obj, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection,
-};
+use crate::pmem::{global_pool, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection};
 use crate::PDefault;
 use crossbeam_epoch::unprotected;
 use crossbeam_utils::atomic::AtomicConsume;
@@ -319,8 +317,6 @@ impl<T> Pointable for [MaybeUninit<T>] {
         }
         let p = ptr.deref_mut(pool);
         p.len = len;
-        persist_obj(p, true);
-
         ptr.into_offset()
     }
 

@@ -19,7 +19,7 @@ use itertools::*;
 use libc::c_void;
 use tinyvec::*;
 
-use crate::pepoch::atomic::cut_as_high_tag_len;
+use crate::pepoch::atomic::*;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
 use crate::pmem::{
@@ -641,6 +641,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> Context<K, V
 }
 
 fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
+    #[cfg(feature = "clevel_alloc_lock")]
+    let _alloc_lock = ALLOC_LOCK.lock();
+
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
@@ -650,7 +653,7 @@ fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bu
             size * std::mem::size_of::<Bucket<K, V>>(),
         );
     }
-    persist_obj(&data_ref, true);
+    persist_obj(data_ref, true);
 
     let node = POwned::new(Node::from(PAtomic::from(data)), pool);
     persist_obj(unsafe { node.deref(pool) }, true);
@@ -757,7 +760,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
-        let mut context_new = POwned::new(
+        let mut context_new = alloc_persist(
             Context {
                 first_level: PAtomic::from(next_level),
                 last_level: context_ref.last_level.clone(),
@@ -765,6 +768,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             },
             pool,
         );
+
+        // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯.
+        // 1. context_new를 checkpoint
+        // 2. detectable CAS for context switch
+
         loop {
             context = ok_or!(
                 self.context.compare_exchange(
@@ -792,6 +800,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                     .len()
                         >= next_level_size
                     {
+                        unsafe { guard.defer_pdestroy(context_new.into_shared(guard)) }
                         return (context, false);
                     }
 
@@ -1024,7 +1033,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
             context_ref = unsafe { context.deref(pool) };
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
-            let mut context_new = POwned::new(
+            let mut context_new = alloc_persist(
                 Context {
                     first_level: first_level.into(),
                     last_level: next_level.into(),
@@ -1032,6 +1041,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 },
                 pool,
             );
+
+            // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯
+            // 1. context_new를 checkpoint
+            // 2. detectable CAS for context switch
 
             unsafe {
                 guard.defer_pdestroy(last_level);
@@ -1438,7 +1451,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new(Slot::from((key, value)), pool)
+        let slot = alloc_persist(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
         let slot = ok_or!(
@@ -1737,3 +1750,18 @@ mod tests {
         )
     }
 }
+
+fn alloc_persist<T>(init: T, pool: &PoolHandle) -> POwned<T> {
+    #[cfg(feature = "clevel_alloc_lock")]
+    let _g = ALLOC_LOCK.lock();
+
+    let ptr = POwned::new(init, pool);
+    persist_obj(unsafe { ptr.deref(pool) }, true);
+    ptr
+}
+
+#[cfg(feature = "clevel_alloc_lock")]
+lazy_static::lazy_static!(
+    /// global mutex to simulate sequential allocation
+    pub static ref ALLOC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+);
