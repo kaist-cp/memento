@@ -1693,6 +1693,8 @@ mod tests {
 
     impl RootObj<InsertSearch> for TestRootObj<ClevelInner<usize, usize>> {
         fn run(&self, mmt: &mut InsertSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            // TODO: implement integration test for tcrash
+
             let kv = &self.obj;
 
             match tid {
