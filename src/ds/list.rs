@@ -203,4 +203,97 @@ impl<K, V> List<K, V> {
             }
         }
     }
+
+    pub fn try_delete<const REC: bool>(
+        &self,
+        prev: PShared<Node<K, V>>,
+        curr: PShared<Node<K, V>>,
+        try_del: &mut TryDelete<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> bool {
+        let curr_ref = unsafe { curr.deref() };
+
+        // FAO-like..
+        let mut next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
+        if next.tag() == 1 {
+            return false;
+        }
+
+        if let Err(e) = curr_ref.next.cas::<REC>(
+            next,
+            next.with_tag(1),
+            &mut try_ins.delete,
+            tid,
+            guard,
+            pool,
+        ) {
+            if e.tag() == 1 {
+                return false;
+            }
+            next = e;
+        }
+
+        while let Err(e) = curr_ref.next.cas::<false>(
+            next,
+            next.with_tag(1),
+            &mut try_ins.delete,
+            tid,
+            guard,
+            pool,
+        ) {
+            if e.tag() == 1 {
+                return false;
+            }
+            next = e;
+        }
+
+        let prev_ref = unsafe { prev.deref() };
+        if prev_ref
+            .next
+            .cas::<REC>(next, node, &mut try_ins.delete, tid, guard, pool)
+            .is_ok()
+        {
+            unsafe { guard.defer_pdestroy(curr) };
+        }
+
+        true
+    }
+
+    pub fn delete<const REC: bool>(
+        &self,
+        key: K,
+        del: &mut Delete<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> bool {
+        let (found, prev, curr) = self.find::<REC>(&node.key, &mut del.find, tid, guard, pool);
+        if !found {
+            return false;
+        }
+
+        if self
+            .try_delete::<REC>(node, prev, curr, del.try_del, tid, guard, pool)
+            .is_ok()
+        {
+            return true;
+        }
+
+        loop {
+            let (found, prev, curr) =
+                self.find::<false>(&node.key, &mut del.find, tid, guard, pool);
+            if !found {
+                return false;
+            }
+
+            if self
+                .try_delete::<false>(node, prev, curr, del.try_del, tid, guard, pool)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
 }
