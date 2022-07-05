@@ -1,6 +1,6 @@
 //! Persistent Data Structures
 
-// pub mod clevel;
+pub mod clevel;
 // pub mod comb;
 // pub mod elim_stack;
 // pub mod exchanger;
@@ -12,5 +12,5 @@ pub mod queue_general;
 // pub mod soft_hash;
 // pub mod soft_list;
 // pub mod stack;
-// pub mod tlock;
+pub mod tlock;
 // pub mod treiber_stack;

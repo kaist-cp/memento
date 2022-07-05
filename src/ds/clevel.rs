@@ -5,7 +5,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::sync::mpsc;
+use std::sync::mpsc::{self, RecvError};
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{self as epoch, Guard};
@@ -79,7 +79,7 @@ impl<K, V: Collectable> Insert<K, V> {
 /// Insert inner client
 #[derive(Debug)]
 pub struct InsertInner<K, V: Collectable> {
-    insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
+    insert_chk: Checkpoint<Option<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>>,
     insert_cas: Cas,
 }
 
@@ -113,12 +113,49 @@ impl<K, V: Collectable> InsertInner<K, V> {
     }
 }
 
+/// ResizeLoop client
+#[derive(Debug)]
+pub struct ResizeLoop<K, V: Collectable> {
+    recv_chk: Checkpoint<bool>,
+    resize: Resize<K, V>,
+}
+
+impl<K, V: Collectable> Default for ResizeLoop<K, V> {
+    fn default() -> Self {
+        Self {
+            recv_chk: Default::default(),
+            resize: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for ResizeLoop<K, V> {
+    fn filter(
+        resize_loop: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut resize_loop.recv_chk, tid, gc, pool);
+        Resize::filter(&mut resize_loop.resize, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> ResizeLoop<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.recv_chk.clear();
+        self.resize.clear();
+    }
+}
+
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V: Collectable> {
     delete_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
     delete_cas: Cas,
-    insert_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
+    insert_chk: Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
     insert_cas: Cas,
 }
 
@@ -430,19 +467,26 @@ pub fn resize_loop<
 >(
     clevel: &ClevelInner<K, V>,
     recv: &mpsc::Receiver<()>,
-    resize: &mut Resize<K, V>,
+    resize_loop: &mut ResizeLoop<K, V>,
     tid: usize,
     guard: &mut Guard,
     pool: &PoolHandle,
 ) {
-    if REC {
-        clevel.resize::<REC>(resize, tid, guard, pool);
+    if resize_loop
+        .recv_chk
+        .checkpoint::<REC, _>(|| recv.recv().is_ok(), tid, pool)
+    {
+        println!("[resize_loop] do resize!");
+        clevel.resize::<REC>(&mut resize_loop.resize, tid, guard, pool);
         guard.repin_after(|| {});
     }
 
-    while let Ok(()) = recv.recv() {
+    while resize_loop
+        .recv_chk
+        .checkpoint::<false, _>(|| recv.recv().is_ok(), tid, pool)
+    {
         println!("[resize_loop] do resize!");
-        clevel.resize::<false>(resize, tid, guard, pool);
+        clevel.resize::<false>(&mut resize_loop.resize, tid, guard, pool);
         guard.repin_after(|| {});
     }
 }
@@ -862,22 +906,20 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return (context, first_level);
         }
 
-        if REC {
-            if let Some(ins_slot) = client.insert_chk.peek(tid, pool) {
-                let ins_slot = unsafe { ins_slot.deref(pool) };
-                if ins_slot
-                    .cas::<REC>(
-                        PShared::null(),
-                        slot_ptr,
-                        &mut client.insert_cas,
-                        tid,
-                        guard,
-                        pool,
-                    )
-                    .is_ok()
-                {
-                    return (context, first_level);
-                }
+        if let Some(ins_slot) = client.insert_chk.checkpoint::<REC, _>(|| None, tid, pool) {
+            let ins_slot = unsafe { ins_slot.deref(pool) };
+            if ins_slot
+                .cas::<REC>(
+                    PShared::null(),
+                    slot_ptr,
+                    &mut client.insert_cas,
+                    tid,
+                    guard,
+                    pool,
+                )
+                .is_ok()
+            {
+                return (context, first_level);
             }
         }
 
@@ -923,8 +965,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                         return (context, first_level);
                     }
 
-                    let _ = client.insert_chk.checkpoint::<REC>(
-                        unsafe { slot.as_pptr(pool) },
+                    let _ = client.insert_chk.checkpoint::<REC, _>(
+                        || Some(unsafe { slot.as_pptr(pool) }),
                         tid,
                         pool,
                     );
@@ -1198,20 +1240,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
-        if REC {
-            if let Some((size, slot_p)) = client.insert_chk.peek(tid, pool) {
-                let res = self.try_slot_insert_inner::<REC>(
-                    slot_p,
-                    slot_new,
-                    size,
-                    &mut client.insert_cas,
-                    tid,
-                    guard,
-                    pool,
-                );
-                if res.is_ok() {
-                    return res;
-                }
+        if let Some((size, slot_p)) = client.insert_chk.checkpoint::<REC, _>(|| None, tid, pool) {
+            let res = self.try_slot_insert_inner::<REC>(
+                slot_p,
+                slot_new,
+                size,
+                &mut client.insert_cas,
+                tid,
+                guard,
+                pool,
+            );
+            if res.is_ok() {
+                return res;
             }
         }
 
@@ -1244,7 +1284,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
                     let (size, slot_p) = client
                         .insert_chk
-                        .checkpoint::<false>((size, unsafe { slot.as_pptr(pool) }), tid, pool)
+                        .checkpoint::<false, _>(
+                            || Some((size, unsafe { slot.as_pptr(pool) })),
+                            tid,
+                            pool,
+                        )
                         .unwrap();
 
                     let res = self.try_slot_insert_inner::<false>(
@@ -1351,14 +1395,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
-        let prev_p = ok_or!(
-            prev_slot_chk.checkpoint::<REC>(
-                prev_slot.map(|p| unsafe { p.as_pptr(pool) }),
-                tid,
-                pool
-            ),
-            e,
-            e.current
+        let prev_p = prev_slot_chk.checkpoint::<REC, _>(
+            || prev_slot.map(|p| unsafe { p.as_pptr(pool) }),
+            tid,
+            pool,
         );
 
         let (_, result) = self.insert_inner::<REC>(
@@ -1388,11 +1428,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         // If the inserted array is not being resized, it's done.
         let context_ref = unsafe { context.deref(pool) };
 
-        let done = ok_or!(
-            move_done.checkpoint::<REC>(context_ref.resize_size < result.size, tid, pool),
-            e,
-            e.current
-        );
+        let done =
+            move_done.checkpoint::<REC, _>(|| context_ref.resize_size < result.size, tid, pool);
         if done {
             return Ok(());
         }
@@ -1437,11 +1474,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
 
         let occupied = find_result.is_some();
-        let occupied = ok_or!(
-            client.occupied.checkpoint::<REC>(occupied, tid, pool),
-            e,
-            e.current
-        );
+        let occupied = client.occupied.checkpoint::<REC, _>(|| occupied, tid, pool);
         if occupied {
             // occupied is true if `find_result` is `Some`
             return Err(InsertError::Occupied);
@@ -1450,14 +1483,10 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let slot = alloc_persist(Slot::from((key, value)), pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
-        let slot = ok_or!(
-            client
-                .node
-                .checkpoint::<REC>(PAtomic::from(slot), tid, pool),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
+        let slot = client
+            .node
+            .checkpoint::<REC, _>(|| PAtomic::from(slot), tid, pool)
+            .load(Ordering::Relaxed, guard);
 
         let mut res = self.insert_loop::<REC>(
             context,
@@ -1515,13 +1544,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             None => (PPtr::null(), PAtomic::null()),
         };
 
-        let chk = ok_or!(
-            try_delete
-                .find_result_chk
-                .checkpoint::<REC>((slot, slot_ptr), tid, pool),
-            e,
-            e.current
-        );
+        let chk = try_delete
+            .find_result_chk
+            .checkpoint::<REC, _>(|| (slot, slot_ptr), tid, pool);
 
         if chk.0.is_null() {
             // slot is null if find result is none
@@ -1583,7 +1608,7 @@ mod tests {
     const SMOKE_CNT: usize = 100_000;
 
     struct Smoke {
-        resize: Resize<usize, usize>,
+        resize: ResizeLoop<usize, usize>,
         insert: [Insert<usize, usize>; SMOKE_CNT],
         delete: [Delete<usize, usize>; SMOKE_CNT],
     }
@@ -1601,7 +1626,7 @@ mod tests {
     impl Collectable for Smoke {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..SMOKE_CNT {
-                Resize::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
+                ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
                 Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
             }
@@ -1665,7 +1690,7 @@ mod tests {
 
     struct InsertSearch {
         insert: [Insert<usize, usize>; INSERT_SEARCH_CNT],
-        resize: Resize<usize, usize>,
+        resize: ResizeLoop<usize, usize>,
     }
 
     impl Default for InsertSearch {
@@ -1681,7 +1706,7 @@ mod tests {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..INSERT_SEARCH_CNT {
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
-                Resize::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
+                ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
             }
         }
     }
