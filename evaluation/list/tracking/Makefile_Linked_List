@@ -8,60 +8,60 @@ CFLAGS=-DPMEM -DPWB_IS_CLWB
 all:
 
 ll-recoverable-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -DPROFILING -O3 main_linked_list.cpp -o bin/LLRecoverable_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -DPROFILING -O3 -o bin/LLRecoverable_exp_read
 
 ll-recoverable-nopsync-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -DPSYNC_OFF -O3 main_linked_list.cpp -o bin/LLRecoverable_nopsync_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -DPSYNC_OFF -O3 -o bin/LLRecoverable_nopsync_exp_read
 
 ll-recoverable-nopwbs-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -O3 main_linked_list.cpp -o bin/LLRecoverable_nopwbs_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -O3 -o bin/LLRecoverable_nopwbs_exp_read
 
 ll-recoverable-nolowpwbs-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -DHIGH_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_nolowpwbs_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -DHIGH_PWBS -O3 -o bin/LLRecoverable_nolowpwbs_exp_read
 
 ll-recoverable-nolownomedpwbs-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_nolownomedpwbs_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 -o bin/LLRecoverable_nolownomedpwbs_exp_read
 
 ll-recoverable-lowpwbs-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DLOW_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_lowpwbs_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DLOW_PWBS -O3 -o bin/LLRecoverable_lowpwbs_exp_read
 
 ll-recoverable-medpwbs-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_medpwbs_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -O3 -o bin/LLRecoverable_medpwbs_exp_read
 
 ll-recoverable-highpwbs-read: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_highpwbs_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 -o bin/LLRecoverable_highpwbs_exp_read
 
 capsules-read: main_linked_list.cpp RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DREAD_WRITE_FLUSH -O3 main_linked_list.cpp -o bin/capsules_exp_read
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DREAD_WRITE_FLUSH -O3 -o bin/capsules_exp_read
 
 
 
 ll-recoverable-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -DPROFILING -O3 main_linked_list.cpp -o bin/LLRecoverable_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -DPROFILING -O3 -o bin/LLRecoverable_exp_update
 
 ll-recoverable-nopsync-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_nopsync_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DLOW_PWBS -DMED_PWBS -DHIGH_PWBS -O3 -o bin/LLRecoverable_nopsync_exp_update
 
 ll-recoverable-nopwbs-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -O3 main_linked_list.cpp -o bin/LLRecoverable_nopwbs_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -O3 -o bin/LLRecoverable_nopwbs_exp_update
 
 ll-recoverable-nolowpwbs-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -DHIGH_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_nolowpwbs_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -DHIGH_PWBS -O3 -o bin/LLRecoverable_nolowpwbs_exp_update
 
 ll-recoverable-nolownomedpwbs-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_nolownomedpwbs_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 -o bin/LLRecoverable_nolownomedpwbs_exp_update
 
 ll-recoverable-lowpwbs-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DLOW_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_lowpwbs_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DLOW_PWBS -O3 -o bin/LLRecoverable_lowpwbs_exp_update
 
 ll-recoverable-medpwbs-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_medpwbs_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DMED_PWBS -O3 -o bin/LLRecoverable_medpwbs_exp_update
 
 ll-recoverable-highpwbs-update: main_linked_list.cpp RecoverableLinkedListTracking.h RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 main_linked_list.cpp -o bin/LLRecoverable_highpwbs_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DMANUAL_FLUSH -DPSYNC_OFF -DHIGH_PWBS -O3 -o bin/LLRecoverable_highpwbs_exp_update
 
 capsules-update: main_linked_list.cpp RecoverableLinkedListCapsules.h Utilities.h p_utils.h
-	g++ -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DREAD_WRITE_FLUSH -O3 main_linked_list.cpp -o bin/capsules_exp_update
+	g++ main_linked_list.cpp -lpmem -lnuma -pthread -std=c++11 -mcx16 $(CFLAGS) $(ARGS) -DMCX16 -DREAD_WRITE_FLUSH -O3 -o bin/capsules_exp_update
 
 
 
