@@ -18,7 +18,7 @@ objs = {
             'log_queue': {'data_id': '', 'label': "LogQ", 'marker': 's', 'color': 'c', 'style': '--'},
             'dss_queue': {'data_id': '', 'label': "DssQ", 'marker': 's', 'color': 'orange', 'style': '--'},
             'pbcomb_queue': {'data_id': '', 'label': "PBCombQ", 'marker': 's', 'color': 'red', 'style': '--'},
-            'pbcomb_queue_full_detectable': {'data_id': '', 'label': "PBCombQ+D", 'marker': 's', 'color': 'darkred', 'style': '--'},
+            # 'pbcomb_queue_full_detectable': {'data_id': '', 'label': "PBCombQ+D", 'marker': 's', 'color': 'darkred', 'style': '--'},
             'clobber_queue': {'data_id': '', 'label': "ClobberQ", 'marker': 's', 'color': 'm', 'style': '-.'},
             'pmdk_queue': {'data_id': '', 'label': "PMDKQ", 'marker': 's', 'color': 'skyblue', 'style': '--'},
             'crndm_queue': {'data_id': '', 'label': "CorundumQ", 'marker': 's', 'color': 'green', 'style': '--'},
