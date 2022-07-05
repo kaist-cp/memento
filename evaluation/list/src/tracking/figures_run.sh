@@ -32,7 +32,7 @@ for key_range in 500; do
 	for list in Tracking Capsules-Opt; do
 		for threads in 1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64; do
 			for (( i=1; i<=$iterations; i++ )); do
-				LD_PRELOAD=libvmmalloc.so.1 ./bin/LLRecoverable_exp_read $list $threads $duration
+				LD_PRELOAD=libvmmalloc.so.1 numactl --cpunodebind=0 --membind=0 ./bin/LLRecoverable_exp_read $list $threads $duration
 			done
 		done
 	done
@@ -40,7 +40,7 @@ for key_range in 500; do
 	for list in Capsules; do
 		for threads in 1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64; do
 			for (( i=1; i<=$iterations; i++ )); do
-				LD_PRELOAD=libvmmalloc.so.1 ./bin/capsules_exp_read $list $threads $duration
+				LD_PRELOAD=libvmmalloc.so.1 numactl --cpunodebind=0 --membind=0 ./bin/capsules_exp_read $list $threads $duration
 			done
 		done
 	done
@@ -118,7 +118,7 @@ for key_range in 500; do
 	for list in Tracking Capsules-Opt; do
 		for threads in 1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64; do
 			for (( i=1; i<=$iterations; i++ )); do
-				LD_PRELOAD=libvmmalloc.so.1 ./bin/LLRecoverable_exp_update $list $threads $duration
+				LD_PRELOAD=libvmmalloc.so.1 numactl --cpunodebind=0 --membind=0 ./bin/LLRecoverable_exp_update $list $threads $duration
 			done
 		done
 	done
@@ -126,7 +126,7 @@ for key_range in 500; do
 	for list in Capsules; do
 		for threads in 1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64; do
 			for (( i=1; i<=$iterations; i++ )); do
-				LD_PRELOAD=libvmmalloc.so.1 ./bin/capsules_exp_update $list $threads $duration
+				LD_PRELOAD=libvmmalloc.so.1 numactl --cpunodebind=0 --membind=0 ./bin/capsules_exp_update $list $threads $duration
 			done
 		done
 	done
