@@ -160,18 +160,27 @@ pub trait Collectable: Sized {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle);
 }
 
-impl<T: Collectable, U: Collectable, Z: Collectable> Collectable for (T, U, Z) {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        T::filter(&mut s.0, tid, gc, pool);
-        U::filter(&mut s.1, tid, gc, pool);
-        Z::filter(&mut s.2, tid, gc, pool);
-    }
-}
-
 impl<T: Collectable, U: Collectable> Collectable for (T, U) {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         T::filter(&mut s.0, tid, gc, pool);
         U::filter(&mut s.1, tid, gc, pool);
+    }
+}
+
+impl<T: Collectable, U: Collectable, V: Collectable> Collectable for (T, U, V) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        T::filter(&mut s.0, tid, gc, pool);
+        U::filter(&mut s.1, tid, gc, pool);
+        V::filter(&mut s.2, tid, gc, pool);
+    }
+}
+
+impl<T: Collectable, U: Collectable, V: Collectable, W: Collectable> Collectable for (T, U, V, W) {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        T::filter(&mut s.0, tid, gc, pool);
+        U::filter(&mut s.1, tid, gc, pool);
+        V::filter(&mut s.2, tid, gc, pool);
+        W::filter(&mut s.3, tid, gc, pool);
     }
 }
 

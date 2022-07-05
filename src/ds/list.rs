@@ -4,14 +4,15 @@ use crate::ploc::detectable_cas::Cas;
 use crate::ploc::{Checkpoint, DetectableCASAtomic};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
-use etrace::ok_or;
-use std::mem::MaybeUninit;
+use etrace::{ok_or, some_or};
+use std::cmp::Ordering::{Equal, Greater, Less};
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
-use crate::pmem::{ll::*, pool::*};
+use crate::pmem::{ll::*, pool::*, AsPPtr, PPtr};
 use crate::*;
 
+/// Node
 #[derive(Debug)]
 #[repr(align(128))]
 pub struct Node<K, V: Collectable> {
@@ -38,10 +39,10 @@ impl<K, V: Collectable> Collectable for Node<K, V> {
 }
 
 #[derive(Debug)]
-pub struct Harris<K, V: Collectable> {
+struct Harris<K, V: Collectable> {
     result: Checkpoint<(
         bool,
-        PPtr<DetectableCASAtomic<K, V>>,
+        PPtr<DetectableCASAtomic<Node<K, V>>>,
         PAtomic<Node<K, V>>,
         PAtomic<Node<K, V>>,
     )>,
@@ -65,7 +66,7 @@ impl<K, V: Collectable> Collectable for Harris<K, V> {
 }
 
 #[derive(Debug)]
-pub struct Find<K, V: Collectable> {
+struct Find<K, V: Collectable> {
     harris: Harris<K, V>,
 }
 
@@ -83,6 +84,7 @@ impl<K, V: Collectable> Collectable for Find<K, V> {
     }
 }
 
+/// Lookup memento
 #[derive(Debug)]
 pub struct Lookup<K, V: Collectable> {
     find: Find<K, V>,
@@ -98,12 +100,12 @@ impl<K, V: Collectable> Default for Lookup<K, V> {
 
 impl<K, V: Collectable> Collectable for Lookup<K, V> {
     fn filter(lookup: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Lookup::filter(&mut lookup.find, tid, gc, pool);
+        Find::filter(&mut lookup.find, tid, gc, pool);
     }
 }
 
 #[derive(Debug)]
-pub struct TryInsert {
+struct TryInsert {
     insert: Cas,
 }
 
@@ -121,6 +123,7 @@ impl Collectable for TryInsert {
     }
 }
 
+/// Insert memento
 #[derive(Debug)]
 pub struct Insert<K, V: Collectable> {
     node: Checkpoint<PAtomic<Node<K, V>>>,
@@ -147,7 +150,7 @@ impl<K, V: Collectable> Collectable for Insert<K, V> {
 }
 
 #[derive(Debug)]
-pub struct TryDelete {
+struct TryDelete {
     logical: Cas,
     physical: Cas,
 }
@@ -168,6 +171,7 @@ impl Collectable for TryDelete {
     }
 }
 
+/// Delete memento
 #[derive(Debug)]
 pub struct Delete<K, V: Collectable> {
     find: Find<K, V>,
@@ -190,13 +194,14 @@ impl<K, V: Collectable> Collectable for Delete<K, V> {
     }
 }
 
+/// List
 #[derive(Debug)]
 pub struct List<K, V: Collectable> {
     head: CachePadded<DetectableCASAtomic<Node<K, V>>>,
 }
 
 impl<K, V: Collectable> PDefault for List<K, V> {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(_: &PoolHandle) -> Self {
         Self {
             head: Default::default(),
         }
@@ -209,21 +214,28 @@ impl<K, V: Collectable> Collectable for List<K, V> {
     }
 }
 
-impl<K, V: Collectable> List<K, V> {
-    fn harris<const REC: bool>(
+impl<K: Ord, V: Collectable> List<K, V> {
+    fn harris<'g, const REC: bool>(
         &self,
-        key: K,
+        key: &K,
         harris: &mut Harris<K, V>,
         tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> Result<(bool, &DetectableCASAtomic<Node<K, V>>, PShared<Node<K, V>>), ()> {
-        let mut prev = &self.head;
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Result<
+        (
+            bool,
+            &DetectableCASAtomic<Node<K, V>>,
+            PShared<'g, Node<K, V>>,
+        ),
+        (),
+    > {
+        let mut prev = &*self.head;
         let mut curr = self.head.load(Ordering::SeqCst, guard, pool);
         let mut prev_next = curr;
 
         let found = loop {
-            let curr_node = some_or!(unsafe { curr.as_ref() }, break false);
+            let curr_node = some_or!(unsafe { curr.as_ref(pool) }, break false);
             let next = curr_node.next.load(Ordering::Acquire, guard, pool);
 
             if next.tag() != 0 {
@@ -242,7 +254,7 @@ impl<K, V: Collectable> List<K, V> {
             }
         };
 
-        let (found, prev, curr, prev_next) = ok_or!(
+        let chk = ok_or!(
             harris.result.checkpoint::<REC>(
                 (
                     found,
@@ -254,16 +266,18 @@ impl<K, V: Collectable> List<K, V> {
                 pool
             ),
             e,
-            (
-                e.0,
-                unsafe { e.1.deref(pool) },
-                e.2.load(Ordering::Relaxed, guard),
-                e.3.load(Ordering::Relaxed, guard)
-            )
+            e.current
         );
+        let (found, prev, curr, prev_next) = (
+            chk.0,
+            unsafe { chk.1.deref(pool) },
+            chk.2.load(Ordering::Relaxed, guard),
+            chk.3.load(Ordering::Relaxed, guard),
+        );
+
         // If prev and curr WERE adjacent, no need to clean up
         if prev_next == curr {
-            return Ok(found, prev, curr);
+            return Ok((found, prev, curr));
         }
 
         // cleanup marked nodes between prev and curr
@@ -274,66 +288,69 @@ impl<K, V: Collectable> List<K, V> {
         let mut node = prev_next;
         while node.with_tag(0) != curr {
             unsafe {
-                let next = node
-                    .as_ref()
-                    .unwrap()
-                    .next
-                    .load(Ordering::Acquire, guard, pool);
+                let next = node.deref(pool).next.load(Ordering::Acquire, guard, pool);
                 guard.defer_pdestroy(node);
                 node = next;
             }
         }
 
-        Ok(found, prev, curr)
+        Ok((found, prev, curr))
     }
 
-    fn find<const REC: bool>(
+    fn find<'g, const REC: bool>(
         &self,
-        key: K,
+        key: &K,
         find: &mut Find<K, V>,
         tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> (bool, &DetectableCASAtomic<Node<K, V>>, PShared<Node<K, V>>) {
-        if let Ok(r, prev, curr) = self.harris::<REC>(key, &mut find.harris, tid, guard, pool) {
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> (
+        bool,
+        &DetectableCASAtomic<Node<K, V>>,
+        PShared<'g, Node<K, V>>,
+    ) {
+        if let Ok((r, prev, curr)) = self.harris::<REC>(key, &mut find.harris, tid, guard, pool) {
             return (r, prev, curr);
         }
 
         loop {
-            if let Ok(r, prev, curr) = self.harris::<false>(key, &mut find.harris, tid, guard, pool)
+            if let Ok((r, prev, curr)) =
+                self.harris::<false>(key, &mut find.harris, tid, guard, pool)
             {
                 return (r, prev, curr);
             }
         }
     }
 
-    pub fn lookup<const REC: bool>(
+    /// Lookup
+    pub fn lookup<'g, const REC: bool>(
         &self,
-        key: K,
+        key: &'g K,
         look: &mut Lookup<K, V>,
         tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> Option<&V> {
+        guard: &'g Guard,
+        pool: &'static PoolHandle,
+    ) -> Option<&'g V> {
         let (found, _, curr) = self.find::<REC>(key, &mut look.find, tid, guard, pool);
         if found {
-            unsafe { curr.as_ref().map(|n| &n.value) }
+            unsafe { curr.as_ref(pool).map(|n| &n.value) }
         } else {
             None
         }
     }
 
-    pub fn try_insert<const REC: bool>(
+    fn try_insert<const REC: bool>(
         &self,
-        node: PShared<Node<K, V>>,
+        node: PShared<'_, Node<K, V>>,
         prev: &DetectableCASAtomic<Node<K, V>>,
-        next: PShared<Node<K, V>>,
-        try_ins: &mut TryInsert<K, V>,
+        next: PShared<'_, Node<K, V>>,
+        try_ins: &mut TryInsert,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
-        node.next.store(next, Ordering::Relaxed);
+        let node_ref = unsafe { node.deref(pool) };
+        node_ref.next.inner.store(next, Ordering::Relaxed);
         persist_obj(unsafe { &node.deref(pool).next }, true);
 
         prev.cas::<REC>(next, node, &mut try_ins.insert, tid, guard, pool)
@@ -341,6 +358,7 @@ impl<K, V: Collectable> List<K, V> {
             .map_err(|_| ())
     }
 
+    /// Insert
     pub fn insert<const REC: bool>(
         &self,
         key: K,
@@ -348,9 +366,9 @@ impl<K, V: Collectable> List<K, V> {
         ins: &mut Insert<K, V>,
         tid: usize,
         guard: &Guard,
-        pool: &PoolHandle,
+        pool: &'static PoolHandle,
     ) -> Result<(), ()> {
-        let node = POwned::new(Node::from((key, value)));
+        let node = POwned::new(Node::from((key, value)), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
 
         let node = ok_or!(
@@ -366,15 +384,16 @@ impl<K, V: Collectable> List<K, V> {
             }
         )
         .load(Ordering::Relaxed, guard);
+        let node_ref = unsafe { node.deref(pool) };
 
-        let (found, prev, curr) = self.find::<REC>(&node.key, &mut ins.find, tid, guard, pool);
+        let (found, prev, curr) = self.find::<REC>(&node_ref.key, &mut ins.find, tid, guard, pool);
         if found {
             unsafe { guard.defer_pdestroy(node) };
-            return false;
+            return Err(());
         }
 
         if self
-            .try_insert::<REC>(node, prev, curr, ins.try_ins, tid, guard, pool)
+            .try_insert::<REC>(node, prev, curr, &mut ins.try_ins, tid, guard, pool)
             .is_ok()
         {
             return Ok(());
@@ -382,14 +401,14 @@ impl<K, V: Collectable> List<K, V> {
 
         loop {
             let (found, prev, curr) =
-                self.find::<false>(&node.key, &mut ins.find, tid, guard, pool);
+                self.find::<false>(&node_ref.key, &mut ins.find, tid, guard, pool);
             if found {
                 unsafe { guard.defer_pdestroy(node) };
-                return false;
+                return Err(());
             }
 
             if self
-                .try_insert::<false>(node, prev, curr, ins.try_ins, tid, guard, pool)
+                .try_insert::<false>(node, prev, curr, &mut ins.try_ins, tid, guard, pool)
                 .is_ok()
             {
                 return Ok(());
@@ -397,21 +416,21 @@ impl<K, V: Collectable> List<K, V> {
         }
     }
 
-    pub fn try_delete<const REC: bool>(
+    fn try_delete<const REC: bool>(
         &self,
-        prev: PShared<Node<K, V>>,
-        curr: PShared<Node<K, V>>,
+        prev: &DetectableCASAtomic<Node<K, V>>,
+        curr: PShared<'_, Node<K, V>>,
         try_del: &mut TryDelete,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
-    ) -> bool {
-        let curr_ref = unsafe { curr.deref() };
+    ) -> Result<(), ()> {
+        let curr_ref = unsafe { curr.deref(pool) };
 
         // FAO-like..
         let mut next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
         if next.tag() == 1 {
-            return false;
+            return Err(());
         }
 
         if let Err(e) = curr_ref.next.cas::<REC>(
@@ -423,7 +442,7 @@ impl<K, V: Collectable> List<K, V> {
             pool,
         ) {
             if e.tag() == 1 {
-                return false;
+                return Err(());
             }
             next = e;
         }
@@ -437,53 +456,53 @@ impl<K, V: Collectable> List<K, V> {
             pool,
         ) {
             if e.tag() == 1 {
-                return false;
+                return Err(());
             }
             next = e;
         }
 
         if prev
-            .cas::<REC>(next, node, &mut try_del.physical, tid, guard, pool)
+            .cas::<REC>(curr, next, &mut try_del.physical, tid, guard, pool)
             .is_ok()
         {
             unsafe { guard.defer_pdestroy(curr) };
         }
 
-        true
+        Ok(())
     }
 
+    /// Delete
     pub fn delete<const REC: bool>(
         &self,
-        key: K,
+        key: &K,
         del: &mut Delete<K, V>,
         tid: usize,
         guard: &Guard,
-        pool: &PoolHandle,
-    ) -> bool {
-        let (found, prev, curr) = self.find::<REC>(&node.key, &mut del.find, tid, guard, pool);
+        pool: &'static PoolHandle,
+    ) -> Result<(), ()> {
+        let (found, prev, curr) = self.find::<REC>(key, &mut del.find, tid, guard, pool);
         if !found {
-            return false;
+            return Err(());
         }
 
         if self
-            .try_delete::<REC>(node, prev, curr, del.try_del, tid, guard, pool)
+            .try_delete::<REC>(prev, curr, &mut del.try_del, tid, guard, pool)
             .is_ok()
         {
-            return true;
+            return Ok(());
         }
 
         loop {
-            let (found, prev, curr) =
-                self.find::<false>(&node.key, &mut del.find, tid, guard, pool);
+            let (found, prev, curr) = self.find::<false>(key, &mut del.find, tid, guard, pool);
             if !found {
-                return false;
+                return Err(());
             }
 
             if self
-                .try_delete::<false>(node, prev, curr, del.try_del, tid, guard, pool)
+                .try_delete::<false>(prev, curr, &mut del.try_del, tid, guard, pool)
                 .is_ok()
             {
-                return true;
+                return Ok(());
             }
         }
     }
