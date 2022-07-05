@@ -397,7 +397,7 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let _ = queue.comb_enqueue::<true>(
-                            compose(tid, i, tid),
+                            compose(tid, i, tid + i),
                             &mut enq_deq.enqs[i],
                             tid,
                             guard,
@@ -428,4 +428,3 @@ mod test {
     }
 }
 
-// unsafe impl Sync for (dyn for<'r> Fn(&'r CombStruct) + 'static) {}

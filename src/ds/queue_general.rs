@@ -430,7 +430,7 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let _ = self.obj.enqueue::<true>(
-                            (tid, i, tid),
+                            (tid, i, tid+i),
                             &mut enq_deq.enqs[i],
                             tid,
                             guard,

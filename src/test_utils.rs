@@ -398,7 +398,7 @@ pub mod tests {
     }
 
     pub(crate) fn produce_res(tid: usize, seq: usize, value: usize) {
-        if let Some(prev) = RESULTS_TCRASH[tid].lock_poisonable().insert(seq, tid + seq) {
+        if let Some(prev) = RESULTS_TCRASH[tid].lock_poisonable().insert(seq, value) {
             assert_eq!(prev, value);
         }
     }
