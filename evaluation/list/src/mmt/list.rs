@@ -1,13 +1,14 @@
 use core::sync::atomic::Ordering;
 use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
-use memento::ds::clevel::Delete;
 use memento::ds::list::*;
-use memento::pmem::pool::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
+use memento::pmem::{global_pool, pool::*};
 use memento::PDefault;
 
-use crate::common::{pick_range, TestNOps, DURATION, INIT_SIZE, KEY_RANGE, PROB, TOTAL_NOPS};
+use crate::common::{
+    pick_range, TestNOps, DELETE_RATIO, DURATION, INIT_SIZE, INSERT_RATIO, KEY_RANGE, TOTAL_NOPS,
+};
 
 /// Root obj for evaluation of MementoQueueGeneral
 #[derive(Debug)]
@@ -22,58 +23,48 @@ impl Collectable for TestMementoList {
 }
 
 impl PDefault for TestMementoList {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        // let list = List::pdefault(pool);
-        // let guard = epoch::pin();
+    fn pdefault(_: &PoolHandle) -> Self {
+        let pool = global_pool().unwrap();
+        let list = List::pdefault(pool);
+        let guard = epoch::pin();
 
-        // let mut ins_init = Insert::default();
-        // for i in 0..unsafe { INIT_SIZE } {
-        //     let v = pick_range(1, unsafe { KEY_RANGE });
-
-        //     list.insert(key, value, ins_init, 0, guard, pool);
-        // }
-        // Self { list }
-        todo!("need List::pdefault")
+        let mut ins_init = Insert::default();
+        for _ in 0..unsafe { INIT_SIZE } {
+            let v = pick_range(1, unsafe { KEY_RANGE });
+            let _ = list.insert::<false>(v, v, &mut ins_init, 0, &guard, pool);
+        }
+        Self { list }
     }
 }
 
 impl TestNOps for TestMementoList {}
 
 #[derive(Debug)]
-pub struct TestMementoInsDelRd<const INS_RT: f64, const DEL_RT: f64, const RD_RT: f64> {
+pub struct TestMementoInsDelRd {
     ins: CachePadded<Insert<usize, usize>>,
     del: CachePadded<Delete<usize, usize>>,
+    rd: CachePadded<Lookup<usize, usize>>,
 }
 
-impl<const INS_RT: f64, const DEL_RT: f64, const RD_RT: f64> Default
-    for TestMementoInsDelRd<INS_RT, DEL_RT, RD_RT>
-{
+impl Default for TestMementoInsDelRd {
     fn default() -> Self {
         Self {
             ins: CachePadded::new(Default::default()),
             del: CachePadded::new(Default::default()),
+            rd: CachePadded::new(Default::default()),
         }
     }
 }
 
-impl<const INS_RT: f64, const DEL_RT: f64, const RD_RT: f64> Collectable
-    for TestMementoInsDelRd<INS_RT, DEL_RT, RD_RT>
-{
+impl Collectable for TestMementoInsDelRd {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
         todo!()
     }
 }
 
-impl<const INS_RT: f64, const DEL_RT: f64, const RD_RT: f64>
-    RootObj<TestMementoInsDelRd<INS_RT, DEL_RT, RD_RT>> for TestMementoList
-{
-    fn run(
-        &self,
-        mmt: &mut TestMementoInsDelRd<INS_RT, DEL_RT, RD_RT>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+impl RootObj<TestMementoInsDelRd> for TestMementoList {
+    fn run(&self, mmt: &mut TestMementoInsDelRd, tid: usize, guard: &Guard, _: &PoolHandle) {
+        let pool = global_pool().unwrap();
         let list = &self.list;
 
         let ops = self.test_nops(
@@ -83,16 +74,17 @@ impl<const INS_RT: f64, const DEL_RT: f64, const RD_RT: f64>
                     .unwrap();
                 let del = unsafe { (&*mmt.del as *const _ as *mut Delete<usize, usize>).as_mut() }
                     .unwrap();
+                let rd = unsafe { (&*mmt.rd as *const _ as *mut Lookup<usize, usize>).as_mut() }
+                    .unwrap();
 
                 let op = pick_range(1, 100);
                 let key = pick_range(1, unsafe { KEY_RANGE });
-                if op <= INS_RT * 100 {
-                    // TODO: value?
-                    list.insert(key, value, ins, tid, guard, pool);
-                } else if op <= INS_RT * 100 + DEL_RT * 100 {
-                    todo!("delete(key)")
+                if op <= unsafe { INSERT_RATIO } {
+                    let _ = list.insert::<false>(key, key, ins, tid, guard, pool);
+                } else if op <= unsafe { INSERT_RATIO } + unsafe { DELETE_RATIO } {
+                    let _ = list.delete::<false>(&key, del, tid, guard, pool);
                 } else {
-                    todo!("read(key)");
+                    let _ = list.lookup::<false>(&key, rd, tid, guard, pool);
                 }
             },
             tid,

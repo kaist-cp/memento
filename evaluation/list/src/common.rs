@@ -26,6 +26,15 @@ pub static mut RELAXED: usize = 0;
 /// range of key
 pub static mut KEY_RANGE: usize = 0;
 
+/// insert ratio
+pub static mut INSERT_RATIO: usize = 0;
+
+/// delete ratio
+pub static mut DELETE_RATIO: usize = 0;
+
+/// read ratio
+pub static mut READ_RATIO: usize = 0;
+
 pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
 
 pub trait TestNOps {
@@ -127,16 +136,13 @@ pub struct Opt {
 
     /// % read
     #[structopt(short, long, default_value = "0")]
-    pub read_ratio: usize,
+    pub read_ratio: f64,
 }
 
 /// Abstraction of queue
 pub mod queue {
-    use crossbeam_epoch::Guard;
-    use memento::pmem::PoolHandle;
-
     use crate::{
-        common::KEY_RANGE,
+        common::{DELETE_RATIO, INSERT_RATIO, KEY_RANGE, READ_RATIO},
         mmt::{TestMementoInsDelRd, TestMementoList},
     };
 
@@ -145,17 +151,17 @@ pub mod queue {
     pub fn bench_list(opt: &Opt, target: TestTarget) -> usize {
         unsafe { KEY_RANGE = opt.key_range };
         unsafe { INIT_SIZE = opt.key_range / 2 };
-        let ins = opt.insert_ratio;
-        let del = opt.delete_ratio;
-        let rd = opt.read_ratio;
-        assert!(ins + del + rd == 1);
+        unsafe { INSERT_RATIO = (opt.insert_ratio * 100.0) as usize };
+        unsafe { DELETE_RATIO = (opt.delete_ratio * 100.0) as usize };
+        unsafe { READ_RATIO = (opt.read_ratio * 100.0) as usize };
+
+        unsafe {
+            assert!(INSERT_RATIO + DELETE_RATIO + READ_RATIO == 100);
+        }
 
         match target {
             TestTarget::MementoList => {
-                get_nops::<TestMementoList, TestMementoInsDelRd<ins, del, rd>>(
-                    &opt.filepath,
-                    opt.threads,
-                )
+                get_nops::<TestMementoList, TestMementoInsDelRd>(&opt.filepath, opt.threads)
             }
         }
     }

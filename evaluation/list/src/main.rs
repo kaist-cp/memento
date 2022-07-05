@@ -6,7 +6,6 @@ use list::common::Opt;
 use list::common::TestTarget;
 use list::common::DURATION;
 use list::common::RELAXED;
-use regex::Regex;
 use std::fs::create_dir_all;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -72,9 +71,9 @@ fn bench(opt: &Opt) -> f64 {
         opt.target,
         opt.threads,
         opt.key_range,
-        opt.insert_ratio * 100,
-        opt.delete_ratio * 100,
-        opt.read_ratio * 100
+        opt.insert_ratio * 100.0,
+        opt.delete_ratio * 100.0,
+        opt.read_ratio * 100.0
     );
     let target = parse_target(&opt.target);
     let nops = match target {
