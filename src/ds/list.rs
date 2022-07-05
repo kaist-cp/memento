@@ -14,13 +14,13 @@ use crate::*;
 
 #[derive(Debug)]
 #[repr(align(128))]
-pub struct Node<K, V> {
+pub struct Node<K, V: Collectable> {
     key: K,
     value: V,
     next: DetectableCASAtomic<Self>,
 }
 
-impl<T: Collectable> From<(K, V)> for Node<K, V> {
+impl<K, V: Collectable> From<(K, V)> for Node<K, V> {
     fn from((key, value): (K, V)) -> Self {
         Self {
             key,
@@ -30,8 +30,15 @@ impl<T: Collectable> From<(K, V)> for Node<K, V> {
     }
 }
 
+impl<K, V: Collectable> Collectable for Node<K, V> {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        V::filter(&mut node.value, tid, gc, pool);
+        DetectableCASAtomic::filter(&mut node.next, tid, gc, pool);
+    }
+}
+
 #[derive(Debug)]
-pub struct Harris<K, V> {
+pub struct Harris<K, V: Collectable> {
     result: Checkpoint<(
         bool,
         PPtr<DetectableCASAtomic<K, V>>,
@@ -41,14 +48,58 @@ pub struct Harris<K, V> {
     help: Cas,
 }
 
-#[derive(Debug)]
-pub struct Find<K, V> {
-    harris: Harris<K, V>,
+impl<K, V: Collectable> Default for Harris<K, V> {
+    fn default() -> Self {
+        Self {
+            result: Default::default(),
+            help: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Harris<K, V> {
+    fn filter(harris: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut harris.result, tid, gc, pool);
+        Cas::filter(&mut harris.help, tid, gc, pool);
+    }
 }
 
 #[derive(Debug)]
-pub struct Lookup<K, V> {
+pub struct Find<K, V: Collectable> {
+    harris: Harris<K, V>,
+}
+
+impl<K, V: Collectable> Default for Find<K, V> {
+    fn default() -> Self {
+        Self {
+            harris: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Find<K, V> {
+    fn filter(find: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Harris::filter(&mut find.harris, tid, gc, pool);
+    }
+}
+
+#[derive(Debug)]
+pub struct Lookup<K, V: Collectable> {
     find: Find<K, V>,
+}
+
+impl<K, V: Collectable> Default for Lookup<K, V> {
+    fn default() -> Self {
+        Self {
+            find: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Lookup<K, V> {
+    fn filter(lookup: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Lookup::filter(&mut lookup.find, tid, gc, pool);
+    }
 }
 
 #[derive(Debug)]
@@ -56,11 +107,43 @@ pub struct TryInsert {
     insert: Cas,
 }
 
+impl Default for TryInsert {
+    fn default() -> Self {
+        Self {
+            insert: Default::default(),
+        }
+    }
+}
+
+impl Collectable for TryInsert {
+    fn filter(try_ins: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Cas::filter(&mut try_ins.insert, tid, gc, pool);
+    }
+}
+
 #[derive(Debug)]
-pub struct Insert<K, V> {
+pub struct Insert<K, V: Collectable> {
     node: Checkpoint<PAtomic<Node<K, V>>>,
     find: Find<K, V>,
     try_ins: TryInsert,
+}
+
+impl<K, V: Collectable> Default for Insert<K, V> {
+    fn default() -> Self {
+        Self {
+            node: Default::default(),
+            find: Default::default(),
+            try_ins: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Insert<K, V> {
+    fn filter(ins: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut ins.node, tid, gc, pool);
+        Find::filter(&mut ins.find, tid, gc, pool);
+        TryInsert::filter(&mut ins.try_ins, tid, gc, pool);
+    }
 }
 
 #[derive(Debug)]
@@ -69,18 +152,64 @@ pub struct TryDelete {
     physical: Cas,
 }
 
+impl Default for TryDelete {
+    fn default() -> Self {
+        Self {
+            logical: Default::default(),
+            physical: Default::default(),
+        }
+    }
+}
+
+impl Collectable for TryDelete {
+    fn filter(try_del: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Cas::filter(&mut try_del.logical, tid, gc, pool);
+        Cas::filter(&mut try_del.physical, tid, gc, pool);
+    }
+}
+
 #[derive(Debug)]
-pub struct Delete<K, V> {
+pub struct Delete<K, V: Collectable> {
     find: Find<K, V>,
     try_del: TryDelete,
 }
 
+impl<K, V: Collectable> Default for Delete<K, V> {
+    fn default() -> Self {
+        Self {
+            find: Default::default(),
+            try_del: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Delete<K, V> {
+    fn filter(del: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Find::filter(&mut del.find, tid, gc, pool);
+        TryDelete::filter(&mut del.try_del, tid, gc, pool);
+    }
+}
+
 #[derive(Debug)]
-pub struct List<K, V> {
+pub struct List<K, V: Collectable> {
     head: CachePadded<DetectableCASAtomic<Node<K, V>>>,
 }
 
-impl<K, V> List<K, V> {
+impl<K, V: Collectable> PDefault for List<K, V> {
+    fn pdefault(pool: &PoolHandle) -> Self {
+        Self {
+            head: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for List<K, V> {
+    fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        DetectableCASAtomic::filter(&mut queue.head, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> List<K, V> {
     fn harris<const REC: bool>(
         &self,
         key: K,

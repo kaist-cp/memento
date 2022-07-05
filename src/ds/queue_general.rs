@@ -69,6 +69,7 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryEnqueue<T> {}
 
 impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
     fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut try_push.tail, tid, gc, pool);
         Cas::filter(&mut try_push.insert, tid, gc, pool);
     }
 }
@@ -137,6 +138,7 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Cas::filter(&mut try_deq.delete, tid, gc, pool);
+        Checkpoint::filter(&mut try_deq.head_next, tid, gc, pool);
     }
 }
 
