@@ -2,7 +2,7 @@
 
 # Define size and path to NV memory
 export VMMALLOC_POOL_SIZE=$((64*1024*1024*1024))
-export VMMALLOC_POOL_DIR="/mnt/pmem_fsdax0/"
+export VMMALLOC_POOL_DIR="/mnt/pmem0/"
 
 duration=3			# duration=10 (for paper)
 iterations=3        # iterations=10 (for paper)
@@ -24,7 +24,7 @@ for key_range in 500; do
 	filename="results/linked_list_results[$inserts_percentage.$deletes_percentage.$key_range].txt"
 	echo "Running manual linked list flush experiments for $duration seconds each and random work $max_work." >> $filename
 	# --------------------------------------
-	
+
 	printf "\n================================================================\n"
 	printf "READ-INTENSIVE BENCHMARK (15%% INSERTS, 15%% DELETES, 70%% FINDS)\n"
 	printf "================================================================\n"
