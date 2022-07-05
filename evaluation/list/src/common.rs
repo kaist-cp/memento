@@ -1,0 +1,162 @@
+//! Abstraction for evaluation
+
+use crossbeam_epoch::Guard;
+use memento::pmem::{Collectable, Pool, RootObj};
+use rand::Rng;
+use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+use structopt::StructOpt;
+
+/// file size
+pub const FILE_SIZE: usize = 128 * 1024 * 1024 * 1024;
+
+/// number of init nodes
+pub static mut INIT_SIZE: usize = 0;
+
+/// max threads
+pub const MAX_THREADS: usize = 64;
+
+/// test duration
+pub static mut DURATION: f64 = 0.0;
+
+/// period of repin
+pub static mut RELAXED: usize = 0;
+
+/// range of key
+pub static mut KEY_RANGE: usize = 0;
+
+pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
+
+pub trait TestNOps {
+    // Count number of executions of `op` in `duration` seconds
+    fn test_nops<'f, F: Fn(usize, &Guard)>(
+        &self,
+        op: &'f F,
+        tid: usize,
+        duration: f64,
+        guard: &Guard,
+    ) -> usize
+    where
+        &'f F: Send,
+    {
+        let mut ops = 0;
+        let start = Instant::now();
+        let dur = Duration::from_secs_f64(duration);
+        let guard = &mut unsafe { ptr::read(guard) };
+        while start.elapsed() < dur {
+            op(tid, guard);
+            ops += 1;
+
+            if ops % unsafe { RELAXED } == 0 {
+                guard.repin_after(|| {});
+            }
+        }
+        ops
+    }
+}
+
+pub fn get_total_nops() -> usize {
+    TOTAL_NOPS.load(Ordering::SeqCst)
+}
+
+#[derive(Debug)]
+pub enum TestTarget {
+    MementoList,
+}
+
+#[inline]
+pub fn pick_range(min: usize, max: usize) -> usize {
+    rand::thread_rng().gen_range(min..=max)
+}
+
+pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
+where
+    O: RootObj<M> + Send + Sync + 'static,
+    M: Collectable + Default + Send + Sync,
+{
+    let _ = Pool::remove(filepath);
+
+    let pool_handle = Pool::create::<O, M>(filepath, FILE_SIZE, nr_thread).unwrap();
+
+    // Each thread executes op for `duration` seconds and accumulates execution count in `TOTAL_NOPS`
+    pool_handle.execute::<O, M>();
+
+    // Load `TOTAL_NOPS`
+    get_total_nops()
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(name = "bench")]
+pub struct Opt {
+    /// filepath
+    #[structopt(short, long)]
+    pub filepath: String,
+
+    /// target
+    #[structopt(short = "a", long)]
+    pub target: String,
+
+    /// number of threads
+    #[structopt(short, long)]
+    pub threads: usize,
+
+    /// test duration
+    #[structopt(short, long, default_value = "5")]
+    pub duration: f64,
+
+    /// output path
+    #[structopt(short, long)]
+    pub output: Option<String>,
+
+    /// period of repin (default: repin_after once every 10000 ops)
+    #[structopt(short, long, default_value = "10000")]
+    pub relax: usize,
+
+    /// range of key
+    #[structopt(short, long, default_value = "500")]
+    pub key_range: usize,
+
+    /// % insert
+    #[structopt(short, long, default_value = "0")]
+    pub insert_ratio: f64,
+
+    /// % delete
+    #[structopt(short, long, default_value = "0")]
+    pub delete_ratio: f64,
+
+    /// % read
+    #[structopt(short, long, default_value = "0")]
+    pub read_ratio: usize,
+}
+
+/// Abstraction of queue
+pub mod queue {
+    use crossbeam_epoch::Guard;
+    use memento::pmem::PoolHandle;
+
+    use crate::{
+        common::KEY_RANGE,
+        mmt::{TestMementoInsDelRd, TestMementoList},
+    };
+
+    use super::{get_nops, Opt, TestTarget, INIT_SIZE};
+
+    pub fn bench_list(opt: &Opt, target: TestTarget) -> usize {
+        unsafe { KEY_RANGE = opt.key_range };
+        unsafe { INIT_SIZE = opt.key_range / 2 };
+        let ins = opt.insert_ratio;
+        let del = opt.delete_ratio;
+        let rd = opt.read_ratio;
+        assert!(ins + del + rd == 1);
+
+        match target {
+            TestTarget::MementoList => {
+                get_nops::<TestMementoList, TestMementoInsDelRd<ins, del, rd>>(
+                    &opt.filepath,
+                    opt.threads,
+                )
+            }
+        }
+    }
+}

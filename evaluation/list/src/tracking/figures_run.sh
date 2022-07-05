@@ -4,8 +4,8 @@
 export VMMALLOC_POOL_SIZE=$((64*1024*1024*1024))
 export VMMALLOC_POOL_DIR="/mnt/pmem0/"
 
-duration=3			# duration=10 (for paper)
-iterations=3        # iterations=10 (for paper)
+duration=10			# duration=10 (for paper)
+iterations=5        # iterations=10 (for paper)
 
 # Create results folder
 mkdir -p results
