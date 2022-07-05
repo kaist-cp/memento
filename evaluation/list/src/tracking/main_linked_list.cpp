@@ -40,7 +40,7 @@ int arguments[MAX_THREADS * PADDING];
 int numThreads = 2; // default value
 int timeForRecord = 5; // default value
 volatile bool run = false;
-volatile bool stop = false; 
+volatile bool stop = false;
 
 RecoverableLinkedListTracking<int> recoverableLinkedListTracking;
 int totalNumRecoverableLinkedListTrackingActions = 0;
@@ -64,7 +64,7 @@ unsigned long totalNumRecoverableLinkedListTrackingActions_numInsertAttempts;
 unsigned long totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringInserts;
 unsigned long totalNumRecoverableLinkedListTrackingActions_numDeleteOps;
 unsigned long totalNumRecoverableLinkedListTrackingActions_numDeleteAttempts;
-unsigned long totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringDeletes;         
+unsigned long totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringDeletes;
 unsigned long totalNumRecoverableLinkedListTrackingActions_numFindOps;
 unsigned long totalNumRecoverableLinkedListTrackingActions_numFindAttempts;
 unsigned long totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringFinds;
@@ -96,7 +96,7 @@ unsigned long totalNumRecoverableLinkedListCapsulesActions_numInsertAttempts;
 unsigned long totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringInserts;
 unsigned long totalNumRecoverableLinkedListCapsulesActions_numDeleteOps;
 unsigned long totalNumRecoverableLinkedListCapsulesActions_numDeleteAttempts;
-unsigned long totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringDeletes;         
+unsigned long totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringDeletes;
 unsigned long totalNumRecoverableLinkedListCapsulesActions_numFindOps;
 unsigned long totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringFinds;
 unsigned long totalNumRecoverableLinkedListCapsulesActions_numSearchBarrier1;
@@ -117,7 +117,7 @@ unsigned long totalNumRecoverableLinkedListCapsulesActions_numFence;
 inline static void* startRoutineRecoverableLinkedListTracking(void* argsInput){
 
     int thread_id = *(int*)argsInput;
-    threadPin(thread_id);
+    // threadPin(thread_id);
 
     long numMyOps=0;
 
@@ -125,7 +125,7 @@ inline static void* startRoutineRecoverableLinkedListTracking(void* argsInput){
     unsigned long numMyInsertsSuccessful = 0, numMyInsertsUnSuccessful = 0;
     unsigned long numMyDeletesSuccessful = 0, numMyDeletesUnSuccessful = 0;
     unsigned long numMyFindsSuccessful = 0, numMyFindsUnSuccessful = 0;
-	#endif    
+	#endif
 
     RecoverableLinkedListTracking<int>& list = recoverableLinkedListTracking;
 
@@ -157,7 +157,7 @@ inline static void* startRoutineRecoverableLinkedListTracking(void* argsInput){
             }
 		#else
             list.Insert(key, thread_id);
-		#endif      
+		#endif
         }
         else if (op <= 100*INSERTS_PERCENTAGE+100*DELETES_PERCENTAGE) {
 		#if defined(PROFILING)
@@ -170,7 +170,7 @@ inline static void* startRoutineRecoverableLinkedListTracking(void* argsInput){
             }
 		#else
             list.Delete(key, thread_id);
-		#endif            
+		#endif
         }
         else {
 		#if defined(PROFILING)
@@ -202,7 +202,7 @@ inline static void* startRoutineRecoverableLinkedListTracking(void* argsInput){
     ADD(&totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringInserts, RecoverableLinkedListTracking<int>::prof.numNodesAccessedDuringInserts);
     ADD(&totalNumRecoverableLinkedListTrackingActions_numDeleteOps, RecoverableLinkedListTracking<int>::prof.numDeleteOps);
     ADD(&totalNumRecoverableLinkedListTrackingActions_numDeleteAttempts, RecoverableLinkedListTracking<int>::prof.numDeleteAttempts);
-    ADD(&totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringDeletes, RecoverableLinkedListTracking<int>::prof.numNodesAccessedDuringDeletes); 
+    ADD(&totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringDeletes, RecoverableLinkedListTracking<int>::prof.numNodesAccessedDuringDeletes);
     ADD(&totalNumRecoverableLinkedListTrackingActions_numFindOps, RecoverableLinkedListTracking<int>::prof.numFindOps);
     ADD(&totalNumRecoverableLinkedListTrackingActions_numFindAttempts, RecoverableLinkedListTracking<int>::prof.numFindAttempts);
     ADD(&totalNumRecoverableLinkedListTrackingActions_numNodesAccessedDuringFinds, RecoverableLinkedListTracking<int>::prof.numNodesAccessedDuringFinds);
@@ -221,7 +221,7 @@ inline static void* startRoutineRecoverableLinkedListTracking(void* argsInput){
     ADD(&totalNumRecoverableLinkedListTrackingActions_numFlushHelp, RecoverableLinkedListTracking<int>::prof.numPwbHelp);
     ADD(&totalNumRecoverableLinkedListTrackingActions_numBarrierHelp, RecoverableLinkedListTracking<int>::prof.numBarrierHelp);
     ADD(&totalNumRecoverableLinkedListTrackingActions_numFenceHelp, RecoverableLinkedListTracking<int>::prof.numPsyncHelp);
-	#endif    
+	#endif
 
     return NULL;
 }
@@ -229,7 +229,7 @@ inline static void* startRoutineRecoverableLinkedListTracking(void* argsInput){
 inline static void* startRoutineRecoverableLinkedListCapsules(void* argsInput){
 
     int thread_id = *(int*)argsInput;
-    threadPin(thread_id);
+    // threadPin(thread_id);
 
     long numMyOps=0;
 
@@ -237,14 +237,14 @@ inline static void* startRoutineRecoverableLinkedListCapsules(void* argsInput){
     unsigned long numMyInsertsSuccessful = 0, numMyInsertsUnSuccessful = 0;
     unsigned long numMyDeletesSuccessful = 0, numMyDeletesUnSuccessful = 0;
     unsigned long numMyFindsSuccessful = 0, numMyFindsUnSuccessful = 0;
-	#endif      
+	#endif
 
     RecoverableLinkedListCapsules<int>& list = recoverableLinkedListCapsules;
-    
+
     int key;
     unsigned int seed = time(NULL) + thread_id;
     long op;
-    
+
     fastRandomSetSeed(seed);
 
     while (run == false) {          // busy-wait to start "simultaneously"
@@ -268,7 +268,7 @@ inline static void* startRoutineRecoverableLinkedListCapsules(void* argsInput){
             }
 		#else
             list.Insert(key, thread_id);
-		#endif             
+		#endif
         }
         else if (op <= 100*INSERTS_PERCENTAGE+100*DELETES_PERCENTAGE) {
 		#if defined(PROFILING)
@@ -281,7 +281,7 @@ inline static void* startRoutineRecoverableLinkedListCapsules(void* argsInput){
             }
 		#else
             list.Delete(key, thread_id);
-		#endif             
+		#endif
 
         }
         else {
@@ -316,7 +316,7 @@ inline static void* startRoutineRecoverableLinkedListCapsules(void* argsInput){
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringInserts, RecoverableLinkedListCapsules<int>::prof.numNodesAccessedDuringInserts);
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numDeleteOps, RecoverableLinkedListCapsules<int>::prof.numDeleteOps);
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numDeleteAttempts, RecoverableLinkedListCapsules<int>::prof.numDeleteAttempts);
-    ADD(&totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringDeletes, RecoverableLinkedListCapsules<int>::prof.numNodesAccessedDuringDeletes); 
+    ADD(&totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringDeletes, RecoverableLinkedListCapsules<int>::prof.numNodesAccessedDuringDeletes);
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numFindOps, RecoverableLinkedListCapsules<int>::prof.numFindOps);
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numNodesAccessedDuringFinds, RecoverableLinkedListCapsules<int>::prof.numNodesAccessedDuringFinds);
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numSearchBarrier1, RecoverableLinkedListCapsules<int>::prof.numSearchBarrier1);
@@ -330,7 +330,7 @@ inline static void* startRoutineRecoverableLinkedListCapsules(void* argsInput){
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numFlushHigh, RecoverableLinkedListCapsules<int>::prof.numPwbHigh);
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numBarrier, RecoverableLinkedListCapsules<int>::prof.numBarrier);
     ADD(&totalNumRecoverableLinkedListCapsulesActions_numFence, RecoverableLinkedListCapsules<int>::prof.numPsync);
-	#endif    
+	#endif
 
     return NULL;
 }
@@ -354,7 +354,7 @@ void countRecoverableLinkedListTracking(){
         }
     }
 
-    threadPin(i);
+    // threadPin(i);
 
     run = true;
     MFENCE();
@@ -386,7 +386,7 @@ void countRecoverableLinkedListTracking(){
     file << (float) totalNumRecoverableLinkedListTrackingActions_numFlushHigh/totalNumRecoverableLinkedListTrackingActions << endl;
     file << "Test Tracking-Fence - Threads num: " << numThreads << endl;
     file << (float) totalNumRecoverableLinkedListTrackingActions_numFence/totalNumRecoverableLinkedListTrackingActions << endl;
-	#endif     
+	#endif
 }
 
 void countRecoverableLinkedListCapsules(){
@@ -406,7 +406,7 @@ void countRecoverableLinkedListCapsules(){
         }
     }
 
-    threadPin(i);
+    // threadPin(i);
 
     run = true;
     MFENCE();
@@ -445,10 +445,10 @@ void countRecoverableLinkedListCapsules(){
 int main(int argc, char* argv[]){
 
 	file.open(
-            string("results/linked_list_results[") + 
-            to_string(INSERTS_PERCENTAGE).substr(0,4) + string(".") +  
-            to_string(DELETES_PERCENTAGE).substr(0,4) + string(".") + 
-            to_string(KEY_RANGE) + "].txt", 
+            string("results/linked_list_results[") +
+            to_string(INSERTS_PERCENTAGE).substr(0,4) + string(".") +
+            to_string(DELETES_PERCENTAGE).substr(0,4) + string(".") +
+            to_string(KEY_RANGE) + "].txt",
             ofstream::app);
 
 	char* linkedListType = argv[1];
@@ -488,7 +488,7 @@ int main(int argc, char* argv[]){
         file << "Test Tracking-highpwbs - Threads num: " << numThreads << endl;
         cout << "Test Tracking-highpwbs - Threads num: " << numThreads << endl;
         countRecoverableLinkedListTracking();
-    }    
+    }
 
     // Capsules
     else if(!strcmp(linkedListType, "Capsules-Opt")){
@@ -527,12 +527,12 @@ int main(int argc, char* argv[]){
         file << "Test Capsules-Opt-highpwbs - Threads num: " << numThreads << endl;
         cout << "Test Capsules-Opt-highpwbs - Threads num: " << numThreads << endl;
         countRecoverableLinkedListCapsules();
-    }   
+    }
 
     // default
     else {
         cerr << linkedListType << " is not a valid list type." << endl;
     }
-    
+
     return 0;
 }
