@@ -9,6 +9,7 @@ CNT_CRASH=10000   # Number of crash test
 
 # Initialize
 # set -e
+make -j
 SCRIPT_DIR=`dirname $(realpath "$0")`
 OUT_PATH="$SCRIPT_DIR/out"
 rm -rf $OUT_PATH

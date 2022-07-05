@@ -105,7 +105,7 @@ pub mod tests {
         crate::ploc::NR_MAX_THREADS,
         crate::pmem::rdtscp,
         libc::{size_t, SIGUSR1, SIGUSR2},
-        std::sync::atomic::{AtomicBool, AtomicI32, Ordering},
+        std::sync::atomic::{AtomicBool, AtomicI32},
     };
 
     /// get path for test file
@@ -259,7 +259,7 @@ pub mod tests {
             // Start test
             let handle = std::thread::spawn(move || {
                 // initialze test variables
-                let unix_tid = unsafe { libc::gettid() };
+                // let unix_tid = unsafe { libc::gettid() };
                 // println!("Initialze test variables (unix_tid: {unix_tid})");
                 lazy_static::initialize(&JOB_FINISHED);
                 lazy_static::initialize(&RESULTS);
@@ -309,7 +309,7 @@ pub mod tests {
     #[cfg(feature = "simulate_tcrash")]
     pub fn kill_random() {
         let pid = unsafe { libc::getpid() };
-        let tid = unsafe { libc::gettid() };
+        // let tid = unsafe { libc::gettid() };
         // println!("[kill_random] Pick one thread to kill. (unix_pid: {pid}, unix_tid: {tid})");
         loop {
             // it prevents an infinity loop that occurs when the main thread receives a signal right after installing the handler but before spawning child threads.
