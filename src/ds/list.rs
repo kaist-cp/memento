@@ -126,6 +126,22 @@ impl<K, V> List<K, V> {
         }
     }
 
+    pub fn lookup<const REC: bool>(
+        &self,
+        key: K,
+        look: &mut Lookup<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Option<&V> {
+        let (found, _, curr) = self.find::<REC>(key, &mut look.find, tid, guard, pool);
+        if found {
+            unsafe { curr.as_ref().map(|n| &n.value) }
+        } else {
+            None
+        }
+    }
+
     pub fn try_insert<const REC: bool>(
         &self,
         node: PShared<Node<K, V>>,
