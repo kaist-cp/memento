@@ -389,15 +389,14 @@ mod test {
                     // Check queue is empty
                     let mut tmp_deq = Dequeue::default();
                     let res = queue.comb_dequeue::<true>(&mut tmp_deq, tid, guard, pool);
-                    let (_, _, value) = decompose(res);
-                    assert!(value == CombiningQueue::EMPTY);
+                    assert!(res == CombiningQueue::EMPTY);
                 }
                 // other threads: { enq; deq; }
                 _ => {
                     // enq; deq;
                     for i in 0..COUNT {
                         let _ = queue.comb_enqueue::<true>(
-                            compose(tid, i, tid + i),
+                            compose(tid, i, i % tid),
                             &mut enq_deq.enqs[i],
                             tid,
                             guard,
@@ -427,4 +426,3 @@ mod test {
         run_test::<TestRootObj<CombiningQueue>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 }
-

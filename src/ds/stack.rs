@@ -122,7 +122,7 @@ pub(crate) mod tests {
                     // push; pop;
                     for i in 0..COUNT {
                         let _ = self.obj.push::<true>(
-                            compose(tid, i, tid + i),
+                            compose(tid, i, i % tid),
                             &mut push_pop.pushes[i],
                             tid,
                             guard,

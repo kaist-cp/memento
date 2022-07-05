@@ -430,7 +430,7 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let _ = self.obj.enqueue::<true>(
-                            compose(tid, i, tid+i),
+                            compose(tid, i, i % tid),
                             &mut enq_deq.enqs[i],
                             tid,
                             guard,
@@ -443,6 +443,7 @@ mod test {
 
                         // Transfer the deq result to the result array
                         let (tid, i, value) = decompose(res.unwrap());
+                        // println!("{tid}, {i}, {value}");
                         produce_res(tid, i, value);
                     }
 
