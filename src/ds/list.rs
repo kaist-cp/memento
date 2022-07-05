@@ -455,6 +455,8 @@ impl<K: Ord, V: Collectable> List<K, V> {
             guard,
             pool,
         ) {
+            // TODO(kyeongmin): 1 스레드가 자신이 insert한거 delete시에 여기 err로 빠져서 테스트 실패함. 위에서 logical delete 성공했으면 이 loop은 안하든지 해야할듯.
+            // test command: rm -rf /mnt/pmem0/* && RUST_MIN_STACK=100737418200 cargo test ds::list::test --release -- --nocapture
             if e.tag() == 1 {
                 return Err(());
             }
@@ -505,5 +507,119 @@ impl<K: Ord, V: Collectable> List<K, V> {
                 return Ok(());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        pmem::{global_pool, ralloc::Collectable},
+        test_utils::tests::*,
+    };
+
+    const NR_THREAD: usize = 1;
+    const COUNT: usize = 1;
+
+    struct InsDelLook {
+        inserts: [Insert<usize, usize>; COUNT],
+        deletes: [Delete<usize, usize>; COUNT],
+        lookups: [Lookup<usize, usize>; COUNT],
+    }
+
+    impl Default for InsDelLook {
+        fn default() -> Self {
+            Self {
+                inserts: array_init::array_init(|_| Default::default()),
+                deletes: array_init::array_init(|_| Default::default()),
+                lookups: array_init::array_init(|_| Default::default()),
+            }
+        }
+    }
+
+    impl Collectable for InsDelLook {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..COUNT {
+                Insert::filter(&mut m.inserts[i], tid, gc, pool);
+                Delete::filter(&mut m.deletes[i], tid, gc, pool);
+                Lookup::filter(&mut m.lookups[i], tid, gc, pool);
+            }
+        }
+    }
+
+    impl RootObj<InsDelLook> for TestRootObj<List<usize, usize>> {
+        fn run(&self, ins_del_look: &mut InsDelLook, tid: usize, guard: &Guard, _: &PoolHandle) {
+            let pool = global_pool().unwrap();
+            match tid {
+                // T1: Check the execution results of other threads
+                1 => {
+                    // Check results
+                    check_res(tid, NR_THREAD, COUNT);
+                }
+                // Threads other than T1 perform { insert; lookup; delete; lookup; }
+                _ => {
+                    // enq; deq;
+                    for i in 0..COUNT {
+                        let key = compose(tid, i, i % tid);
+
+                        // insert and lookup
+                        println!("insert k: {key}");
+                        assert!(self
+                            .obj
+                            .insert::<true>(
+                                key,
+                                key,
+                                &mut ins_del_look.inserts[i],
+                                tid,
+                                guard,
+                                pool,
+                            )
+                            .is_ok());
+                        let res = self.obj.lookup::<true>(
+                            &key,
+                            &mut ins_del_look.lookups[i],
+                            tid,
+                            guard,
+                            pool,
+                        );
+                        assert!(res.is_some());
+                        println!("lookup k: {key} -> value: {}", res.unwrap());
+
+                        // Transfer the lookup result to the result array
+                        let (tid, i, value) = decompose(*res.unwrap());
+                        produce_res(tid, i, value);
+
+                        // delete and lookup
+                        println!("delete k: {key}");
+                        assert!(self
+                            .obj
+                            .delete::<true>(&key, &mut ins_del_look.deletes[i], tid, guard, pool)
+                            .is_ok());
+                        let res = self.obj.lookup::<true>(
+                            &key,
+                            &mut ins_del_look.lookups[i],
+                            tid,
+                            guard,
+                            pool,
+                        );
+                        assert!(res.is_none());
+                    }
+
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ins_del_look() {
+        const FILE_NAME: &str = "list_ins_del_look_.pool";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<TestRootObj<List<usize, usize>>, InsDelLook, _>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        );
     }
 }
