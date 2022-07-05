@@ -456,6 +456,7 @@ int main(int argc, char* argv[]){
     timeForRecord = atoi(argv[3]); // how many seconds to run the experiment for
 
 	// Tracking
+    cout << "Test  - INSERT: " << INSERTS_PERCENTAGE << ", DELETE: " << DELETES_PERCENTAGE << ", KEY RANGE: " << KEY_RANGE <<endl;
    	if(!strcmp(linkedListType, "Tracking")){
         file << "Test Tracking - Threads num: " << numThreads << endl;
         cout << "Test Tracking - Threads num: " << numThreads << endl;

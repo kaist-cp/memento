@@ -80,52 +80,54 @@ for obj in objs:
         data = data.append(pd.read_csv(data_path))
 
     # get throughput
-    data = data.groupby(['target', 'insert', 'threads'])[
+    data = data.groupby(['target', 'insert', 'threads', 'key range'])[
         'throughput'].mean().div(pow(10, 6)).reset_index(name='throughput')
     threads = np.array(list(set(data['threads'])))
-    data = data.groupby(['target', 'insert'])['throughput'].apply(
+    data = data.groupby(['target', 'insert', 'key range'])['throughput'].apply(
         list).reset_index(name="throughput")
 
     # draw graph per (obj, insert %) pairs.
+    key_ranges = set(data['key range'])
     insert_ratios = set(data['insert'])
-    for ix, ins_rt in enumerate(insert_ratios):
-        if ins_rt == 0.15:
-            workload = 'read-intensive'
-        elif ins_rt == 0.35:
-            workload = 'update-intensive'
-        else:
-            exit(1)
-        plot_id = "{}-throughput-{}".format(obj, workload)
-        plot_lines = []
+    for kr in key_ranges:
+        for ix, ins_rt in enumerate(insert_ratios):
+            if ins_rt == 0.15:
+                workload = 'read-intensive'
+            elif ins_rt == 0.35:
+                workload = 'update-intensive'
+            else:
+                exit(1)
+            plot_id = "{}-throughput-{}-kr{}".format(obj, workload, kr)
+            plot_lines = []
 
-        # Gathering info
-        for t in targets:
-            label = targets[t]['label']
-            shape = targets[t]['marker']
-            color = targets[t]['color']
-            style = targets[t]['style']
-            marker = targets[t]['marker']
-            throughputs = data[(data['target'] == t) &
-                               (data['insert'] == ins_rt)]
+            # Gathering info
+            for t in targets:
+                label = targets[t]['label']
+                shape = targets[t]['marker']
+                color = targets[t]['color']
+                style = targets[t]['style']
+                marker = targets[t]['marker']
+                throughputs = data[(data['target'] == t) &
+                                (data['insert'] == ins_rt) & (data['key range'] == kr)]
 
-            if throughputs.empty:
-                continue
-            throughputs = list(throughputs['throughput'])[0]
+                if throughputs.empty:
+                    continue
+                throughputs = list(throughputs['throughput'])[0]
 
-            if len(threads) > len(throughputs):
-                gap = len(threads)-len(throughputs)
-                throughputs += [None]*gap
-            plot_lines.append({'x': threads, 'y': throughputs,
-                              'label': label, 'marker': shape, 'color': color, 'style': style})
+                if len(threads) > len(throughputs):
+                    gap = len(threads)-len(throughputs)
+                    throughputs += [None]*gap
+                plot_lines.append({'x': threads, 'y': throughputs,
+                                'label': label, 'marker': shape, 'color': color, 'style': style})
 
-        # Draw
-        if workload == 'read-intensive':
-            ylabel = 'Throughput (M op/s)'
-        else:
-            ylabel = ''
-        ax = draw('Threads', ylabel,
-                  plot_lines, "./out/{}".format(plot_id), 8)
-    axLine, axLabel = ax.get_legend_handles_labels()
-    print(axLabel)
-    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
-    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
+            # Draw
+            if workload == 'read-intensive':
+                ylabel = 'Throughput (M op/s)'
+            else:
+                ylabel = ''
+            ax = draw('Threads', ylabel,
+                    plot_lines, "./out/{}".format(plot_id), 8)
+        axLine, axLabel = ax.get_legend_handles_labels()
+        print(axLabel)
+        draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
+        draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))

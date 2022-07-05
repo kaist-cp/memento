@@ -57,6 +57,9 @@ show_cfg
 # 2. Benchmarking list performance
 
 ## Tracking
+(cd src/tracking; ./figures_compile.sh 500) # key range 500
+(cd src/tracking; ./figures_run.sh)
+(cd src/tracking; ./figures_compile.sh 2000) # key range 2000
 (cd src/tracking; ./figures_run.sh)
 
 ## Memento
@@ -65,7 +68,7 @@ show_cfg
 insert_rt=0.15
 delete_rt=0.15
 read_rt=0.7
-for key_range in 500; do
+for key_range in 500 2000; do
     benches memento_list $key_range $insert_rt $delete_rt $read_rt
 done
 
@@ -73,7 +76,7 @@ done
 insert_rt=0.35
 delete_rt=0.35
 read_rt=0.3
-for key_range in 500; do
+for key_range in 500 2000; do
     benches memento_list $key_range $insert_rt $delete_rt $read_rt
 done
 

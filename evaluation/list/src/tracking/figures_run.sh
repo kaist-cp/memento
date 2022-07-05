@@ -4,15 +4,15 @@
 export VMMALLOC_POOL_SIZE=$((64*1024*1024*1024))
 export VMMALLOC_POOL_DIR="/mnt/pmem0/"
 
-duration=10			# duration=10 (for paper)
-iterations=5        # iterations=10 (for paper)
+duration=5			# duration=10 (for paper)
+iterations=1        # iterations=10 (for paper)
 
 # Create results folder
 mkdir -p results
 rm -rf results/*
 
 # for key_range in 500 1500 1000 2000 4000; do
-for key_range in 500; do
+for key_range in 500 2000; do
 	# --------------------------------------
 	inserts_percentage=0.15
 	deletes_percentage=0.15
