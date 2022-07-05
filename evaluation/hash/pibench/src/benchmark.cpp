@@ -209,7 +209,7 @@ namespace PiBench
         {
           break;
         }
-        std::cout << "resizing not yet finished. sleep 5sc.." << std::endl;
+        std::cout << "[Before run] resizing not yet finished. sleep 5sc.." << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(5000));
         is_resizing = tree_->hash_is_resizing();
       }
@@ -316,6 +316,15 @@ namespace PiBench
         }
       }
     }
+
+    is_resizing = tree_->hash_is_resizing();
+    stopwatch_t sw_rsz;
+    sw_rsz.start();
+    while (tree_->hash_is_resizing())
+    {
+    }
+    float elapsed_rsz = sw_rsz.elapsed<std::chrono::microseconds>();
+
 #pragma omp single nowait
     {
       elapsed = swt.elapsed<std::chrono::microseconds>();
@@ -356,6 +365,7 @@ namespace PiBench
     }
     if (opt_.throughput)
     {
+      std::cout << "\tFinal resize time(ms): " << elapsed_rsz / 1000 << std::endl;
       std::cout << "\tRun time(ms): " << elapsed / 1000 << std::endl;
       std::cout << "\tThroughput(Mops/s): " << (float)opt_.num_ops / elapsed
                 << std::endl;
