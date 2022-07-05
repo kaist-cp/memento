@@ -2,34 +2,33 @@
 
 # Test Config
 PMEM_PATH="/mnt/pmem0"
-FEATURE="default"
-# TARGETS=("clevel" "elim_stack" "exchanger" "queue_comb" "queue_general" "queue_lp" "queue" "soft_hash" "soft_list" "stack" "treiber_stack")
-# TARGETS=("queue" "queue_general" "queue_lp")    # Test target
-TARGETS=("queue_general")    # Test target
-CNT_NORMAL=1                                   # Number of normal test
-CNT_CRASH=100                                    # Number of crash test
+# # TARGETS=("clevel" "elim_stack" "exchanger" "queue_comb" "queue_general" "queue_lp" "queue" "soft_hash" "soft_list" "stack" "treiber_stack")
+TARGETS=("queue_general" "queue_comb" "queue_lp" "queue" "elim_stack")
+CNT_NORMAL=10    # Number of normal test
+CNT_CRASH=10000   # Number of crash test
 
 # Initialize
-set -e
+# set -e
 SCRIPT_DIR=`dirname $(realpath "$0")`
-OUT_PATH="$SCRIPT_DIR/out_threadcrash"
+OUT_PATH="$SCRIPT_DIR/out"
 rm -rf $OUT_PATH
 mkdir -p $OUT_PATH
 cargo clean
 
-# Use original std
-# cargo build --tests --release --features=simulate_tcrash
-# rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
+cargo build --tests --release --features=simulate_tcrash
+rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
 
-# Use Customized std
-cargo +nightly-2022-05-26 build --tests --release --features=simulate_tcrash -Z build-std --target=x86_64-unknown-linux-gnu
-rm -f $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-*.d
+function pmsg() {
+    msg=$1
+    time=$(date +%m)/$(date +%d)-$(date +%H):$(date +%M)
+    echo -e "$1"
+    echo "[$time] $msg" >> $OUT_PATH/${target}_progress.out
+}
 
 function dmsg() {
     msg=$1
     time=$(date +%m)/$(date +%d)-$(date +%H):$(date +%M)
     echo -e "$1"
-    echo "[$time] $msg" >> $OUT_PATH/debug.out
     echo "[$time] $msg" >> $OUT_PATH/$target.out
 }
 
@@ -39,27 +38,23 @@ function init() {
 
     # create new pool
     rm -rf $PMEM_PATH/*
-    # RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
-    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out
+    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
 function run() {
     target=$1
     dmsg "run $target"
 
-    # RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
 function run_bg() {
     target=$1
     dmsg "run_bg $target"
 
-    # RUST_BACKTRACE=0 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out &
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
 }
 
-# Run test
 for target in ${TARGETS[@]}; do
     # Test normal run.
     avgtest=0 # average test time
@@ -96,7 +91,6 @@ for target in ${TARGETS[@]}; do
         pid_bg=$!
 
         # thread crash
-        # TODO: many times?
         crashtime=$(shuf -i $crash_min-$crash_max -n 1)
         while true; do
             current=$(date +%s%N)
@@ -113,7 +107,16 @@ for target in ${TARGETS[@]}; do
         # wait until finish
         dmsg "wait $pid_bg"
         wait $pid_bg
-        dmsg "ok"
+
+        ext=$?
+        if [ $ext -eq 0 ]; then
+            dmsg "ok"
+            pmsg "[${i}th test] success"
+        else
+            dmsg "fails with exit code $ext"
+            pmsg "[${i}th test] fails with exit code $ext"
+            pkill -9 memento*
+        fi
         dmsg "⎿_________________________________________________________________⏌"
     done
 done
