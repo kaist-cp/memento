@@ -33,19 +33,11 @@ function dmsg() {
     echo "[$time] $msg" >> $OUT_PATH/$target.out
 }
 
-function init() {
-    target=$1
-    dmsg "initialze $target"
-
-    # create new pool
-    rm -rf $PMEM_PATH/*
-    RUST_MIN_STACK=100737418200 POOL_EXECUTE=0 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
-}
-
 function run() {
     target=$1
     dmsg "run $target"
 
+    rm -rf $PMEM_PATH/*
     RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
@@ -53,6 +45,7 @@ function run_bg() {
     target=$1
     dmsg "run_bg $target"
 
+    rm -rf $PMEM_PATH/*
     RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
 }
 
@@ -60,9 +53,7 @@ for target in ${TARGETS[@]}; do
     # Test normal run.
     avgtest=0 # average test time
     for i in $(seq 1 $CNT_NORMAL); do
-        # initlaize
         dmsg "normal run $target $i/$CNT_NORMAL"
-        init $target
 
         # run
         start=$(date +%s%N)
@@ -71,7 +62,6 @@ for target in ${TARGETS[@]}; do
 
         # calculate average test time
         avgtest=$(($avgtest+$(($end-$start))))
-        # run $target
     done
     avgtest=$(($avgtest/$CNT_NORMAL))
     dmsg "avgtest: $avgtest ns"
@@ -83,10 +73,6 @@ for target in ${TARGETS[@]}; do
     dmsg "maximum crash time=$crash_max ns"
     for i in $(seq 1 $CNT_CRASH); do
         dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
-        init $target
-
-        # run
-        dmsg "-------------------------- crash run ------------------------------"
         start=$(date +%s%N)
         run_bg $target
         pid_bg=$!
@@ -118,6 +104,6 @@ for target in ${TARGETS[@]}; do
             pmsg "[${i}th test] fails with exit code $ext"
             pkill -9 memento*
         fi
-        dmsg "⎿_________________________________________________________________⏌"
+        dmsg "⎿___________________________________________________________________________⏌"
     done
 done

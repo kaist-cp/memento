@@ -245,7 +245,6 @@ pub mod tests {
         #[cfg(feature = "simulate_tcrash")]
         {
             // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
-            std::panic::set_hook(Box::new(|_| {}));
 
             // Install signal handler
             // println!(
@@ -357,7 +356,7 @@ pub mod tests {
     /// - tid must be less than 100
     /// - value must be less than 100
     pub(crate) fn decompose(value: usize) -> (usize, usize, usize) {
-        (value / 10000, (value / 100) % 100, value % 100)
+        ((value / 100) % 100, value / 10000, value % 100)
     }
 
     pub(crate) fn check_res(tid: usize, nr_wait: usize, count: usize) {
@@ -385,14 +384,15 @@ pub mod tests {
         let mut nr_has_res = 0;
 
         for (tid, result) in results.iter_mut().enumerate() {
-            if !result.is_empty() {
-                nr_has_res += 1;
+            if result.is_empty() {
+                continue;
             }
 
             for seq in 0..count {
-                assert_eq!(result.remove(&seq).unwrap(), tid + seq);
+                assert_eq!(result.remove(&seq).unwrap(), seq % tid);
             }
             assert!(result.is_empty());
+            nr_has_res += 1;
         }
         assert!(nr_has_res == nr_wait);
     }
