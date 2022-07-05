@@ -390,15 +390,15 @@ mod test {
     const COUNT: usize = 20_000;
 
     struct EnqDeq {
-        enqs: [Enqueue<(usize, usize, usize)>; COUNT], // (tid, op seq, value)
-        deqs: [Dequeue<(usize, usize, usize)>; COUNT], // (tid, op seq, value)
+        enqs: [Enqueue<usize>; COUNT],
+        deqs: [Dequeue<usize>; COUNT],
     }
 
     impl Default for EnqDeq {
         fn default() -> Self {
             Self {
-                enqs: array_init::array_init(|_| Enqueue::<(usize, usize, usize)>::default()),
-                deqs: array_init::array_init(|_| Dequeue::<(usize, usize, usize)>::default()),
+                enqs: array_init::array_init(|_| Enqueue::<usize>::default()),
+                deqs: array_init::array_init(|_| Dequeue::<usize>::default()),
             }
         }
     }
@@ -412,7 +412,7 @@ mod test {
         }
     }
 
-    impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<(usize, usize, usize)>> {
+    impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<usize>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
                 // T1: Check the execution results of other threads
@@ -421,7 +421,7 @@ mod test {
                     check_res(tid, NR_THREAD, COUNT);
 
                     // Check queue is empty
-                    let mut tmp_deq = Dequeue::<(usize, usize, usize)>::default();
+                    let mut tmp_deq = Dequeue::<usize>::default();
                     let must_none = self.obj.dequeue::<true>(&mut tmp_deq, tid, guard, pool);
                     assert!(must_none.is_none());
                 }
@@ -430,7 +430,7 @@ mod test {
                     // enq; deq;
                     for i in 0..COUNT {
                         let _ = self.obj.enqueue::<true>(
-                            (tid, i, tid+i),
+                            compose(tid, i, tid+i),
                             &mut enq_deq.enqs[i],
                             tid,
                             guard,
@@ -442,7 +442,7 @@ mod test {
                         assert!(res.is_some());
 
                         // Transfer the deq result to the result array
-                        let (tid, i, value) = res.unwrap();
+                        let (tid, i, value) = decompose(res.unwrap());
                         produce_res(tid, i, value);
                     }
 
@@ -461,7 +461,7 @@ mod test {
         const FILE_NAME: &str = "general_enq_deq.pool";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<QueueGeneral<(usize, usize, usize)>>, EnqDeq, _>(
+        run_test::<TestRootObj<QueueGeneral<usize>>, EnqDeq, _>(
             FILE_NAME,
             FILE_SIZE,
             NR_THREAD + 1,
