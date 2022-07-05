@@ -67,7 +67,7 @@ fn setup() -> (Opt, Writer<File>) {
 //  the throughput (op execution/s) when using `nr_thread` threads
 fn bench(opt: &Opt) -> f64 {
     println!(
-        "bench {} using {} threads (key range: 1~{}, insert: {}%, delete: {}%, read: {}, %)",
+        "bench {} using {} threads (key range: 1~{}, insert: {}%, delete: {}%, read: {}%)",
         opt.target,
         opt.threads,
         opt.key_range,
