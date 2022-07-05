@@ -1,7 +1,4 @@
 //! Concurrent Level Hash Table.
-#![allow(missing_docs)]
-#![allow(box_pointers)]
-#![allow(unreachable_pub)]
 use core::cmp;
 use core::fmt::{Debug, Display};
 use core::hash::{Hash, Hasher};
@@ -379,7 +376,7 @@ impl<K, V: Collectable> Collectable for Context<K, V> {
 }
 
 impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
-    pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
+    fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
         NodeIter {
             inner: self.last_level.load(Ordering::Acquire, guard),
             last: self.first_level.load(Ordering::Acquire, guard),
@@ -689,12 +686,15 @@ impl<K, V: Collectable> Drop for ClevelInner<K, V> {
     }
 }
 
+/// Insert error
 #[derive(Debug, Clone)]
 pub enum InsertError {
+    /// Occupied
     Occupied,
 }
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<K, V> {
+    /// Capacity
     pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
         let context = self.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
@@ -956,6 +956,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         }
     }
 
+    /// Resize
     pub fn resize<const REC: bool>(
         &self,
         client: &mut Resize<K, V>,
@@ -1080,6 +1081,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         }
     }
 
+    /// Check if resizing
     pub fn is_resizing(&self, guard: &Guard, pool: &PoolHandle) -> bool {
         let context = self.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
@@ -1164,6 +1166,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         }
     }
 
+    /// Search
     pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Option<&'g V> {
         let (key_tag, key_hashes) = hashes(key);
         let (_, find_result) = self.find_fast(key, key_tag, key_hashes, guard, pool);
@@ -1424,6 +1427,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         Err((context, result))
     }
 
+    /// Insert
     pub fn insert<const REC: bool>(
         &self,
         key: K,
@@ -1550,6 +1554,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         .map_err(|_| ())
     }
 
+    /// Delete
     pub fn delete<const REC: bool>(
         &self,
         key: &K,
