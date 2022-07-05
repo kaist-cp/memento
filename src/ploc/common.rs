@@ -248,18 +248,19 @@ where
     T: Default + Clone + Collectable,
 {
     /// Checkpoint
-    pub fn checkpoint<const REC: bool>(
+    pub fn checkpoint<const REC: bool, F: FnOnce() -> T>(
         &mut self,
-        new: T,
+        val_func: F,
         tid: usize,
         pool: &PoolHandle,
-    ) -> Result<T, CheckpointError<T>> {
+    ) -> T {
         if REC {
             if let Some(v) = self.peek(tid, pool) {
-                return Err(CheckpointError { current: v, new });
+                return v;
             }
         }
 
+        let new = val_func();
         let (stale, _) = self.stale_latest_idx();
 
         // Normal run
@@ -275,7 +276,7 @@ where
         }
 
         pool.exec_info.local_max_time[tid].store(t.into(), Ordering::Relaxed);
-        Ok(new)
+        new
     }
 
     #[inline]

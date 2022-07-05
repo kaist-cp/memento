@@ -4,7 +4,6 @@ use crate::ploc::detectable_cas::Cas;
 use crate::ploc::{Checkpoint, DetectableCASAtomic};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
-use etrace::ok_or;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
@@ -238,14 +237,10 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         };
 
-        let tail = ok_or!(
-            try_enq
-                .tail
-                .checkpoint::<REC>(PAtomic::from(tail), tid, pool),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
+        let tail = try_enq
+            .tail
+            .checkpoint::<REC, _>(|| PAtomic::from(tail), tid, pool)
+            .load(Ordering::Relaxed, guard);
         let tail_ref = unsafe { tail.deref(pool) };
 
         if tail_ref
@@ -271,22 +266,18 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let node = POwned::new(Node::from(value), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = ok_or!(
-            enq.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
-            e,
-            unsafe {
-                drop(
-                    e.new
-                        .load(Ordering::Relaxed, epoch::unprotected())
-                        .into_owned(),
-                );
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+        let node = enq
+            .node
+            .checkpoint::<REC, _>(
+                || {
+                    let node = POwned::new(Node::from(value), pool);
+                    persist_obj(unsafe { node.deref(pool) }, true);
+                    PAtomic::from(node)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         if self
             .try_enqueue::<REC>(node, &mut enq.try_enq, tid, guard, pool)
@@ -329,14 +320,10 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         };
 
-        let chk = ok_or!(
-            try_deq.head_next.checkpoint::<REC>(
-                (PAtomic::from(head), PAtomic::from(next)),
-                tid,
-                pool
-            ),
-            e,
-            e.current
+        let chk = try_deq.head_next.checkpoint::<REC, _>(
+            || (PAtomic::from(head), PAtomic::from(next)),
+            tid,
+            pool,
         );
         let head = chk.0.load(Ordering::Relaxed, guard);
         let next = chk.1.load(Ordering::Relaxed, guard);
