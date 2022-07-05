@@ -56,7 +56,7 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
 
 
 def draw_column(column_name, column_label, contentions):
-    for contention in contentions:
+    for ix, contention in enumerate(contentions):
         for obj in objs:
             targets = objs[obj]['targets']
 
@@ -121,7 +121,10 @@ def draw_column(column_name, column_label, contentions):
                                    'stddev': stddev_t, 'label': label, 'marker': shape, 'color': color, 'style': style})
 
             # Draw
-            ylabel = column_label
+            if ix == 0:
+                ylabel = column_label
+            else:
+                ylabel = ''
             ax = draw('Threads', ylabel,
                       plot_lines, "./out/{}".format(plot_id), 8)
 
