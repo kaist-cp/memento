@@ -333,7 +333,7 @@ pub mod tests {
     #[allow(box_pointers)]
     #[cfg(feature = "simulate_tcrash")]
     pub fn self_panic(_signum: usize) {
-        // TODO: https://man7.org/linux/man-pages/man7/signal-safety.7.html
+        // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
         let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
@@ -371,6 +371,12 @@ pub mod tests {
             cnt += 1;
         }
         println!("[run] t{tid} pass the busy lock (unix_tid: {unix_tid})");
+
+        // Wait until all threads are prevented from being selected by `kill_random` on the main thread.
+        #[cfg(feature = "simulate_tcrash")]
+        for unix_tid in UNIX_TIDS.iter() {
+            while unix_tid.load(Ordering::SeqCst) > 0 {}
+        }
 
         // Check results
         let mut results: [HashMap<usize, usize>; 1024] =
