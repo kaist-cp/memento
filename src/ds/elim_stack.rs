@@ -399,9 +399,9 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 20_000;
+    const COUNT: usize = 5_000;
 
-    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
 
     // We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
