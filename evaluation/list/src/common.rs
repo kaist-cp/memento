@@ -2,7 +2,6 @@
 
 use crossbeam_epoch::Guard;
 use memento::pmem::{Collectable, Pool, RootObj};
-use rand::Rng;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -74,11 +73,6 @@ pub enum TestTarget {
     MementoList,
 }
 
-#[inline]
-pub fn pick_range(min: usize, max: usize) -> usize {
-    rand::thread_rng().gen_range(min..=max)
-}
-
 pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: RootObj<M> + Send + Sync + 'static,
@@ -139,8 +133,8 @@ pub struct Opt {
     pub read_ratio: f64,
 }
 
-/// Abstraction of queue
-pub mod queue {
+/// list
+pub mod list {
     use crate::{
         common::{DELETE_RATIO, INSERT_RATIO, KEY_RANGE, READ_RATIO},
         mmt::{TestMementoInsDelRd, TestMementoList},
@@ -166,3 +160,49 @@ pub mod queue {
         }
     }
 }
+
+use std::cell::Cell;
+
+thread_local! {
+    pub static FAST_RANDOM_NEXT: Cell<usize> = Cell::new(1);
+    pub static FAST_RANDOM_NEXT_Z: Cell<u32> = Cell::new(2);
+    pub static FAST_RANDOM_NEXT_W: Cell<u32> = Cell::new(2);
+}
+
+pub fn fast_random_set_seed(seed: u32) {
+    let _ = FAST_RANDOM_NEXT.try_with(|x| x.set(seed as usize));
+    let _ = FAST_RANDOM_NEXT_Z.try_with(|x| x.set(seed));
+    let _ = FAST_RANDOM_NEXT_W.try_with(|x| x.set(seed / 2));
+
+    let z = FAST_RANDOM_NEXT_Z.try_with(|x| x.get()).unwrap();
+    let w = FAST_RANDOM_NEXT_W.try_with(|x| x.get()).unwrap();
+    if z == 0 || z == 0x9068ffff {
+        let _ = FAST_RANDOM_NEXT_Z.try_with(|x| x.set(z + 1));
+    }
+    if w == 0 || w == 0x464fffff {
+        let _ = FAST_RANDOM_NEXT_Z.try_with(|x| x.set(w + 1));
+    }
+}
+
+#[inline]
+fn fast_random() -> usize {
+    FAST_RANDOM_NEXT
+        .try_with(|x| {
+            let new = x.get() * 1103515245 + 12345;
+            x.set(new);
+            new
+        })
+        .unwrap()
+}
+
+#[inline]
+pub fn fast_random_range(low: usize, high: usize) -> usize {
+    return low + ((high as f64) * (fast_random() as f64 / (SIM_RAND_MAX as f64 + 1.0))) as usize;
+}
+
+const SIM_RAND_MAX: usize = 32768;
+
+// #[inline]
+// pub fn pick_range(min: usize, max: usize) -> usize {
+//     rand::thread_rng().gen_range(min..=max)
+// }

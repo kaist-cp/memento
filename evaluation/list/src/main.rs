@@ -1,7 +1,7 @@
 #![feature(generic_associated_types)]
 
 use csv::Writer;
-use list::common::queue::bench_list;
+use list::common::list::bench_list;
 use list::common::Opt;
 use list::common::TestTarget;
 use list::common::DURATION;
