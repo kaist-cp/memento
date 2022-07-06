@@ -17,14 +17,14 @@ type Value = u64;
 pub struct ClevelMemento {
     insert: CachePadded<Insert<Key, Value>>, // insert client
     delete: CachePadded<Delete<Key, Value>>, // delete client
-    resize: CachePadded<Resize<Key, Value>>, // resize client
+    resize_loop: CachePadded<ResizeLoop<Key, Value>>, // resize client
 }
 
 impl Collectable for ClevelMemento {
     fn filter(root_mmt: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Collectable::filter(&mut *root_mmt.insert, tid, gc, pool);
         Collectable::filter(&mut *root_mmt.delete, tid, gc, pool);
-        Collectable::filter(&mut *root_mmt.resize, tid, gc, pool);
+        Collectable::filter(&mut *root_mmt.resize_loop, tid, gc, pool);
     }
 }
 
@@ -140,7 +140,7 @@ pub extern "C" fn run_resize_loop(
 ) {
     let mut guard = epoch::pin();
     let recv = unsafe { RECV.as_ref().unwrap() };
-    resize_loop::<_, _, false>(obj, recv, &mut m.resize, tid, &mut guard, pool);
+    resize_loop::<_, _, false>(obj, recv, &mut m.resize_loop, tid, &mut guard, pool);
 }
 
 #[no_mangle]
