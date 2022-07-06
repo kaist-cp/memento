@@ -190,7 +190,7 @@ fn fast_random() -> usize {
         .try_with(|x| {
             let new = x.get() * 1103515245 + 12345;
             x.set(new);
-            new
+            (new / 65536) % 32768
         })
         .unwrap()
 }
