@@ -309,15 +309,13 @@ impl<K: Ord, V: Collectable> List<K, V> {
         &DetectableCASAtomic<Node<K, V>>,
         PShared<'g, Node<K, V>>,
     ) {
-        if let Ok((r, prev, curr)) = self.harris::<REC>(key, &mut find.harris, tid, guard, pool) {
-            return (r, prev, curr);
+        if let Ok(res) = self.harris::<REC>(key, &mut find.harris, tid, guard, pool) {
+            return res;
         }
 
         loop {
-            if let Ok((r, prev, curr)) =
-                self.harris::<false>(key, &mut find.harris, tid, guard, pool)
-            {
-                return (r, prev, curr);
+            if let Ok(res) = self.harris::<false>(key, &mut find.harris, tid, guard, pool) {
+                return res;
             }
         }
     }
