@@ -195,14 +195,16 @@ pub mod tests {
 
     use lazy_static::lazy_static;
 
+    const MAX_THREADS: usize = 64;
+
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
-        pub static ref RESULTS: [AtomicUsize; 1024] =
+        pub static ref RESULTS: [AtomicUsize; MAX_THREADS] =
             array_init::array_init(|_| AtomicUsize::new(0));
         // pub static ref RESULTS_TCRASH: Mutex<HashMap<(usize, usize), usize>> =
         //     Mutex::new(HashMap::new()); // (tid, op seq) -> value
 
-        pub static ref RESULTS_TCRASH: [Mutex<HashMap<usize, usize>>; 1024] =
+        pub static ref RESULTS_TCRASH: [Mutex<HashMap<usize, usize>>; MAX_THREADS] =
         array_init::array_init(|_| Mutex::new(HashMap::new())); // per-thread op seq -> value
     }
 
@@ -382,7 +384,7 @@ pub mod tests {
         }
 
         // Check results
-        let mut results: [HashMap<usize, usize>; 1024] =
+        let mut results: [HashMap<usize, usize>; MAX_THREADS] =
             array_init::array_init(|i| RESULTS_TCRASH[i].lock_poisonable().clone());
         let mut nr_has_res = 0;
 
