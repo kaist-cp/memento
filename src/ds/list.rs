@@ -515,16 +515,18 @@ mod test {
 
     struct InsDelLook {
         inserts: [Insert<usize, usize>; COUNT],
+        ins_lookups: [Lookup<usize, usize>; COUNT],
         deletes: [Delete<usize, usize>; COUNT],
-        lookups: [Lookup<usize, usize>; COUNT],
+        del_lookups: [Lookup<usize, usize>; COUNT],
     }
 
     impl Default for InsDelLook {
         fn default() -> Self {
             Self {
                 inserts: array_init::array_init(|_| Default::default()),
+                ins_lookups: array_init::array_init(|_| Default::default()),
                 deletes: array_init::array_init(|_| Default::default()),
-                lookups: array_init::array_init(|_| Default::default()),
+                del_lookups: array_init::array_init(|_| Default::default()),
             }
         }
     }
@@ -533,8 +535,9 @@ mod test {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..COUNT {
                 Insert::filter(&mut m.inserts[i], tid, gc, pool);
+                Lookup::filter(&mut m.ins_lookups[i], tid, gc, pool);
                 Delete::filter(&mut m.deletes[i], tid, gc, pool);
-                Lookup::filter(&mut m.lookups[i], tid, gc, pool);
+                Lookup::filter(&mut m.del_lookups[i], tid, gc, pool);
             }
         }
     }
@@ -568,7 +571,7 @@ mod test {
                             .is_ok());
                         let res = self.obj.lookup::<true>(
                             &key,
-                            &mut ins_del_look.lookups[i],
+                            &mut ins_del_look.ins_lookups[i],
                             tid,
                             guard,
                             pool,
@@ -588,7 +591,7 @@ mod test {
                             .is_ok());
                         let res = self.obj.lookup::<true>(
                             &key,
-                            &mut ins_del_look.lookups[i],
+                            &mut ins_del_look.del_lookups[i],
                             tid,
                             guard,
                             pool,
