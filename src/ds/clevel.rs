@@ -1589,7 +1589,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 }
 
 #[cfg(test)]
-mod tests {
+mod smoke_tests {
     use crate::{
         pmem::RootObj,
         test_utils::tests::{run_test, TestRootObj},
@@ -1708,8 +1708,6 @@ mod tests {
 
     impl RootObj<InsertSearch> for TestRootObj<ClevelInner<usize, usize>> {
         fn run(&self, mmt: &mut InsertSearch, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            // TODO: implement integration test for tcrash
-
             let kv = &self.obj;
 
             match tid {
@@ -1765,6 +1763,124 @@ mod tests {
         run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertSearch>(
             FILE_NAME, FILE_SIZE, NR_THREADS,
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        pmem::{ralloc::Collectable, RootObj},
+        test_utils::tests::*,
+    };
+
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 10_000;
+
+    static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
+    static mut RECV: Option<mpsc::Receiver<()>> = None;
+
+    struct InsDelLook {
+        resize_loop: ResizeLoop<usize, usize>,
+        inserts: [Insert<usize, usize>; COUNT],
+        deletes: [Delete<usize, usize>; COUNT],
+    }
+
+    impl Default for InsDelLook {
+        fn default() -> Self {
+            Self {
+                resize_loop: Default::default(),
+                inserts: array_init::array_init(|_| Default::default()),
+                deletes: array_init::array_init(|_| Default::default()),
+            }
+        }
+    }
+
+    impl Collectable for InsDelLook {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..COUNT {
+                ResizeLoop::filter(&mut m.resize_loop, tid, gc, pool);
+                Insert::filter(&mut m.inserts[i], tid, gc, pool);
+                Delete::filter(&mut m.deletes[i], tid, gc, pool);
+            }
+        }
+    }
+
+    impl RootObj<InsDelLook> for TestRootObj<ClevelInner<usize, usize>> {
+        fn run(&self, mmt: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let kv = &self.obj;
+
+            match tid {
+                // T1: Check the execution results of other threads
+                1 => {
+                    // Check results
+                    check_res(tid, NR_THREAD, COUNT);
+
+                    // drop sends
+                    for send in unsafe { SEND.as_mut().unwrap() } {
+                        if let Some(send) = send.take() {
+                            drop(send);
+                        }
+                    }
+                }
+                // T2: Resize loop
+                2 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
+                    let _ =
+                        resize_loop::<_, _, true>(kv, recv, &mut mmt.resize_loop, tid, guard, pool);
+                }
+                // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
+                _ => {
+                    // let send = unsafe { SEND.as_mut().unwrap().pop().unwrap() };
+                    let send = unsafe { SEND.as_ref().unwrap()[tid].as_ref().unwrap() };
+
+                    for i in 0..COUNT {
+                        let key = compose(tid, i, i % tid);
+
+                        // insert and lookup
+                        assert!(kv
+                            .insert::<true>(key, key, &send, &mut mmt.inserts[i], tid, guard, pool)
+                            .is_ok());
+                        let res = kv.search(&key, guard, pool);
+                        assert!(res.is_some());
+
+                        // transfer the lookup result to the result array
+                        let (tid, i, value) = decompose(*res.unwrap());
+                        produce_res(tid, i, value);
+
+                        // delete and lookup
+                        assert!(kv.delete::<true>(&key, &mut mmt.deletes[i], tid, guard, pool));
+                        let res = kv.search(&key, guard, pool);
+                        assert!(res.is_none());
+                    }
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ins_del_look() {
+        const FILE_NAME: &str = "clevel";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        let (send, recv) = mpsc::channel();
+        unsafe {
+            SEND = Some(array_init::array_init(|_| None));
+            RECV = Some(recv);
+            for tid in 3..=NR_THREAD + 2 {
+                let sends = SEND.as_mut().unwrap();
+                sends[tid] = Some(send.clone());
+            }
+        }
+        drop(send);
+
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, InsDelLook>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 2,
+        );
     }
 }
 
