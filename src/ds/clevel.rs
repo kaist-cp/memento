@@ -1501,12 +1501,15 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         );
 
         while let Err((context, result)) = res {
-            // TODO: checkpoint prev_slot
+            let prev_slot = client
+                .prev_slot
+                .checkpoint::<false, _>(|| Some(unsafe { result.slot.as_pptr(pool) }), tid, pool)
+                .map(|p| unsafe { p.deref(pool) });
             res = self.insert_loop::<false>(
                 context,
                 slot,
                 key_hashes,
-                Some(result.slot),
+                prev_slot,
                 sender,
                 &mut client.move_done,
                 &mut client.tag_cas,
