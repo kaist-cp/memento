@@ -82,6 +82,8 @@ for obj in objs:
                 break
         if data_id != '':
             data_path = "./out/{}_{}.csv".format(t, data_id)
+        if data_path == '':
+            data_path = "./out/{}.csv".format(t)
 
         print("read {} for target {}".format(data_path, t))
         data = data.append(pd.read_csv(data_path))
