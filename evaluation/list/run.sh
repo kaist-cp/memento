@@ -56,27 +56,21 @@ show_cfg
 
 # 2. Benchmarking list performance
 
-## Tracking
-(cd src/tracking; ./figures_compile.sh 500) # key range 500
-(cd src/tracking; ./figures_run.sh)
-(cd src/tracking; ./figures_compile.sh 2000) # key range 2000
-(cd src/tracking; ./figures_run.sh)
-
-## Memento
-
-### Read intensive
-insert_rt=0.15
-delete_rt=0.15
-read_rt=0.7
 for key_range in 500 2000; do
+    ### Read & Update intensive for tracking
+    (cd src/tracking; ./figures_compile.sh $key_range)
+    (cd src/tracking; ./figures_run.sh $key_range $TEST_DUR $TEST_CNT)
+
+    ### Read intensive for mmt
+    insert_rt=0.15
+    delete_rt=0.15
+    read_rt=0.7
     benches memento_list $key_range $insert_rt $delete_rt $read_rt
-done
 
-### Update intensive
-insert_rt=0.35
-delete_rt=0.35
-read_rt=0.3
-for key_range in 500 2000; do
+    ### Update intensive for mmt
+    insert_rt=0.35
+    delete_rt=0.35
+    read_rt=0.3
     benches memento_list $key_range $insert_rt $delete_rt $read_rt
 done
 
