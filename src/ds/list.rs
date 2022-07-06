@@ -432,7 +432,6 @@ impl<K: Ord, V: Collectable> List<K, V> {
         if next.tag() == 1 {
             return Err(());
         }
-
         if let Err(e) = curr_ref.next.cas::<REC>(
             next,
             next.with_tag(1),
@@ -445,22 +444,20 @@ impl<K: Ord, V: Collectable> List<K, V> {
                 return Err(());
             }
             next = e;
-        }
 
-        while let Err(e) = curr_ref.next.cas::<false>(
-            next,
-            next.with_tag(1),
-            &mut try_del.logical,
-            tid,
-            guard,
-            pool,
-        ) {
-            // TODO(kyeongmin): 1 스레드가 자신이 insert한거 delete시에 여기 err로 빠져서 테스트 실패함. 위에서 logical delete 성공했으면 이 loop은 안하든지 해야할듯.
-            // test command: rm -rf /mnt/pmem0/* && RUST_MIN_STACK=100737418200 cargo test ds::list::test --release -- --nocapture
-            if e.tag() == 1 {
-                return Err(());
+            while let Err(e) = curr_ref.next.cas::<false>(
+                next,
+                next.with_tag(1),
+                &mut try_del.logical,
+                tid,
+                guard,
+                pool,
+            ) {
+                if e.tag() == 1 {
+                    return Err(());
+                }
+                next = e;
             }
-            next = e;
         }
 
         if prev
