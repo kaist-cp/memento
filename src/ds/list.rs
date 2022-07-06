@@ -427,9 +427,11 @@ impl<K: Ord, V: Collectable> List<K, V> {
         let (found, prev, prev_next, curr) = self.find_inner(key, guard, pool);
         let chk = try_ins.found.checkpoint::<REC, _>(
             || {
-                let node_ref = unsafe { node.deref(pool) };
-                node_ref.next.inner.store(curr, Ordering::Relaxed);
-                persist_obj(unsafe { &node.deref(pool).next }, true);
+                if !found {
+                    let node_ref = unsafe { node.deref(pool) };
+                    node_ref.next.inner.store(curr, Ordering::Relaxed);
+                    persist_obj(unsafe { &node.deref(pool).next }, true);
+                }
 
                 (
                     found,
