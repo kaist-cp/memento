@@ -5,7 +5,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::sync::mpsc::{self, RecvError};
+use std::sync::mpsc;
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{self as epoch, Guard};
@@ -153,7 +153,7 @@ impl<K, V: Collectable> ResizeLoop<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V: Collectable> {
-    delete_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    delete_chk: Checkpoint<Option<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
     delete_cas: Cas,
     insert_chk: Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
     insert_cas: Cas,
@@ -865,33 +865,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         mut first_level: PShared<'g, Node<Bucket<K, V>>>,
-        slot_slot_ptr: Option<(&DetectableCASAtomic<Slot<K, V>>, PShared<'_, Slot<K, V>>)>,
+        slot: &DetectableCASAtomic<Slot<K, V>>,
+        slot_ptr: PShared<'_, Slot<K, V>>,
         client: &mut Resize<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, PShared<'g, Node<Bucket<K, V>>>) {
-        let (slot, slot_ptr) = if REC {
-            some_or!(
-                client.delete_chk.peek(tid, pool),
-                return (context, first_level)
-            )
-        } else {
-            let s = slot_slot_ptr.unwrap();
-            ok_or!(
-                client.delete_chk.checkpoint::<REC>(
-                    (unsafe { s.0.as_pptr(pool) }, PAtomic::from(s.1),),
-                    tid,
-                    pool,
-                ),
-                e,
-                e.current
-            )
-        };
-
-        let slot = unsafe { slot.deref(pool) };
-        let slot_ptr = slot_ptr.load(Ordering::Relaxed, guard);
-
         if slot
             .cas::<REC>(
                 slot_ptr,
@@ -907,6 +887,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         }
 
         if let Some(ins_slot) = client.insert_chk.checkpoint::<REC, _>(|| None, tid, pool) {
+            // TODO: 이러면 normal exec에서도 값이 계속 flush됨
             let ins_slot = unsafe { ins_slot.deref(pool) };
             if ins_slot
                 .cas::<REC>(
@@ -1006,11 +987,15 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let mut context_ref = unsafe { context.deref(pool) };
         let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
 
-        if REC {
+        if let Some((slot, slot_ptr)) = client.delete_chk.checkpoint::<REC, _>(|| None, tid, pool) {
+            let slot = unsafe { slot.deref(pool) };
+            let slot_ptr = slot_ptr.load(Ordering::Relaxed, guard);
+
             let res = self.invalidate_and_move::<REC>(
                 context,
                 first_level,
-                None,
+                slot,
+                slot_ptr,
                 client,
                 tid,
                 guard,
@@ -1053,10 +1038,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                             continue;
                         }
 
+                        let _ = client.delete_chk.checkpoint::<false, _>(
+                            || Some((unsafe { slot.as_pptr(pool) }, PAtomic::from(slot_ptr))),
+                            tid,
+                            pool,
+                        );
+
                         let res = self.invalidate_and_move::<false>(
                             context,
                             first_level,
-                            Some((slot, slot_ptr)),
+                            slot,
+                            slot_ptr,
                             client,
                             tid,
                             guard,
