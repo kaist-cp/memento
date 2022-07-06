@@ -23,8 +23,7 @@ impl Collectable for TestMementoList {
 }
 
 impl PDefault for TestMementoList {
-    fn pdefault(_: &PoolHandle) -> Self {
-        let pool = global_pool().unwrap();
+    fn pdefault(pool: &PoolHandle) -> Self {
         let list = List::pdefault(pool);
         let guard = epoch::pin();
 
@@ -64,7 +63,6 @@ impl Collectable for TestMementoInsDelRd {
 
 impl RootObj<TestMementoInsDelRd> for TestMementoList {
     fn run(&self, mmt: &mut TestMementoInsDelRd, tid: usize, guard: &Guard, _: &PoolHandle) {
-        let pool = global_pool().unwrap();
         let list = &self.list;
 
         let ops = self.test_nops(

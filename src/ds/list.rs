@@ -221,11 +221,11 @@ impl<K: Ord, V: Collectable> List<K, V> {
         harris: &mut Harris<K, V>,
         tid: usize,
         guard: &'g Guard,
-        pool: &'static PoolHandle,
+        pool: &'g PoolHandle,
     ) -> Result<
         (
             bool,
-            &DetectableCASAtomic<Node<K, V>>,
+            &'g DetectableCASAtomic<Node<K, V>>,
             PShared<'g, Node<K, V>>,
         ),
         (),
@@ -303,10 +303,10 @@ impl<K: Ord, V: Collectable> List<K, V> {
         find: &mut Find<K, V>,
         tid: usize,
         guard: &'g Guard,
-        pool: &'static PoolHandle,
+        pool: &'g PoolHandle,
     ) -> (
         bool,
-        &DetectableCASAtomic<Node<K, V>>,
+        &'g DetectableCASAtomic<Node<K, V>>,
         PShared<'g, Node<K, V>>,
     ) {
         if let Ok(res) = self.harris::<REC>(key, &mut find.harris, tid, guard, pool) {
@@ -327,7 +327,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         look: &mut Lookup<K, V>,
         tid: usize,
         guard: &'g Guard,
-        pool: &'static PoolHandle,
+        pool: &'g PoolHandle,
     ) -> Option<&'g V> {
         let (found, _, curr) = self.find::<REC>(key, &mut look.find, tid, guard, pool);
         if found {
@@ -364,7 +364,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         ins: &mut Insert<K, V>,
         tid: usize,
         guard: &Guard,
-        pool: &'static PoolHandle,
+        pool: &PoolHandle,
     ) -> Result<(), ()> {
         let node = POwned::new(Node::from((key, value)), pool);
         persist_obj(unsafe { node.deref(pool) }, true);
@@ -475,7 +475,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         del: &mut Delete<K, V>,
         tid: usize,
         guard: &Guard,
-        pool: &'static PoolHandle,
+        pool: &PoolHandle,
     ) -> Result<(), ()> {
         let (found, prev, curr) = self.find::<REC>(key, &mut del.find, tid, guard, pool);
         if !found {
@@ -508,10 +508,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        pmem::{global_pool, ralloc::Collectable},
-        test_utils::tests::*,
-    };
+    use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 1;
     const COUNT: usize = 1;
@@ -543,8 +540,7 @@ mod test {
     }
 
     impl RootObj<InsDelLook> for TestRootObj<List<usize, usize>> {
-        fn run(&self, ins_del_look: &mut InsDelLook, tid: usize, guard: &Guard, _: &PoolHandle) {
-            let pool = global_pool().unwrap();
+        fn run(&self, ins_del_look: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
