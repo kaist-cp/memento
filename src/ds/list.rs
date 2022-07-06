@@ -486,20 +486,18 @@ impl<K: Ord, V: Collectable> List<K, V> {
             .load(Ordering::Relaxed, guard);
         let node_ref = unsafe { node.deref(pool) };
 
-        if self
-            .try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool)
-            .is_ok()
-        {
-            return Ok(());
-        }
+        match self.try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool) {
+            Ok(()) => return Ok(()),
+            Err(InsertErr::Fail) => return Err(()),
+            Err(InsertErr::Retry) => (),
+        };
 
         loop {
-            if self
-                .try_insert::<false>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool)
-                .is_ok()
-            {
-                return Ok(());
-            }
+            match self.try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool) {
+                Ok(()) => return Ok(()),
+                Err(InsertErr::Fail) => return Err(()),
+                Err(InsertErr::Retry) => (),
+            };
         }
     }
 
