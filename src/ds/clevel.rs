@@ -79,7 +79,7 @@ impl<K, V: Collectable> Insert<K, V> {
 /// Insert inner client
 #[derive(Debug)]
 pub struct InsertInner<K, V: Collectable> {
-    insert_chk: Checkpoint<Option<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>>,
+    insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
     insert_cas: Cas,
 }
 
@@ -153,9 +153,9 @@ impl<K, V: Collectable> ResizeLoop<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V: Collectable> {
-    delete_chk: Checkpoint<Option<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
+    delete_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
     delete_cas: Cas,
-    insert_chk: Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
+    insert_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
     insert_cas: Cas,
 }
 
@@ -871,21 +871,22 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, PShared<'g, Node<Bucket<K, V>>>) {
-        if let Some(ins_slot) = client.insert_chk.checkpoint::<REC, _>(|| None, tid, pool) {
-            // TODO: 이러면 normal exec에서도 값이 계속 flush됨
-            let ins_slot = unsafe { ins_slot.deref(pool) };
-            if ins_slot
-                .cas::<REC>(
-                    PShared::null(),
-                    slot_ptr,
-                    &mut client.insert_cas,
-                    tid,
-                    guard,
-                    pool,
-                )
-                .is_ok()
-            {
-                return (context, first_level);
+        if REC {
+            if let Some(ins_slot) = client.insert_chk.peek(tid, pool) {
+                let ins_slot = unsafe { ins_slot.deref(pool) };
+                if ins_slot
+                    .cas::<REC>(
+                        PShared::null(),
+                        slot_ptr,
+                        &mut client.insert_cas,
+                        tid,
+                        guard,
+                        pool,
+                    )
+                    .is_ok()
+                {
+                    return (context, first_level);
+                }
             }
         }
 
@@ -931,14 +932,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                         return (context, first_level);
                     }
 
-                    let _ = client.insert_chk.checkpoint::<REC, _>(
-                        || Some(unsafe { slot.as_pptr(pool) }),
+                    let _ = client.insert_chk.checkpoint::<false, _>(
+                        || unsafe { slot.as_pptr(pool) },
                         tid,
                         pool,
                     );
 
                     if slot
-                        .cas::<REC>(
+                        .cas::<false>(
                             PShared::null(),
                             slot_ptr,
                             &mut client.insert_cas,
@@ -972,32 +973,34 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let mut context_ref = unsafe { context.deref(pool) };
         let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
 
-        if let Some((slot, slot_ptr)) = client.delete_chk.checkpoint::<REC, _>(|| None, tid, pool) {
-            let slot = unsafe { slot.deref(pool) };
-            let slot_ptr = slot_ptr.load(Ordering::Relaxed, guard);
+        if REC {
+            if let Some((slot, slot_ptr)) = client.delete_chk.peek(tid, pool) {
+                let slot = unsafe { slot.deref(pool) };
+                let slot_ptr = slot_ptr.load(Ordering::Relaxed, guard);
 
-            if slot
-                .cas::<REC>(
-                    slot_ptr,
-                    slot_ptr.with_tag(1),
-                    &mut client.delete_cas,
-                    tid,
-                    guard,
-                    pool,
-                )
-                .is_ok()
-            {
-                let res = self.resize_move::<REC>(
-                    context,
-                    first_level,
-                    slot_ptr,
-                    client,
-                    tid,
-                    guard,
-                    pool,
-                );
-                context = res.0;
-                first_level = res.1;
+                if slot
+                    .cas::<REC>(
+                        slot_ptr,
+                        slot_ptr.with_tag(1),
+                        &mut client.delete_cas,
+                        tid,
+                        guard,
+                        pool,
+                    )
+                    .is_ok()
+                {
+                    let res = self.resize_move::<REC>(
+                        context,
+                        first_level,
+                        slot_ptr,
+                        client,
+                        tid,
+                        guard,
+                        pool,
+                    );
+                    context = res.0;
+                    first_level = res.1;
+                }
             }
         }
 
@@ -1034,7 +1037,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                         }
 
                         let _ = client.delete_chk.checkpoint::<false, _>(
-                            || Some((unsafe { slot.as_pptr(pool) }, PAtomic::from(slot_ptr))),
+                            || (unsafe { slot.as_pptr(pool) }, PAtomic::from(slot_ptr)),
                             tid,
                             pool,
                         );
@@ -1239,18 +1242,20 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
-        if let Some((size, slot_p)) = client.insert_chk.checkpoint::<REC, _>(|| None, tid, pool) {
-            let res = self.try_slot_insert_inner::<REC>(
-                slot_p,
-                slot_new,
-                size,
-                &mut client.insert_cas,
-                tid,
-                guard,
-                pool,
-            );
-            if res.is_ok() {
-                return res;
+        if REC {
+            if let Some((size, slot_p)) = client.insert_chk.peek(tid, pool) {
+                let res = self.try_slot_insert_inner::<REC>(
+                    slot_p,
+                    slot_new,
+                    size,
+                    &mut client.insert_cas,
+                    tid,
+                    guard,
+                    pool,
+                );
+                if res.is_ok() {
+                    return res;
+                }
             }
         }
 
@@ -1281,14 +1286,11 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                         continue;
                     }
 
-                    let (size, slot_p) = client
-                        .insert_chk
-                        .checkpoint::<false, _>(
-                            || Some((size, unsafe { slot.as_pptr(pool) })),
-                            tid,
-                            pool,
-                        )
-                        .unwrap();
+                    let (size, slot_p) = client.insert_chk.checkpoint::<false, _>(
+                        || (size, unsafe { slot.as_pptr(pool) }),
+                        tid,
+                        pool,
+                    );
 
                     let res = self.try_slot_insert_inner::<false>(
                         slot_p,
@@ -1386,7 +1388,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         key_hashes: [u32; 2],
         prev_slot: Option<&DetectableCASAtomic<Slot<K, V>>>,
         sender: &mpsc::Sender<()>,
-        prev_slot_chk: &mut Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
         move_done: &mut Checkpoint<bool>,
         tag_cas: &mut Cas,
         insert_inner: &mut InsertInner<K, V>,
@@ -1394,12 +1395,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
-        let prev_p = prev_slot_chk.checkpoint::<REC, _>(
-            || prev_slot.map(|p| unsafe { p.as_pptr(pool) }),
-            tid,
-            pool,
-        );
-
         let (_, result) = self.insert_inner::<REC>(
             context,
             slot,
@@ -1411,8 +1406,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             pool,
         );
 
-        if let Some(p) = prev_p {
-            let prev = unsafe { p.deref(pool) };
+        if let Some(prev) = prev_slot {
             prev.inner
                 .store(PShared::null().with_tag(1), Ordering::Release);
             persist_obj(&prev.inner, true);
@@ -1487,13 +1481,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             .checkpoint::<REC, _>(|| PAtomic::from(slot), tid, pool)
             .load(Ordering::Relaxed, guard);
 
+        let prev_slot = client
+            .prev_slot
+            .checkpoint::<REC, _>(|| None, tid, pool)
+            .map(|p| unsafe { p.deref(pool) });
+
         let mut res = self.insert_loop::<REC>(
             context,
             slot,
             key_hashes,
-            None,
+            prev_slot,
             sender,
-            &mut client.prev_slot,
             &mut client.move_done,
             &mut client.tag_cas,
             &mut client.insert_inner,
@@ -1502,26 +1500,23 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             pool,
         );
 
-        loop {
-            if let Err((context, result)) = res {
-                res = self.insert_loop::<false>(
-                    context,
-                    slot,
-                    key_hashes,
-                    Some(result.slot),
-                    sender,
-                    &mut client.prev_slot,
-                    &mut client.move_done,
-                    &mut client.tag_cas,
-                    &mut client.insert_inner,
-                    tid,
-                    guard,
-                    pool,
-                );
-            } else {
-                return Ok(());
-            }
+        while let Err((context, result)) = res {
+            res = self.insert_loop::<false>(
+                context,
+                slot,
+                key_hashes,
+                Some(result.slot),
+                sender,
+                &mut client.move_done,
+                &mut client.tag_cas,
+                &mut client.insert_inner,
+                tid,
+                guard,
+                pool,
+            );
         }
+
+        Ok(())
     }
 
     fn try_delete<const REC: bool>(
