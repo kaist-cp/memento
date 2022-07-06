@@ -10,7 +10,6 @@ iterations=$3        # iterations=10 (for tracking paper)
 
 # Create results folder
 mkdir -p results
-rm -rf results/*
 
 # for key_range in 500 1500 1000 2000 4000; do
 
