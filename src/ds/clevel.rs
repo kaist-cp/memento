@@ -1501,6 +1501,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         );
 
         while let Err((context, result)) = res {
+            // TODO: checkpoint prev_slot
             res = self.insert_loop::<false>(
                 context,
                 slot,
