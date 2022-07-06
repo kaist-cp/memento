@@ -92,6 +92,15 @@ def get_filepath(bench, dist, workload, target):
     else:
         filepath = "./out/{}/{}/{}/{}.out".format(
             bench.upper(), dist.upper(), workload, target)
+        if exists(filepath):
+            return filepath
+        else:
+            repo = git.Repo(search_parent_directories=True)
+            for commit in repo.iter_commits():
+                filepath = "./out/{}/{}/{}/{}_{}_{}.out".format(
+                    bench.upper(), dist.upper(), workload, target, commit.hexsha[:7], commit.committed_datetime.strftime('%Y%m%d'))
+                if exists(filepath):
+                    return filepath
     return filepath
 
 
