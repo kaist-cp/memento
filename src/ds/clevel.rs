@@ -1736,7 +1736,7 @@ mod tests {
     #[test]
     fn insert_search() {
         const FILE_NAME: &str = "clevel_insert_search";
-        const FILE_SIZE: usize = 16 * 1024 * 1024 * 1024;
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         const NR_THREADS: usize = 1usize << 4;
 
         let (send, recv) = mpsc::channel();

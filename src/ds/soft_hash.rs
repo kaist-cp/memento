@@ -211,7 +211,7 @@ mod test {
     #[test]
     fn insert_contain_remove() {
         const FILE_NAME: &str = "soft_hash_insert_contain_remove";
-        const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<TestRootObj<SOFTHashRoot>, InsertContainRemove>(FILE_NAME, FILE_SIZE, NR_THREAD)
     }
