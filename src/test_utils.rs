@@ -362,7 +362,7 @@ pub mod tests {
         let mut cnt = 0;
         while JOB_FINISHED.load(Ordering::SeqCst) < nr_wait {
             if cnt > 300 {
-                println!("Stop testing. Maybe there is a bug...");
+                println!("Stop testing. Maybe there is a bug... (1)");
                 std::process::exit(1);
             }
 
@@ -379,12 +379,22 @@ pub mod tests {
         // Wait until other threads are prevented from being selected by `kill_random` on the main thread.
         #[cfg(feature = "simulate_tcrash")]
         for unix_tid in UNIX_TIDS.iter() {
-            let utid = unix_tid.load(Ordering::SeqCst);
-            if utid == my_unix_tid || utid == RESIZE_LOOP_UNIX_TID.load(Ordering::SeqCst) {
+            if my_unix_tid == unix_tid.load(Ordering::SeqCst) {
                 continue;
             }
 
-            while unix_tid.load(Ordering::SeqCst) > 0 {}
+            let mut cnt: usize = 0;
+            loop {
+                let unix_tid = unix_tid.load(Ordering::SeqCst);
+                if unix_tid <= 0 || unix_tid == RESIZE_LOOP_UNIX_TID.load(Ordering::SeqCst) {
+                    break;
+                }
+                cnt += 1;
+                if cnt == 30_000_000_000 {
+                    println!("Stop testing. Maybe there is a bug... (2)");
+                    std::process::exit(2);
+                }
+            }
         }
 
         // Check results
