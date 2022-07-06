@@ -243,15 +243,10 @@ pub mod tests {
 
         #[cfg(feature = "simulate_tcrash")]
         {
-            // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
-            std::panic::set_hook(Box::new(|_| {}));
+            // Assertion err causes abort.
+            std::panic::always_abort();
 
             // Install signal handler
-            // println!(
-            //     "Install `kill_random` and `self_panic` handler (unix_tid: {}, unix_pid: {})",
-            //     unsafe { libc::gettid() },
-            //     unsafe { libc::getpid() }
-            // );
             let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
             let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
 
