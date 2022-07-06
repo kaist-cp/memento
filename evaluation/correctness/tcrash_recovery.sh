@@ -2,15 +2,11 @@
 
 # Test Config
 PMEM_PATH="/mnt/pmem0"
-# # TARGETS=("clevel" "elim_stack" "exchanger" "queue_comb" "queue_general" "queue_lp" "queue" "soft_hash" "soft_list" "stack" "treiber_stack")
-# TARGETS=("queue_general")
 target=$1
 CNT_NORMAL=10    # Number of normal test
 CNT_CRASH=10000   # Number of crash test
 
 # Initialize
-# set -e
-make -j
 SCRIPT_DIR=`dirname $(realpath "$0")`
 OUT_PATH="$SCRIPT_DIR/out"
 
