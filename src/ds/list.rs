@@ -429,9 +429,9 @@ impl<K: Ord, V: Collectable> List<K, V> {
         let curr_ref = unsafe { curr.deref(pool) };
 
         // FAO-like..
-        let next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
+        let mut next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
 
-        let next = ok_or!(
+        next = ok_or!(
             try_del
                 .next
                 .checkpoint::<REC>(PAtomic::from(next), tid, pool),
@@ -452,9 +452,8 @@ impl<K: Ord, V: Collectable> List<K, V> {
         );
 
         while let Err(e) = res {
-            let next = e;
-
-            let next = ok_or!(
+            next = e;
+            next = ok_or!(
                 try_del
                     .next
                     .checkpoint::<false>(PAtomic::from(next), tid, pool),
