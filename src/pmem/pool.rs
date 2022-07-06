@@ -139,6 +139,10 @@ impl PoolHandle {
                             // Run memento
                             #[cfg(feature = "simulate_tcrash")]
                             {
+                                // check if already finished.
+                                if UNIX_TIDS[tid].load(Ordering::SeqCst) == -1 {
+                                    return ptr::null_mut();
+                                }
                                 UNIX_TIDS[tid].store(unsafe { libc::gettid() }, Ordering::SeqCst);
                             }
 
