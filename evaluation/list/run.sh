@@ -46,6 +46,8 @@ function benches() {
 # 1. Setup
 PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
+TEST_DUR=10
+TEST_CNT=5
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
