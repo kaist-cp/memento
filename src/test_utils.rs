@@ -227,6 +227,7 @@ pub mod tests {
     lazy_static! {
         pub static ref UNIX_TIDS: [AtomicI32; NR_MAX_THREADS] =
             array_init::array_init(|_| AtomicI32::new(0));
+        pub static ref RESIZE_LOOP_UNIX_TID: AtomicI32 = AtomicI32::new(0);
         pub static ref TEST_STARTED: AtomicBool = AtomicBool::new(false);
         pub static ref TEST_FINISHED: AtomicBool = AtomicBool::new(false);
     }
@@ -357,7 +358,7 @@ pub mod tests {
 
     pub(crate) fn check_res(tid: usize, nr_wait: usize, count: usize) {
         // Wait for all other threads to finish
-        let unix_tid = unsafe { libc::gettid() };
+        let my_unix_tid = unsafe { libc::gettid() };
         let mut cnt = 0;
         while JOB_FINISHED.load(Ordering::SeqCst) < nr_wait {
             if cnt > 300 {
@@ -366,21 +367,24 @@ pub mod tests {
             }
 
             println!(
-                "[run] t{tid} JOB_FINISHED: {} (unix_tid: {unix_tid}, cnt: {cnt})",
+                "[run] t{tid} JOB_FINISHED: {} (unix_tid: {my_unix_tid}, cnt: {cnt})",
                 JOB_FINISHED.load(Ordering::SeqCst)
             );
+
             std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
             cnt += 1;
         }
-        println!("[run] t{tid} pass the busy lock (unix_tid: {unix_tid})");
+        println!("[run] t{tid} pass the busy lock (unix_tid: {my_unix_tid})");
 
         // Wait until other threads are prevented from being selected by `kill_random` on the main thread.
         #[cfg(feature = "simulate_tcrash")]
-        for utid in UNIX_TIDS.iter() {
-            if unix_tid == utid.load(Ordering::SeqCst) {
+        for unix_tid in UNIX_TIDS.iter() {
+            let utid = unix_tid.load(Ordering::SeqCst);
+            if utid == my_unix_tid || utid == RESIZE_LOOP_UNIX_TID.load(Ordering::SeqCst) {
                 continue;
             }
-            while utid.load(Ordering::SeqCst) > 0 {}
+
+            while unix_tid.load(Ordering::SeqCst) > 0 {}
         }
 
         // Check results

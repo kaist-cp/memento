@@ -1940,6 +1940,9 @@ mod test {
                 }
                 // T2: Resize loop
                 2 => {
+                    #[cfg(feature = "simulate_tcrash")]
+                    RESIZE_LOOP_UNIX_TID.store(unsafe { libc::gettid() }, Ordering::SeqCst);
+
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
                     let _ =
