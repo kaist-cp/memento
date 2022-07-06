@@ -370,7 +370,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
 
         loop {
             let (found, prev, prev_next, curr) = self.find_inner(key, guard, pool);
-            let _ = find.found.checkpoint::<false, _>(
+            let chk = find.found.checkpoint::<false, _>(
                 || {
                     (
                         found,
