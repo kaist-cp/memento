@@ -121,6 +121,7 @@ impl<K, V: Collectable> InsertInner<K, V> {
 /// Add level client
 #[derive(Debug)]
 pub struct AddLevel<K, V: Collectable> {
+    lv_cas: Cas,
     context_chk: Checkpoint<PAtomic<Context<K, V>>>,
     context_cas: Cas,
 }
@@ -128,6 +129,7 @@ pub struct AddLevel<K, V: Collectable> {
 impl<K, V: Collectable> Default for AddLevel<K, V> {
     fn default() -> Self {
         Self {
+            lv_cas: Default::default(),
             context_chk: Default::default(),
             context_cas: Default::default(),
         }
@@ -136,6 +138,7 @@ impl<K, V: Collectable> Default for AddLevel<K, V> {
 
 impl<K, V: Collectable> Collectable for AddLevel<K, V> {
     fn filter(add_lv: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Cas::filter(&mut add_lv.lv_cas, tid, gc, pool);
         Checkpoint::filter(&mut add_lv.context_chk, tid, gc, pool);
         Cas::filter(&mut add_lv.context_cas, tid, gc, pool);
     }
@@ -145,6 +148,7 @@ impl<K, V: Collectable> AddLevel<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
+        self.lv_cas.clear();
         self.context_chk.clear();
         self.context_cas.clear();
     }
@@ -387,14 +391,14 @@ impl<K, V: Collectable> Collectable for Bucket<K, V> {
 #[derive(Debug)]
 struct Node<T: Collectable> {
     data: PAtomic<[MaybeUninit<T>]>,
-    next: PAtomic<Self>,
+    next: DetectableCASAtomic<Self>,
 }
 
 impl<T: Collectable> From<PAtomic<[MaybeUninit<T>]>> for Node<T> {
     fn from(data: PAtomic<[MaybeUninit<T>]>) -> Self {
         Self {
             data,
-            next: PAtomic::null(),
+            next: DetectableCASAtomic::default(),
         }
     }
 }
@@ -427,7 +431,7 @@ impl<'g, T: Debug + Collectable> Iterator for NodeIter<'g, T> {
         self.inner = if self.inner == self.last {
             PShared::null()
         } else {
-            inner_ref.next.load(Ordering::Acquire, self.guard)
+            inner_ref.next.load(Ordering::Acquire, self.guard, pool)
         };
         Some(unsafe {
             inner_ref
@@ -456,7 +460,7 @@ impl<K, V: Collectable> Collectable for Context<K, V> {
         while !node.is_null() {
             let node_ref = unsafe { node.deref_mut(pool) };
             Node::mark(node_ref, tid, gc);
-            node = node_ref.next.load(Ordering::SeqCst, guard);
+            node = node_ref.next.load(Ordering::SeqCst, guard, pool);
         }
     }
 }
@@ -491,7 +495,10 @@ impl<K, V: Collectable> PDefault for ClevelInner<K, V> {
         let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
         let last_level = new_node(MIN_SIZE, pool);
         let last_level_ref = unsafe { last_level.deref(pool) };
-        last_level_ref.next.store(first_level, Ordering::Relaxed);
+        last_level_ref
+            .next
+            .inner
+            .store(first_level, Ordering::Relaxed);
         persist_obj(&last_level_ref.next, true);
 
         let context = alloc_persist(
@@ -762,7 +769,7 @@ impl<K, V: Collectable> Drop for ClevelInner<K, V> {
 
         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
         while let Some(node_ref) = unsafe { node.as_ref(pool) } {
-            let next = node_ref.next.load(Ordering::Relaxed, guard);
+            let next = node_ref.next.load(Ordering::Relaxed, guard, pool);
             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
             for bucket in data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
@@ -831,29 +838,30 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         // insert a new level to the next of the first level.
         let backoff = Backoff::default();
         let next_level = loop {
-            let next_level = first_level.next.load(Ordering::Acquire, guard);
+            let next_level = first_level.next.load(Ordering::Acquire, guard, pool);
             if !next_level.is_null() {
                 break next_level;
             }
 
             if let Ok(_g) = self.add_level_lock.try_lock::<REC>(tid) {
-                let next_node = new_node(next_level_size, pool);
+                let next_node = new_node(next_level_size, pool).into_shared(guard);
                 let res = first_level
                     .next
-                    .compare_exchange(
+                    .cas::<REC>(
                         PShared::null(),
                         next_node,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
+                        &mut add_lv.lv_cas,
+                        tid,
                         guard,
+                        pool,
                     )
-                    .unwrap_or_else(|err| err.current);
+                    .map(|()| next_node)
+                    .unwrap_or_else(|e| e);
                 break res;
             }
 
             backoff.snooze();
         };
-        persist_obj(&first_level.next, true);
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
@@ -1147,7 +1155,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             }
 
             context_ref = unsafe { context.deref(pool) };
-            let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
+            let next_level = last_level_ref.next.load(Ordering::Acquire, guard, pool);
 
             let context_new = client
                 .context_chk
