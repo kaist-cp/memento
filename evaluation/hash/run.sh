@@ -123,12 +123,12 @@ function bench_all() {
 
         bench clevel_rust $workload $mode $dist $THREAD
         bench clevel $workload $mode $dist $THREAD
-        bench CCEH $workload $mode $dist $THREAD
-        bench Level $workload $mode $dist $THREAD
-        bench Dash $workload $mode $dist $THREAD
-        bench PCLHT $workload $mode $dist $THREAD
-        bench SOFT $workload $mode $dist $THREAD
-        bench SOFT_rust $workload $mode $dist $THREAD
+        # bench CCEH $workload $mode $dist $THREAD
+        # bench Level $workload $mode $dist $THREAD
+        # bench Dash $workload $mode $dist $THREAD
+        # bench PCLHT $workload $mode $dist $THREAD
+        # bench SOFT $workload $mode $dist $THREAD
+        # bench SOFT_rust $workload $mode $dist $THREAD
 
         # LATENCY use only 32 thread
         if [ "$mode" == "LATENCY" ]; then

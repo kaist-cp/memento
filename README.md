@@ -39,7 +39,6 @@ The directory `src/ds/` contains memento-based persistent data structures suppor
 - `src/ds/exchanger.rs`: A memento-based lock-free exchanger that uses `Insert`, `Delete` and `Checkpoint`.
 - `src/ds/treiber_stack.rs`: A memento-based lock-free stack that uses `DetectableCas` and `Checkpoint` based on Treiber stack.
 - `src/ds/elim_stack.rs`: An elimination-backoff stack combining our memento-based treiber stack and exchanger.
-- `src/ds/soft_list.rs` (and `src/ds/soft_hash.rs`): SOFT list (and hash table). We convert original SOFT list (and hash table, respectively.) to one using mementos.
 - `src/ds/clevel.rs`: A memento-based Clevel extensible hash table. We convert original Clevel to one using mementos.
 - `src/ds/queue_comb.rs`: A memento-based combining queue that uses `Combining` operation.
 

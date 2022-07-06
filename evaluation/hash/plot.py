@@ -9,10 +9,10 @@ import git
 objs = {
     "hash": {
         "targets": {
-            "CCEH": {'label': "CCEH", 'marker': 'x', 'color': 'skyblue', 'style': '-'},
-            'Level': {'label': "Level", 'marker': 'o', 'color': 'orange', 'style': '-'},
-            'Dash': {'label': "Dash", 'marker': '^', 'color': 'green', 'style': '-'},
-            'PCLHT': {'label': "PCLHT", 'marker': 'v', 'color': 'gold', 'style': '-'},
+            # "CCEH": {'label': "CCEH", 'marker': 'x', 'color': 'skyblue', 'style': '-'},
+            # 'Level': {'label': "Level", 'marker': 'o', 'color': 'orange', 'style': '-'},
+            # 'Dash': {'label': "Dash", 'marker': '^', 'color': 'green', 'style': '-'},
+            # 'PCLHT': {'label': "PCLHT", 'marker': 'v', 'color': 'gold', 'style': '-'},
             "clevel": {'label': "Clevel", 'marker': 's', 'color': 'gray', 'style': '-'},
             "clevel_rust": {
                 'label': "Clevel-mmt", 'marker': 's', 'color': 'black', 'style': '-',
@@ -26,19 +26,19 @@ objs = {
                     'read_heavy': '',
                 }
             },
-            'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
-            'SOFT_rust': {
-                'label': "SOFT-mmt", 'marker': 'o', 'color': 'blue', 'style': '-',
-                'data_id': {  # select data manually. or read latest data
-                    'insert': '',
-                    'pos_search': '',
-                    'neg_search': '',
-                    'delete': '',
-                    'write_heavy': '',
-                    'balanced': '',
-                    'read_heavy': '',
-                }
-            },
+            # 'SOFT': {'label': "SOFT", 'marker': 'o', 'color': 'royalblue', 'style': '-'},
+            # 'SOFT_rust': {
+            #     'label': "SOFT-mmt", 'marker': 'o', 'color': 'blue', 'style': '-',
+            #     'data_id': {  # select data manually. or read latest data
+            #         'insert': '',
+            #         'pos_search': '',
+            #         'neg_search': '',
+            #         'delete': '',
+            #         'write_heavy': '',
+            #         'balanced': '',
+            #         'read_heavy': '',
+            #     }
+            # },
         },
         'bench_kinds': {
             'throughput': {

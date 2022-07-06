@@ -54,9 +54,9 @@ rm -rf ${PMEM_PATH}/*.pool*
 show_cfg
 
 # 2. Benchmarking cas performance
-benches cas
+# benches cas
 benches mcas
-benches pcas
+# benches pcas
 benches pmwcas
 benches nrlcas
 

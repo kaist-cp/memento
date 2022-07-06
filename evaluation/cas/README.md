@@ -1,6 +1,6 @@
 # CAS Evaluation
 
-We evaluate the performance of CASes with our own benchmark. Each implementation of comparion targets exists in [`./src/`](./src)
+We evaluate the performance of CASes with our benchmark. Each implementation of comparion targets exists in [`./src/`](./src)
 
 ## Run the entire benchmark
 
@@ -21,7 +21,7 @@ You can run a single benchamrk,
 ```
 
 where
-- `target`: mcas (CAS-mmt at paper), pcas, pmwcas, nrlcas
+- `target`: mcas (CAS-mmt at paper), pmwcas, nrlcas
 - `locations`: number of locations
 
 For example, following command measure the throughput and memory usage of `CAS-mmt` when using `1000` locations and `16` threads.
