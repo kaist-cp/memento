@@ -769,10 +769,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             pool,
         );
 
-        // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯.
-        // 1. context_new를 checkpoint
-        // 2. detectable CAS for context switch
-
         loop {
             context = ok_or!(
                 self.context.compare_exchange(
@@ -1042,10 +1038,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 },
                 pool,
             );
-
-            // TODO: tcrash시 leak 방지를 위해 실행흐름 재현해야할듯
-            // 1. context_new를 checkpoint
-            // 2. detectable CAS for context switch
 
             unsafe {
                 guard.defer_pdestroy(last_level);

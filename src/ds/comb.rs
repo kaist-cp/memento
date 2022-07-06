@@ -211,12 +211,12 @@ impl Combining {
         }
     }
 
-    /// combiner가 되면 per-thread(pt) state로 홀짝놀이하며 reqeust를 처리.
+    /// combiner performs the requests
     ///
-    /// 1. 준비: central obj에 있는 최신 state를 자신의 pt.state[pt.index]로 복사.
-    /// 2. 처리: request를 처리하며 최신 상태가 된 pt.state[pt.index]를 업데이트 해나감
-    /// 3. 마무리:
-    ///     3.1. pt.state[pt.index]를 central obj의 최신 state로 박아넣음 (commit point)
+    /// 1. ready: copy central state to my thread-local state, pt.state[pt.index]
+    /// 2. perform: update pt.state[pt.index]
+    /// 3. finalize:
+    ///     3.1. central state = pt.state[pt.index] (commit point)
     ///     3.2. pt.index = 1 - pt.index
     ///     3.3. release lock
     fn do_combine<const REC: bool, M: Combinable>(
@@ -230,13 +230,13 @@ impl Combining {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> usize {
-        // 1. 준비
+        // ready
         let ind = st_thread.index.load(Ordering::Relaxed);
         let mut new_state = st_thread.state[ind].load(Ordering::Relaxed, guard);
         let new_state_ref = unsafe { new_state.deref_mut(pool) };
         *new_state_ref = unsafe { s.pstate.load(Ordering::Relaxed, guard).deref(pool) }.clone(); // create a copy of current state
 
-        // 2. 처리
+        // perform requests
         for _ in 0..COMBINING_ROUNDS {
             let mut serve_reqs = 0;
 
@@ -268,7 +268,7 @@ impl Combining {
         }
         persist_obj(new_state_ref, true);
 
-        // 3.1 업데이트한 per-thread state를 global에 최신 state로서 박아넣음
+        // 3.1 central state = pt.state[pt.index] (commit point)
         s.pstate.store(new_state, Ordering::Release);
         persist_obj(&*s.pstate, true);
 
@@ -277,7 +277,7 @@ impl Combining {
             func(s, guard, pool);
         }
 
-        // 3.2. per-thread index 뒤집기
+        // 3.2. flip per-thread index
         st_thread.index.store(1 - ind, Ordering::Relaxed);
 
         // 3.3. release lock with new state
@@ -288,7 +288,7 @@ impl Combining {
         retval
     }
 
-    /// non-combiner는 combiner가 끝나기를 기다렸다가 자신의 request가 처리됐는지 확인하고 반환
+    /// non-combiner (1) wait until combiner unlocks the lock and (2) check if my request was performed (3) return
     fn do_non_combine<const REC: bool, M: Combinable>(
         // &self,
         s: &CombStruct,
@@ -307,7 +307,7 @@ impl Combining {
             backoff.snooze();
         }
 
-        // 자신의 request가 처리됐는지 확인
+        // check if my request was performed
         let lastest_state = unsafe { (combined_ptr as *const CombStateRec).as_ref().unwrap() };
         if s.request[tid].activate.load(Ordering::Relaxed)
             <= lastest_state.deactivate[tid].load(Ordering::Acquire)
