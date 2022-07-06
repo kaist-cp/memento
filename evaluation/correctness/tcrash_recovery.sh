@@ -3,7 +3,8 @@
 # Test Config
 PMEM_PATH="/mnt/pmem0"
 # # TARGETS=("clevel" "elim_stack" "exchanger" "queue_comb" "queue_general" "queue_lp" "queue" "soft_hash" "soft_list" "stack" "treiber_stack")
-TARGETS=("queue_general")
+# TARGETS=("queue_general")
+target=$1
 CNT_NORMAL=10    # Number of normal test
 CNT_CRASH=10000   # Number of crash test
 
@@ -12,13 +13,6 @@ CNT_CRASH=10000   # Number of crash test
 make -j
 SCRIPT_DIR=`dirname $(realpath "$0")`
 OUT_PATH="$SCRIPT_DIR/out"
-rm -rf $OUT_PATH
-mkdir -p $OUT_PATH
-mkdir -p $PMEM_PATH/test
-cargo clean
-
-cargo build --tests --release --features=simulate_tcrash
-rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
 
 function pmsg() {
     msg=$1
@@ -50,61 +44,59 @@ function run_bg() {
     RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
 }
 
-for target in ${TARGETS[@]}; do
-    # Test normal run.
-    avgtest=0 # average test time
-    for i in $(seq 1 $CNT_NORMAL); do
-        dmsg "normal run $target $i/$CNT_NORMAL"
+# Test normal run.
+avgtest=0 # average test time
+for i in $(seq 1 $CNT_NORMAL); do
+    dmsg "normal run $target $i/$CNT_NORMAL"
 
-        # run
-        start=$(date +%s%N)
-        run $target
-        end=$(date +%s%N)
+    # run
+    start=$(date +%s%N)
+    run $target
+    end=$(date +%s%N)
 
-        # calculate average test time
-        avgtest=$(($avgtest+$(($end-$start))))
-    done
-    avgtest=$(($avgtest/$CNT_NORMAL))
-    dmsg "avgtest: $avgtest ns"
+    # calculate average test time
+    avgtest=$(($avgtest+$(($end-$start))))
+done
+avgtest=$(($avgtest/$CNT_NORMAL))
+dmsg "avgtest: $avgtest ns"
 
-    # Test thread crash and recovery run.
-    crash_min=$(($avgtest / 3))        # minimum crash time
-    crash_max=$avgtest # maximum crash time
-    dmsg "minimum crash time=$crash_min ns"
-    dmsg "maximum crash time=$crash_max ns"
-    for i in $(seq 1 $CNT_CRASH); do
-        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
-        start=$(date +%s%N)
-        run_bg $target
-        pid_bg=$!
+# Test thread crash and recovery run.
+crash_min=$(($avgtest / 3))        # minimum crash time
+crash_max=$avgtest # maximum crash time
+dmsg "minimum crash time=$crash_min ns"
+dmsg "maximum crash time=$crash_max ns"
+for i in $(seq 1 $CNT_CRASH); do
+    dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
+    start=$(date +%s%N)
+    run_bg $target
+    pid_bg=$!
 
-        # thread crash
-        crashtime=$(shuf -i $crash_min-$crash_max -n 1)
-        while true; do
-            current=$(date +%s%N)
-            elapsed=$(($current-$start))
+    # thread crash
+    crashtime=$(shuf -i $crash_min-$crash_max -n 1)
+    while true; do
+        current=$(date +%s%N)
+        elapsed=$(($current-$start))
 
-            # kill random thread after random crash time
-            if [ $elapsed -gt $crashtime ]; then
-                $SCRIPT_DIR/tgkill -10 $pid_bg $pid_bg || true
-                dmsg "kill random thread after $elapsed ns"
-                break
-            fi
-        done
-
-        # wait until finish
-        dmsg "wait $pid_bg"
-        wait $pid_bg
-
-        ext=$?
-        if [ $ext -eq 0 ]; then
-            dmsg "ok"
-            pmsg "[${i}th test] success"
-        else
-            dmsg "fails with exit code $ext"
-            pmsg "[${i}th test] fails with exit code $ext"
-            kill -9 $pid_bg || true
+        # kill random thread after random crash time
+        if [ $elapsed -gt $crashtime ]; then
+            $SCRIPT_DIR/tgkill -10 $pid_bg $pid_bg || true
+            dmsg "kill random thread after $elapsed ns"
+            break
         fi
-        dmsg "⎿___________________________________________________________________________⏌"
     done
+
+    # wait until finish
+    dmsg "wait $pid_bg"
+    wait $pid_bg
+
+    ext=$?
+    if [ $ext -eq 0 ]; then
+        dmsg "ok"
+        pmsg "[${i}th test] success"
+    else
+        dmsg "fails with exit code $ext"
+        pmsg "[${i}th test] fails with exit code $ext"
+        kill -9 $pid_bg || true
+    fi
+    dmsg "⎿___________________________________________________________________________⏌"
 done
