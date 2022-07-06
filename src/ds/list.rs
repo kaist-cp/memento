@@ -150,22 +150,25 @@ impl<K, V: Collectable> Collectable for Insert<K, V> {
 }
 
 #[derive(Debug)]
-struct TryDelete {
+struct TryDelete<K, V: Collectable> {
+    next: Checkpoint<PAtomic<Node<K, V>>>,
     logical: Cas,
     physical: Cas,
 }
 
-impl Default for TryDelete {
+impl<K, V: Collectable> Default for TryDelete<K, V> {
     fn default() -> Self {
         Self {
+            next: Default::default(),
             logical: Default::default(),
             physical: Default::default(),
         }
     }
 }
 
-impl Collectable for TryDelete {
+impl<K, V: Collectable> Collectable for TryDelete<K, V> {
     fn filter(try_del: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut try_del.next, tid, gc, pool);
         Cas::filter(&mut try_del.logical, tid, gc, pool);
         Cas::filter(&mut try_del.physical, tid, gc, pool);
     }
@@ -175,7 +178,7 @@ impl Collectable for TryDelete {
 #[derive(Debug)]
 pub struct Delete<K, V: Collectable> {
     find: Find<K, V>,
-    try_del: TryDelete,
+    try_del: TryDelete<K, V>,
 }
 
 impl<K, V: Collectable> Default for Delete<K, V> {
@@ -418,7 +421,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         &self,
         prev: &DetectableCASAtomic<Node<K, V>>,
         curr: PShared<'_, Node<K, V>>,
-        try_del: &mut TryDelete,
+        try_del: &mut TryDelete<K, V>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
@@ -426,36 +429,50 @@ impl<K: Ord, V: Collectable> List<K, V> {
         let curr_ref = unsafe { curr.deref(pool) };
 
         // FAO-like..
-        let mut next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
+        let next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
+
+        let next = ok_or!(
+            try_del
+                .next
+                .checkpoint::<REC>(PAtomic::from(next), tid, pool),
+            e,
+            e.current
+        )
+        .load(Ordering::Relaxed, guard);
         if next.tag() == 1 {
             return Err(());
         }
-        if let Err(e) = curr_ref.next.cas::<REC>(
+        let mut res = curr_ref.next.cas::<REC>(
             next,
             next.with_tag(1),
             &mut try_del.logical,
             tid,
             guard,
             pool,
-        ) {
-            if e.tag() == 1 {
+        );
+
+        while let Err(e) = res {
+            let next = e;
+
+            let next = ok_or!(
+                try_del
+                    .next
+                    .checkpoint::<false>(PAtomic::from(next), tid, pool),
+                e,
+                e.current
+            )
+            .load(Ordering::Relaxed, guard);
+            if next.tag() == 1 {
                 return Err(());
             }
-            next = e;
-
-            while let Err(e) = curr_ref.next.cas::<false>(
+            res = curr_ref.next.cas::<false>(
                 next,
                 next.with_tag(1),
                 &mut try_del.logical,
                 tid,
                 guard,
                 pool,
-            ) {
-                if e.tag() == 1 {
-                    return Err(());
-                }
-                next = e;
-            }
+            )
         }
 
         if prev
