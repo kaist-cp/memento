@@ -512,7 +512,7 @@ mod tests {
         }
     }
 
-    const FILE_NAME: &str = "check_inv.pool";
+    const FILE_NAME: &str = "check_inv";
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     // check flag=1 => value=42
@@ -520,6 +520,6 @@ mod tests {
     fn check_inv() {
         env_logger::init();
 
-        run_test::<DummyRootObj, CheckInv, _>(FILE_NAME, FILE_SIZE, 1);
+        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1);
     }
 }

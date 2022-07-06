@@ -420,9 +420,9 @@ mod test {
 
     #[test]
     fn enq_deq() {
-        const FILE_NAME: &str = "combining_enq_deq.pool";
+        const FILE_NAME: &str = "queue_comb";
         const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<CombiningQueue>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
+        run_test::<TestRootObj<CombiningQueue>, EnqDeq>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 }

@@ -243,7 +243,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     if now > start + Self::PATIENCE {
                         break 'chk start;
                     }
-                };
+                }
             };
 
             let winner_tid = old.tid();
@@ -493,9 +493,13 @@ mod test {
     //   - where +2 is a pointer to Root, DetectableCASAtomic
     #[test]
     fn detectable_cas() {
-        const FILE_NAME: &str = "detectable_cas.pool";
+        const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<DetectableCASAtomic<usize>>, DetectableCas, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<TestRootObj<DetectableCASAtomic<usize>>, DetectableCas>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 1,
+        )
     }
 }

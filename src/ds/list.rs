@@ -604,10 +604,10 @@ mod test {
 
     #[test]
     fn ins_del_look() {
-        const FILE_NAME: &str = "list_ins_del_look_.pool";
+        const FILE_NAME: &str = "list";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<List<usize, usize>>, InsDelLook, _>(
+        run_test::<TestRootObj<List<usize, usize>>, InsDelLook>(
             FILE_NAME,
             FILE_SIZE,
             NR_THREAD + 1,

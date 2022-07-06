@@ -91,7 +91,6 @@ pub mod tests {
     use crossbeam_epoch::Guard;
     use std::collections::HashMap;
     use std::io::Error;
-    use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
     use tempfile::NamedTempFile;
@@ -111,7 +110,7 @@ pub mod tests {
     /// get path for test file
     ///
     /// e.g. "foo.pool" => "{project-path}/test/foo.pool"
-    pub fn get_test_abs_path<P: AsRef<Path>>(rel_path: P) -> String {
+    pub fn get_test_abs_path(rel_path: &str) -> String {
         let mut path = std::path::PathBuf::new();
         #[cfg(not(feature = "no_persist"))]
         {
@@ -123,6 +122,7 @@ pub mod tests {
         }
         path.push("test");
         path.push(rel_path);
+        path.push(rel_path.to_string() + ".pool");
         path.to_str().unwrap().to_string()
     }
 
@@ -231,15 +231,14 @@ pub mod tests {
 
     /// run test op
     #[allow(box_pointers)]
-    pub fn run_test<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
+    pub fn run_test<O, M>(pool_name: &'static str, pool_len: usize, nr_memento: usize)
     where
         O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
-        P: AsRef<Path> + Send + Sync + 'static,
     {
         #[cfg(not(feature = "simulate_tcrash"))]
         {
-            run_test_inner::<O, M, P>(pool_name, pool_len, nr_memento);
+            run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
         }
 
         #[cfg(feature = "simulate_tcrash")]
@@ -270,7 +269,7 @@ pub mod tests {
                 TEST_STARTED.store(true, Ordering::SeqCst);
 
                 // println!("Start test (unix_tid: {unix_tid})");
-                run_test_inner::<O, M, P>(pool_name, pool_len, nr_memento);
+                run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
                 // println!("Finish test (unix_tid: {unix_tid})");
 
                 TEST_FINISHED.store(true, Ordering::SeqCst);
@@ -279,11 +278,10 @@ pub mod tests {
         }
     }
 
-    pub fn run_test_inner<O, M, P>(pool_name: P, pool_len: usize, nr_memento: usize)
+    pub fn run_test_inner<O, M>(pool_name: &str, pool_len: usize, nr_memento: usize)
     where
         O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
-        P: AsRef<Path> + Send + Sync + 'static,
     {
         let filepath = get_test_abs_path(pool_name);
 

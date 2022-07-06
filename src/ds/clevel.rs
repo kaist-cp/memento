@@ -1651,7 +1651,7 @@ mod tests {
 
     #[test]
     fn smoke() {
-        const FILE_NAME: &str = "clevel_smoke.pool";
+        const FILE_NAME: &str = "clevel_smoke";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         const NR_THREADS: usize = 2;
 
@@ -1666,9 +1666,7 @@ mod tests {
             RECV = Some(recv);
         }
 
-        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke, _>(
-            FILE_NAME, FILE_SIZE, NR_THREADS,
-        );
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, Smoke>(FILE_NAME, FILE_SIZE, NR_THREADS);
     }
 
     const INSERT_SEARCH_CNT: usize = 3_000;
@@ -1737,7 +1735,7 @@ mod tests {
 
     #[test]
     fn insert_search() {
-        const FILE_NAME: &str = "clevel_insert_search.pool";
+        const FILE_NAME: &str = "clevel_insert_search";
         const FILE_SIZE: usize = 16 * 1024 * 1024 * 1024;
         const NR_THREADS: usize = 1usize << 4;
 
@@ -1752,7 +1750,7 @@ mod tests {
             RECV = Some(recv);
         }
 
-        run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertSearch, _>(
+        run_test::<TestRootObj<ClevelInner<usize, usize>>, InsertSearch>(
             FILE_NAME, FILE_SIZE, NR_THREADS,
         )
     }

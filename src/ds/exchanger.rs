@@ -391,10 +391,10 @@ mod tests {
 
     #[test]
     fn exchange_once() {
-        const FILE_NAME: &str = "exchange_once.pool";
+        const FILE_NAME: &str = "exchange_once";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<Exchanger<usize>>, ExchangeOnce, _>(FILE_NAME, FILE_SIZE, 2)
+        run_test::<TestRootObj<Exchanger<usize>>, ExchangeOnce>(FILE_NAME, FILE_SIZE, 2)
     }
 
     /// Test whether three threads rotate as a whole by exchanging items with adjacent threads
@@ -497,9 +497,9 @@ mod tests {
 
     #[test]
     fn rotate_left() {
-        const FILE_NAME: &str = "rotate_left.pool";
+        const FILE_NAME: &str = "rotate_left";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<[Exchanger<usize>; 2]>, RotateLeft, _>(FILE_NAME, FILE_SIZE, 3);
+        run_test::<TestRootObj<[Exchanger<usize>; 2]>, RotateLeft>(FILE_NAME, FILE_SIZE, 3);
     }
 }

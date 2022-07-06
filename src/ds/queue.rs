@@ -448,9 +448,9 @@ mod test {
     //   - where +2 is a pointer to Root, Queue
     #[test]
     fn enq_deq() {
-        const FILE_NAME: &str = "queue_enq_deq.pool";
+        const FILE_NAME: &str = "queue";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<Queue<usize>>, EnqDeq, _>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<TestRootObj<Queue<usize>>, EnqDeq>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }

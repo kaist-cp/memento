@@ -3,7 +3,7 @@
 # Test Config
 PMEM_PATH="/mnt/pmem0"
 # # TARGETS=("clevel" "elim_stack" "exchanger" "queue_comb" "queue_general" "queue_lp" "queue" "soft_hash" "soft_list" "stack" "treiber_stack")
-TARGETS=("queue_general" "queue_comb" "queue_lp" "queue" "elim_stack")
+TARGETS=("queue_general")
 CNT_NORMAL=10    # Number of normal test
 CNT_CRASH=10000   # Number of crash test
 
@@ -14,6 +14,7 @@ SCRIPT_DIR=`dirname $(realpath "$0")`
 OUT_PATH="$SCRIPT_DIR/out"
 rm -rf $OUT_PATH
 mkdir -p $OUT_PATH
+mkdir -p $PMEM_PATH/test
 cargo clean
 
 cargo build --tests --release --features=simulate_tcrash
@@ -37,7 +38,7 @@ function run() {
     target=$1
     dmsg "run $target"
 
-    rm -rf $PMEM_PATH/*
+    rm -rf $PMEM_PATH/test/$target/*
     RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out
 }
 
@@ -45,7 +46,7 @@ function run_bg() {
     target=$1
     dmsg "run_bg $target"
 
-    rm -rf $PMEM_PATH/*
+    rm -rf $PMEM_PATH/test/$target/*
     RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture >> $OUT_PATH/$target.out &
 }
 
@@ -102,7 +103,7 @@ for target in ${TARGETS[@]}; do
         else
             dmsg "fails with exit code $ext"
             pmsg "[${i}th test] fails with exit code $ext"
-            pkill -9 memento*
+            kill -9 $pid_bg || true
         fi
         dmsg "⎿___________________________________________________________________________⏌"
     done

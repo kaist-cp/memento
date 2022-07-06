@@ -816,11 +816,9 @@ mod test {
 
     #[test]
     fn insert_contain_remove() {
-        const FILE_NAME: &str = "soft_list_insert_contain_remmove.pool";
+        const FILE_NAME: &str = "soft_list_insert_contain_remmove";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<SOFTListRoot>, InsertContainRemove, _>(
-            FILE_NAME, FILE_SIZE, NR_THREAD,
-        )
+        run_test::<TestRootObj<SOFTListRoot>, InsertContainRemove>(FILE_NAME, FILE_SIZE, NR_THREAD)
     }
 }
