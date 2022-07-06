@@ -861,31 +861,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         (context, true)
     }
 
-    fn invalidate_and_move<'g, const REC: bool>(
+    fn resize_move<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         mut first_level: PShared<'g, Node<Bucket<K, V>>>,
-        slot: &DetectableCASAtomic<Slot<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
         client: &mut Resize<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, PShared<'g, Node<Bucket<K, V>>>) {
-        if slot
-            .cas::<REC>(
-                slot_ptr,
-                slot_ptr.with_tag(1),
-                &mut client.delete_cas,
-                tid,
-                guard,
-                pool,
-            )
-            .is_err()
-        {
-            return (context, first_level);
-        }
-
         if let Some(ins_slot) = client.insert_chk.checkpoint::<REC, _>(|| None, tid, pool) {
             // TODO: 이러면 normal exec에서도 값이 계속 flush됨
             let ins_slot = unsafe { ins_slot.deref(pool) };
@@ -991,19 +976,29 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             let slot = unsafe { slot.deref(pool) };
             let slot_ptr = slot_ptr.load(Ordering::Relaxed, guard);
 
-            let res = self.invalidate_and_move::<REC>(
-                context,
-                first_level,
-                slot,
-                slot_ptr,
-                client,
-                tid,
-                guard,
-                pool,
-            );
-
-            context = res.0;
-            first_level = res.1;
+            if slot
+                .cas::<REC>(
+                    slot_ptr,
+                    slot_ptr.with_tag(1),
+                    &mut client.delete_cas,
+                    tid,
+                    guard,
+                    pool,
+                )
+                .is_ok()
+            {
+                let res = self.resize_move::<REC>(
+                    context,
+                    first_level,
+                    slot_ptr,
+                    client,
+                    tid,
+                    guard,
+                    pool,
+                );
+                context = res.0;
+                first_level = res.1;
+            }
         }
 
         loop {
@@ -1044,19 +1039,31 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                             pool,
                         );
 
-                        let res = self.invalidate_and_move::<false>(
-                            context,
-                            first_level,
-                            slot,
-                            slot_ptr,
-                            client,
-                            tid,
-                            guard,
-                            pool,
-                        );
+                        if slot
+                            .cas::<false>(
+                                slot_ptr,
+                                slot_ptr.with_tag(1),
+                                &mut client.delete_cas,
+                                tid,
+                                guard,
+                                pool,
+                            )
+                            .is_ok()
+                        {
+                            let res = self.resize_move::<false>(
+                                context,
+                                first_level,
+                                slot_ptr,
+                                client,
+                                tid,
+                                guard,
+                                pool,
+                            );
 
-                        context = res.0;
-                        first_level = res.1;
+                            context = res.0;
+                            first_level = res.1;
+                        }
+
                         break;
                     }
                 }
