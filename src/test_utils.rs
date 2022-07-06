@@ -372,10 +372,13 @@ pub mod tests {
         }
         println!("[run] t{tid} pass the busy lock (unix_tid: {unix_tid})");
 
-        // Wait until all threads are prevented from being selected by `kill_random` on the main thread.
+        // Wait until other threads are prevented from being selected by `kill_random` on the main thread.
         #[cfg(feature = "simulate_tcrash")]
-        for unix_tid in UNIX_TIDS.iter() {
-            while unix_tid.load(Ordering::SeqCst) > 0 {}
+        for utid in UNIX_TIDS.iter() {
+            if unix_tid == utid.load(Ordering::SeqCst) {
+                continue;
+            }
+            while utid.load(Ordering::SeqCst) > 0 {}
         }
 
         // Check results
