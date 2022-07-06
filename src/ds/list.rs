@@ -4,10 +4,10 @@ use crate::ploc::detectable_cas::Cas;
 use crate::ploc::{Checkpoint, DetectableCASAtomic};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
-use etrace::{ok_or, some_or};
+use etrace::some_or;
 use std::cmp::Ordering::{Equal, Greater, Less};
 
-use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*, AsPPtr, PPtr};
 use crate::*;
@@ -257,19 +257,17 @@ impl<K: Ord, V: Collectable> List<K, V> {
             }
         };
 
-        let chk = ok_or!(
-            harris.result.checkpoint::<REC>(
+        let chk = harris.result.checkpoint::<REC, _>(
+            || {
                 (
                     found,
                     unsafe { prev.as_pptr(pool) },
                     PAtomic::from(curr),
-                    PAtomic::from(prev_next)
-                ),
-                tid,
-                pool
-            ),
-            e,
-            e.current
+                    PAtomic::from(prev_next),
+                )
+            },
+            tid,
+            pool,
         );
         let (found, prev, curr, prev_next) = (
             chk.0,
@@ -369,22 +367,18 @@ impl<K: Ord, V: Collectable> List<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
-        let node = POwned::new(Node::from((key, value)), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = ok_or!(
-            ins.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
-            e,
-            unsafe {
-                drop(
-                    e.new
-                        .load(Ordering::Relaxed, epoch::unprotected())
-                        .into_owned(),
-                );
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+        let node = ins
+            .node
+            .checkpoint::<REC, _>(
+                || {
+                    let node = POwned::new(Node::from((key, value)), pool);
+                    persist_obj(unsafe { node.deref(pool) }, true);
+                    PAtomic::from(node)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
         let node_ref = unsafe { node.deref(pool) };
 
         let (found, prev, curr) = self.find::<REC>(&node_ref.key, &mut ins.find, tid, guard, pool);
@@ -431,14 +425,10 @@ impl<K: Ord, V: Collectable> List<K, V> {
         // FAO-like..
         let mut next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
 
-        next = ok_or!(
-            try_del
-                .next
-                .checkpoint::<REC>(PAtomic::from(next), tid, pool),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
+        next = try_del
+            .next
+            .checkpoint::<REC, _>(|| PAtomic::from(next), tid, pool)
+            .load(Ordering::Relaxed, guard);
         if next.tag() == 1 {
             return Err(());
         }
@@ -453,14 +443,10 @@ impl<K: Ord, V: Collectable> List<K, V> {
 
         while let Err(e) = res {
             next = e;
-            next = ok_or!(
-                try_del
-                    .next
-                    .checkpoint::<false>(PAtomic::from(next), tid, pool),
-                e,
-                e.current
-            )
-            .load(Ordering::Relaxed, guard);
+            next = try_del
+                .next
+                .checkpoint::<false, _>(|| PAtomic::from(next), tid, pool)
+                .load(Ordering::Relaxed, guard);
             if next.tag() == 1 {
                 return Err(());
             }
