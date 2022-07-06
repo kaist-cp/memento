@@ -5,6 +5,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc;
 
 use cfg_if::cfg_if;
@@ -81,6 +82,7 @@ impl<K, V: Collectable> Insert<K, V> {
 pub struct InsertInner<K, V: Collectable> {
     insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
     insert_cas: Cas,
+    add_lv: AddLevel<K, V>,
 }
 
 impl<K, V: Collectable> Default for InsertInner<K, V> {
@@ -88,6 +90,7 @@ impl<K, V: Collectable> Default for InsertInner<K, V> {
         Self {
             insert_chk: Default::default(),
             insert_cas: Default::default(),
+            add_lv: Default::default(),
         }
     }
 }
@@ -101,6 +104,7 @@ impl<K, V: Collectable> Collectable for InsertInner<K, V> {
     ) {
         Checkpoint::filter(&mut insert_inner.insert_chk, tid, gc, pool);
         Cas::filter(&mut insert_inner.insert_cas, tid, gc, pool);
+        AddLevel::filter(&mut insert_inner.add_lv, tid, gc, pool);
     }
 }
 
@@ -110,6 +114,39 @@ impl<K, V: Collectable> InsertInner<K, V> {
     pub fn clear(&mut self) {
         self.insert_chk.clear();
         self.insert_cas.clear();
+        self.add_lv.clear();
+    }
+}
+
+/// Add level client
+#[derive(Debug)]
+pub struct AddLevel<K, V: Collectable> {
+    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    context_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for AddLevel<K, V> {
+    fn default() -> Self {
+        Self {
+            context_chk: Default::default(),
+            context_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for AddLevel<K, V> {
+    fn filter(add_lv: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut add_lv.context_chk, tid, gc, pool);
+        Cas::filter(&mut add_lv.context_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> AddLevel<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.context_chk.clear();
+        self.context_cas.clear();
     }
 }
 
@@ -153,29 +190,38 @@ impl<K, V: Collectable> ResizeLoop<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V: Collectable> {
+    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    context_cas: Cas,
     delete_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
     delete_cas: Cas,
     insert_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
     insert_cas: Cas,
+    add_lv: AddLevel<K, V>,
 }
 
 impl<K, V: Collectable> Default for Resize<K, V> {
     fn default() -> Self {
         Self {
+            context_chk: Default::default(),
+            context_cas: Default::default(),
             delete_chk: Default::default(),
             delete_cas: Default::default(),
             insert_chk: Default::default(),
             insert_cas: Default::default(),
+            add_lv: Default::default(),
         }
     }
 }
 
 impl<K, V: Collectable> Collectable for Resize<K, V> {
     fn filter(resize: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut resize.context_chk, tid, gc, pool);
+        Cas::filter(&mut resize.context_cas, tid, gc, pool);
         Checkpoint::filter(&mut resize.delete_chk, tid, gc, pool);
         Cas::filter(&mut resize.delete_cas, tid, gc, pool);
         Checkpoint::filter(&mut resize.insert_chk, tid, gc, pool);
         Cas::filter(&mut resize.insert_cas, tid, gc, pool);
+        AddLevel::filter(&mut resize.add_lv, tid, gc, pool);
     }
 }
 
@@ -183,10 +229,13 @@ impl<K, V: Collectable> Resize<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
+        self.context_chk.clear();
+        self.context_cas.clear();
         self.delete_chk.clear();
         self.delete_cas.clear();
         self.insert_chk.clear();
         self.insert_cas.clear();
+        self.add_lv.clear();
     }
 }
 
@@ -397,7 +446,7 @@ struct Context<K, V: Collectable> {
     /// Should resize until the last level's size > resize_size
     ///
     /// invariant: resize_size = first_level_size / 2 / 2
-    resize_size: usize,
+    resize_size: AtomicUsize,
 }
 
 impl<K, V: Collectable> Collectable for Context<K, V> {
@@ -425,13 +474,13 @@ impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
 /// Inner Clevel
 #[derive(Debug)]
 pub struct ClevelInner<K, V: Collectable> {
-    context: PAtomic<Context<K, V>>,
+    context: DetectableCASAtomic<Context<K, V>>,
     add_level_lock: ThreadRecoverableSpinLock,
 }
 
 impl<K, V: Collectable> Collectable for ClevelInner<K, V> {
     fn filter(clevel: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        PAtomic::filter(&mut clevel.context, tid, gc, pool);
+        DetectableCASAtomic::filter(&mut clevel.context, tid, gc, pool);
     }
 }
 
@@ -445,15 +494,18 @@ impl<K, V: Collectable> PDefault for ClevelInner<K, V> {
         last_level_ref.next.store(first_level, Ordering::Relaxed);
         persist_obj(&last_level_ref.next, true);
 
+        let context = alloc_persist(
+            Context {
+                first_level: first_level.into(),
+                last_level: last_level.into(),
+                resize_size: AtomicUsize::new(0),
+            },
+            pool,
+        )
+        .into_shared(guard);
+
         ClevelInner {
-            context: PAtomic::new(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: last_level.into(),
-                    resize_size: 0,
-                },
-                pool,
-            ),
+            context: DetectableCASAtomic::from(context),
             add_level_lock: ThreadRecoverableSpinLock::default(),
         }
     }
@@ -705,7 +757,7 @@ impl<K, V: Collectable> Drop for ClevelInner<K, V> {
     fn drop(&mut self) {
         let pool = global_pool().unwrap();
         let guard = unsafe { epoch::unprotected() };
-        let context = self.context.load(Ordering::Relaxed, guard);
+        let context = self.context.load(Ordering::Relaxed, guard, pool);
         let context_ref = unsafe { context.deref(pool) };
 
         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
@@ -740,7 +792,7 @@ pub enum InsertError {
 impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<K, V> {
     /// Capacity
     pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
-        let context = self.context.load(Ordering::Acquire, guard);
+        let context = self.context.load(Ordering::Acquire, guard, pool);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
@@ -767,6 +819,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<Bucket<K, V>>,
+        add_lv: &mut AddLevel<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -804,61 +857,76 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
-        let mut context_new = alloc_persist(
-            Context {
-                first_level: PAtomic::from(next_level),
-                last_level: context_ref.last_level.clone(),
-                resize_size: level_size_prev(level_size_prev(next_level_size)),
-            },
+        let context_new = add_lv
+            .context_chk
+            .checkpoint::<REC, _>(
+                || {
+                    let n = alloc_persist(
+                        Context {
+                            first_level: PAtomic::from(next_level),
+                            last_level: context_ref.last_level.clone(),
+                            resize_size: AtomicUsize::new(level_size_prev(level_size_prev(
+                                next_level_size,
+                            ))),
+                        },
+                        pool,
+                    );
+                    PAtomic::from(n)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
+
+        let mut res = self.context.cas::<REC>(
+            context,
+            context_new,
+            &mut add_lv.context_cas,
+            tid,
+            guard,
             pool,
         );
 
-        loop {
-            context = ok_or!(
-                self.context.compare_exchange(
-                    context,
-                    context_new,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard
-                ),
-                e,
-                {
-                    context = e.current;
-                    context_new = e.new;
-                    let context_ref = unsafe { e.current.deref(pool) };
+        while let Err(e) = res {
+            context = e;
+            let context_ref = unsafe { e.deref(pool) };
 
-                    if unsafe {
-                        context_ref
-                            .first_level
-                            .load(Ordering::Acquire, guard)
-                            .deref(pool)
-                            .data
-                            .load(Ordering::Relaxed, guard)
-                            .deref(pool)
-                    }
-                    .len()
-                        >= next_level_size
-                    {
-                        unsafe { guard.defer_pdestroy(context_new.into_shared(guard)) }
-                        return (context, false);
-                    }
+            if unsafe {
+                context_ref
+                    .first_level
+                    .load(Ordering::Acquire, guard)
+                    .deref(pool)
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            }
+            .len()
+                >= next_level_size
+            {
+                unsafe { guard.defer_pdestroy(context_new) }
+                return (context, false);
+            }
 
-                    // We thought this is unreachable but indeed reachable...
-                    let context_new_ref = unsafe { context_new.deref(pool) };
-                    context_new_ref.last_level.store(
-                        context_ref.last_level.load(Ordering::Acquire, guard),
-                        Ordering::Relaxed,
-                    );
-                    continue;
-                }
+            // We thought this is unreachable but indeed reachable...
+            let context_new_ref = unsafe { context_new.deref(pool) };
+            context_new_ref.last_level.store(
+                context_ref.last_level.load(Ordering::Acquire, guard),
+                Ordering::Relaxed,
             );
+            persist_obj(&context_new_ref.last_level, false); // cas soon
 
-            break;
+            res = self.context.cas::<false>(
+                context,
+                context_new,
+                &mut add_lv.context_cas,
+                tid,
+                guard,
+                pool,
+            );
         }
 
         fence(Ordering::SeqCst);
-        (context, true)
+        (context_new, true)
     }
 
     fn resize_move<'g, const REC: bool>(
@@ -955,8 +1023,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             }
 
             // The first level is full. Resize and retry.
-            let (context_new, _) =
-                self.add_level::<REC>(context, first_level_ref, tid, guard, pool);
+            let (context_new, _) = self.add_level::<REC>(
+                context,
+                first_level_ref,
+                &mut client.add_lv,
+                tid,
+                guard,
+                pool,
+            );
             context = context_new;
         }
     }
@@ -969,7 +1043,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(Ordering::Acquire, guard, pool);
         let mut context_ref = unsafe { context.deref(pool) };
         let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
 
@@ -1017,7 +1091,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
-            if context_ref.resize_size < last_level_size {
+            if context_ref.resize_size.load(Ordering::Relaxed) < last_level_size {
                 break;
             }
 
@@ -1074,52 +1148,73 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
             context_ref = unsafe { context.deref(pool) };
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
-            let mut context_new = alloc_persist(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: next_level.into(),
-                    resize_size: context_ref.resize_size,
-                },
-                pool,
-            );
+
+            let context_new = client
+                .context_chk
+                .checkpoint::<REC, _>(
+                    || {
+                        let n = alloc_persist(
+                            Context {
+                                first_level: first_level.into(),
+                                last_level: next_level.into(),
+                                resize_size: AtomicUsize::new(
+                                    context_ref.resize_size.load(Ordering::Relaxed),
+                                ),
+                            },
+                            pool,
+                        );
+                        PAtomic::from(n)
+                    },
+                    tid,
+                    pool,
+                )
+                .load(Ordering::Relaxed, guard);
 
             unsafe {
                 guard.defer_pdestroy(last_level);
             }
 
-            loop {
-                context = ok_or!(
-                    self.context.compare_exchange(
-                        context,
-                        context_new,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                        guard
-                    ),
-                    e,
-                    {
-                        context = e.current;
-                        context_new = e.new;
-                        let context_ref = unsafe { e.current.deref(pool) };
-                        let context_new_ref = unsafe { context_new.deref_mut(pool) };
-                        context_new_ref.first_level.store(
-                            context_ref.first_level.load(Ordering::Acquire, guard),
-                            Ordering::Relaxed,
-                        );
-                        context_new_ref.resize_size =
-                            cmp::max(context_new_ref.resize_size, context_ref.resize_size);
-                        continue;
-                    }
+            let mut res = self.context.cas::<REC>(
+                context,
+                context_new,
+                &mut client.context_cas,
+                tid,
+                guard,
+                pool,
+            );
+
+            while let Err(e) = res {
+                context = e;
+                let context_ref = unsafe { context.deref(pool) };
+                let context_new_ref = unsafe { context_new.deref(pool) };
+                let cur_fst_lv = context_ref.first_level.load(Ordering::Acquire, guard);
+                let cur_size = cmp::max(
+                    context_new_ref.resize_size.load(Ordering::Relaxed),
+                    context_ref.resize_size.load(Ordering::Relaxed),
                 );
 
-                break;
+                context_new_ref
+                    .first_level
+                    .store(cur_fst_lv, Ordering::Relaxed);
+                context_new_ref
+                    .resize_size
+                    .store(cur_size, Ordering::Relaxed);
+
+                res = self.context.cas::<false>(
+                    context,
+                    context_new,
+                    &mut client.context_cas,
+                    tid,
+                    guard,
+                    pool,
+                );
             }
         }
     }
 
     /// Check if resizing
     pub fn is_resizing(&self, guard: &Guard, pool: &PoolHandle) -> bool {
-        let context = self.context.load(Ordering::Acquire, guard);
+        let context = self.context.load(Ordering::Acquire, guard, pool);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
 
@@ -1130,7 +1225,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 .load(Ordering::Relaxed, guard)
                 .deref(pool)
                 .len()
-        }) <= context_ref.resize_size
+        }) <= context_ref.resize_size.load(Ordering::Relaxed)
     }
 
     fn find_fast<'g>(
@@ -1141,16 +1236,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(Ordering::Acquire, guard, pool);
         loop {
             let context_ref = unsafe { context.deref(pool) };
             let find_result = context_ref.find_fast(key, key_tag, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard);
+                context = self.context.load(Ordering::Acquire, guard, pool);
                 continue;
             });
             let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard);
+                let context_new = self.context.load(Ordering::Acquire, guard, pool);
 
                 // However, a rare case for missing is: after a search operation starts, other
                 // threads add a new level through expansion and rehashing threads move the item
@@ -1180,16 +1275,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(Ordering::Acquire, guard, pool);
         loop {
             let context_ref = unsafe { context.deref(pool) };
             let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard);
+                context = self.context.load(Ordering::Acquire, guard, pool);
                 continue;
             });
             let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard);
+                let context_new = self.context.load(Ordering::Acquire, guard, pool);
 
                 // the same possible corner case as `find_fast`
                 if context != context_new {
@@ -1268,7 +1363,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         // top-to-bottom search
         for array in arrays.into_iter().rev() {
             let size = array.len();
-            if context_ref.resize_size >= size {
+            if context_ref.resize_size.load(Ordering::Relaxed) >= size {
                 break;
             }
 
@@ -1334,8 +1429,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let context_ref = unsafe { context.deref(pool) };
         let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let first_level_ref = unsafe { first_level.deref(pool) };
-        let (context_new, added) =
-            self.add_level::<REC>(context, first_level_ref, tid, guard, pool);
+        let (context_new, added) = self.add_level::<REC>(
+            context,
+            first_level_ref,
+            &mut client.add_lv,
+            tid,
+            guard,
+            pool,
+        );
         if added {
             let _ = sender.send(());
         }
@@ -1416,13 +1517,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         fence(Ordering::SeqCst);
 
         // If the context remains the same, it's done.
-        context = self.context.load(Ordering::Acquire, guard);
+        context = self.context.load(Ordering::Acquire, guard, pool);
 
         // If the inserted array is not being resized, it's done.
         let context_ref = unsafe { context.deref(pool) };
 
-        let done =
-            move_done.checkpoint::<REC, _>(|| context_ref.resize_size < result.size, tid, pool);
+        let done = move_done.checkpoint::<REC, _>(
+            || context_ref.resize_size.load(Ordering::Relaxed) < result.size,
+            tid,
+            pool,
+        );
         if done {
             return Ok(());
         }
