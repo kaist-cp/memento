@@ -244,6 +244,7 @@ pub mod tests {
         #[cfg(feature = "simulate_tcrash")]
         {
             // Use custom hook since default hook (to construct backtrace) often makes the thread blocked for unknown reason.
+            std::panic::set_hook(Box::new(|_| {}));
 
             // Install signal handler
             // println!(
