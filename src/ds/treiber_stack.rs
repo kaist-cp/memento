@@ -337,7 +337,7 @@ mod tests {
     // We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     fn push_pop() {
-        const FILE_NAME: &str = "treiber_push_pop";
+        const FILE_NAME: &str = "treiber_stack";
         run_test::<TestRootObj<TreiberStack<usize>>, PushPop<_, NR_THREAD, COUNT>>(
             FILE_NAME,
             FILE_SIZE,
