@@ -356,24 +356,31 @@ pub mod tests {
         ((value / 100) % 100, value / 10000, value % 100)
     }
 
+    #[allow(unused_variables)]
     pub(crate) fn check_res(tid: usize, nr_wait: usize, count: usize) {
         // Wait for all other threads to finish
+        #[cfg(feature = "simulate_tcrash")]
         let my_unix_tid = unsafe { libc::gettid() };
+        #[cfg(feature = "simulate_tcrash")]
         let mut cnt = 0;
         while JOB_FINISHED.load(Ordering::SeqCst) < nr_wait {
-            if cnt > 300 {
-                println!("Stop testing. Maybe there is a bug... (1)");
-                std::process::exit(1);
+            #[cfg(feature = "simulate_tcrash")]
+            {
+                if cnt > 300 {
+                    println!("Stop testing. Maybe there is a bug... (1)");
+                    std::process::exit(1);
+                }
+
+                println!(
+                    "[run] t{tid} JOB_FINISHED: {} (unix_tid: {my_unix_tid}, cnt: {cnt})",
+                    JOB_FINISHED.load(Ordering::SeqCst)
+                );
+
+                std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
+                cnt += 1;
             }
-
-            println!(
-                "[run] t{tid} JOB_FINISHED: {} (unix_tid: {my_unix_tid}, cnt: {cnt})",
-                JOB_FINISHED.load(Ordering::SeqCst)
-            );
-
-            std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
-            cnt += 1;
         }
+        #[cfg(feature = "simulate_tcrash")]
         println!("[run] t{tid} pass the busy lock (unix_tid: {my_unix_tid})");
 
         // Wait until other threads are prevented from being selected by `kill_random` on the main thread.

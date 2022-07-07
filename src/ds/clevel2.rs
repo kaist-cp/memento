@@ -1120,9 +1120,10 @@ pub enum InsertError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        pmem::Pool,
+        pmem::{Pool, RootObj},
         test_utils::tests::{
-            compose, decompose, get_test_abs_path, DummyRootMemento, DummyRootObj, TestRootObj,
+            check_res, compose, decompose, get_test_abs_path, produce_res, run_test,
+            DummyRootMemento, DummyRootObj, TestRootObj, JOB_FINISHED,
         },
     };
 
@@ -1131,145 +1132,137 @@ mod tests {
     use crossbeam_epoch::pin;
     use crossbeam_utils::thread;
 
+    const NR_THREAD: usize = 12;
+    const COUNT: usize = 1_000_001;
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
+    #[derive(Default)]
+    struct Smoke {}
+
+    impl Collectable for Smoke {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {}
+    }
+
+    impl RootObj<Smoke> for TestRootObj<Clevel<usize, usize>> {
+        fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let kv = &self.obj;
+
+            match tid {
+                // T1: Resize loop
+                1 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
+                    kv.resize_loop(&recv, guard, pool);
+                }
+                _ => {
+                    let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
+                    for i in 0..COUNT {
+                        assert!(kv.insert(i, i, &send, &guard, pool).is_ok());
+                        assert_eq!(kv.search(&i, &guard, pool), Some(&i));
+                    }
+
+                    for i in 0..COUNT {
+                        assert!(kv.delete(&i, &guard, pool));
+                        assert_eq!(kv.search(&i, &guard, pool), None);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn smoke() {
-        const COUNT: usize = 100_000;
-        let filepath = &get_test_abs_path("smoke");
+        const FILE_NAME: &str = "smoke";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        // open pool
-        let pool_handle =
-            unsafe { Pool::open::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE) }
-                .unwrap_or_else(|_| {
-                    Pool::create::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE, 1).unwrap()
-                });
+        let (send, recv) = mpsc::channel();
+        unsafe {
+            SEND = Some(array_init::array_init(|_| None));
+            SEND.as_mut().unwrap()[2] = Some(send);
+            RECV = Some(recv);
+        }
 
-        let pool = global_pool().unwrap();
-        let kv = Clevel::<usize, usize>::pdefault(pool);
-        thread::scope(|s| {
-            let (send, recv) = mpsc::channel();
-            let kv = &kv;
-            let _ = s.spawn(move |_| {
-                let pool = global_pool().unwrap();
-                let mut guard = pin();
-                kv.resize_loop(&recv, &mut guard, pool);
-            });
+        run_test::<TestRootObj<Clevel<usize, usize>>, Smoke>(FILE_NAME, FILE_SIZE, 2);
+    }
 
-            let guard = pin();
+    #[derive(Default)]
+    struct InsSch {}
 
-            for i in 0..COUNT {
-                assert!(kv.insert(i, i, &send, &guard, pool).is_ok());
-                assert_eq!(kv.search(&i, &guard, pool), Some(&i));
+    impl Collectable for InsSch {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {}
+    }
+
+    impl RootObj<InsSch> for TestRootObj<Clevel<usize, usize>> {
+        fn run(&self, mmt: &mut InsSch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let kv = &self.obj;
+
+            match tid {
+                // T1: Resize loop
+                1 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
+                    kv.resize_loop(&recv, guard, pool);
+                }
+                _ => {
+                    let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
+                    for i in 0..COUNT {
+                        let _ = kv.insert(i, i, &send, &guard, pool);
+
+                        if kv.search(&i, &guard, pool) != Some(&i) {
+                            panic!("[test] tid = {tid} fail n {i}");
+                        }
+                    }
+                }
             }
-
-            for i in 0..COUNT {
-                assert!(kv.delete(&i, &guard, pool));
-                assert_eq!(kv.search(&i, &guard, pool), None);
-            }
-        })
-        .unwrap();
+        }
     }
 
     #[test]
     fn insert_search() {
-        const NR_THREAD: usize = 12;
-        const COUNT: usize = 1_000;
-        let filepath = &get_test_abs_path("insert_search");
+        const FILE_NAME: &str = "insert_search";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        // open pool
-        let pool_handle =
-            unsafe { Pool::open::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE) }
-                .unwrap_or_else(|_| {
-                    Pool::create::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE, 1).unwrap()
-                });
-
-        let pool = global_pool().unwrap();
-        let kv = Clevel::<usize, usize>::pdefault(pool);
-        thread::scope(|s| {
-            let (send, recv) = mpsc::channel();
-            unsafe {
-                SEND = Some(array_init::array_init(|_| None));
-                RECV = Some(recv);
-                for tid in 1..=NR_THREAD {
-                    let sends = SEND.as_mut().unwrap();
-                    sends[tid] = Some(send.clone());
-                }
+        let (send, recv) = mpsc::channel();
+        unsafe {
+            SEND = Some(array_init::array_init(|_| None));
+            RECV = Some(recv);
+            for tid in 2..=NR_THREAD + 1 {
+                let sends = SEND.as_mut().unwrap();
+                sends[tid] = Some(send.clone());
             }
-            drop(send);
+        }
+        drop(send);
 
-            let kv = &kv;
-            let _ = s.spawn(move |_| {
-                let mut guard = pin();
-                let recv = unsafe { RECV.as_ref().unwrap() };
-                kv.resize_loop(&recv, &mut guard, pool);
-            });
-
-            for tid in 1..=NR_THREAD {
-                let _ = s.spawn(move |_| {
-                    let pool = global_pool().unwrap();
-                    let guard = pin();
-
-                    let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
-                    for i in 0..COUNT {
-                        // // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert(i, i, &send, &guard, pool);
-
-                        // // println!("[test] tid = {tid}, i = {i}, search");
-                        if kv.search(&i, &guard, pool) != Some(&i) {
-                            panic!("[test] tid = {tid} fail n {i}");
-                            // assert_eq!(kv.search(&i, &guard), Some(&i));
-                        }
-                    }
-                });
-            }
-        })
-        .unwrap();
+        run_test::<TestRootObj<Clevel<usize, usize>>, InsSch>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 
-    #[test]
-    fn clevel_ins_del_look() {
-        const NR_THREAD: usize = 12;
-        const COUNT: usize = 1_000_001;
+    #[derive(Default)]
+    struct InsDelLook {}
 
-        let filepath = &get_test_abs_path("clevel_ins_del_look");
+    impl Collectable for InsDelLook {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {}
+    }
 
-        // open pool
-        let pool_handle =
-            unsafe { Pool::open::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE) }
-                .unwrap_or_else(|_| {
-                    Pool::create::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE, 1).unwrap()
-                });
+    impl RootObj<InsDelLook> for TestRootObj<Clevel<usize, usize>> {
+        fn run(&self, mmt: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let kv = &self.obj;
 
-        let pool = global_pool().unwrap();
-        let kv = Clevel::<usize, usize>::pdefault(pool);
-        thread::scope(|s| {
-            let (send, recv) = mpsc::channel();
-            unsafe {
-                SEND = Some(array_init::array_init(|_| None));
-                RECV = Some(recv);
-                for tid in 1..=NR_THREAD {
-                    let sends = SEND.as_mut().unwrap();
-                    sends[tid] = Some(send.clone());
+            match tid {
+                // T1: Check the execution results of other threads
+                1 => {
+                    check_res(tid, NR_THREAD, COUNT);
                 }
-            }
-            drop(send);
-
-            let kv = &kv;
-            let _ = s.spawn(move |_| {
-                let mut guard = pin();
-                let recv = unsafe { RECV.as_ref().unwrap() };
-                kv.resize_loop(&recv, &mut guard, pool);
-            });
-
-            for tid in 1..=NR_THREAD {
-                let _ = s.spawn(move |_| {
-                    let pool = global_pool().unwrap();
-                    let guard = pin();
-
+                // T2: Resize loop
+                2 => {
+                    let recv = unsafe { RECV.as_ref().unwrap() };
+                    let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
+                    kv.resize_loop(&recv, guard, pool);
+                }
+                // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
+                _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
                     for i in 0..COUNT {
                         let key = compose(tid, i, i % tid);
@@ -1281,17 +1274,40 @@ mod tests {
 
                         // transfer the lookup result to the result array
                         let (tid, i, value) = decompose(*res.unwrap());
-                        // produce_res(tid, i, value);
+                        produce_res(tid, i, value);
 
                         // delete and lookup
                         assert!(kv.delete(&key, &guard, pool));
                         let res = kv.search(&key, &guard, pool);
                         assert!(res.is_none());
                     }
-                });
+                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+                }
             }
-        })
-        .unwrap();
+        }
+    }
+
+    #[test]
+    fn clevel_ins_del_look() {
+        const FILE_NAME: &str = "clevel_ins_del_look";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        let (send, recv) = mpsc::channel();
+        unsafe {
+            SEND = Some(array_init::array_init(|_| None));
+            RECV = Some(recv);
+            for tid in 3..=NR_THREAD + 2 {
+                let sends = SEND.as_mut().unwrap();
+                sends[tid] = Some(send.clone());
+            }
+        }
+        drop(send);
+
+        run_test::<TestRootObj<Clevel<usize, usize>>, InsDelLook>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD + 2,
+        );
     }
 }
 
