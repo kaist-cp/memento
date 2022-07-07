@@ -21,6 +21,7 @@ use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
 
+use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
@@ -66,6 +67,7 @@ fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
     let hash = hasher.finish() as usize;
 
     let tag = hash.rotate_left(16) as u16;
+    let tag = cut_as_high_tag_len(tag as usize) as u16;
     let left = hash as u32;
     let right = hash.rotate_right(32) as u32;
 
@@ -352,7 +354,7 @@ fn new_node<K, V>(
     size: usize,
     pool: &PoolHandle,
 ) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-    println!("[new_node] size: {size}");
+    // println!("[new_node] size: {size}");
 
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
@@ -489,7 +491,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 }
             );
 
-            println!("[add_level] next_level_size: {next_level_size}");
+            // // println!("[add_level] next_level_size: {next_level_size}");
             break;
         }
 
@@ -498,7 +500,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
     }
 
     pub fn resize(&self, guard: &Guard, pool: &PoolHandle) {
-        println!("[resize]");
+        // // // println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let mut context_ref = unsafe { context.deref(pool) };
@@ -514,10 +516,10 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
             let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
-            println!(
-                "[reisze] resize_size: {}, last_level_size: {}",
-                context_ref.resize_size, last_level_size
-            );
+            // println!(
+            //     "[reisze] resize_size: {}, last_level_size: {}",
+            //     context_ref.resize_size, last_level_size
+            // );
             if context_ref.resize_size < last_level_size {
                 break;
             }
@@ -531,9 +533,9 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                     .deref(pool)
             };
             let mut first_level_size = first_level_data.len();
-            println!(
-                "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
-            );
+            // println!(
+            //     "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
+            // );
 
             for (bid, bucket) in last_level_data.iter().enumerate() {
                 for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
@@ -570,7 +572,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                         continue
                     );
 
-                    // // println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
+                    // // // println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
 
                     let mut moved = false;
                     loop {
@@ -628,9 +630,9 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                             break;
                         }
 
-                        println!(
-                            "[resize] resizing again for ({last_level_size}, {bid}, {sid})..."
-                        );
+                        // println!(
+                        //     "[resize] resizing again for ({last_level_size}, {bid}, {sid})..."
+                        // );
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
@@ -691,7 +693,7 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                 break;
             }
 
-            println!("[resize] done!");
+            // println!("[resize] done!");
         }
     }
 }
@@ -830,7 +832,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
 
         Err(())
 
-        // println!("[insert_inner] tid = {tid}, key = {}, count = {}, level = {}, bucket index = {}, slot index = {}, slot = {:?}", unsafe { slot_new.deref() }.key, found.0, found.1, found.2, index, slot as *const _);
+        // // println!("[insert_inner] tid = {tid}, key = {}, count = {}, level = {}, bucket index = {}, slot index = {}, slot = {:?}", unsafe { slot_new.deref() }.key, found.0, found.1, found.2, index, slot as *const _);
     }
 }
 
@@ -916,7 +918,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             }
 
             // No remaining slots. Resize.
-            // println!("[insert] tid = {tid} triggering resize");
+            // // println!("[insert] tid = {tid} triggering resize");
             let context_ref = unsafe { context.deref(pool) };
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
             let first_level_ref = unsafe { first_level.deref(pool) };
@@ -970,7 +972,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                 break;
             }
 
-            // println!(
+            // // println!(
             //     "[insert] tid = {tid} inserted {} to resized array ({}, {}). move.",
             //     unsafe { insert_result.slot_ptr.deref() }.key,
             //     insert_result.size,
@@ -1003,8 +1005,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     where
         V: Clone,
     {
-        println!("[insert] tid: {tid} do insert");
-        // println!("[insert] tid: {}, key: {}", tid, key);
+        // println!("[insert] tid: {tid} do insert");
+        // // println!("[insert] tid: {}, key: {}", tid, key);
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.inner.find(&key, key_tag, key_hashes, guard, pool);
         if find_result.is_some() {
@@ -1021,14 +1023,14 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         Ok(())
     }
 
-    pub fn delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) {
-        // println!("[delete] key: {}", key);
+    pub fn delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) -> bool {
+        // // println!("[delete] key: {}", key);
         let (key_tag, key_hashes) = hashes(&key);
         loop {
             let (_, find_result) = self.inner.find(key, key_tag, key_hashes, guard, pool);
             let find_result = some_or!(find_result, {
-                println!("[delete] suspicious...");
-                return;
+                // println!("[delete] suspicious...");
+                return false;
             });
 
             if find_result
@@ -1048,17 +1050,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             unsafe {
                 guard.defer_pdestroy(find_result.slot_ptr);
             }
-            // println!("[delete] finish!");
-            return;
+            // // println!("[delete] finish!");
+            return true;
         }
     }
 }
 
 impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
     pub fn resize_loop(&mut self, guard: &mut Guard, pool: &PoolHandle) {
-        println!("[resize loop] start loop");
+        // println!("[resize loop] start loop");
         while let Ok(()) = self.resize_recv.recv() {
-            println!("[resize_loop] do resize!");
+            // println!("[resize_loop] do resize!");
             self.inner.resize(guard, pool);
             guard.repin_after(|| {});
         }
@@ -1069,7 +1071,9 @@ impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
 mod tests {
     use crate::{
         pmem::Pool,
-        test_utils::tests::{get_test_abs_path, DummyRootMemento, DummyRootObj, TestRootObj},
+        test_utils::tests::{
+            compose, decompose, get_test_abs_path, DummyRootMemento, DummyRootObj, TestRootObj,
+        },
     };
 
     use super::*;
@@ -1102,18 +1106,15 @@ mod tests {
 
             let guard = pin();
 
-            const RANGE: usize = 1;
+            const RANGE: usize = 10_000;
 
             for i in 0..RANGE {
                 assert!(kv.insert(0, i, i, &guard, pool).is_ok());
                 assert_eq!(kv.search(&i, &guard, pool), Some(&i));
             }
 
-            // rm -rf /mnt/pmem0/test/smoke/* && cargo test --release ds::clevel2::tests::smoke
-
             for i in 0..RANGE {
-                // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
-                kv.delete(&i, &guard, pool);
+                assert!(kv.delete(&i, &guard, pool));
                 assert_eq!(kv.search(&i, &guard, pool), None);
             }
         })
@@ -1122,6 +1123,15 @@ mod tests {
 
     #[test]
     fn insert_search() {
+        let filepath = &get_test_abs_path("insert_search");
+
+        // open pool
+        let pool_handle =
+            unsafe { Pool::open::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE) }
+                .unwrap_or_else(|_| {
+                    Pool::create::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE, 1).unwrap()
+                });
+
         thread::scope(|s| {
             let pool = global_pool().unwrap();
 
@@ -1139,14 +1149,66 @@ mod tests {
                     let pool = global_pool().unwrap();
                     let guard = pin();
                     for i in 0..RANGE {
-                        // println!("[test] tid = {tid}, i = {i}, insert");
+                        // // println!("[test] tid = {tid}, i = {i}, insert");
                         let _ = kv.insert(tid, i, i, &guard, pool);
 
-                        // println!("[test] tid = {tid}, i = {i}, search");
+                        // // println!("[test] tid = {tid}, i = {i}, search");
                         if kv.search(&i, &guard, pool) != Some(&i) {
                             panic!("[test] tid = {tid} fail on {i}");
                             // assert_eq!(kv.search(&i, &guard), Some(&i));
                         }
+                    }
+                });
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn clevel_ins_del_look() {
+        let filepath = &get_test_abs_path("insert_search");
+
+        // open pool
+        let pool_handle =
+            unsafe { Pool::open::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE) }
+                .unwrap_or_else(|_| {
+                    Pool::create::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE, 1).unwrap()
+                });
+
+        thread::scope(|s| {
+            let pool = global_pool().unwrap();
+
+            let (kv, mut kv_resize) = Clevel::<usize, usize>::new(pool);
+            let _ = s.spawn(move |_| {
+                let mut guard = pin();
+                kv_resize.resize_loop(&mut guard, pool);
+            });
+
+            const NR_THREAD: usize = 12;
+            const COUNT: usize = 10_000;
+
+            for tid in 1..=NR_THREAD {
+                let kv = kv.clone();
+                let _ = s.spawn(move |_| {
+                    let pool = global_pool().unwrap();
+                    let guard = pin();
+
+                    for i in 0..COUNT {
+                        let key = compose(tid, i, i % tid);
+
+                        // insert and lookup
+                        assert!(kv.insert(tid, key, key, &guard, pool).is_ok());
+                        let res = kv.search(&key, &guard, pool);
+                        assert!(res.is_some());
+
+                        // transfer the lookup result to the result array
+                        let (tid, i, value) = decompose(*res.unwrap());
+                        // produce_res(tid, i, value);
+
+                        // delete and lookup
+                        assert!(kv.delete(&key, &guard, pool));
+                        let res = kv.search(&key, &guard, pool);
+                        assert!(res.is_none());
                     }
                 });
             }
