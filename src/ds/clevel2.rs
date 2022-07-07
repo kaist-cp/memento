@@ -1235,7 +1235,7 @@ mod tests {
         const NR_THREAD: usize = 12;
         const COUNT: usize = 1_000_001;
 
-        let filepath = &get_test_abs_path("insert_search");
+        let filepath = &get_test_abs_path("clevel_ins_del_look");
 
         // open pool
         let pool_handle =
