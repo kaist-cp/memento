@@ -1052,7 +1052,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         pool: &PoolHandle,
     ) {
         let mut context = self.context.load(Ordering::Acquire, guard, pool);
-        let mut context_ref = unsafe { context.deref(pool) };
+        let context_ref = unsafe { context.deref(pool) };
         let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
 
         if REC {
@@ -1086,103 +1086,143 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             }
         }
 
-        loop {
-            context_ref = unsafe { context.deref(pool) };
-            let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
-            let last_level_ref = unsafe { last_level.deref(pool) };
-            let last_level_data = unsafe {
-                last_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            let last_level_size = last_level_data.len();
+        let mut res = self.resize_inner::<REC>(context, first_level, client, tid, guard, pool);
+        while let Err((context, first_level)) = res {
+            res = self.resize_inner::<false>(context, first_level, client, tid, guard, pool);
+        }
+    }
 
-            // if we don't need to resize, break out.
-            if context_ref.resize_size.load(Ordering::Relaxed) < last_level_size {
-                break;
-            }
+    fn resize_inner<'g, const REC: bool>(
+        &'g self,
+        mut context: PShared<'g, Context<K, V>>,
+        mut first_level: PShared<'g, Node<Bucket<K, V>>>,
+        client: &mut Resize<K, V>,
+        tid: usize,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<(), (PShared<'g, Context<K, V>>, PShared<'g, Node<Bucket<K, V>>>)> {
+        let mut context_ref = unsafe { context.deref(pool) };
+        let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
+        let last_level_ref = unsafe { last_level.deref(pool) };
+        let last_level_data = unsafe {
+            last_level_ref
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+        };
+        let last_level_size = last_level_data.len();
 
-            for (_bid, bucket) in last_level_data.iter().enumerate() {
-                for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
-                    let mut slot_ptr = slot.load(Ordering::Acquire, guard, pool);
-                    loop {
-                        if slot_ptr.is_null() {
-                            break;
-                        }
+        // if we don't need to resize, break out.
+        if context_ref.resize_size.load(Ordering::Relaxed) < last_level_size {
+            return Ok(());
+        }
 
-                        // tagged with 1 by concurrent move if resized. we should wait for the item to be moved before changing context.
-                        // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                        if slot_ptr.tag() == 1 {
-                            slot_ptr = slot.load(Ordering::Acquire, guard, pool);
-                            continue;
-                        }
-
-                        let _ = client.delete_chk.checkpoint::<false, _>(
-                            || (unsafe { slot.as_pptr(pool) }, PAtomic::from(slot_ptr)),
-                            tid,
-                            pool,
-                        );
-
-                        if slot
-                            .cas::<false>(
-                                slot_ptr,
-                                slot_ptr.with_tag(1),
-                                &mut client.delete_cas,
-                                tid,
-                                guard,
-                                pool,
-                            )
-                            .is_ok()
-                        {
-                            let res = self.resize_move::<false>(
-                                context,
-                                first_level,
-                                slot_ptr,
-                                client,
-                                tid,
-                                guard,
-                                pool,
-                            );
-
-                            context = res.0;
-                            first_level = res.1;
-                        }
-
+        for (_bid, bucket) in last_level_data.iter().enumerate() {
+            for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
+                let mut slot_ptr = slot.load(Ordering::Acquire, guard, pool);
+                loop {
+                    if slot_ptr.is_null() {
                         break;
                     }
-                }
-            }
 
-            context_ref = unsafe { context.deref(pool) };
-            let next_level = last_level_ref.next.load(Ordering::Acquire, guard, pool);
+                    // tagged with 1 by concurrent move if resized. we should wait for the item to be moved before changing context.
+                    // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
+                    if slot_ptr.tag() == 1 {
+                        slot_ptr = slot.load(Ordering::Acquire, guard, pool);
+                        continue;
+                    }
 
-            let context_new = client
-                .context_chk
-                .checkpoint::<REC, _>(
-                    || {
-                        let n = alloc_persist(
-                            Context {
-                                first_level: first_level.into(),
-                                last_level: next_level.into(),
-                                resize_size: AtomicUsize::new(
-                                    context_ref.resize_size.load(Ordering::Relaxed),
-                                ),
-                            },
+                    let _ = client.delete_chk.checkpoint::<false, _>(
+                        || (unsafe { slot.as_pptr(pool) }, PAtomic::from(slot_ptr)),
+                        tid,
+                        pool,
+                    );
+
+                    if slot
+                        .cas::<false>(
+                            slot_ptr,
+                            slot_ptr.with_tag(1),
+                            &mut client.delete_cas,
+                            tid,
+                            guard,
+                            pool,
+                        )
+                        .is_ok()
+                    {
+                        let res = self.resize_move::<false>(
+                            context,
+                            first_level,
+                            slot_ptr,
+                            client,
+                            tid,
+                            guard,
                             pool,
                         );
-                        PAtomic::from(n)
-                    },
-                    tid,
-                    pool,
-                )
-                .load(Ordering::Relaxed, guard);
 
-            unsafe {
-                guard.defer_pdestroy(last_level);
+                        context = res.0;
+                        first_level = res.1;
+                    }
+
+                    break;
+                }
             }
+        }
 
-            let mut res = self.context.cas::<REC>(
+        context_ref = unsafe { context.deref(pool) };
+        let next_level = last_level_ref.next.load(Ordering::Acquire, guard, pool);
+
+        let context_new = client
+            .context_chk
+            .checkpoint::<REC, _>(
+                || {
+                    let n = alloc_persist(
+                        Context {
+                            first_level: first_level.into(),
+                            last_level: next_level.into(),
+                            resize_size: AtomicUsize::new(
+                                context_ref.resize_size.load(Ordering::Relaxed),
+                            ),
+                        },
+                        pool,
+                    );
+                    PAtomic::from(n)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
+
+        unsafe {
+            guard.defer_pdestroy(last_level);
+        }
+
+        let mut res = self.context.cas::<REC>(
+            context,
+            context_new,
+            &mut client.context_cas,
+            tid,
+            guard,
+            pool,
+        );
+
+        while let Err(e) = res {
+            context = e;
+            let context_ref = unsafe { context.deref(pool) };
+            let context_new_ref = unsafe { context_new.deref(pool) };
+            let cur_fst_lv = context_ref.first_level.load(Ordering::Acquire, guard);
+            let cur_size = cmp::max(
+                context_new_ref.resize_size.load(Ordering::Relaxed),
+                context_ref.resize_size.load(Ordering::Relaxed),
+            );
+
+            context_new_ref
+                .first_level
+                .store(cur_fst_lv, Ordering::Relaxed);
+            context_new_ref
+                .resize_size
+                .store(cur_size, Ordering::Relaxed);
+
+            res = self.context.cas::<false>(
                 context,
                 context_new,
                 &mut client.context_cas,
@@ -1190,34 +1230,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 guard,
                 pool,
             );
-
-            while let Err(e) = res {
-                context = e;
-                let context_ref = unsafe { context.deref(pool) };
-                let context_new_ref = unsafe { context_new.deref(pool) };
-                let cur_fst_lv = context_ref.first_level.load(Ordering::Acquire, guard);
-                let cur_size = cmp::max(
-                    context_new_ref.resize_size.load(Ordering::Relaxed),
-                    context_ref.resize_size.load(Ordering::Relaxed),
-                );
-
-                context_new_ref
-                    .first_level
-                    .store(cur_fst_lv, Ordering::Relaxed);
-                context_new_ref
-                    .resize_size
-                    .store(cur_size, Ordering::Relaxed);
-
-                res = self.context.cas::<false>(
-                    context,
-                    context_new,
-                    &mut client.context_cas,
-                    tid,
-                    guard,
-                    pool,
-                );
-            }
         }
+
+        Err((context_new, first_level))
     }
 
     /// Check if resizing
@@ -1704,7 +1719,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 }
 
 #[cfg(test)]
-mod smoke_tests {
+mod other_tests {
     use crate::{
         pmem::RootObj,
         test_utils::tests::{run_test, TestRootObj},
