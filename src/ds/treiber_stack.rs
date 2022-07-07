@@ -2,10 +2,10 @@
 
 use core::sync::atomic::Ordering;
 
-use etrace::{ok_or, some_or};
+use etrace::some_or;
 
 use super::stack::*;
-use crate::pepoch::{self as epoch, Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{Guard, PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
@@ -38,23 +38,35 @@ impl<T: Collectable> Collectable for Node<T> {
 }
 
 /// Try push memento
-#[derive(Debug, Default)]
-pub struct TryPush {
+#[derive(Debug)]
+pub struct TryPush<T: Collectable> {
+    top: Checkpoint<PAtomic<Node<T>>>,
     insert: Cas,
 }
 
-unsafe impl Send for TryPush {}
+unsafe impl<T: Collectable> Send for TryPush<T> {}
 
-impl Collectable for TryPush {
+impl<T: Clone + Collectable> Default for TryPush<T> {
+    fn default() -> Self {
+        Self {
+            top: Default::default(),
+            insert: Default::default(),
+        }
+    }
+}
+
+impl<T: Collectable> Collectable for TryPush<T> {
     fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut try_push.top, tid, gc, pool);
         Cas::filter(&mut try_push.insert, tid, gc, pool);
     }
 }
 
-impl TryPush {
+impl<T: Collectable> TryPush<T> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
+        self.top.clear();
         self.insert.clear();
     }
 }
@@ -63,7 +75,7 @@ impl TryPush {
 #[derive(Debug)]
 pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
-    try_push: TryPush,
+    try_push: TryPush<T>,
 }
 
 impl<T: Clone + Collectable> Default for Push<T> {
@@ -188,15 +200,25 @@ impl<T: Clone + Collectable> TreiberStack<T> {
     pub fn try_push<const REC: bool>(
         &self,
         node: PShared<'_, Node<T>>,
-        try_push: &mut TryPush,
+        try_push: &mut TryPush<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let top = self.top.load(Ordering::SeqCst, guard, pool);
-        let node_ref = unsafe { node.deref(pool) };
-        node_ref.next.store(top, Ordering::SeqCst);
-        persist_obj(&node_ref.next, false); // we do CAS right after that
+        let top = try_push
+            .top
+            .checkpoint::<REC, _>(
+                || {
+                    let top = self.top.load(Ordering::SeqCst, guard, pool);
+                    let node_ref = unsafe { node.deref(pool) };
+                    node_ref.next.store(top, Ordering::SeqCst);
+                    persist_obj(&node_ref.next, false); // we do CAS right after that
+                    PAtomic::from(top)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         self.top
             .cas::<REC>(top, node, &mut try_push.insert, tid, guard, pool)
@@ -212,22 +234,18 @@ impl<T: Clone + Collectable> TreiberStack<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let node = POwned::new(Node::from(value), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = ok_or!(
-            push.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
-            e,
-            unsafe {
-                drop(
-                    e.new
-                        .load(Ordering::Relaxed, epoch::unprotected())
-                        .into_owned(),
-                );
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+        let node = push
+            .node
+            .checkpoint::<REC, _>(
+                || {
+                    let node = POwned::new(Node::from(value), pool);
+                    persist_obj(unsafe { node.deref(pool) }, true);
+                    PAtomic::from(node)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         if self
             .try_push::<REC>(node, &mut push.try_push, tid, guard, pool)
@@ -254,13 +272,17 @@ impl<T: Clone + Collectable> TreiberStack<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let top = self.top.load(Ordering::SeqCst, guard, pool);
-        let top = ok_or!(
-            try_pop.top.checkpoint::<REC>(PAtomic::from(top), tid, pool),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
+        let top = try_pop
+            .top
+            .checkpoint::<REC, _>(
+                || {
+                    let top = self.top.load(Ordering::SeqCst, guard, pool);
+                    PAtomic::from(top)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         let top_ref = some_or!(unsafe { top.as_ref(pool) }, return Ok(None));
         let next = top_ref.next.load(Ordering::SeqCst, guard);

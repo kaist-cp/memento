@@ -4,7 +4,6 @@ use crate::ploc::insert_delete::{self, SMOAtomic};
 use crate::ploc::{not_deleted, Checkpoint, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
-use etrace::ok_or;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
@@ -248,22 +247,18 @@ impl<T: Clone + Collectable> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let node = POwned::new(Node::from(value), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = ok_or!(
-            enq.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
-            e,
-            unsafe {
-                drop(
-                    e.new
-                        .load(Ordering::Relaxed, epoch::unprotected())
-                        .into_owned(),
-                );
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+        let node = enq
+            .node
+            .checkpoint::<REC, _>(
+                || {
+                    let node = POwned::new(Node::from(value), pool);
+                    persist_obj(unsafe { node.deref(pool) }, true);
+                    PAtomic::from(node)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         if self.try_enqueue::<REC>(node, guard, pool).is_ok() {
             return;
@@ -300,15 +295,12 @@ impl<T: Clone + Collectable> Queue<T> {
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
         };
 
-        let chk = ok_or!(
-            try_deq.head_next.checkpoint::<REC>(
-                (PAtomic::from(head), PAtomic::from(next)),
-                tid,
-                pool
-            ),
-            e,
-            e.current
+        let chk = try_deq.head_next.checkpoint::<REC, _>(
+            || (PAtomic::from(head), PAtomic::from(next)),
+            tid,
+            pool,
         );
+
         let head = chk.0.load(Ordering::Relaxed, guard);
         let next = chk.1.load(Ordering::Relaxed, guard);
 

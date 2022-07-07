@@ -2,8 +2,7 @@
 
 use std::{sync::atomic::Ordering, time::Duration};
 
-use crossbeam_epoch::{self as epoch, Guard};
-use etrace::ok_or;
+use crossbeam_epoch::Guard;
 
 use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
@@ -184,35 +183,25 @@ impl<T: Clone + Collectable> Exchanger<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<T, TryFail> {
-        let node = POwned::new(Node::from(value), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = ok_or!(
-            try_xchg
-                .node
-                .checkpoint::<REC>(PAtomic::from(node), tid, pool),
-            e,
-            unsafe {
-                drop(
-                    e.new
-                        .load(Ordering::Relaxed, epoch::unprotected())
-                        .into_owned(),
-                );
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+        let node = try_xchg
+            .node
+            .checkpoint::<REC, _>(
+                || {
+                    let node = POwned::new(Node::from(value), pool);
+                    persist_obj(unsafe { node.deref(pool) }, true);
+                    PAtomic::from(node)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         // Loads previously read slots or reads new ones
         let init_slot = self.slot.load(true, Ordering::SeqCst, guard);
-        let init_slot = ok_or!(
-            try_xchg
-                .init_slot
-                .checkpoint::<REC>(PAtomic::from(init_slot), tid, pool),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
+        let init_slot = try_xchg
+            .init_slot
+            .checkpoint::<REC, _>(|| PAtomic::from(init_slot), tid, pool)
+            .load(Ordering::Relaxed, guard);
 
         // If slot is null, insert and wait
         // - return fail on failure
@@ -309,14 +298,10 @@ impl<T: Clone + Collectable> Exchanger<T> {
         std::thread::sleep(Duration::from_nanos(100));
 
         let wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
-        let wait_slot = ok_or!(
-            try_xchg
-                .wait_slot
-                .checkpoint::<REC>(PAtomic::from(wait_slot), tid, pool),
-            e,
-            e.current
-        )
-        .load(Ordering::Relaxed, guard);
+        let wait_slot = try_xchg
+            .wait_slot
+            .checkpoint::<REC, _>(|| PAtomic::from(wait_slot), tid, pool)
+            .load(Ordering::Relaxed, guard);
 
         // If wait_slot is changed from me to another node, I take my partner's value
         if wait_slot != mine {

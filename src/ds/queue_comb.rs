@@ -9,7 +9,6 @@ use crate::PDefault;
 use array_init::array_init;
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
-use etrace::ok_or;
 use libc::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tinyvec::{tiny_vec, TinyVec};
@@ -31,11 +30,7 @@ impl Combinable for Enqueue {
         tid: usize,
         pool: &PoolHandle,
     ) -> usize {
-        ok_or!(
-            self.activate.checkpoint::<REC>(activate, tid, pool),
-            e,
-            e.current
-        )
+        self.activate.checkpoint::<REC, _>(|| activate, tid, pool)
     }
 
     fn peek_retval(&mut self) -> usize {
@@ -67,11 +62,7 @@ impl Combinable for Dequeue {
         tid: usize,
         pool: &PoolHandle,
     ) -> usize {
-        ok_or!(
-            self.activate.checkpoint::<REC>(activate, tid, pool),
-            e,
-            e.current
-        )
+        self.activate.checkpoint::<REC, _>(|| activate, tid, pool)
     }
 
     fn peek_retval(&mut self) -> usize {
