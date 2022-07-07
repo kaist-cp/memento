@@ -108,17 +108,13 @@ impl<K, V: Collectable> InsertLoop<K, V> {
 /// Insert inner client
 #[derive(Debug)]
 pub struct InsertInner<K, V: Collectable> {
-    insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
-    insert_cas: Cas,
-    add_lv: AddLevel<K, V>,
+    insert_inner_inner: InsertInnerInner<K, V>,
 }
 
 impl<K, V: Collectable> Default for InsertInner<K, V> {
     fn default() -> Self {
         Self {
-            insert_chk: Default::default(),
-            insert_cas: Default::default(),
-            add_lv: Default::default(),
+            insert_inner_inner: Default::default(),
         }
     }
 }
@@ -130,9 +126,7 @@ impl<K, V: Collectable> Collectable for InsertInner<K, V> {
         gc: &mut GarbageCollection,
         pool: &mut PoolHandle,
     ) {
-        Checkpoint::filter(&mut insert_inner.insert_chk, tid, gc, pool);
-        Cas::filter(&mut insert_inner.insert_cas, tid, gc, pool);
-        AddLevel::filter(&mut insert_inner.add_lv, tid, gc, pool);
+        InsertInnerInner::filter(&mut insert_inner.insert_inner_inner, tid, gc, pool);
     }
 }
 
@@ -140,9 +134,81 @@ impl<K, V: Collectable> InsertInner<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
+        self.insert_inner_inner.clear();
+    }
+}
+
+/// Insert inner inner client
+#[derive(Debug)]
+pub struct InsertInnerInner<K, V: Collectable> {
+    try_slot_insert: TrySlotInsert<K, V>,
+    add_lv: AddLevel<K, V>,
+}
+
+impl<K, V: Collectable> Default for InsertInnerInner<K, V> {
+    fn default() -> Self {
+        Self {
+            try_slot_insert: Default::default(),
+            add_lv: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for InsertInnerInner<K, V> {
+    fn filter(
+        insert_inner_inner: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        TrySlotInsert::filter(&mut insert_inner_inner.try_slot_insert, tid, gc, pool);
+        AddLevel::filter(&mut insert_inner_inner.add_lv, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> InsertInnerInner<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_slot_insert.clear();
+        self.add_lv.clear();
+    }
+}
+
+/// Insert inner inner client
+#[derive(Debug)]
+pub struct TrySlotInsert<K, V: Collectable> {
+    insert_chk: Checkpoint<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>,
+    insert_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
+    fn default() -> Self {
+        Self {
+            insert_chk: Default::default(),
+            insert_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for TrySlotInsert<K, V> {
+    fn filter(
+        try_slot_insert: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut try_slot_insert.insert_chk, tid, gc, pool);
+        Cas::filter(&mut try_slot_insert.insert_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> TrySlotInsert<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
         self.insert_chk.clear();
         self.insert_cas.clear();
-        self.add_lv.clear();
     }
 }
 
@@ -1382,18 +1448,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        client: &mut InsertInner<K, V>,
+        tsi: &mut TrySlotInsert<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
         if REC {
-            if let Some((size, slot_p)) = client.insert_chk.peek(tid, pool) {
+            if let Some((size, slot_p)) = tsi.insert_chk.peek(tid, pool) {
                 let res = self.try_slot_insert_inner::<REC>(
                     slot_p,
                     slot_new,
                     size,
-                    &mut client.insert_cas,
+                    &mut tsi.insert_cas,
                     tid,
                     guard,
                     pool,
@@ -1431,7 +1497,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                         continue;
                     }
 
-                    let (size, slot_p) = client.insert_chk.checkpoint::<false, _>(
+                    let (size, slot_p) = tsi.insert_chk.checkpoint::<false, _>(
                         || (size, unsafe { slot.as_pptr(pool) }),
                         tid,
                         pool,
@@ -1441,7 +1507,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                         slot_p,
                         slot_new,
                         size,
-                        &mut client.insert_cas,
+                        &mut tsi.insert_cas,
                         tid,
                         guard,
                         pool,
@@ -1463,16 +1529,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        client: &mut InsertInner<K, V>,
+        in_in_in: &mut InsertInnerInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
-    {
-        if let Ok(result) =
-            self.try_slot_insert::<REC>(context, slot, key_hashes, client, tid, guard, pool)
-        {
-            return Ok((context, result));
+    ) -> Result<FindResult<'g, K, V>, PShared<'g, Context<K, V>>> {
+        if let Ok(result) = self.try_slot_insert::<REC>(
+            context,
+            slot,
+            key_hashes,
+            &mut in_in_in.try_slot_insert,
+            tid,
+            guard,
+            pool,
+        ) {
+            return Ok(result);
         }
 
         // No remaining slots. Resize.
@@ -1482,7 +1553,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         let (context_new, added) = self.add_level::<REC>(
             context,
             first_level_ref,
-            &mut client.add_lv,
+            &mut in_in_in.add_lv,
             tid,
             guard,
             pool,
@@ -1500,17 +1571,17 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         sender: &mpsc::Sender<()>,
-        insert_inner: &mut InsertInner<K, V>,
+        in_in: &mut InsertInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
+    ) -> FindResult<'g, K, V> {
         let mut res = self.insert_inner_inner::<REC>(
             context,
             slot,
             key_hashes,
             sender,
-            insert_inner,
+            &mut in_in.insert_inner_inner,
             tid,
             guard,
             pool,
@@ -1522,7 +1593,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 slot,
                 key_hashes,
                 sender,
-                insert_inner,
+                &mut in_in.insert_inner_inner,
                 tid,
                 guard,
                 pool,
@@ -1559,7 +1630,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             )
             .map(|p| unsafe { p.deref(pool) });
 
-        let (_, result) = self.insert_inner::<REC>(
+        let result = self.insert_inner::<REC>(
             context,
             slot,
             key_hashes,
