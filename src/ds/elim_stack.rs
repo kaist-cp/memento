@@ -2,8 +2,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crossbeam_epoch::{self as epoch, Guard};
-use etrace::ok_or;
+use crossbeam_epoch::Guard;
 use rand::{thread_rng, Rng};
 
 use crate::{
@@ -49,7 +48,7 @@ impl<T: Collectable> Collectable for Request<T> {
 #[derive(Debug)]
 pub struct TryPush<T: Clone + Collectable> {
     /// try push memento for inner stack
-    try_push: treiber_stack::TryPush,
+    try_push: treiber_stack::TryPush<Request<T>>,
 
     /// elimination exchange index
     elim_idx: usize,
@@ -273,22 +272,18 @@ impl<T: Clone + Collectable> ElimStack<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let node = POwned::new(Node::from(Request::Push(value)), pool);
-        persist_obj(unsafe { node.deref(pool) }, true);
-
-        let node = ok_or!(
-            push.node.checkpoint::<REC>(PAtomic::from(node), tid, pool),
-            e,
-            unsafe {
-                drop(
-                    e.new
-                        .load(Ordering::Relaxed, epoch::unprotected())
-                        .into_owned(),
-                );
-                e.current
-            }
-        )
-        .load(Ordering::Relaxed, guard);
+        let node = push
+            .node
+            .checkpoint::<REC, _>(
+                || {
+                    let node = POwned::new(Node::from(Request::Push(value)), pool);
+                    persist_obj(unsafe { node.deref(pool) }, true);
+                    PAtomic::from(node)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         if self
             .try_push::<REC>(node, &mut push.try_push, tid, guard, pool)
