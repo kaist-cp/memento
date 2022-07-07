@@ -807,63 +807,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         }
     }
 
-    fn try_slot_insert<'g>(
-        &'g self,
-        context: PShared<'g, Context<K, V>>,
-        slot_new: PShared<'g, Slot<K, V>>,
-        key_hashes: [u32; 2],
-        guard: &'g Guard,
-        pool: &'g PoolHandle,
-    ) -> Result<FindResult<'g, K, V>, ()> {
-        let context_ref = unsafe { context.deref(pool) };
-        let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
-        for array in context_ref.level_iter(guard) {
-            arrays.push(array);
-        }
-
-        // top-to-bottom search
-        for array in arrays.into_iter().rev() {
-            let size = array.len();
-            if context_ref.resize_size >= size {
-                break;
-            }
-
-            // i and then key_hash: for load factor... let's insert to less crowded bucket... (fuzzy)
-            let key_hashes = key_hashes
-                .into_iter()
-                .map(|key_hash| key_hash as usize % size)
-                .sorted()
-                .dedup();
-            for i in 0..SLOTS_IN_BUCKET {
-                for key_hash in key_hashes.clone() {
-                    let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
-
-                    if !slot.load(Ordering::Acquire, guard).is_null() {
-                        continue;
-                    }
-
-                    if let Ok(slot_ptr) = slot.compare_exchange(
-                        PShared::null(),
-                        slot_new,
-                        Ordering::AcqRel,
-                        Ordering::Relaxed,
-                        guard,
-                    ) {
-                        return Ok(FindResult {
-                            size,
-                            slot,
-                            slot_ptr,
-                        });
-                    }
-                }
-            }
-        }
-
-        Err(())
-
-        // // println!("[insert_inner] tid = {tid}, key = {}, count = {}, level = {}, bucket index = {}, slot index = {}, slot = {:?}", unsafe { slot_new.deref() }.key, found.0, found.1, found.2, index, slot as *const _);
-    }
-
     pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
         let context = self.context.load(Ordering::Acquire, guard);
         let context_ref = unsafe { context.deref(pool) };
@@ -895,9 +838,70 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     }
 
     // TODO: memento
+    fn try_slot_insert<'g>(
+        &'g self,
+        context: PShared<'g, Context<K, V>>, // stable
+        slot_new: PShared<'g, Slot<K, V>>,
+        key_hashes: [u32; 2],
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<FindResult<'g, K, V>, ()> {
+        // TODO: if REC checkpoint slot and CAS
+
+        let context_ref = unsafe { context.deref(pool) };
+        let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
+        for array in context_ref.level_iter(guard) {
+            arrays.push(array);
+        }
+
+        // top-to-bottom search
+        for array in arrays.into_iter().rev() {
+            let size = array.len();
+            if context_ref.resize_size >= size {
+                break;
+            }
+
+            // i and then key_hash: for load factor... let's insert to less crowded bucket... (fuzzy)
+            let key_hashes = key_hashes
+                .into_iter()
+                .map(|key_hash| key_hash as usize % size)
+                .sorted()
+                .dedup();
+            for i in 0..SLOTS_IN_BUCKET {
+                for key_hash in key_hashes.clone() {
+                    let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
+
+                    if !slot.load(Ordering::Acquire, guard).is_null() {
+                        continue;
+                    }
+
+                    // TODO: checkpoint slot
+
+                    // TODO: CAS
+                    if let Ok(slot_ptr) = slot.compare_exchange(
+                        PShared::null(),
+                        slot_new,
+                        Ordering::AcqRel,
+                        Ordering::Relaxed,
+                        guard,
+                    ) {
+                        return Ok(FindResult {
+                            size,
+                            slot,
+                            slot_ptr,
+                        });
+                    }
+                }
+            }
+        }
+
+        Err(())
+    }
+
+    // TODO: memento
     fn insert_inner_inner<'g>(
         &'g self,
-        mut context: PShared<'g, Context<K, V>>,
+        context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
@@ -905,6 +909,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
     {
+        // TODO: checkpoint context
         if let Ok(result) = self.try_slot_insert(context, slot, key_hashes, guard, pool) {
             return Ok((context, result));
         }
@@ -920,6 +925,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         Err(context_new)
     }
 
+    // TODO: memento
     fn insert_inner<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
@@ -938,67 +944,88 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         res.unwrap()
     }
 
+    fn move_if_resized_inner<'g>(
+        &'g self,
+        context: PShared<'g, Context<K, V>>,
+        insert_result: FindResult<'g, K, V>,
+        key_hashes: [u32; 2],
+        resize_send: &mpsc::Sender<()>,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
+        // If the inserted slot is being resized, try again.
+        fence(Ordering::SeqCst);
+
+        // If the context remains the same, it's done.
+        let context_new = self.context.load(Ordering::Acquire, guard);
+        if context == context_new {
+            return Ok(());
+        }
+
+        // If the inserted array is not being resized, it's done.
+        let context_new_ref = unsafe { context_new.deref(pool) };
+        if context_new_ref.resize_size < insert_result.size {
+            return Ok(());
+        }
+
+        // Move the slot if the slot is not already (being) moved.
+        //
+        // the resize thread may already have passed the slot. I need to move it.
+        if insert_result
+            .slot
+            .compare_exchange(
+                insert_result.slot_ptr,
+                insert_result.slot_ptr.with_tag(1),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                guard,
+            )
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        let (context_insert, insert_result_insert) = self.insert_inner(
+            context_new,
+            insert_result.slot_ptr,
+            key_hashes,
+            resize_send,
+            guard,
+            pool,
+        );
+        insert_result
+            .slot
+            .store(PShared::null().with_tag(1), Ordering::Release);
+
+        Err((context_insert, insert_result_insert))
+    }
+
     fn move_if_resized<'g>(
         &'g self,
-        mut context: PShared<'g, Context<K, V>>,
-        mut insert_result: FindResult<'g, K, V>,
+        context: PShared<'g, Context<K, V>>,
+        insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
-        loop {
-            // If the inserted slot is being resized, try again.
-            fence(Ordering::SeqCst);
-
-            // If the context remains the same, it's done.
-            let context_new = self.context.load(Ordering::Acquire, guard);
-            if context == context_new {
-                return;
-            }
-
-            // If the inserted array is not being resized, it's done.
-            let context_new_ref = unsafe { context_new.deref(pool) };
-            if context_new_ref.resize_size < insert_result.size {
-                break;
-            }
-
-            // Move the slot if the slot is not already (being) moved.
-            //
-            // the resize thread may already have passed the slot. I need to move it.
-            if insert_result
-                .slot
-                .compare_exchange(
-                    insert_result.slot_ptr,
-                    insert_result.slot_ptr.with_tag(1),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard,
-                )
-                .is_err()
-            {
-                break;
-            }
-
-            // // println!(
-            //     "[insert] tid = {tid} inserted {} to resized array ({}, {}). move.",
-            //     unsafe { insert_result.slot_ptr.deref() }.key,
-            //     insert_result.size,
-            //     insert_result.bucket_index
-            // );
-            let (context_insert, insert_result_insert) = self.insert_inner(
-                context_new,
-                insert_result.slot_ptr,
+        let mut res = self.move_if_resized_inner(
+            context,
+            insert_result,
+            key_hashes,
+            resize_send,
+            guard,
+            pool,
+        );
+        while let Err((context, insert_result)) = res {
+            res = self.move_if_resized_inner(
+                context,
+                insert_result,
                 key_hashes,
                 resize_send,
                 guard,
                 pool,
             );
-            insert_result
-                .slot
-                .store(PShared::null().with_tag(1), Ordering::Release);
-            context = context_insert;
-            insert_result = insert_result_insert;
         }
     }
 
@@ -1028,8 +1055,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         let (context_new, insert_result) =
             self.insert_inner(context, slot, key_hashes, resize_send, guard, pool);
         self.move_if_resized(
-            context_new,
-            insert_result,
+            context_new,   // stable by insert_inner
+            insert_result, // stable by insert_inner
             key_hashes,
             resize_send,
             guard,
