@@ -285,7 +285,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
             .load(Ordering::Relaxed, guard);
 
         let top_ref = some_or!(unsafe { top.as_ref(pool) }, return Ok(None));
-        let next = top_ref.next.load(Ordering::SeqCst, guard);
+        let next = top_ref.next.load(Ordering::SeqCst, guard); // next is stable because top is stable here (invariant of stack)
 
         self.top
             .cas::<REC>(top, next, &mut try_pop.delete, tid, guard, pool)
