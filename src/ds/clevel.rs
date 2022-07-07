@@ -32,35 +32,23 @@ const TINY_VEC_CAPACITY: usize = 8;
 /// Insert client
 #[derive(Debug)]
 pub struct Insert<K, V: Collectable> {
-    occupied: Checkpoint<bool>,
+    context_occupied: Checkpoint<PAtomic<Context<K, V>, bool>>,
     node: Checkpoint<PAtomic<Slot<K, V>>>,
-    insert_inner: InsertInner<K, V>,
-    prev_slot: Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
-    move_done: Checkpoint<bool>,
-    tag_cas: Cas,
 }
 
 impl<K, V: Collectable> Default for Insert<K, V> {
     fn default() -> Self {
         Self {
-            occupied: Default::default(),
+            context_occupied: Default::default(),
             node: Default::default(),
-            insert_inner: Default::default(),
-            prev_slot: Default::default(),
-            move_done: Default::default(),
-            tag_cas: Default::default(),
         }
     }
 }
 
 impl<K, V: Collectable> Collectable for Insert<K, V> {
     fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut insert.occupied, tid, gc, pool);
+        Checkpoint::filter(&mut insert.context_occupied, tid, gc, pool);
         Checkpoint::filter(&mut insert.node, tid, gc, pool);
-        InsertInner::filter(&mut insert.insert_inner, tid, gc, pool);
-        Checkpoint::filter(&mut insert.prev_slot, tid, gc, pool);
-        Checkpoint::filter(&mut insert.move_done, tid, gc, pool);
-        Cas::filter(&mut insert.tag_cas, tid, gc, pool);
     }
 }
 
@@ -68,11 +56,47 @@ impl<K, V: Collectable> Insert<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
-        self.occupied.clear();
+        self.context_occupied.clear();
         self.node.clear();
+    }
+}
+
+/// Insert Loop client
+#[derive(Debug)]
+pub struct InsertLoop<K, V: Collectable> {
+    insert_inner: InsertInner<K, V>,
+    prev_slot_chk: Checkpoint<Option<PPtr<DetectableCASAtomic<Slot<K, V>>>>>,
+    context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    tag_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for InsertLoop<K, V> {
+    fn default() -> Self {
+        Self {
+            insert_inner: Default::default(),
+            prev_slot_chk: Default::default(),
+            context_new_chk: Default::default(),
+            tag_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for InsertLoop<K, V> {
+    fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        InsertInner::filter(&mut insert.insert_inner, tid, gc, pool);
+        Checkpoint::filter(&mut insert.prev_slot_chk, tid, gc, pool);
+        Checkpoint::filter(&mut insert.context_new_chk, tid, gc, pool);
+        Cas::filter(&mut insert.tag_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> InsertLoop<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
         self.insert_inner.clear();
-        self.prev_slot.clear();
-        self.move_done.clear();
+        self.prev_slot_chk.clear();
+        self.context_new_chk.clear();
         self.tag_cas.clear();
     }
 }
@@ -1506,24 +1530,31 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
 
     fn insert_loop<'g, const REC: bool>(
         &'g self,
-        mut context: PShared<'g, Context<K, V>>,
+        context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         prev_slot: Option<&DetectableCASAtomic<Slot<K, V>>>,
         sender: &mpsc::Sender<()>,
-        move_done: &mut Checkpoint<bool>,
-        tag_cas: &mut Cas,
-        insert_inner: &mut InsertInner<K, V>,
+        insert_loop: &mut InsertLoop<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
+        let prev_slot = insert_loop
+            .prev_slot_chk
+            .checkpoint::<REC, _>(
+                || prev_slot.map(|slot_ref| unsafe { slot_ref.as_pptr(pool) }),
+                tid,
+                pool,
+            )
+            .map(|p| unsafe { p.deref(pool) });
+
         let (_, result) = self.insert_inner::<REC>(
             context,
             slot,
             key_hashes,
             sender,
-            insert_inner,
+            &mut insert_loop.insert_inner,
             tid,
             guard,
             pool,
@@ -1538,18 +1569,21 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         // If the inserted slot is being resized, try again.
         fence(Ordering::SeqCst);
 
-        // If the context remains the same, it's done.
-        context = self.context.load(Ordering::Acquire, guard, pool);
+        let context_new = insert_loop
+            .context_new_chk
+            .checkpoint::<REC, _>(
+                || {
+                    // If the context remains the same, it's done.
+                    PAtomic::from(self.context.load(Ordering::Acquire, guard, pool))
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
 
         // If the inserted array is not being resized, it's done.
-        let context_ref = unsafe { context.deref(pool) };
-
-        let done = move_done.checkpoint::<REC, _>(
-            || context_ref.resize_size.load(Ordering::Relaxed) < result.size,
-            tid,
-            pool,
-        );
-        if done {
+        let context_ref = unsafe { context_new.deref(pool) };
+        if context_ref.resize_size.load(Ordering::Relaxed) < result.size {
             return Ok(());
         }
 
@@ -1562,7 +1596,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             .cas::<REC>(
                 result.slot_ptr,
                 result.slot_ptr.with_tag(1),
-                tag_cas,
+                &mut insert_loop.tag_cas,
                 tid,
                 guard,
                 pool,
@@ -1572,7 +1606,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return Ok(());
         }
 
-        Err((context, result))
+        Err((context_new, result))
     }
 
     /// Insert
@@ -1590,35 +1624,42 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         V: Clone,
     {
         let (key_tag, key_hashes) = hashes(&key);
-        let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
 
-        let occupied = find_result.is_some();
-        let occupied = client.occupied.checkpoint::<REC, _>(|| occupied, tid, pool);
+        let chk = client.context_occupied.checkpoint::<REC, _>(
+            || {
+                let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
+                (PAtomic::from(context), find_result.is_some())
+            },
+            tid,
+            pool,
+        );
+        let (context, occupied) = (chk.0.load(Ordering::Relaxed, guard), chk.1);
         if occupied {
             // occupied is true if `find_result` is `Some`
             return Err(InsertError::Occupied);
         }
 
-        let slot = alloc_persist(Slot::from((key, value)), pool)
-            .with_high_tag(key_tag as usize)
-            .into_shared(guard);
         let slot = client
             .node
-            .checkpoint::<REC, _>(|| PAtomic::from(slot), tid, pool)
+            .checkpoint::<REC, _>(
+                || {
+                    let slot = alloc_persist(Slot::from((key, value)), pool)
+                        .with_high_tag(key_tag as usize)
+                        .into_shared(guard);
+                    PAtomic::from(slot)
+                },
+                tid,
+                pool,
+            )
             .load(Ordering::Relaxed, guard);
-
-        let prev_slot = client
-            .prev_slot
-            .checkpoint::<REC, _>(|| None, tid, pool)
-            .map(|p| unsafe { p.deref(pool) });
 
         let mut res = self.insert_loop::<REC>(
             context,
             slot,
             key_hashes,
-            prev_slot,
+            None,
             sender,
-            &mut client.move_done,
+            &mut client.context_new_chk,
             &mut client.tag_cas,
             &mut client.insert_inner,
             tid,
@@ -1635,9 +1676,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
                 context,
                 slot,
                 key_hashes,
-                prev_slot,
+                Some(result.slot),
                 sender,
-                &mut client.move_done,
+                &mut client.context_new_chk,
                 &mut client.tag_cas,
                 &mut client.insert_inner,
                 tid,
