@@ -1051,10 +1051,25 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let mut context = self.context.load(Ordering::Acquire, guard, pool);
+        let context = self.context.load(Ordering::Acquire, guard, pool);
         let context_ref = unsafe { context.deref(pool) };
-        let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+        let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
 
+        let mut res = self.resize_inner::<REC>(context, first_level, client, tid, guard, pool);
+        while let Err((context, first_level)) = res {
+            res = self.resize_inner::<false>(context, first_level, client, tid, guard, pool);
+        }
+    }
+
+    fn resize_inner<'g, const REC: bool>(
+        &'g self,
+        mut context: PShared<'g, Context<K, V>>,
+        mut first_level: PShared<'g, Node<Bucket<K, V>>>,
+        client: &mut Resize<K, V>,
+        tid: usize,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<(), (PShared<'g, Context<K, V>>, PShared<'g, Node<Bucket<K, V>>>)> {
         if REC {
             if let Some((slot, slot_ptr)) = client.delete_chk.peek(tid, pool) {
                 let slot = unsafe { slot.deref(pool) };
@@ -1086,21 +1101,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             }
         }
 
-        let mut res = self.resize_inner::<REC>(context, first_level, client, tid, guard, pool);
-        while let Err((context, first_level)) = res {
-            res = self.resize_inner::<false>(context, first_level, client, tid, guard, pool);
-        }
-    }
-
-    fn resize_inner<'g, const REC: bool>(
-        &'g self,
-        mut context: PShared<'g, Context<K, V>>,
-        mut first_level: PShared<'g, Node<Bucket<K, V>>>,
-        client: &mut Resize<K, V>,
-        tid: usize,
-        guard: &'g Guard,
-        pool: &'g PoolHandle,
-    ) -> Result<(), (PShared<'g, Context<K, V>>, PShared<'g, Node<Bucket<K, V>>>)> {
         let mut context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
         let last_level_ref = unsafe { last_level.deref(pool) };
