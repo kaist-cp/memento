@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import os.path
 import git
+import shutil
 
 objs = {
     "hash": {
@@ -57,19 +58,29 @@ objs = {
                 'x_label': 'Threads',
                 'y_label': 'Throughput (M op/s)',
             },
-            'latency': {
-                'workloads': {
-                    'insert': {'label': "(a) Insert"},
-                    'pos_search': {'label': "(b) Pos. Search"},
-                    'neg_search': {'label': "(c) Neg. Search"},
-                    'delete': {'label': "(d) Delete"},
-                },
-                'distributions': ['uniform'],
+            # 'latency': {
+            #     'workloads': {
+            #         'insert': {'label': "(a) Insert"},
+            #         'pos_search': {'label': "(b) Pos. Search"},
+            #         'neg_search': {'label': "(c) Neg. Search"},
+            #         'delete': {'label': "(d) Delete"},
+            #     },
+            #     'distributions': ['uniform'],
 
-                'x': ['0%', '50%', '90%', '99%', '99.9%', '99.99%', '99.999%'],
-                'x_label': 'Percentile',
-                'y_label': 'Latency (ns)',
-            },
+            #     'x': ['0%', '50%', '90%', '99%', '99.9%', '99.99%', '99.999%'],
+            #     'x_label': 'Percentile',
+            #     'y_label': 'Latency (ns)',
+            # },
+            # 'load_factor': {
+            #     'workloads': {
+            #         'insert',
+            #     },
+            #     'distributions': ['uniform'],
+
+            #     'x': ['0', '50', '100', '150', '200'],
+            #     'x_label': 'Number of insertions(M)',
+            #     'y_label': 'Load Factor',
+            # },
         },
     },
 }
@@ -105,6 +116,7 @@ def get_filepath(bench, dist, workload, target):
 
 
 def read_throughputs(filepath):
+    print("read", filepath)
     threads = []
     throughputs = []
     with open(filepath, "r") as f:
@@ -121,7 +133,7 @@ def read_throughputs(filepath):
     return threads, throughputs
 
 
-N_LATENCY = len(objs['hash']['bench_kinds']['latency']['x'])
+N_LATENCY = 7 # ['0%', '50%', '90%', '99%', '99.9%', '99.99%', '99.999%']
 
 
 def read_latency(filepath):
@@ -160,10 +172,12 @@ def draw_ax(bench, ax, datas):
                     color=data['color'], linestyle=data['style'], marker=data['marker'])
 
     if bench == "latency":
-        ax.tick_params(labelrotation=45)
+        print(data['xlabel'])
+        ax.tick_params(labelrotation=25)
         ax.set_yticks(np.arange(1, 4))
         ax.set_yticklabels(['$10^3$', '$10^6$', '$10^9$'], rotation=0)
-        ax.tick_params(axis='x', labelsize=8)
+        ax.tick_params(axis='x', labelsize=5)
+        ax.tick_params(axis='y', labelsize=7)
 
         global latency_label_done
         if not latency_label_done:
@@ -172,18 +186,22 @@ def draw_ax(bench, ax, datas):
         else:
             ax.set_yticklabels([], rotation=0)
     ax.grid()
-    plt.setp(ax, xlabel=data['xlabel'])
+    ax.set_xlabel(data['xlabel'], fontsize=6)
 
 
 def draw_axes(bench, ylabel, axes_datas):
     if bench == 'latency':
-        figsize = (6, 1.6)
+        figsize = (6, 0.8)
+        print(ylabel)
     else:
-        figsize = (20, 2.4)
+        # figsize = (10, 1.5)
+        figsize = (10, 2.4)
     fig, axes = plt.subplots(1, len(axes_datas), figsize=figsize)
     for i, ax_datas in enumerate(axes_datas):
         draw_ax(bench, axes[i], ax_datas)
-    plt.setp(axes[0], ylabel=ylabel)
+    axes[0].set_ylabel(ylabel, fontsize=7)
+    axes[0].set_ylabel(ylabel)
+
     return axes
 
 # draw line graph for <bench-dist>
@@ -192,22 +210,21 @@ def draw_axes(bench, ylabel, axes_datas):
 # therefore, we collect data for all workloads belonging to that <bench-dist> and plot them together.
 
 
-def draw(bench, dist, targets):
+def draw(bench, dist, targets, workloads):
     plt.clf()
     bench_info = objs['hash']['bench_kinds'][bench]
     bd_datas = []
 
     # workload: insert, pos_search, ...
     for wl, wl_info in bench_info['workloads'].items():
-        wl_datas = []
+        if wl not in workloads:
+            continue
 
         # target: CCEH, Level, ...
+        wl_datas = []
         for t, t_plot in targets.items():
 
             filepath = get_filepath(bench, dist, wl, t)
-            # filepath = "./out/{}/{}/{}/{}.out".format(
-            #     bench.upper(), dist.upper(), wl, t)
-
             if not os.path.isfile(filepath):
                 continue
 
@@ -252,16 +269,22 @@ for obj, obj_info in objs.items():
             else:
                 plot_id = "hash-{}-multi{}-{}".format(bench, tnum, dist)
 
-            # draw graph, not save
-            axes = draw(bench, dist, targets)
+            # (a), (b), (c), (d)
+            workloads = ["insert", "pos_search", "neg_search", "delete"]
+            axes = draw(bench, dist, targets, workloads)
+            figpath = "./out/{}_abcd.svg".format(plot_id)
+            plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
+            print(figpath)
 
-            # save
-            figpath = "./out/{}.png".format(plot_id)
-            plt.savefig(figpath, bbox_inches='tight', dpi=300)
+            # (e), (f), (g)
+            workloads = ["write_heavy", "balanced", "read_heavy"]
+            axes = draw(bench, dist, targets, workloads)
+            figpath = "./out/{}_efg.svg".format(plot_id)
+            plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
             print(figpath)
 
     axLine, axLabel = axes[0].get_legend_handles_labels()
-    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
+    draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
 
 # 2. single-thread throughput (bar graph)
 for obj, obj_info in objs.items():
@@ -269,7 +292,7 @@ for obj, obj_info in objs.items():
     dfs = []
     dfs_xlabel = []
 
-    for ix, dist in enumerate(["uniform", "selfsimilar"]):
+    for ix, dist in enumerate(["Uniform", "Self Similar"]):
         plt.clf()
         bd_datas = []
 
@@ -279,7 +302,7 @@ for obj, obj_info in objs.items():
                         ['throughput']['workloads'][wl]['label_single']}
 
             for t, t_plot in targets.items():
-                filepath = get_filepath('throughput', dist, wl, t)
+                filepath = get_filepath('throughput', dist.replace(" ", ""), wl, t)
 
                 # filepath = "./out/THROUGHPUT/{}/{}/{}.out".format(
                 #     dist.upper(), wl, t)
@@ -295,17 +318,23 @@ for obj, obj_info in objs.items():
         dfs_xlabel.append('('+chr(ix+ord('a'))+') '+dist)
 
     # draw graph, not save
-    fig, axes = plt.subplots(1, 2, figsize=(6, 1.6))
+    fig, axes = plt.subplots(1, 2, figsize=(6, 1.0))
     for ix, df in enumerate(dfs):
         colors = [objs["hash"]["targets"][target]["color"]
                   for target in df.columns[1:]]
         p = df.plot(ax=axes[ix], x="workload",
-                    xlabel=dfs_xlabel[ix], kind="bar", rot=20, legend=False, color=colors)
-        p.tick_params(axis='x', labelsize=8)
+                    xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False, color=colors)
+
+        axes[0].set_yticks([0, 0.5, 1, 1.5])
+        axes[1].set_yticks([0, 1, 2])
+        axes[ix].tick_params(axis='y', labelsize=7)
+        p.tick_params(axis='x', labelsize=5)
+        p.set_xlabel(dfs_xlabel[ix], fontsize=7)
         p.grid(True, axis='y', linestyle='--')
-    plt.setp(axes[0], ylabel="Throughput (M op/s)")
+    axes[0].set_ylabel("Throughput (M op/s)", fontsize=7)
 
     # save
-    figpath = "./out/hash-throughput-single.png"
+    figpath = "./out/hash-throughput-single.svg"
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
     print(figpath)
+
