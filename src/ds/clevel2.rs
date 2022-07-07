@@ -2,6 +2,7 @@
 #![allow(missing_docs)]
 #![allow(box_pointers)]
 #![allow(unreachable_pub)]
+#![allow(unused)]
 use core::cmp;
 use core::fmt::Debug;
 use core::fmt::Display;
@@ -9,7 +10,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 
 use cfg_if::cfg_if;
 use crossbeam_epoch::{self as epoch, Guard};
@@ -122,7 +123,7 @@ struct Context<K, V> {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct Clevel<K, V> {
+pub struct Clevel<K, V> {
     context: PAtomic<Context<K, V>>,
 
     #[derivative(Debug = "ignore")]
@@ -185,7 +186,7 @@ impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
     type Item = &'g [MaybeUninit<T>];
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pool = global_pool().unwrap(); // TODO: global pool 안쓰기
+        let pool = global_pool().unwrap();
         let inner_ref = unsafe { self.inner.as_ref(pool) }?;
         self.inner = if self.inner == self.last {
             PShared::null()
@@ -361,6 +362,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
                     guard.defer_pdestroy(find_result.slot_ptr);
                 },
                 Err(e) => {
+                    // TODO: CAS: with_tid(0)
                     if e.current == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
@@ -396,7 +398,7 @@ fn new_node<K, V>(
 
 impl<K, V> Drop for Clevel<K, V> {
     fn drop(&mut self) {
-        let pool = global_pool().unwrap(); // TODO: global pool 안쓰기?
+        let pool = global_pool().unwrap();
         let guard = unsafe { epoch::unprotected() };
         let context = self.context.load(Ordering::Relaxed, guard);
         let context_ref = unsafe { context.deref(pool) };
@@ -574,8 +576,8 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             //     "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
             // );
 
-            for (bid, bucket) in last_level_data.iter().enumerate() {
-                for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
+            for (_bid, bucket) in last_level_data.iter().enumerate() {
+                for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
                             let mut slot_ptr = slot.load(Ordering::Acquire, guard);
@@ -805,7 +807,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         }
     }
 
-    fn insert_inner_inner<'g>(
+    fn try_slot_insert<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
         slot_new: PShared<'g, Slot<K, V>>,
@@ -892,7 +894,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
     }
 
-    fn insert_inner<'g>(
+    // TODO: memento
+    fn insert_inner_inner<'g>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
@@ -900,23 +903,39 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        loop {
-            if let Ok(result) = self.insert_inner_inner(context, slot, key_hashes, guard, pool) {
-                return (context, result);
-            }
-
-            // No remaining slots. Resize.
-            // // println!("[insert] tid = {tid} triggering resize");
-            let context_ref = unsafe { context.deref(pool) };
-            let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-            let first_level_ref = unsafe { first_level.deref(pool) };
-            let (context_new, added) = self.add_level(context, first_level_ref, guard, pool);
-            if added {
-                let _ = resize_send.send(());
-            }
-            context = context_new;
+    ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
+    {
+        if let Ok(result) = self.try_slot_insert(context, slot, key_hashes, guard, pool) {
+            return Ok((context, result));
         }
+
+        // No remaining slots. Resize.
+        let context_ref = unsafe { context.deref(pool) };
+        let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+        let first_level_ref = unsafe { first_level.deref(pool) };
+        let (context_new, added) = self.add_level(context, first_level_ref, guard, pool);
+        if added {
+            let _ = resize_send.send(());
+        }
+        Err(context_new)
+    }
+
+    fn insert_inner<'g>(
+        &'g self,
+        context: PShared<'g, Context<K, V>>,
+        slot: PShared<'g, Slot<K, V>>,
+        key_hashes: [u32; 2],
+        resize_send: &mpsc::Sender<()>,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
+        let mut res = self.insert_inner_inner(context, slot, key_hashes, resize_send, guard, pool);
+
+        while let Err(context_new) = res {
+            res = self.insert_inner_inner(context_new, slot, key_hashes, resize_send, guard, pool);
+        }
+
+        res.unwrap()
     }
 
     fn move_if_resized<'g>(
@@ -933,7 +952,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             fence(Ordering::SeqCst);
 
             // If the context remains the same, it's done.
-            let mut context_new = self.context.load(Ordering::Acquire, guard);
+            let context_new = self.context.load(Ordering::Acquire, guard);
             if context == context_new {
                 return;
             }
@@ -994,18 +1013,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     where
         V: Clone,
     {
-        // println!("[insert] tid: {tid} do insert");
-        // // println!("[insert] tid: {}, key: {}", tid, key);
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
+        // TODO: checkpoint: find_result
         if find_result.is_some() {
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new(Slot { key, value }, pool)
+        // TODO: checkpoint: slot (maybe with find_result)
+        let slot = alloc_persist(Slot { key, value }, pool)
             .with_high_tag(key_tag as usize)
             .into_shared(guard);
-        // question: why `context_new` is created?
+
         let (context_new, insert_result) =
             self.insert_inner(context, slot, key_hashes, resize_send, guard, pool);
         self.move_if_resized(
