@@ -677,7 +677,6 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> Context<K, V
         }
 
         // find result nearest to the top.
-        // CAUTION: tag conflicts with Memento SMO.
         let last = some_or!(found.pop(), return Ok(None));
         if last.slot_ptr.tag() == 1 {
             return Err(());
@@ -725,7 +724,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> Context<K, V
                     guard.defer_pdestroy(find_result.slot_ptr);
                 },
                 Err(e) => {
-                    if e.current == find_result.slot_ptr.with_tag(1) {
+                    if e.current.with_tid(0) == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
                     }
