@@ -1,7 +1,12 @@
 //! Concurrent Level Hash Table.
-#![allow(missing_docs)]
+
+#![allow(clippy::type_complexity)]
+#![feature(new_uninit)]
+#![recursion_limit = "512"]
 #![allow(box_pointers)]
+#![allow(missing_docs)]
 #![allow(unreachable_pub)]
+
 use core::cmp;
 use core::fmt::Debug;
 use core::fmt::Display;
@@ -12,18 +17,13 @@ use core::sync::atomic::{fence, Ordering};
 use std::sync::{mpsc, Arc};
 
 use cfg_if::cfg_if;
-use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
 use derivative::Derivative;
 use etrace::*;
-use fasthash::Murmur3HasherExt;
+use hashers::fx_hash::FxHasher;
 use itertools::*;
-use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
-
-use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
-use crate::PDefault;
 
 const TINY_VEC_CAPACITY: usize = 8;
 
@@ -60,16 +60,17 @@ cfg_if! {
     }
 }
 
-fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
-    let mut hasher = Murmur3HasherExt::default();
+fn hashes<T: Hash>(t: &T) -> [u32; 2] {
+    let mut hasher = FxHasher::default();
     t.hash(&mut hasher);
     let hash = hasher.finish() as usize;
 
-    let tag = hash.rotate_left(16) as u16;
-    let left = hash as u32;
-    let right = hash.rotate_right(32) as u32;
+    // 32/32 비트로 쪼개서 반환
+    let left = hash >> 32;
+    let right = hash & ((1 << 32) - 1);
+    debug_assert_eq!(hash, (left << 32) | right);
 
-    (tag, [left, if left != right { right } else { right + 1 }])
+    [left as u32, if left != right { right as u32 } else { right as u32 + 1 }]
 }
 
 #[derive(Debug, Default)]
@@ -81,46 +82,38 @@ struct Slot<K, V> {
 #[derive(Debug)]
 #[repr(align(64))]
 struct Bucket<K, V> {
-    slots: [PAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
+    slots: [Atomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
 #[derive(Debug)]
-struct Node<T> {
-    data: T,
-    next: PAtomic<Node<T>>,
-}
-
-impl<T> From<T> for Node<T> {
-    fn from(val: T) -> Self {
-        Self {
-            data: val,
-            next: PAtomic::null(),
-        }
-    }
+struct Node<T: ?Sized> {
+    data: Box<T>,
+    next: Atomic<Node<T>>,
 }
 
 #[derive(Debug)]
-struct NodeIter<'g, T> {
-    inner: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
-    last: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
+struct NodeIter<'g, T: ?Sized> {
+    inner: Shared<'g, Node<T>>,
+    last: Shared<'g, Node<T>>,
     guard: &'g Guard,
 }
 
 #[derive(Debug)]
 struct Context<K, V> {
-    first_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
-    last_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    first_level: Atomic<Node<[MaybeUninit<Bucket<K, V>>]>>,
+    last_level: Atomic<Node<[MaybeUninit<Bucket<K, V>>]>>,
 
     /// Should resize until the last level's size > resize_size
     ///
-    /// invariant: resize_size = first_level_size / 2 / 2
+    /// invariant: resize_size = level_size_prev(level_size_prev(first_level_size))
     resize_size: usize,
 }
 
 #[derive(Derivative)]
 #[derivative(Debug)]
+// #[derive(Debug)]
 struct ClevelInner<K, V> {
-    context: PAtomic<Context<K, V>>,
+    context: Atomic<Context<K, V>>,
 
     #[derivative(Debug = "ignore")]
     add_level_lock: RawMutexImpl,
@@ -142,42 +135,38 @@ pub struct ClevelResize<K, V> {
 struct FindResult<'g, K, V> {
     /// level's size
     size: usize,
-    slot: &'g PAtomic<Slot<K, V>>,
-    slot_ptr: PShared<'g, Slot<K, V>>,
+    bucket_index: usize,
+    slot: &'g Atomic<Slot<K, V>>,
+    slot_ptr: Shared<'g, Slot<K, V>>,
 }
 
 impl<'g, K, V> Default for FindResult<'g, K, V> {
     fn default() -> Self {
         Self {
             size: 0,
+            bucket_index: 0,
             slot: unsafe { &*ptr::null() },
-            slot_ptr: PShared::null(),
+            slot_ptr: Shared::null(),
         }
     }
 }
 
-impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
-    type Item = &'g [MaybeUninit<T>];
+impl<'g, T: ?Sized + Debug> Iterator for NodeIter<'g, T> {
+    type Item = &'g T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pool = global_pool().unwrap(); // TODO: global pool 안쓰기
-        let inner_ref = unsafe { self.inner.as_ref(pool) }?;
+        let inner_ref = unsafe { self.inner.as_ref() }?;
         self.inner = if self.inner == self.last {
-            PShared::null()
+            Shared::null()
         } else {
             inner_ref.next.load(Ordering::Acquire, self.guard)
         };
-        Some(unsafe {
-            inner_ref
-                .data
-                .load(Ordering::Relaxed, self.guard)
-                .deref(pool)
-        })
+        Some(&inner_ref.data)
     }
 }
 
 impl<K: PartialEq + Hash, V> Context<K, V> {
-    pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
+    pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, [MaybeUninit<Bucket<K, V>>]> {
         NodeIter {
             inner: self.last_level.load(Ordering::Acquire, guard),
             last: self.first_level.load(Ordering::Acquire, guard),
@@ -187,16 +176,12 @@ impl<K: PartialEq + Hash, V> Context<K, V> {
 }
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
-    /// `Ok`: found something (may not be unique)
-    ///
-    /// `Err` means contention
+    /// `Ok` means we found something (may not be unique); and `Err` means contention.
     fn find_fast<'g>(
         &'g self,
         key: &K,
-        key_tag: u16,
         key_hashes: [u32; 2],
         guard: &'g Guard,
-        pool: &PoolHandle,
     ) -> Result<Option<FindResult<'g, K, V>>, ()> {
         let mut found_moved = false;
 
@@ -211,13 +196,9 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
                     let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    // TODO: check 2-byte tag: slot_ptr's high 2 bytes should be the 2-byte LSB of key. otherwise, continue.
 
-                    // check 2-byte tag
-                    if slot_ptr.high_tag() != key_tag as usize {
-                        continue;
-                    }
-
-                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(pool) }, continue);
+                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref() }, continue);
                     if *key != slot_ref.key {
                         continue;
                     }
@@ -232,6 +213,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
 
                     return Ok(Some(FindResult {
                         size,
+                        bucket_index: key_hash,
                         slot,
                         slot_ptr,
                     }));
@@ -249,17 +231,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
         }
     }
 
-    /// `Ok`: found a unique item (by deduplication)
-    ///
-    /// `Err` means contention
-    fn find<'g>(
-        &'g self,
-        key: &K,
-        key_tag: u16,
-        key_hashes: [u32; 2],
-        guard: &'g Guard,
-        pool: &'g PoolHandle,
-    ) -> Result<Option<FindResult<'g, K, V>>, ()> {
+    /// `Ok` means we found a unique tem (by deduplication); and `Err` means contention.
+    fn find<'g>(&'g self, key: &K, key_hashes: [u32; 2], guard: &'g Guard) -> Result<Option<FindResult<'g, K, V>>, ()> {
         let mut found = tiny_vec!([_; TINY_VEC_CAPACITY]);
 
         // "bottom-to-top" or "last-to-first"
@@ -273,19 +246,16 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
                     let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    // TODO: check 2-byte tag
 
-                    // check 2-byte tag
-                    if slot_ptr.high_tag() != key_tag as usize {
-                        continue;
-                    }
-
-                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(pool) }, continue);
+                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref() }, continue);
                     if *key != slot_ref.key {
                         continue;
                     }
 
                     found.push(FindResult {
                         size,
+                        bucket_index: key_hash,
                         slot,
                         slot_ptr,
                     });
@@ -309,9 +279,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
 
                 if last.slot_ptr == slot_ptr || owned_found.iter().any(|x| x.slot_ptr == slot_ptr) {
                     // If the moved item is found again, help moving.
-                    find_result
-                        .slot
-                        .store(PShared::null().with_tag(1), Ordering::Release);
+                    find_result.slot.store(Shared::null().with_tag(1), Ordering::Release);
                 } else {
                     // If the moved item is not found again, retry.
                     return Err(());
@@ -327,13 +295,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
             match find_result.slot.compare_exchange(
                 find_result.slot_ptr,
-                PShared::null(),
+                Shared::null(),
                 Ordering::AcqRel,
                 Ordering::Acquire,
                 guard,
             ) {
                 Ok(_) => unsafe {
-                    guard.defer_pdestroy(find_result.slot_ptr);
+                    guard.defer_destroy(find_result.slot_ptr);
                 },
                 Err(e) => {
                     if e.current == find_result.slot_ptr.with_tag(1) {
@@ -348,50 +316,36 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     }
 }
 
-fn new_node<K, V>(
-    size: usize,
-    pool: &PoolHandle,
-) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
+fn new_node<K, V>(size: usize) -> Owned<Node<[MaybeUninit<Bucket<K, V>>]>> {
     println!("[new_node] size: {size}");
 
-    let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
-    let data_ref = unsafe { data.deref(pool) };
-    unsafe {
-        let _ = libc::memset(
-            data_ref as *const _ as *mut c_void,
-            0x0,
-            size * std::mem::size_of::<Bucket<K, V>>(),
-        );
-    }
-    // persist_obj(&data_ref, true);
-
-    // TODO: pallocation maybeuninit 잘 동작하나?
-    POwned::new(Node::from(PAtomic::from(data)), pool)
+    Owned::new(Node {
+        data: Box::new_zeroed_slice(size),
+        next: Atomic::null(),
+    })
 }
 
 impl<K, V> Drop for ClevelInner<K, V> {
     fn drop(&mut self) {
-        let pool = global_pool().unwrap(); // TODO: global pool 안쓰기?
         let guard = unsafe { unprotected() };
         let context = self.context.load(Ordering::Relaxed, guard);
-        let context_ref = unsafe { context.deref(pool) };
+        let context_ref = unsafe { context.deref() };
 
         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
-        while let Some(node_ref) = unsafe { node.as_ref(pool) } {
+        while let Some(node_ref) = unsafe { node.as_ref() } {
             let next = node_ref.next.load(Ordering::Relaxed, guard);
-            let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
-            for bucket in data.iter() {
+            for bucket in node_ref.data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
                     let slot_ptr = slot.load(Ordering::Relaxed, guard);
                     if !slot_ptr.is_null() {
                         unsafe {
-                            guard.defer_pdestroy(slot_ptr);
+                            guard.defer_destroy(slot_ptr);
                         }
                     }
                 }
             }
             unsafe {
-                guard.defer_pdestroy(node);
+                guard.defer_destroy(node);
             }
             node = next;
         }
@@ -401,36 +355,26 @@ impl<K, V> Drop for ClevelInner<K, V> {
 impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
     fn add_level<'g>(
         &'g self,
-        mut context: PShared<'g, Context<K, V>>,
-        first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        mut context: Shared<'g, Context<K, V>>,
+        first_level: &'g Node<[MaybeUninit<Bucket<K, V>>]>,
         guard: &'g Guard,
-        pool: &'g PoolHandle,
-    ) -> (PShared<'g, Context<K, V>>, bool) {
-        let first_level_data =
-            unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
-        let next_level_size = level_size_next(first_level_data.len());
+    ) -> (Shared<'g, Context<K, V>>, bool) {
+        let next_level_size = level_size_next(first_level.data.len());
 
         // insert a new level to the next of the first level.
         let next_level = first_level.next.load(Ordering::Acquire, guard);
         let next_level = if !next_level.is_null() {
             next_level
         } else {
-            self.add_level_lock.lock(); // TODO: persistent spin lock?
+            self.add_level_lock.lock();
             let next_level = first_level.next.load(Ordering::Acquire, guard);
             let next_level = if !next_level.is_null() {
                 next_level
             } else {
-                let next_node = new_node(next_level_size, pool);
-                // TODO: Should we use `Insert` for this?
+                let next_node = new_node(next_level_size);
                 first_level
                     .next
-                    .compare_exchange(
-                        PShared::null(),
-                        next_node,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                        guard,
-                    )
+                    .compare_exchange(Shared::null(), next_node, Ordering::AcqRel, Ordering::Acquire, guard)
                     .unwrap_or_else(|err| err.current)
             };
             unsafe {
@@ -440,51 +384,34 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         };
 
         // update context.
-        let context_ref = unsafe { context.deref(pool) };
-        let mut context_new = POwned::new(
-            Context {
-                first_level: PAtomic::from(next_level),
-                last_level: context_ref.last_level.clone(),
-                resize_size: level_size_prev(level_size_prev(next_level_size)),
-            },
-            pool,
-        );
+        let context_ref = unsafe { context.deref() };
+        let mut context_new = Owned::new(Context {
+            first_level: Atomic::from(next_level),
+            last_level: context_ref.last_level.clone(),
+            resize_size: level_size_prev(level_size_prev(next_level_size)),
+        });
         loop {
             context = ok_or!(
-                self.context.compare_exchange(
-                    context,
-                    context_new,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard
-                ),
+                self.context
+                    .compare_exchange(context, context_new, Ordering::AcqRel, Ordering::Acquire, guard),
                 e,
                 {
                     context = e.current;
                     context_new = e.new;
-                    let context_ref = unsafe { e.current.deref(pool) };
+                    let context_ref = unsafe { e.current.deref() };
 
-                    if unsafe {
-                        context_ref
-                            .first_level
-                            .load(Ordering::Acquire, guard)
-                            .deref(pool)
-                            .data
-                            .load(Ordering::Relaxed, guard)
-                            .deref(pool)
-                    }
-                    .len()
+                    if unsafe { context_ref.first_level.load(Ordering::Acquire, guard).deref() }
+                        .data
+                        .len()
                         >= next_level_size
                     {
                         return (context, false);
                     }
 
-                    // We thought this is unreachable but indeed reachable...
-                    let context_new_ref = unsafe { context_new.deref(pool) };
-                    context_new_ref.last_level.store(
-                        context_ref.last_level.load(Ordering::Acquire, guard),
-                        Ordering::Relaxed,
-                    );
+                    // TODO: maybe unreachable...
+                    context_new
+                        .last_level
+                        .store(context_ref.last_level.load(Ordering::Acquire, guard), Ordering::Relaxed);
                     continue;
                 }
             );
@@ -497,45 +424,27 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
         (context, true)
     }
 
-    pub fn resize(&self, guard: &Guard, pool: &PoolHandle) {
+    pub fn resize(&self, guard: &Guard) {
         println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
-            let mut context_ref = unsafe { context.deref(pool) };
+            let mut context_ref = unsafe { context.deref() };
 
             let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
-            let last_level_ref = unsafe { last_level.deref(pool) };
-            let last_level_data = unsafe {
-                last_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            let last_level_size = last_level_data.len();
+            let last_level_ref = unsafe { last_level.deref() };
+            let last_level_size = last_level_ref.data.len();
 
             // if we don't need to resize, break out.
-            println!(
-                "[reisze] resize_size: {}, last_level_size: {}",
-                context_ref.resize_size, last_level_size
-            );
             if context_ref.resize_size < last_level_size {
                 break;
             }
 
             let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-            let mut first_level_ref = unsafe { first_level.deref(pool) };
-            let mut first_level_data = unsafe {
-                first_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            let mut first_level_size = first_level_data.len();
-            println!(
-                "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
-            );
+            let mut first_level_ref = unsafe { first_level.deref() };
+            let mut first_level_size = first_level_ref.data.len();
+            println!("[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}");
 
-            for (bid, bucket) in last_level_data.iter().enumerate() {
+            for (bid, bucket) in last_level_ref.data.iter().enumerate() {
                 for (sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                     let slot_ptr = some_or!(
                         {
@@ -574,39 +483,29 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
 
                     let mut moved = false;
                     loop {
-                        let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
-                        let key_hashes = key_hashes
+                        let key_hashes = hashes(&unsafe { slot_ptr.deref() }.key)
                             .into_iter()
                             .map(|key_hash| key_hash as usize % first_level_size)
                             .sorted()
                             .dedup();
                         for i in 0..SLOTS_IN_BUCKET {
                             for key_hash in key_hashes.clone() {
-                                let slot = unsafe {
-                                    first_level_data[key_hash]
-                                        .assume_init_ref()
-                                        .slots
-                                        .get_unchecked(i)
-                                };
+                                let slot =
+                                    unsafe { first_level_ref.data[key_hash].assume_init_ref().slots.get_unchecked(i) };
 
-                                let slot_first_level = slot.load(Ordering::Acquire, guard);
-                                if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
-                                    // 2-byte tag checking
-                                    if slot_first_level.high_tag() != key_tag as usize {
-                                        continue;
+                                if let Some(slot) = unsafe { slot.load(Ordering::Acquire, guard).as_ref() } {
+                                    // TODO: 2-byte tag checking
+
+                                    if slot.key == unsafe { slot_ptr.deref() }.key {
+                                        moved = true;
+                                        break;
                                     }
-
-                                    if slot.key != unsafe { slot_ptr.deref(pool) }.key {
-                                        continue;
-                                    }
-
-                                    moved = true;
-                                    break;
+                                    continue;
                                 }
 
                                 if slot
                                     .compare_exchange(
-                                        PShared::null(),
+                                        Shared::null(),
                                         slot_ptr,
                                         Ordering::AcqRel,
                                         Ordering::Relaxed,
@@ -628,65 +527,46 @@ impl<K: PartialEq + Hash, V> ClevelInner<K, V> {
                             break;
                         }
 
-                        println!(
-                            "[resize] resizing again for ({last_level_size}, {bid}, {sid})..."
-                        );
+                        println!("[resize] resizing again for ({}, {}, {})...", last_level_size, bid, sid);
 
                         // The first level is full. Resize and retry.
-                        let (context_new, _) =
-                            self.add_level(context, first_level_ref, guard, pool);
+                        let (context_new, _) = self.add_level(context, first_level_ref, guard);
                         context = context_new;
-                        context_ref = unsafe { context.deref(pool) };
+                        context_ref = unsafe { context.deref() };
                         first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-                        first_level_ref = unsafe { first_level.deref(pool) };
-                        first_level_data = unsafe {
-                            first_level_ref
-                                .data
-                                .load(Ordering::Relaxed, guard)
-                                .deref(pool)
-                        };
-                        first_level_size = first_level_data.len();
+                        first_level_ref = unsafe { first_level.deref() };
+                        first_level_size = first_level_ref.data.len();
                     }
                 }
             }
 
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
-            let mut context_new = POwned::new(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: next_level.into(),
-                    resize_size: context_ref.resize_size,
-                },
-                pool,
-            );
+            let mut context_new = Owned::new(Context {
+                first_level: first_level.into(),
+                last_level: next_level.into(),
+                resize_size: context_ref.resize_size,
+            });
 
             loop {
                 context = ok_or!(
-                    self.context.compare_exchange(
-                        context,
-                        context_new,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                        guard
-                    ),
+                    self.context
+                        .compare_exchange(context, context_new, Ordering::AcqRel, Ordering::Acquire, guard),
                     e,
                     {
                         context = e.current;
                         context_new = e.new;
-                        let context_ref = unsafe { e.current.deref(pool) };
-                        let context_new_ref = unsafe { context_new.deref_mut(pool) };
-                        context_new_ref.first_level.store(
+                        let context_ref = unsafe { e.current.deref() };
+                        context_new.first_level.store(
                             context_ref.first_level.load(Ordering::Acquire, guard),
                             Ordering::Relaxed,
                         );
-                        context_new_ref.resize_size =
-                            cmp::max(context_new_ref.resize_size, context_ref.resize_size);
+                        context_new.resize_size = cmp::max(context_new.resize_size, context_ref.resize_size);
                         continue;
                     }
                 );
 
                 unsafe {
-                    guard.defer_pdestroy(last_level);
+                    guard.defer_destroy(last_level);
                 }
                 break;
             }
@@ -707,17 +587,15 @@ impl<K, V> Clone for Clevel<K, V> {
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     fn find_fast<'g>(
-        &self,
+        &'g self,
         key: &K,
-        key_tag: u16,
         key_hashes: [u32; 2],
         guard: &'g Guard,
-        pool: &'g PoolHandle,
-    ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
+    ) -> (Shared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
-            let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find_fast(key, key_tag, key_hashes, guard, pool);
+            let context_ref = unsafe { context.deref() };
+            let find_result = context_ref.find_fast(key, key_hashes, guard);
             let find_result = ok_or!(find_result, {
                 context = self.context.load(Ordering::Acquire, guard);
                 continue;
@@ -748,15 +626,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     fn find<'g>(
         &'g self,
         key: &K,
-        key_tag: u16,
         key_hashes: [u32; 2],
         guard: &'g Guard,
-        pool: &'g PoolHandle,
-    ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
+    ) -> (Shared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
-            let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
+            let context_ref = unsafe { context.deref() };
+            let find_result = context_ref.find(key, key_hashes, guard);
             let find_result = ok_or!(find_result, {
                 context = self.context.load(Ordering::Acquire, guard);
                 continue;
@@ -778,13 +654,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     fn insert_inner<'g>(
         &'g self,
         tid: usize,
-        context: PShared<'g, Context<K, V>>,
-        slot_new: PShared<'g, Slot<K, V>>,
+        context: Shared<'g, Context<K, V>>,
+        slot_new: Shared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         guard: &'g Guard,
-        pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
-        let context_ref = unsafe { context.deref(pool) };
+        let context_ref = unsafe { context.deref() };
         let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
         for array in context_ref.level_iter(guard) {
             arrays.push(array);
@@ -811,15 +686,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
                         continue;
                     }
 
-                    if let Ok(slot_ptr) = slot.compare_exchange(
-                        PShared::null(),
-                        slot_new,
-                        Ordering::AcqRel,
-                        Ordering::Relaxed,
-                        guard,
-                    ) {
+                    if let Ok(slot_ptr) =
+                        slot.compare_exchange(Shared::null(), slot_new, Ordering::AcqRel, Ordering::Relaxed, guard)
+                    {
                         return Ok(FindResult {
                             size,
+                            bucket_index: key_hash,
                             slot,
                             slot_ptr,
                         });
@@ -834,28 +706,24 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> ClevelInner<K, V> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum InsertError {
     Occupied,
 }
 
 impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
-    pub fn new(pool: &PoolHandle) -> (Self, ClevelResize<K, V>) {
+    pub fn new() -> (Self, ClevelResize<K, V>) {
         let guard = unsafe { unprotected() };
 
-        let first_level = new_node(level_size_next(MIN_SIZE), pool).into_shared(guard);
-        let last_level = new_node(MIN_SIZE, pool);
-        let last_level_ref = unsafe { last_level.deref(pool) };
-        last_level_ref.next.store(first_level, Ordering::Relaxed);
+        let first_level = new_node(level_size_next(MIN_SIZE)).into_shared(guard);
+        let last_level = new_node(MIN_SIZE);
+        last_level.next.store(first_level, Ordering::Relaxed);
         let inner = Arc::new(ClevelInner {
-            context: PAtomic::new(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: last_level.into(),
-                    resize_size: 0,
-                },
-                pool,
-            ),
+            context: Atomic::new(Context {
+                first_level: first_level.into(),
+                last_level: last_level.into(),
+                resize_size: 0,
+            }),
             add_level_lock: RawMutexImpl::INIT,
         });
         let (resize_send, resize_recv) = mpsc::channel();
@@ -868,59 +736,40 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         )
     }
 
-    pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
+    pub fn get_capacity<'g>(&'g self, guard: &'g Guard) -> usize {
         let context = self.inner.context.load(Ordering::Acquire, guard);
-        let context_ref = unsafe { context.deref(pool) };
+        let context_ref = unsafe { context.deref() };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
 
-        let first_level_data = unsafe {
-            first_level
-                .deref(pool)
-                .data
-                .load(Ordering::Relaxed, guard)
-                .deref(pool)
-        };
-        let last_level_data = unsafe {
-            last_level
-                .deref(pool)
-                .data
-                .load(Ordering::Relaxed, guard)
-                .deref(pool)
-        };
-
-        (first_level_data.len() * 2 - last_level_data.len()) * SLOTS_IN_BUCKET
+        (unsafe { first_level.deref().data.len() * 2 - last_level.deref().data.len() }) * SLOTS_IN_BUCKET
     }
 
-    pub fn search<'g>(&'g self, key: &K, guard: &'g Guard, pool: &'g PoolHandle) -> Option<&'g V> {
-        let (key_tag, key_hashes) = hashes(key);
-        let (_, find_result) = self.inner.find_fast(key, key_tag, key_hashes, guard, pool);
-        Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
+    pub fn search<'g>(&'g self, key: &K, guard: &'g Guard) -> Option<&'g V> {
+        let key_hashes = hashes(key);
+        let (_, find_result) = self.inner.find_fast(key, key_hashes, guard);
+        Some(&unsafe { find_result?.slot_ptr.deref() }.value)
     }
 
     fn insert_inner<'g>(
         &'g self,
         tid: usize,
-        mut context: PShared<'g, Context<K, V>>,
-        slot: PShared<'g, Slot<K, V>>,
+        mut context: Shared<'g, Context<K, V>>,
+        slot: Shared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         guard: &'g Guard,
-        pool: &'g PoolHandle,
-    ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
+    ) -> (Shared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         loop {
-            if let Ok(result) = self
-                .inner
-                .insert_inner(tid, context, slot, key_hashes, guard, pool)
-            {
+            if let Ok(result) = self.inner.insert_inner(tid, context, slot, key_hashes, guard) {
                 return (context, result);
             }
 
             // No remaining slots. Resize.
             // println!("[insert] tid = {tid} triggering resize");
-            let context_ref = unsafe { context.deref(pool) };
+            let context_ref = unsafe { context.deref() };
             let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-            let first_level_ref = unsafe { first_level.deref(pool) };
-            let (context_new, added) = self.inner.add_level(context, first_level_ref, guard, pool);
+            let first_level_ref = unsafe { first_level.deref() };
+            let (context_new, added) = self.inner.add_level(context, first_level_ref, guard);
             if added {
                 let _ = self.resize_send.send(());
             }
@@ -931,24 +780,23 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     fn move_if_resized<'g>(
         &'g self,
         tid: usize,
-        mut context: PShared<'g, Context<K, V>>,
+        mut context: Shared<'g, Context<K, V>>,
         mut insert_result: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
         guard: &'g Guard,
-        pool: &'g PoolHandle,
     ) {
         loop {
             // If the inserted slot is being resized, try again.
             fence(Ordering::SeqCst);
 
             // If the context remains the same, it's done.
-            let mut context_new = self.inner.context.load(Ordering::Acquire, guard);
+            let context_new = self.inner.context.load(Ordering::Acquire, guard);
             if context == context_new {
                 return;
             }
 
             // If the inserted array is not being resized, it's done.
-            let context_new_ref = unsafe { context_new.deref(pool) };
+            let context_new_ref = unsafe { context_new.deref() };
             if context_new_ref.resize_size < insert_result.size {
                 break;
             }
@@ -976,66 +824,80 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             //     insert_result.size,
             //     insert_result.bucket_index
             // );
-            let (context_insert, insert_result_insert) = self.insert_inner(
-                tid,
-                context_new,
-                insert_result.slot_ptr,
-                key_hashes,
-                guard,
-                pool,
-            );
-            insert_result
-                .slot
-                .store(PShared::null().with_tag(1), Ordering::Release);
+            let (context_insert, insert_result_insert) =
+                self.insert_inner(tid, context_new, insert_result.slot_ptr, key_hashes, guard);
+            insert_result.slot.store(Shared::null().with_tag(1), Ordering::Release);
             context = context_insert;
             insert_result = insert_result_insert;
         }
     }
 
-    pub fn insert(
-        &self,
-        tid: usize,
-        key: K,
-        value: V,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> Result<(), InsertError>
+    pub fn insert(&self, tid: usize, key: K, value: V, guard: &Guard) -> Result<(), InsertError>
     where
         V: Clone,
     {
-        println!("[insert] tid: {tid} do insert");
-        // println!("[insert] tid: {}, key: {}", tid, key);
-        let (key_tag, key_hashes) = hashes(&key);
-        let (context, find_result) = self.inner.find(&key, key_tag, key_hashes, guard, pool);
+        let key_hashes = hashes(&key);
+        let (context, find_result) = self.inner.find(&key, key_hashes, guard);
         if find_result.is_some() {
             return Err(InsertError::Occupied);
         }
 
-        let slot = POwned::new(Slot { key, value }, pool)
-            .with_high_tag(key_tag as usize)
-            .into_shared(guard);
+        let slot = Owned::new(Slot { key, value }).into_shared(guard);
         // question: why `context_new` is created?
-        let (context_new, insert_result) =
-            self.insert_inner(tid, context, slot, key_hashes, guard, pool);
-        self.move_if_resized(tid, context_new, insert_result, key_hashes, guard, pool);
+        let (context_new, insert_result) = self.insert_inner(tid, context, slot, key_hashes, guard);
+        self.move_if_resized(tid, context_new, insert_result, key_hashes, guard);
         Ok(())
     }
 
-    pub fn delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) {
-        // println!("[delete] key: {}", key);
-        let (key_tag, key_hashes) = hashes(&key);
+    pub fn update(&self, tid: usize, key: K, value: V, guard: &Guard) -> Result<(), (K, V)>
+    where
+        K: Clone,
+    {
+        let key_hashes = hashes(&key);
+        let mut slot_new = Owned::new(Slot {
+            key: key.clone(),
+            value,
+        });
+
         loop {
-            let (_, find_result) = self.inner.find(key, key_tag, key_hashes, guard, pool);
+            let (context, find_result) = self.inner.find(&key, key_hashes, guard);
+            let find_result = some_or!(find_result, {
+                let slot = *slot_new.into_box();
+                return Err((slot.key, slot.value));
+            });
+
+            if let Err(e) = find_result.slot.compare_exchange(
+                find_result.slot_ptr,
+                slot_new,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                guard,
+            ) {
+                slot_new = e.new;
+                continue;
+            }
+
+            unsafe {
+                guard.defer_destroy(find_result.slot_ptr);
+            }
+            self.move_if_resized(tid, context, find_result, key_hashes, guard);
+            return Ok(());
+        }
+    }
+
+    pub fn delete(&self, key: &K, guard: &Guard) {
+        let key_hashes = hashes(&key);
+        loop {
+            let (_, find_result) = self.inner.find(key, key_hashes, guard);
             let find_result = some_or!(find_result, {
                 println!("[delete] suspicious...");
                 return;
             });
-
             if find_result
                 .slot
                 .compare_exchange(
                     find_result.slot_ptr,
-                    PShared::null(),
+                    Shared::null(),
                     Ordering::AcqRel,
                     Ordering::Relaxed,
                     guard,
@@ -1046,20 +908,18 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             }
 
             unsafe {
-                guard.defer_pdestroy(find_result.slot_ptr);
+                guard.defer_destroy(find_result.slot_ptr);
             }
-            // println!("[delete] finish!");
             return;
         }
     }
 }
 
 impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
-    pub fn resize_loop(&mut self, guard: &mut Guard, pool: &PoolHandle) {
-        println!("[resize loop] start loop");
+    pub fn resize_loop(&mut self, guard: &mut Guard) {
         while let Ok(()) = self.resize_recv.recv() {
             println!("[resize_loop] do resize!");
-            self.inner.resize(guard, pool);
+            self.inner.resize(guard);
             guard.repin_after(|| {});
         }
     }
@@ -1067,54 +927,36 @@ impl<K: PartialEq + Hash, V> ClevelResize<K, V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        pmem::Pool,
-        test_utils::tests::{get_test_abs_path, DummyRootMemento, DummyRootObj, TestRootObj},
-    };
-
     use super::*;
 
     use crossbeam_epoch::pin;
     use crossbeam_utils::thread;
 
-    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
     #[test]
     fn smoke() {
-        let filepath = &get_test_abs_path("smoke");
-
-        // open pool
-        let pool_handle =
-            unsafe { Pool::open::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE) }
-                .unwrap_or_else(|_| {
-                    Pool::create::<DummyRootObj, DummyRootMemento>(filepath, FILE_SIZE, 1).unwrap()
-                });
-
-        // TODO: pool open
         thread::scope(|s| {
-            let pool = global_pool().unwrap();
-            let (kv, mut kv_resize) = Clevel::<usize, usize>::new(pool);
+            let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
             let _ = s.spawn(move |_| {
-                let pool = global_pool().unwrap();
                 let mut guard = pin();
-                kv_resize.resize_loop(&mut guard, pool);
+                kv_resize.resize_loop(&mut guard);
             });
 
             let guard = pin();
 
-            const RANGE: usize = 1;
+            const RANGE: usize = 1usize << 8;
 
             for i in 0..RANGE {
-                assert!(kv.insert(0, i, i, &guard, pool).is_ok());
-                assert_eq!(kv.search(&i, &guard, pool), Some(&i));
+                let _ = kv.insert(0, i, i, &guard);
+                assert_eq!(kv.search(&i, &guard), Some(&i));
+
+                let _ = kv.update(0, i, i + RANGE, &guard);
+                assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
             }
 
-            // rm -rf /mnt/pmem0/test/smoke/* && cargo test --release ds::clevel2::tests::smoke
-
             for i in 0..RANGE {
-                // assert_eq!(kv.search(&i, &guard, pool), Some(&(i + RANGE)));
-                kv.delete(&i, &guard, pool);
-                assert_eq!(kv.search(&i, &guard, pool), None);
+                assert_eq!(kv.search(&i, &guard), Some(&(i + RANGE)));
+                kv.delete(&i, &guard);
+                assert_eq!(kv.search(&i, &guard), None);
             }
         })
         .unwrap();
@@ -1123,12 +965,10 @@ mod tests {
     #[test]
     fn insert_search() {
         thread::scope(|s| {
-            let pool = global_pool().unwrap();
-
-            let (kv, mut kv_resize) = Clevel::<usize, usize>::new(pool);
+            let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
             let _ = s.spawn(move |_| {
                 let mut guard = pin();
-                kv_resize.resize_loop(&mut guard, pool);
+                kv_resize.resize_loop(&mut guard);
             });
 
             const THREADS: usize = 1usize << 4;
@@ -1136,14 +976,13 @@ mod tests {
             for tid in 0..THREADS {
                 let kv = kv.clone();
                 let _ = s.spawn(move |_| {
-                    let pool = global_pool().unwrap();
                     let guard = pin();
                     for i in 0..RANGE {
                         // println!("[test] tid = {tid}, i = {i}, insert");
-                        let _ = kv.insert(tid, i, i, &guard, pool);
+                        let _ = kv.insert(tid, i, i, &guard);
 
                         // println!("[test] tid = {tid}, i = {i}, search");
-                        if kv.search(&i, &guard, pool) != Some(&i) {
+                        if kv.search(&i, &guard) != Some(&i) {
                             panic!("[test] tid = {tid} fail on {i}");
                             // assert_eq!(kv.search(&i, &guard), Some(&i));
                         }
@@ -1153,4 +992,40 @@ mod tests {
         })
         .unwrap();
     }
+
+    #[test]
+    fn insert_update_search() {
+        thread::scope(|s| {
+            let (kv, mut kv_resize) = Clevel::<usize, usize>::new();
+            let _ = s.spawn(move |_| {
+                let mut guard = pin();
+                kv_resize.resize_loop(&mut guard);
+            });
+
+            const THREADS: usize = 1usize << 4;
+            const RANGE: usize = 1usize << 6;
+            for tid in 0..THREADS {
+                let kv = kv.clone();
+                let _ = s.spawn(move |_| {
+                    let guard = pin();
+                    for i in 0..RANGE {
+                        // println!("[test] tid = {tid}, i = {i}, insert");
+                        let _ = kv.insert(tid, i, i, &guard);
+
+                        // println!("[test] tid = {tid}, i = {i}, update");
+                        let _ = kv.insert(tid, i, i + RANGE, &guard);
+
+                        // println!("[test] tid = {tid}, i = {i}, search");
+                        if kv.search(&i, &guard) != Some(&i) && kv.search(&i, &guard) != Some(&(i + RANGE)) {
+                            panic!("[test] tid = {tid} fail on {i}");
+                        }
+                    }
+                });
+            }
+        })
+        .unwrap();
+    }
 }
+
+type Key = u64;
+type Value = u64;
