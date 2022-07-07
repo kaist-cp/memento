@@ -1069,35 +1069,45 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         Ok(())
     }
 
-    pub fn delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) -> bool {
-        // // println!("[delete] key: {}", key);
+    // TODO: memento
+    fn try_delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) -> Result<bool, ()> {
         let (key_tag, key_hashes) = hashes(&key);
+        let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
+        // TODO: checkpoint find_result
+        let find_result = some_or!(find_result, {
+            return Ok(false);
+        });
+
+        // TODO: CAS
+        if find_result
+            .slot
+            .compare_exchange(
+                find_result.slot_ptr,
+                PShared::null(),
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+                guard,
+            )
+            .is_err()
+        {
+            return Err(());
+        }
+
+        unsafe {
+            guard.defer_pdestroy(find_result.slot_ptr);
+        }
+        return Ok(true);
+    }
+
+    pub fn delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) -> bool {
+        if let Ok(ret) = self.try_delete(key, guard, pool) {
+            return ret;
+        }
+
         loop {
-            let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
-            let find_result = some_or!(find_result, {
-                // println!("[delete] suspicious...");
-                return false;
-            });
-
-            if find_result
-                .slot
-                .compare_exchange(
-                    find_result.slot_ptr,
-                    PShared::null(),
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                    guard,
-                )
-                .is_err()
-            {
-                continue;
+            if let Ok(ret) = self.try_delete(key, guard, pool) {
+                return ret;
             }
-
-            unsafe {
-                guard.defer_pdestroy(find_result.slot_ptr);
-            }
-            // // println!("[delete] finish!");
-            return true;
         }
     }
 }
