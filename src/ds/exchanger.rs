@@ -337,7 +337,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
     fn succ_after_wait(mine: PShared<'_, Node<T>>, guard: &Guard, pool: &PoolHandle) -> T {
         // My partner is my replacement()
         let mine_ref = unsafe { mine.deref(pool) };
-        let partner = mine_ref.replacement().load(Ordering::SeqCst, guard);
+        let partner = mine_ref.replacement().load(Ordering::SeqCst, guard); // replacement is stable because of invariant of exchanger
         let partner_ref = unsafe { partner.deref(pool) };
         partner_ref.data.clone()
     }
