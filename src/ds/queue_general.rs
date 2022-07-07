@@ -222,24 +222,33 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), TryFail> {
-        let tail = loop {
-            let tail = self.tail.load(Ordering::SeqCst, guard);
-            let tail_ref = unsafe { tail.deref(pool) };
-            let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
-
-            if next.is_null() {
-                break tail;
-            }
-
-            // tail is stale
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        };
-
         let tail = try_enq
             .tail
-            .checkpoint::<REC, _>(|| PAtomic::from(tail), tid, pool)
+            .checkpoint::<REC, _>(
+                || {
+                    let tail = loop {
+                        let tail = self.tail.load(Ordering::SeqCst, guard);
+                        let tail_ref = unsafe { tail.deref(pool) };
+                        let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
+
+                        if next.is_null() {
+                            break tail;
+                        }
+
+                        // tail is stale
+                        let _ = self.tail.compare_exchange(
+                            tail,
+                            next,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            guard,
+                        );
+                    };
+                    PAtomic::from(tail)
+                },
+                tid,
+                pool,
+            )
             .load(Ordering::Relaxed, guard);
         let tail_ref = unsafe { tail.deref(pool) };
 
@@ -304,24 +313,29 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let (head, next) = loop {
-            let head = self.head.load(Ordering::SeqCst, guard, pool);
-            let head_ref = unsafe { head.deref(pool) };
-            let next = head_ref.next.load(Ordering::SeqCst, guard, pool);
-            let tail = self.tail.load(Ordering::SeqCst, guard);
-
-            if head.as_ptr() != tail.as_ptr() || next.is_null() {
-                break (head, next);
-            }
-
-            // tail is stale
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        };
-
         let chk = try_deq.head_next.checkpoint::<REC, _>(
-            || (PAtomic::from(head), PAtomic::from(next)),
+            || {
+                let (head, next) = loop {
+                    let head = self.head.load(Ordering::SeqCst, guard, pool);
+                    let head_ref = unsafe { head.deref(pool) };
+                    let next = head_ref.next.load(Ordering::SeqCst, guard, pool);
+                    let tail = self.tail.load(Ordering::SeqCst, guard);
+
+                    if head.as_ptr() != tail.as_ptr() || next.is_null() {
+                        break (head, next);
+                    }
+
+                    // tail is stale
+                    let _ = self.tail.compare_exchange(
+                        tail,
+                        next,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                };
+                (PAtomic::from(head), PAtomic::from(next))
+            },
             tid,
             pool,
         );
