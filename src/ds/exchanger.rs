@@ -197,10 +197,16 @@ impl<T: Clone + Collectable> Exchanger<T> {
             .load(Ordering::Relaxed, guard);
 
         // Loads previously read slots or reads new ones
-        let init_slot = self.slot.load(true, Ordering::SeqCst, guard);
         let init_slot = try_xchg
             .init_slot
-            .checkpoint::<REC, _>(|| PAtomic::from(init_slot), tid, pool)
+            .checkpoint::<REC, _>(
+                || {
+                    let init_slot = self.slot.load(true, Ordering::SeqCst, guard);
+                    PAtomic::from(init_slot)
+                },
+                tid,
+                pool,
+            )
             .load(Ordering::Relaxed, guard);
 
         // If slot is null, insert and wait
@@ -297,10 +303,16 @@ impl<T: Clone + Collectable> Exchanger<T> {
     ) -> Result<T, TryFail> {
         std::thread::sleep(Duration::from_nanos(100));
 
-        let wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
         let wait_slot = try_xchg
             .wait_slot
-            .checkpoint::<REC, _>(|| PAtomic::from(wait_slot), tid, pool)
+            .checkpoint::<REC, _>(
+                || {
+                    let wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
+                    PAtomic::from(wait_slot)
+                },
+                tid,
+                pool,
+            )
             .load(Ordering::Relaxed, guard);
 
         // If wait_slot is changed from me to another node, I take my partner's value
