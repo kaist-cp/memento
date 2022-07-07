@@ -390,10 +390,9 @@ fn new_node<K, V>(
             size * std::mem::size_of::<Bucket<K, V>>(),
         );
     }
-    // persist_obj(&data_ref, true);
+    persist_obj(&data_ref, true);
 
-    // TODO: pallocation maybeuninit 잘 동작하나?
-    POwned::new(Node::from(PAtomic::from(data)), pool)
+    alloc_persist(Node::from(PAtomic::from(data)), pool)
 }
 
 impl<K, V> Drop for Clevel<K, V> {
@@ -442,13 +441,12 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         let next_level = if !next_level.is_null() {
             next_level
         } else {
-            self.add_level_lock.lock(); // TODO: persistent spin lock?
+            self.add_level_lock.lock(); // TODO: persistent try lock
             let next_level = first_level.next.load(Ordering::Acquire, guard);
             let next_level = if !next_level.is_null() {
                 next_level
             } else {
                 let next_node = new_node(next_level_size, pool);
-                // TODO: Should we use `Insert` for this?
                 first_level
                     .next
                     .compare_exchange(
@@ -468,7 +466,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
-        let mut context_new = POwned::new(
+        let mut context_new = alloc_persist(
             Context {
                 first_level: PAtomic::from(next_level),
                 last_level: context_ref.last_level.clone(),
@@ -476,6 +474,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             },
             pool,
         );
+        // TODO: checkpoint context_new
         loop {
             context = ok_or!(
                 self.context.compare_exchange(
@@ -516,7 +515,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                 }
             );
 
-            // // println!("[add_level] next_level_size: {next_level_size}");
             break;
         }
 
@@ -530,7 +528,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         guard: &mut Guard,
         pool: &PoolHandle,
     ) {
-        // println!("[resize loop] start loop");
         while let Ok(()) = resize_recv.recv() {
             // println!("[resize_loop] do resize!");
             self.resize(guard, pool);
@@ -692,7 +689,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             }
 
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
-            let mut context_new = POwned::new(
+            let mut context_new = alloc_persist(
                 Context {
                     first_level: first_level.into(),
                     last_level: next_level.into(),
@@ -909,12 +906,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
     {
-        // TODO: checkpoint context
         if let Ok(result) = self.try_slot_insert(context, slot, key_hashes, guard, pool) {
             return Ok((context, result));
         }
 
         // No remaining slots. Resize.
+        // TODO: checkpoint context? (depending on add_level)
         let context_ref = unsafe { context.deref(pool) };
         let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let first_level_ref = unsafe { first_level.deref(pool) };
@@ -944,6 +941,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         res.unwrap()
     }
 
+    // TODO: memento
     fn move_if_resized_inner<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>, // must be stable
@@ -1005,6 +1003,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         Err((context_insert, insert_result_insert))
     }
 
+    // TODO: memento
     fn move_if_resized<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
@@ -1287,9 +1286,6 @@ mod tests {
 }
 
 fn alloc_persist<T>(init: T, pool: &PoolHandle) -> POwned<T> {
-    #[cfg(feature = "clevel_alloc_lock")]
-    let _g = ALLOC_LOCK.lock();
-
     let ptr = POwned::new(init, pool);
     persist_obj(unsafe { ptr.deref(pool) }, true);
     ptr
