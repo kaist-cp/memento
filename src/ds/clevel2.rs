@@ -840,13 +840,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     // TODO: memento
     fn try_slot_insert<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>, // stable
-        slot_new: PShared<'g, Slot<K, V>>,
+        context: PShared<'g, Context<K, V>>, // no need to be stable
+        slot_new: PShared<'g, Slot<K, V>>,   // must be stable
         key_hashes: [u32; 2],
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
-        // TODO: if REC checkpoint slot and CAS
+        // TODO: if REC peek slot and CAS
 
         let context_ref = unsafe { context.deref(pool) };
         let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
@@ -901,8 +901,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     // TODO: memento
     fn insert_inner_inner<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
-        slot: PShared<'g, Slot<K, V>>,
+        context: PShared<'g, Context<K, V>>, // no need to be stable
+        slot: PShared<'g, Slot<K, V>>,       // must be stable
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
@@ -928,8 +928,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     // TODO: memento
     fn insert_inner<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
-        slot: PShared<'g, Slot<K, V>>,
+        context: PShared<'g, Context<K, V>>, // no need to be stable
+        slot: PShared<'g, Slot<K, V>>,       // must be stable
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
@@ -946,17 +946,20 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
 
     fn move_if_resized_inner<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
-        insert_result: FindResult<'g, K, V>,
+        context: PShared<'g, Context<K, V>>, // must be stable
+        insert_result: FindResult<'g, K, V>, // no need to be stable
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
+        // TODO: checkpoint insert_result (only prev_slot)
+
         // If the inserted slot is being resized, try again.
         fence(Ordering::SeqCst);
 
         // If the context remains the same, it's done.
+        // TODO: checkpoint context_new
         let context_new = self.context.load(Ordering::Acquire, guard);
         if context == context_new {
             return Ok(());
@@ -971,6 +974,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         // Move the slot if the slot is not already (being) moved.
         //
         // the resize thread may already have passed the slot. I need to move it.
+        // TODO: CAS
         if insert_result
             .slot
             .compare_exchange(
@@ -997,6 +1001,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             .slot
             .store(PShared::null().with_tag(1), Ordering::Release);
 
+        // stable error
         Err((context_insert, insert_result_insert))
     }
 
@@ -1019,7 +1024,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         );
         while let Err((context, insert_result)) = res {
             res = self.move_if_resized_inner(
-                context,
+                context, // stable by move_if_resized_inner
                 insert_result,
                 key_hashes,
                 resize_send,
