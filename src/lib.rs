@@ -20,13 +20,13 @@
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
 #![deny(unreachable_pub)]
-#![deny(single_use_lifetimes)]
+// #![deny(single_use_lifetimes)]
 #![deny(unused_lifetimes)]
 // #![deny(unstable_features)] // Allowed due to below
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
