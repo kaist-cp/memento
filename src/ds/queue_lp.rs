@@ -214,7 +214,6 @@ impl<T: Clone + Collectable> Queue<T> {
             }
 
             // tail is stale
-            persist_obj(&tail_ref.next, false);
             let _ =
                 self.tail
                     .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
@@ -278,25 +277,29 @@ impl<T: Clone + Collectable> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let (head, next) = loop {
-            let head = self.head.load_lp(Ordering::SeqCst, guard);
-            let head_ref = unsafe { head.deref(pool) };
-            let next = head_ref.next.load_lp(Ordering::SeqCst, guard);
-            let tail = self.tail.load(Ordering::SeqCst, guard);
-
-            if head != tail || next.is_null() {
-                break (head, next);
-            }
-
-            // tail is stale
-            persist_obj(&unsafe { tail.deref(pool) }.next, false);
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        };
-
         let chk = try_deq.head_next.checkpoint::<REC, _>(
-            || (PAtomic::from(head), PAtomic::from(next)),
+            || {
+                let (head, next) = loop {
+                    let head = self.head.load_lp(Ordering::SeqCst, guard);
+                    let head_ref = unsafe { head.deref(pool) };
+                    let next = head_ref.next.load_lp(Ordering::SeqCst, guard);
+                    let tail = self.tail.load(Ordering::SeqCst, guard);
+
+                    if head != tail || next.is_null() {
+                        break (head, next);
+                    }
+
+                    // tail is stale
+                    let _ = self.tail.compare_exchange(
+                        tail,
+                        next,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                };
+                (PAtomic::from(head), PAtomic::from(next))
+            },
             tid,
             pool,
         );

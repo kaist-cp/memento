@@ -279,24 +279,29 @@ impl<T: Clone + Collectable> Queue<T> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<Option<T>, TryFail> {
-        let (head, next) = loop {
-            let head = self.head.load(false, Ordering::SeqCst, guard);
-            let head_ref = unsafe { head.deref(pool) };
-            let tail = self.tail.load(Ordering::SeqCst, guard);
-            let next = head_ref.next.load(head == tail, Ordering::SeqCst, guard);
-
-            if head != tail || next.is_null() {
-                break (head, next);
-            }
-
-            // tail is stale
-            let _ =
-                self.tail
-                    .compare_exchange(tail, next, Ordering::SeqCst, Ordering::SeqCst, guard);
-        };
-
         let chk = try_deq.head_next.checkpoint::<REC, _>(
-            || (PAtomic::from(head), PAtomic::from(next)),
+            || {
+                let (head, next) = loop {
+                    let head = self.head.load(false, Ordering::SeqCst, guard);
+                    let head_ref = unsafe { head.deref(pool) };
+                    let tail = self.tail.load(Ordering::SeqCst, guard);
+                    let next = head_ref.next.load(head == tail, Ordering::SeqCst, guard);
+
+                    if head != tail || next.is_null() {
+                        break (head, next);
+                    }
+
+                    // tail is stale
+                    let _ = self.tail.compare_exchange(
+                        tail,
+                        next,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                };
+                (PAtomic::from(head), PAtomic::from(next))
+            },
             tid,
             pool,
         );
