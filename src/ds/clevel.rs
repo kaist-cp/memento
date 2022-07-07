@@ -32,8 +32,9 @@ const TINY_VEC_CAPACITY: usize = 8;
 /// Insert client
 #[derive(Debug)]
 pub struct Insert<K, V: Collectable> {
-    context_occupied: Checkpoint<PAtomic<Context<K, V>, bool>>,
+    context_occupied: Checkpoint<(PAtomic<Context<K, V>>, bool)>,
     node: Checkpoint<PAtomic<Slot<K, V>>>,
+    insert_loop: InsertLoop<K, V>,
 }
 
 impl<K, V: Collectable> Default for Insert<K, V> {
@@ -41,6 +42,7 @@ impl<K, V: Collectable> Default for Insert<K, V> {
         Self {
             context_occupied: Default::default(),
             node: Default::default(),
+            insert_loop: Default::default(),
         }
     }
 }
@@ -49,6 +51,7 @@ impl<K, V: Collectable> Collectable for Insert<K, V> {
     fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut insert.context_occupied, tid, gc, pool);
         Checkpoint::filter(&mut insert.node, tid, gc, pool);
+        InsertLoop::filter(&mut insert.insert_loop, tid, gc, pool);
     }
 }
 
@@ -58,6 +61,7 @@ impl<K, V: Collectable> Insert<K, V> {
     pub fn clear(&mut self) {
         self.context_occupied.clear();
         self.node.clear();
+        self.insert_loop.clear();
     }
 }
 
@@ -1539,7 +1543,13 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
+    ) -> Result<
+        (),
+        (
+            PShared<'g, Context<K, V>>,
+            &'g DetectableCASAtomic<Slot<K, V>>,
+        ),
+    > {
         let prev_slot = insert_loop
             .prev_slot_chk
             .checkpoint::<REC, _>(
@@ -1606,7 +1616,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return Ok(());
         }
 
-        Err((context_new, result))
+        Err((context_new, result.slot))
     }
 
     /// Insert
@@ -1615,7 +1625,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
         key: K,
         value: V,
         sender: &mpsc::Sender<()>,
-        client: &mut Insert<K, V>,
+        insert: &mut Insert<K, V>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
@@ -1625,7 +1635,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
     {
         let (key_tag, key_hashes) = hashes(&key);
 
-        let chk = client.context_occupied.checkpoint::<REC, _>(
+        let chk = insert.context_occupied.checkpoint::<REC, _>(
             || {
                 let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
                 (PAtomic::from(context), find_result.is_some())
@@ -1639,7 +1649,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             return Err(InsertError::Occupied);
         }
 
-        let slot = client
+        let slot = insert
             .node
             .checkpoint::<REC, _>(
                 || {
@@ -1659,28 +1669,20 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug + Collectable> ClevelInner<
             key_hashes,
             None,
             sender,
-            &mut client.context_new_chk,
-            &mut client.tag_cas,
-            &mut client.insert_inner,
+            &mut insert.insert_loop,
             tid,
             guard,
             pool,
         );
 
-        while let Err((context, result)) = res {
-            let prev_slot = client
-                .prev_slot
-                .checkpoint::<false, _>(|| Some(unsafe { result.slot.as_pptr(pool) }), tid, pool)
-                .map(|p| unsafe { p.deref(pool) });
+        while let Err((context, prev_slot)) = res {
             res = self.insert_loop::<false>(
                 context,
                 slot,
                 key_hashes,
-                Some(result.slot),
+                Some(prev_slot),
                 sender,
-                &mut client.context_new_chk,
-                &mut client.tag_cas,
-                &mut client.insert_inner,
+                &mut insert.insert_loop,
                 tid,
                 guard,
                 pool,
