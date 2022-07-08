@@ -23,7 +23,7 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::{Cas, Checkpoint};
+use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
 use crate::pmem::{global_pool, AsPPtr, Collectable, GarbageCollection, PoolHandle};
 use crate::pmem::{persist_obj, PPtr};
 use crate::PDefault;
@@ -793,13 +793,13 @@ impl<K, V: Collectable> Collectable for Context<K, V> {
 
 #[derive(Debug)]
 pub struct Clevel<K, V: Collectable> {
-    context: PAtomic<Context<K, V>>,
+    context: DetectableCASAtomic<Context<K, V>>,
     add_level_lock: ThreadRecoverableSpinLock,
 }
 
 impl<K, V: Collectable> Collectable for Clevel<K, V> {
     fn filter(clevel: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        PAtomic::filter(&mut clevel.context, tid, gc, pool);
+        DetectableCASAtomic::filter(&mut clevel.context, tid, gc, pool);
     }
 }
 
@@ -824,7 +824,7 @@ impl<K, V: Collectable> PDefault for Clevel<K, V> {
         .into_shared(guard);
 
         Clevel {
-            context: PAtomic::from(context),
+            context: DetectableCASAtomic::from(context),
             add_level_lock: ThreadRecoverableSpinLock::default(),
         }
     }
@@ -1041,7 +1041,7 @@ impl<K, V: Collectable> Drop for Clevel<K, V> {
     fn drop(&mut self) {
         let pool = global_pool().unwrap();
         let guard = unsafe { epoch::unprotected() };
-        let context = self.context.load(Ordering::Relaxed, guard);
+        let context = self.context.load(Ordering::Relaxed, guard, pool);
         let context_ref = unsafe { context.deref(pool) };
 
         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
@@ -1152,17 +1152,18 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let context_new_ref = unsafe { context_new.deref(pool) };
 
         // TODO: cas
-        let mut res = self.context.compare_exchange(
+        let mut res = self.context.cas::<REC>(
             context,
             context_new,
-            Ordering::AcqRel,
-            Ordering::Acquire,
+            &mut add_lv.context_cas,
+            tid,
             guard,
+            pool,
         );
 
         while let Err(e) = res {
-            context = e.current;
-            let context_ref = unsafe { e.current.deref(pool) };
+            context = e;
+            let context_ref = unsafe { e.deref(pool) };
 
             // TODO: checkpoint len
             if unsafe {
@@ -1186,12 +1187,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             ); // Exploit invariant
 
             // TODO: cas
-            res = self.context.compare_exchange(
+            res = self.context.cas::<false>(
                 context,
                 context_new,
-                Ordering::AcqRel,
-                Ordering::Acquire,
+                &mut add_lv.context_cas,
+                tid,
                 guard,
+                pool,
             );
         }
 
@@ -1463,17 +1465,18 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let context_new_ref = unsafe { context_new.deref_mut(pool) };
 
         // TODO: CAS
-        let mut res = self.context.compare_exchange(
+        let mut res = self.context.cas::<REC>(
             context,
             context_new,
-            Ordering::AcqRel,
-            Ordering::Acquire,
+            &mut resize_inner.context_cas,
+            tid,
             guard,
+            pool,
         );
 
         while let Err(e) = res {
-            context = e.current;
-            let context_ref = unsafe { e.current.deref(pool) };
+            context = e;
+            let context_ref = unsafe { e.deref(pool) };
             context_new_ref.first_level.store(
                 context_ref.first_level.load(Ordering::Acquire, guard),
                 Ordering::Relaxed,
@@ -1482,12 +1485,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 cmp::max(context_new_ref.resize_size, context_ref.resize_size);
 
             // TODO: CAS
-            res = self.context.compare_exchange(
+            res = self.context.cas::<false>(
                 context,
                 context_new,
-                Ordering::AcqRel,
-                Ordering::Acquire,
+                &mut resize_inner.context_cas,
+                tid,
                 guard,
+                pool,
             );
         }
 
@@ -1502,7 +1506,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let context = self.context.load(Ordering::Acquire, guard);
+        let context = self.context.load(Ordering::Acquire, guard, pool);
         // TODO: checkpoint context
         let mut res = self.resize_inner::<REC>(context, &mut resize.resize_inner, tid, guard, pool);
         while let Err(e) = res {
@@ -1534,16 +1538,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(Ordering::Acquire, guard, pool);
         loop {
             let context_ref = unsafe { context.deref(pool) };
             let find_result = context_ref.find_fast(key, key_tag, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard);
+                context = self.context.load(Ordering::Acquire, guard, pool);
                 continue;
             });
             let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard);
+                let context_new = self.context.load(Ordering::Acquire, guard, pool);
 
                 // However, a rare case for missing is: after a search operation starts, other
                 // threads add a new level through expansion and rehashing threads move the item
@@ -1573,16 +1577,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
+        let mut context = self.context.load(Ordering::Acquire, guard, pool);
         loop {
             let context_ref = unsafe { context.deref(pool) };
             let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
             let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard);
+                context = self.context.load(Ordering::Acquire, guard, pool);
                 continue;
             });
             let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard);
+                let context_new = self.context.load(Ordering::Acquire, guard, pool);
 
                 // the same possible corner case as `find_fast`
                 if context != context_new {
@@ -1596,7 +1600,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     }
 
     pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
-        let context = self.context.load(Ordering::Acquire, guard);
+        let context = self.context.load(Ordering::Acquire, guard, pool);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
@@ -1776,7 +1780,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         // If the context remains the same, it's done.
         // TODO: checkpoint context_new
-        let context_new = self.context.load(Ordering::Acquire, guard);
+        let context_new = self.context.load(Ordering::Acquire, guard, pool);
         if context == context_new {
             return Ok(());
         }
