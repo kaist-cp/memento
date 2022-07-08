@@ -28,7 +28,7 @@ impl Collectable for ClevelMemento {
     }
 }
 
-impl RootObj<ClevelMemento> for ClevelInner<Key, Value> {
+impl RootObj<ClevelMemento> for Clevel<Key, Value> {
     fn run(&self, _: &mut ClevelMemento, _: usize, _: &Guard, _: &PoolHandle) {
         todo!()
     }
@@ -76,7 +76,7 @@ pub extern "C" fn pool_create(
         GUARD = Some(array_init::array_init(|_| None));
     }
 
-    Pool::create::<ClevelInner<Key, Value>, ClevelMemento>(
+    Pool::create::<Clevel<Key, Value>, ClevelMemento>(
         c_str.to_str().unwrap(),
         size,
         nr_thread + 1, // +1 for resize loop thread.
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn get_root(ix: u64, pool: &PoolHandle) -> *mut c_void {
 #[no_mangle]
 pub extern "C" fn run_insert(
     m: &mut ClevelMemento,
-    obj: &ClevelInner<Key, Value>,
+    obj: &Clevel<Key, Value>,
     tid: usize,
     k: Key,
     v: Value,
@@ -108,7 +108,7 @@ pub extern "C" fn run_insert(
 #[no_mangle]
 pub extern "C" fn run_update(
     _m: &mut ClevelMemento,
-    _obj: &ClevelInner<Key, Value>,
+    _obj: &Clevel<Key, Value>,
     _tid: usize,
     _k: Key,
     _v: Value,
@@ -122,7 +122,7 @@ pub extern "C" fn run_update(
 #[no_mangle]
 pub extern "C" fn run_delete(
     m: &mut ClevelMemento,
-    obj: &ClevelInner<Key, Value>,
+    obj: &Clevel<Key, Value>,
     tid: usize,
     k: Key,
     pool: &'static PoolHandle,
@@ -134,18 +134,18 @@ pub extern "C" fn run_delete(
 #[no_mangle]
 pub extern "C" fn run_resize_loop(
     m: &mut ClevelMemento,
-    obj: &ClevelInner<Key, Value>,
+    obj: &Clevel<Key, Value>,
     tid: usize,
     pool: &'static PoolHandle,
 ) {
     let mut guard = epoch::pin();
     let recv = unsafe { RECV.as_ref().unwrap() };
-    resize_loop::<_, _, false>(obj, recv, &mut m.resize_loop, tid, &mut guard, pool);
+    obj.resize_loop::<_, _, false>(recv, &mut m.resize_loop, tid, &mut guard, pool);
 }
 
 #[no_mangle]
 pub extern "C" fn search(
-    obj: &ClevelInner<Key, Value>,
+    obj: &Clevel<Key, Value>,
     tid: usize,
     k: Key,
     pool: &'static PoolHandle,
@@ -155,13 +155,13 @@ pub extern "C" fn search(
 }
 
 #[no_mangle]
-pub extern "C" fn get_capacity(obj: &ClevelInner<Key, Value>, pool: &PoolHandle) -> usize {
+pub extern "C" fn get_capacity(obj: &Clevel<Key, Value>, pool: &PoolHandle) -> usize {
     let guard = crossbeam_epoch::pin();
     obj.get_capacity(&guard, pool)
 }
 
 #[no_mangle]
-pub extern "C" fn is_resizing(obj: &ClevelInner<Key, Value>, pool: &PoolHandle) -> bool {
+pub extern "C" fn is_resizing(obj: &Clevel<Key, Value>, pool: &PoolHandle) -> bool {
     let guard = crossbeam_epoch::pin();
     obj.is_resizing(&guard, pool)
 }

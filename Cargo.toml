@@ -33,9 +33,6 @@ cfg-if = "1.0.0"
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
 libc = "0.2.109"
 num_cpus = "1.13.1"
-parking_lot = "0.12.1"
-derivate = "0.1.0"
-hashers = "1.0.1"
 
 
 [dev-dependencies]
