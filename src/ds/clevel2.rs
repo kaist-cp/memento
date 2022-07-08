@@ -481,12 +481,14 @@ impl<K, V: Collectable> ResizeLoop<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct Resize<K, V: Collectable> {
+    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
     resize_inner: ResizeInner<K, V>,
 }
 
 impl<K, V: Collectable> Default for Resize<K, V> {
     fn default() -> Self {
         Self {
+            context_chk: Default::default(),
             resize_inner: Default::default(),
         }
     }
@@ -494,6 +496,7 @@ impl<K, V: Collectable> Default for Resize<K, V> {
 
 impl<K, V: Collectable> Collectable for Resize<K, V> {
     fn filter(resize: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut resize.context_chk, tid, gc, pool);
         ResizeInner::filter(&mut resize.resize_inner, tid, gc, pool);
     }
 }
@@ -502,6 +505,7 @@ impl<K, V: Collectable> Resize<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
+        self.context_chk.clear();
         self.resize_inner.clear();
     }
 }
@@ -1561,8 +1565,14 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) {
-        let context = self.context.load(Ordering::Acquire, guard, pool);
-        // TODO: checkpoint context
+        let context = resize
+            .context_chk
+            .checkpoint::<REC, _>(
+                || PAtomic::from(self.context.load(Ordering::Acquire, guard, pool)),
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
         let mut res = self.resize_inner::<REC>(context, &mut resize.resize_inner, tid, guard, pool);
         while let Err(e) = res {
             res = self.resize_inner::<false>(e, &mut resize.resize_inner, tid, guard, pool);
@@ -1577,10 +1587,21 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &mut Guard,
         pool: &PoolHandle,
     ) {
-        // TODO: if checkpoint recv.is_ok()
-        while let Ok(()) = resize_recv.recv() {
+        if resize_loop
+            .recv_chk
+            .checkpoint::<REC, _>(|| resize_recv.recv().is_ok(), tid, pool)
+        {
             // println!("[resize_loop] do resize!");
-            self.resize::<false>(&mut resize_loop.resize, tid, guard, pool);
+            self.resize::<REC>(&mut resize_loop.resize, tid, guard, pool);
+            guard.repin_after(|| {});
+        }
+
+        while resize_loop
+            .recv_chk
+            .checkpoint::<false, _>(|| resize_recv.recv().is_ok(), tid, pool)
+        {
+            // println!("[resize_loop] do resize!");
+            self.resize::<REC>(&mut resize_loop.resize, tid, guard, pool);
             guard.repin_after(|| {});
         }
     }
