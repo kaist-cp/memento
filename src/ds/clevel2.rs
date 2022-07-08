@@ -151,7 +151,7 @@ impl<K, V: Collectable> MoveIfResized<K, V> {
 #[derive(Debug)]
 pub struct MoveIfResizedInner<K, V: Collectable> {
     context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
-    cas: Cas,
+    slot_cas: Cas,
     insert_inner: InsertInner<K, V>,
 }
 
@@ -159,7 +159,7 @@ impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
     fn default() -> Self {
         Self {
             context_new_chk: Default::default(),
-            cas: Default::default(),
+            slot_cas: Default::default(),
             insert_inner: Default::default(),
         }
     }
@@ -173,7 +173,7 @@ impl<K, V: Collectable> Collectable for MoveIfResizedInner<K, V> {
         pool: &mut PoolHandle,
     ) {
         Checkpoint::filter(&mut move_if_resized_inner.context_new_chk, tid, gc, pool);
-        Cas::filter(&mut move_if_resized_inner.cas, tid, gc, pool);
+        Cas::filter(&mut move_if_resized_inner.slot_cas, tid, gc, pool);
         InsertInner::filter(&mut move_if_resized_inner.insert_inner, tid, gc, pool);
     }
 }
@@ -183,7 +183,7 @@ impl<K, V: Collectable> MoveIfResizedInner<K, V> {
     #[inline]
     pub fn clear(&mut self) {
         self.context_new_chk.clear();
-        self.cas.clear();
+        self.slot_cas.clear();
         self.insert_inner.clear();
     }
 }
@@ -262,14 +262,14 @@ impl<K, V: Collectable> InsertInnerInner<K, V> {
 #[derive(Debug)]
 pub struct TrySlotInsert<K, V: Collectable> {
     slot_chk: Checkpoint<(usize, PPtr<PAtomic<Slot<K, V>>>)>,
-    cas: Cas,
+    slot_cas: Cas,
 }
 
 impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
     fn default() -> Self {
         Self {
             slot_chk: Default::default(),
-            cas: Default::default(),
+            slot_cas: Default::default(),
         }
     }
 }
@@ -282,7 +282,7 @@ impl<K, V: Collectable> Collectable for TrySlotInsert<K, V> {
         pool: &mut PoolHandle,
     ) {
         Checkpoint::filter(&mut try_slot_insert.slot_chk, tid, gc, pool);
-        Cas::filter(&mut try_slot_insert.cas, tid, gc, pool);
+        Cas::filter(&mut try_slot_insert.slot_cas, tid, gc, pool);
     }
 }
 
@@ -291,7 +291,7 @@ impl<K, V: Collectable> TrySlotInsert<K, V> {
     #[inline]
     pub fn clear(&mut self) {
         self.slot_chk.clear();
-        self.cas.clear();
+        self.slot_cas.clear();
     }
 }
 
@@ -366,14 +366,14 @@ impl<K, V: Collectable> NextLevel<K, V> {
 /// Delete client
 #[derive(Debug)]
 pub struct TryDelete<K, V: Collectable> {
-    delete_cas: Cas,
-    find_result_chk: Checkpoint<(PPtr<PAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    slot_cas: Cas,
+    find_result_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
 }
 
 impl<K, V: Collectable> Default for TryDelete<K, V> {
     fn default() -> Self {
         Self {
-            delete_cas: Default::default(),
+            slot_cas: Default::default(),
             find_result_chk: Default::default(),
         }
     }
@@ -386,7 +386,7 @@ impl<K, V: Collectable> Collectable for TryDelete<K, V> {
         gc: &mut GarbageCollection,
         pool: &mut PoolHandle,
     ) {
-        Cas::filter(&mut try_delete.delete_cas, tid, gc, pool);
+        Cas::filter(&mut try_delete.slot_cas, tid, gc, pool);
         Checkpoint::filter(&mut try_delete.find_result_chk, tid, gc, pool);
     }
 }
@@ -395,7 +395,7 @@ impl<K, V: Collectable> TryDelete<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
-        self.delete_cas.clear();
+        self.slot_cas.clear();
         self.find_result_chk.clear();
     }
 }
@@ -707,13 +707,13 @@ impl<K, V: Collectable> Collectable for Slot<K, V> {
 #[derive(Debug)]
 #[repr(align(64))]
 struct Bucket<K, V: Collectable> {
-    slots: [PAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
+    slots: [DetectableCASAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
 impl<K, V: Collectable> Collectable for Bucket<K, V> {
     fn filter(bucket: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         for slot in bucket.slots.iter_mut() {
-            PAtomic::filter(slot, tid, gc, pool);
+            DetectableCASAtomic::filter(slot, tid, gc, pool);
         }
     }
 }
@@ -837,7 +837,7 @@ impl<K, V: Collectable> PDefault for Clevel<K, V> {
 struct FindResult<'g, K, V: Collectable> {
     /// level's size
     size: usize,
-    slot: &'g PAtomic<Slot<K, V>>,
+    slot: &'g DetectableCASAtomic<Slot<K, V>>,
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
 
@@ -886,7 +886,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(Ordering::Acquire, guard, pool);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -948,7 +948,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard);
+                    let slot_ptr = slot.load(Ordering::Acquire, guard, pool);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
@@ -987,7 +987,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                     // If the moved item is found again, help moving.
                     find_result
                         .slot
-                        .store(PShared::null().with_tag(1), Ordering::Release);
+                        .inner
+                        .store(PShared::null().with_tag(1), Ordering::Release); // exploit invariant
                 } else {
                     // If the moved item is not found again, retry.
                     return Err(());
@@ -1001,7 +1002,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
         // remove everything else.
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
-            match find_result.slot.compare_exchange(
+            // exploit invariant
+            match find_result.slot.inner.compare_exchange(
                 find_result.slot_ptr,
                 PShared::null(),
                 Ordering::AcqRel,
@@ -1013,7 +1015,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                 },
                 Err(e) => {
                     // TODO: CAS: with_tid(0)
-                    if e.current == find_result.slot_ptr.with_tag(1) {
+                    // exploit invariant
+                    if e.current.with_tid(0) == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
                     }
@@ -1053,7 +1056,7 @@ impl<K, V: Collectable> Drop for Clevel<K, V> {
             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
             for bucket in data.iter() {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Relaxed, guard);
+                    let slot_ptr = slot.load(Ordering::Relaxed, guard, pool);
                     if !slot_ptr.is_null() {
                         unsafe { guard.defer_pdestroy(slot_ptr) };
                     }
@@ -1216,6 +1219,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         key_hashes: [u32; 2],              // must be stable
         first_level_ref: &Node<Bucket<K, V>>,
         resize_move_slot_insert: &mut ResizeMoveSlotInsert<K, V>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
@@ -1243,7 +1247,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                         .get_unchecked(i)
                 };
 
-                let slot_first_level = slot.load(Ordering::Acquire, guard);
+                let slot_first_level = slot.load(Ordering::Acquire, guard, pool);
                 if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
                     // 2-byte tag checking
                     if slot_first_level.high_tag() != key_tag as usize {
@@ -1259,12 +1263,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
                 // TODO: CAS
                 if slot
-                    .compare_exchange(
+                    .cas::<false>(
                         PShared::null(),
                         slot_ptr,
-                        Ordering::AcqRel,
-                        Ordering::Relaxed,
+                        &mut resize_move_slot_insert.slot_cas,
+                        tid,
                         guard,
+                        pool,
                     )
                     .is_ok()
                 {
@@ -1296,6 +1301,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 key_hashes,
                 first_level_ref,
                 &mut resize_move_inner.resize_move_slot_insert,
+                tid,
                 guard,
                 pool,
             )
@@ -1377,7 +1383,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             for (_, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                 let slot_ptr = some_or!(
                     {
-                        let mut slot_ptr = slot.load(Ordering::Acquire, guard);
+                        let mut slot_ptr = slot.load(Ordering::Acquire, guard, pool);
                         loop {
                             if slot_ptr.is_null() {
                                 break None;
@@ -1386,19 +1392,20 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                             // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
                             // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
                             if slot_ptr.tag() == 1 {
-                                slot_ptr = slot.load(Ordering::Acquire, guard);
+                                slot_ptr = slot.load(Ordering::Acquire, guard, pool);
                                 continue;
                             }
 
                             // TODO: checkpoint (slot, slot_ptr)
-                            if let Err(e) = slot.compare_exchange(
+                            if let Err(e) = slot.cas::<false>(
                                 slot_ptr,
                                 slot_ptr.with_tag(1),
-                                Ordering::AcqRel,
-                                Ordering::Acquire,
+                                &mut resize_clean.slot_cas,
+                                tid,
                                 guard,
+                                pool,
                             ) {
-                                slot_ptr = e.current;
+                                slot_ptr = e;
                                 continue;
                             }
 
@@ -1642,6 +1649,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         context: PShared<'g, Context<K, V>>, // no need to be stable
         slot_new: PShared<'g, Slot<K, V>>,   // must be stable
         key_hashes: [u32; 2],
+        try_slot_insert: &mut TrySlotInsert<K, V>,
+        tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
@@ -1671,22 +1680,23 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
                     // TODO: checkpoint slot
 
-                    if !slot.load(Ordering::Acquire, guard).is_null() {
+                    if !slot.load(Ordering::Acquire, guard, pool).is_null() {
                         continue;
                     }
 
                     // TODO: CAS
-                    if let Ok(slot_ptr) = slot.compare_exchange(
+                    if let Ok(()) = slot.cas::<false>(
                         PShared::null(),
                         slot_new,
-                        Ordering::AcqRel,
-                        Ordering::Relaxed,
+                        &mut try_slot_insert.slot_cas,
+                        tid,
                         guard,
+                        pool,
                     ) {
                         return Ok(FindResult {
                             size,
                             slot,
-                            slot_ptr,
+                            slot_ptr: slot_new,
                         });
                     }
                 }
@@ -1709,7 +1719,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
     {
-        if let Ok(result) = self.try_slot_insert::<REC>(context, slot, key_hashes, guard, pool) {
+        if let Ok(result) = self.try_slot_insert::<REC>(
+            context,
+            slot,
+            key_hashes,
+            &mut insert_inner_inner.try_slot_insert,
+            tid,
+            guard,
+            pool,
+        ) {
             return Ok((context, result));
         }
 
@@ -1805,12 +1823,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         // TODO: CAS
         if insert_result
             .slot
-            .compare_exchange(
+            .cas::<REC>(
                 insert_result.slot_ptr,
                 insert_result.slot_ptr.with_tag(1),
-                Ordering::AcqRel,
-                Ordering::Acquire,
+                &mut move_if_resize_inner.slot_cas,
+                tid,
                 guard,
+                pool,
             )
             .is_err()
         {
@@ -1829,7 +1848,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         );
         insert_result
             .slot
-            .store(PShared::null().with_tag(1), Ordering::Release);
+            .inner
+            .store(PShared::null().with_tag(1), Ordering::Release); // exploit invariant
 
         // stable error
         Err((context_insert, insert_result_insert))
@@ -1962,12 +1982,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         // TODO: CAS
         if slot
-            .compare_exchange(
+            .cas::<REC>(
                 slot_ptr,
                 PShared::null(),
-                Ordering::AcqRel,
-                Ordering::Relaxed,
+                &mut try_delete.slot_cas,
+                tid,
                 guard,
+                pool,
             )
             .is_err()
         {
