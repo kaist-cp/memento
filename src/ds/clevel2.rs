@@ -267,7 +267,7 @@ impl<K, V: Collectable> InsertInnerInner<K, V> {
 /// Try slot insert client
 #[derive(Debug)]
 pub struct TrySlotInsert<K, V: Collectable> {
-    slot_chk: Checkpoint<(usize, PPtr<PAtomic<Slot<K, V>>>)>,
+    slot_chk: Checkpoint<Option<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>>,
     slot_cas: Cas,
 }
 
@@ -1724,7 +1724,26 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<FindResult<'g, K, V>, ()> {
-        // TODO: if REC peek slot and CAS
+        if REC {
+            if let Some(v) = try_slot_insert.slot_chk.peek(tid, pool) {
+                let (size, slot) = unsafe { some_or!(v, return Err(())) };
+                let slot = unsafe { slot.deref(pool) };
+                if let Ok(()) = slot.cas::<false>(
+                    PShared::null(),
+                    slot_new,
+                    &mut try_slot_insert.slot_cas,
+                    tid,
+                    guard,
+                    pool,
+                ) {
+                    return Ok(FindResult {
+                        size,
+                        slot,
+                        slot_ptr: slot_new,
+                    });
+                }
+            }
+        }
 
         let context_ref = unsafe { context.deref(pool) };
         let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
@@ -1748,11 +1767,17 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             for i in 0..SLOTS_IN_BUCKET {
                 for key_hash in key_hashes.clone() {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
-                    // TODO: checkpoint slot
-
                     if !slot.load(Ordering::Acquire, guard, pool).is_null() {
                         continue;
                     }
+
+                    let _ = unsafe {
+                        try_slot_insert.slot_chk.checkpoint::<false, _>(
+                            || Some((size, slot.as_pptr(pool))),
+                            tid,
+                            pool,
+                        )
+                    };
 
                     if let Ok(()) = slot.cas::<false>(
                         PShared::null(),
@@ -1772,7 +1797,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        // TODO: checkpoint result as slot is None
+        let _ = try_slot_insert
+            .slot_chk
+            .checkpoint::<false, _>(|| None, tid, pool);
+
         Err(())
     }
 
