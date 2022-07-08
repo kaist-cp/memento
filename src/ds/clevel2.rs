@@ -92,30 +92,50 @@ struct Bucket<K, V> {
 
 #[derive(Debug)]
 struct Node<T> {
-    data: T,
-    next: PAtomic<Node<T>>,
+    data: PAtomic<[MaybeUninit<T>]>,
+    next: PAtomic<Self>,
 }
 
-impl<T> From<T> for Node<T> {
-    fn from(val: T) -> Self {
+impl<T> From<PAtomic<[MaybeUninit<T>]>> for Node<T> {
+    fn from(data: PAtomic<[MaybeUninit<T>]>) -> Self {
         Self {
-            data: val,
-            next: PAtomic::null(),
+            data,
+            next: PAtomic::default(),
         }
     }
 }
 
 #[derive(Debug)]
 struct NodeIter<'g, T> {
-    inner: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
-    last: PShared<'g, Node<PAtomic<[MaybeUninit<T>]>>>,
+    inner: PShared<'g, Node<T>>,
+    last: PShared<'g, Node<T>>,
     guard: &'g Guard,
+}
+
+impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
+    type Item = &'g [MaybeUninit<T>];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let pool = global_pool().unwrap();
+        let inner_ref = unsafe { self.inner.as_ref(pool) }?;
+        self.inner = if self.inner == self.last {
+            PShared::null()
+        } else {
+            inner_ref.next.load(Ordering::Acquire, self.guard)
+        };
+        Some(unsafe {
+            inner_ref
+                .data
+                .load(Ordering::Relaxed, self.guard)
+                .deref(pool)
+        })
+    }
 }
 
 #[derive(Debug)]
 struct Context<K, V> {
-    first_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
-    last_level: PAtomic<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>,
+    first_level: PAtomic<Node<Bucket<K, V>>>,
+    last_level: PAtomic<Node<Bucket<K, V>>>,
 
     /// Should resize until the last level's size > resize_size
     ///
@@ -178,26 +198,6 @@ impl<'g, K, V> Default for FindResult<'g, K, V> {
             slot: unsafe { &*ptr::null() },
             slot_ptr: PShared::null(),
         }
-    }
-}
-
-impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
-    type Item = &'g [MaybeUninit<T>];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pool = global_pool().unwrap();
-        let inner_ref = unsafe { self.inner.as_ref(pool) }?;
-        self.inner = if self.inner == self.last {
-            PShared::null()
-        } else {
-            inner_ref.next.load(Ordering::Acquire, self.guard)
-        };
-        Some(unsafe {
-            inner_ref
-                .data
-                .load(Ordering::Relaxed, self.guard)
-                .deref(pool)
-        })
     }
 }
 
@@ -374,12 +374,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     }
 }
 
-fn new_node<K, V>(
-    size: usize,
-    pool: &PoolHandle,
-) -> POwned<Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>> {
-    // println!("[new_node] size: {size}");
-
+fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
@@ -419,17 +414,17 @@ impl<K, V> Drop for Clevel<K, V> {
     }
 }
 
-impl<K: PartialEq + Hash, V> Clevel<K, V> {
+impl<K: Debug + PartialEq + Hash, V: Debug> Clevel<K, V> {
     // TODO: memento
     fn next_level<'g>(
         &self,
-        first_level: &Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level: &Node<Bucket<K, V>>,
         next_level_size: usize,
         backoff: &Backoff,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> Result<PShared<'g, Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>, ()> {
+    ) -> Result<PShared<'g, Node<Bucket<K, V>>>, ()> {
         let next_level = first_level.next.load(Ordering::Acquire, guard);
         // TODO: checkpoint next_level
         if !next_level.is_null() {
@@ -465,7 +460,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     fn add_level<'g>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
-        first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>, // must be stable
+        first_level: &'g Node<Bucket<K, V>>, // must be stable
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -558,7 +553,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
         key_tag: u16,                      // must be stable
         key_hashes: [u32; 2],              // must be stable
-        first_level_ref: &Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level_ref: &Node<Bucket<K, V>>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
@@ -627,17 +622,11 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
         key_tag: u16,                      // must be stable
         key_hashes: [u32; 2],              // must be stable
-        first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level_ref: &'g Node<Bucket<K, V>>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> Result<
-        &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        (
-            PShared<'g, Context<K, V>>,
-            &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        ),
-    > {
+    ) -> Result<&'g Node<Bucket<K, V>>, (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>)> {
         if self
             .resize_move_slot_insert(slot_ptr, key_tag, key_hashes, first_level_ref, guard, pool)
             .is_ok()
@@ -659,11 +648,11 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         &'g self,
         context: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
-        first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level_ref: &'g Node<Bucket<K, V>>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>> {
+    ) -> &'g Node<Bucket<K, V>> {
         let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
 
         let mut res = self.resize_move_inner(
@@ -690,7 +679,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     fn resize_clean<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
-        mut first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        mut first_level_ref: &'g Node<Bucket<K, V>>,
         last_level_data: &'g [MaybeUninit<Bucket<K, V>>], // must be stable
         tid: usize,
         guard: &'g Guard,
