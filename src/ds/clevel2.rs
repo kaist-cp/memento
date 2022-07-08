@@ -487,7 +487,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                 e,
                 {
                     context = e.current;
-                    context_new = e.new;
+                    context_new = e.new; // TODO: need?
                     let context_ref = unsafe { e.current.deref(pool) };
 
                     if unsafe {
@@ -506,6 +506,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                     }
 
                     // We thought this is unreachable but indeed reachable...
+                    // TODO: because resizer switch the context? (i.e. advance the last level, but not first level)
                     let context_new_ref = unsafe { context_new.deref(pool) };
                     context_new_ref.last_level.store(
                         context_ref.last_level.load(Ordering::Acquire, guard),
@@ -872,7 +873,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
                         continue;
                     }
 
-                    // TODO: checkpoint slot
+                    // TODO: checkpoint slot (seungmin: 위에서 load하기 전에 해야하는거 아닌지?)
 
                     // TODO: CAS
                     if let Ok(slot_ptr) = slot.compare_exchange(
@@ -1006,8 +1007,8 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     // TODO: memento
     fn move_if_resized<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
-        insert_result: FindResult<'g, K, V>,
+        context: PShared<'g, Context<K, V>>, // must be stable
+        insert_result: FindResult<'g, K, V>, // ?
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
         guard: &'g Guard,
