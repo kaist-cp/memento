@@ -5,7 +5,6 @@
 #![allow(unused)]
 use core::cmp;
 use core::fmt::Debug;
-use core::fmt::Display;
 use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
@@ -24,6 +23,7 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
+use crate::ploc::Checkpoint;
 use crate::pmem::persist_obj;
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
 use crate::PDefault;
@@ -78,15 +78,49 @@ fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
     (tag, [left, if left != right { right } else { right + 1 }])
 }
 
+/// Insert client
+#[derive(Debug)]
+pub struct Insert<K, V: Collectable> {
+    found_slot: Checkpoint<(bool, PAtomic<Slot<K, V>>)>,
+}
+
+impl<K, V: Collectable> Default for Insert<K, V> {
+    fn default() -> Self {
+        Self {
+            found_slot: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Insert<K, V> {
+    fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut insert.found_slot, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> Insert<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.found_slot.clear();
+    }
+}
+
 #[derive(Debug, Default)]
-struct Slot<K, V> {
+struct Slot<K, V: Collectable> {
     key: K,
     value: V,
 }
 
+impl<K, V: Collectable> Collectable for Slot<K, V> {
+    fn filter(slot: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        V::filter(&mut slot.value, tid, gc, pool);
+    }
+}
+
 #[derive(Debug)]
 #[repr(align(64))]
-struct Bucket<K, V> {
+struct Bucket<K, V: Collectable> {
     slots: [PAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
@@ -133,7 +167,7 @@ impl<'g, T: Debug> Iterator for NodeIter<'g, T> {
 }
 
 #[derive(Debug)]
-struct Context<K, V> {
+struct Context<K, V: Collectable> {
     first_level: PAtomic<Node<Bucket<K, V>>>,
     last_level: PAtomic<Node<Bucket<K, V>>>,
 
@@ -144,7 +178,7 @@ struct Context<K, V> {
 }
 
 #[derive(Debug)]
-pub struct Clevel<K, V> {
+pub struct Clevel<K, V: Collectable> {
     context: PAtomic<Context<K, V>>,
     add_level_lock: ThreadRecoverableSpinLock,
 }
@@ -183,14 +217,14 @@ impl<K, V: Collectable> PDefault for Clevel<K, V> {
 }
 
 #[derive(Debug)]
-struct FindResult<'g, K, V> {
+struct FindResult<'g, K, V: Collectable> {
     /// level's size
     size: usize,
     slot: &'g PAtomic<Slot<K, V>>,
     slot_ptr: PShared<'g, Slot<K, V>>,
 }
 
-impl<'g, K, V> Default for FindResult<'g, K, V> {
+impl<'g, K, V: Collectable> Default for FindResult<'g, K, V> {
     #[allow(deref_nullptr)]
     fn default() -> Self {
         Self {
@@ -201,7 +235,7 @@ impl<'g, K, V> Default for FindResult<'g, K, V> {
     }
 }
 
-impl<K: PartialEq + Hash, V> Context<K, V> {
+impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
     pub fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
         NodeIter {
             inner: self.last_level.load(Ordering::Acquire, guard),
@@ -211,7 +245,7 @@ impl<K: PartialEq + Hash, V> Context<K, V> {
     }
 }
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
+impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
     /// `Ok`: found something (may not be unique)
     ///
     /// `Err` means contention
@@ -374,7 +408,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Context<K, V> {
     }
 }
 
-fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
+fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
     let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
@@ -389,7 +423,7 @@ fn new_node<K, V>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> 
     alloc_persist(Node::from(PAtomic::from(data)), pool)
 }
 
-impl<K, V> Drop for Clevel<K, V> {
+impl<K, V: Collectable> Drop for Clevel<K, V> {
     fn drop(&mut self) {
         let pool = global_pool().unwrap();
         let guard = unsafe { epoch::unprotected() };
@@ -414,7 +448,7 @@ impl<K, V> Drop for Clevel<K, V> {
     }
 }
 
-impl<K: Debug + PartialEq + Hash, V: Debug> Clevel<K, V> {
+impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     // TODO: memento
     fn next_level<'g>(
         &self,
@@ -829,9 +863,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug> Clevel<K, V> {
             guard.repin_after(|| {});
         }
     }
-}
 
-impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
     fn find_fast<'g>(
         &self,
         key: &K,
@@ -1147,11 +1179,12 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
         }
     }
 
-    pub fn insert(
+    pub fn insert<const REC: bool>(
         &self,
         key: K,
         value: V,
         resize_send: &mpsc::Sender<()>,
+        insert: &mut Insert<K, V>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
@@ -1247,21 +1280,40 @@ mod tests {
     use crossbeam_utils::thread;
 
     const NR_THREAD: usize = 12;
+    const SMOKE_CNT: usize = 100_000;
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
-    #[derive(Default)]
-    struct Smoke {}
+    struct Smoke {
+        // resize: ResizeLoop<usize, usize>,
+        insert: [Insert<usize, usize>; SMOKE_CNT],
+        // delete: [Delete<usize, usize>; SMOKE_CNT],
+    }
+
+    impl Default for Smoke {
+        fn default() -> Self {
+            Self {
+                // resize: Default::default(),
+                insert: array_init::array_init(|_| Insert::<usize, usize>::default()),
+                // delete: array_init::array_init(|_| Delete::<usize, usize>::default()),
+            }
+        }
+    }
 
     impl Collectable for Smoke {
-        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {}
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..SMOKE_CNT {
+                // ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
+                Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
+                // Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
+            }
+        }
     }
 
     impl RootObj<Smoke> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            const COUNT: usize = 100_000;
             let kv = &self.obj;
 
             match tid {
@@ -1273,12 +1325,14 @@ mod tests {
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
-                    for i in 0..COUNT {
-                        assert!(kv.insert(i, i, &send, tid, &guard, pool).is_ok());
+                    for i in 0..SMOKE_CNT {
+                        assert!(kv
+                            .insert::<true>(i, i, &send, &mut mmt.insert[i], tid, &guard, pool)
+                            .is_ok());
                         assert_eq!(kv.search(&i, &guard, pool), Some(&i));
                     }
 
-                    for i in 0..COUNT {
+                    for i in 0..SMOKE_CNT {
                         assert!(kv.delete(&i, &guard, pool));
                         assert_eq!(kv.search(&i, &guard, pool), None);
                     }
@@ -1302,17 +1356,33 @@ mod tests {
         run_test::<TestRootObj<Clevel<usize, usize>>, Smoke>(FILE_NAME, FILE_SIZE, 2);
     }
 
-    #[derive(Default)]
-    struct InsSch {}
+    const INS_SCH_CNT: usize = 3_000;
+
+    struct InsSch {
+        insert: [Insert<usize, usize>; INS_SCH_CNT],
+        // resize: ResizeLoop<usize, usize>,
+    }
+
+    impl Default for InsSch {
+        fn default() -> Self {
+            Self {
+                insert: array_init::array_init(|_| Insert::<usize, usize>::default()),
+                // resize: Default::default(),
+            }
+        }
+    }
 
     impl Collectable for InsSch {
-        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {}
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..INS_SCH_CNT {
+                Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
+                // ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
+            }
+        }
     }
 
     impl RootObj<InsSch> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut InsSch, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            const INS_SCH_CNT: usize = 1_000;
-
             let kv = &self.obj;
             match tid {
                 // T1: Resize loop
@@ -1324,7 +1394,8 @@ mod tests {
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
                     for i in 0..INS_SCH_CNT {
-                        let _ = kv.insert(i, i, &send, tid, &guard, pool);
+                        let _ =
+                            kv.insert::<true>(i, i, &send, &mut mmt.insert[i], tid, &guard, pool);
 
                         if kv.search(&i, &guard, pool) != Some(&i) {
                             panic!("[test] tid = {tid} fail n {i}");
@@ -1354,22 +1425,42 @@ mod tests {
         run_test::<TestRootObj<Clevel<usize, usize>>, InsSch>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 
-    #[derive(Default)]
-    struct InsDelLook {}
+    const INS_DEL_LOOK_CNT: usize = 1_000_000;
+
+    struct InsDelLook {
+        // resize_loop: ResizeLoop<usize, usize>,
+        inserts: [Insert<usize, usize>; INS_DEL_LOOK_CNT],
+        // deletes: [Delete<usize, usize>; INS_DEL_LOOK_CNT],
+    }
+
+    impl Default for InsDelLook {
+        fn default() -> Self {
+            Self {
+                // resize_loop: Default::default(),
+                inserts: array_init::array_init(|_| Default::default()),
+                // deletes: array_init::array_init(|_| Default::default()),
+            }
+        }
+    }
 
     impl Collectable for InsDelLook {
-        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {}
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..INS_DEL_LOOK_CNT {
+                // ResizeLoop::filter(&mut m.resize_loop, tid, gc, pool);
+                Insert::filter(&mut m.inserts[i], tid, gc, pool);
+                // Delete::filter(&mut m.deletes[i], tid, gc, pool);
+            }
+        }
     }
 
     impl RootObj<InsDelLook> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            const COUNT: usize = 1_000_000;
             let kv = &self.obj;
 
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
-                    check_res(tid, NR_THREAD, COUNT);
+                    check_res(tid, NR_THREAD, INS_DEL_LOOK_CNT);
                 }
                 // T2: Resize loop
                 2 => {
@@ -1380,11 +1471,13 @@ mod tests {
                 // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
-                    for i in 0..COUNT {
+                    for i in 0..INS_DEL_LOOK_CNT {
                         let key = compose(tid, i, i % tid);
 
                         // insert and lookup
-                        assert!(kv.insert(key, key, &send, tid, &guard, pool).is_ok());
+                        assert!(kv
+                            .insert::<true>(key, key, &send, &mut mmt.inserts[i], tid, &guard, pool)
+                            .is_ok());
                         let res = kv.search(&key, &guard, pool);
                         assert!(res.is_some());
 
