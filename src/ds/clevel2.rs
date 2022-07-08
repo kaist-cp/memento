@@ -749,38 +749,44 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                     resize_size: context_ref.resize_size,
                 },
                 pool,
+            )
+            .into_shared(guard);
+            let context_new_ref = unsafe { context_new.deref_mut(pool) };
+
+            // TODO: CAS
+            let mut res = self.context.compare_exchange(
+                context,
+                context_new,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                guard,
             );
 
-            loop {
-                context = ok_or!(
-                    self.context.compare_exchange(
-                        context,
-                        context_new,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                        guard
-                    ),
-                    e,
-                    {
-                        context = e.current;
-                        context_new = e.new;
-                        let context_ref = unsafe { e.current.deref(pool) };
-                        let context_new_ref = unsafe { context_new.deref_mut(pool) };
-                        context_new_ref.first_level.store(
-                            context_ref.first_level.load(Ordering::Acquire, guard),
-                            Ordering::Relaxed,
-                        );
-                        context_new_ref.resize_size =
-                            cmp::max(context_new_ref.resize_size, context_ref.resize_size);
-                        continue;
-                    }
+            while let Err(e) = res {
+                context = e.current;
+                let context_ref = unsafe { e.current.deref(pool) };
+                context_new_ref.first_level.store(
+                    context_ref.first_level.load(Ordering::Acquire, guard),
+                    Ordering::Relaxed,
                 );
+                context_new_ref.resize_size =
+                    cmp::max(context_new_ref.resize_size, context_ref.resize_size);
 
-                unsafe {
-                    guard.defer_pdestroy(last_level);
-                }
-                break;
+                // TODO: CAS
+                res = self.context.compare_exchange(
+                    context,
+                    context_new,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    guard,
+                );
             }
+
+            unsafe {
+                guard.defer_pdestroy(last_level);
+            }
+            context = context_new;
+            break;
         }
     }
 
@@ -792,7 +798,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     ) {
         // TODO: if checkpoint recv.is_ok()
         while let Ok(()) = resize_recv.recv() {
-            println!("[resize_loop] do resize!");
+            // println!("[resize_loop] do resize!");
             self.resize(guard, pool);
             guard.repin_after(|| {});
         }
