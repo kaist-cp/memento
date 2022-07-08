@@ -1855,7 +1855,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             if let Some(v) = try_slot_insert.slot_chk.peek(tid, pool) {
                 let (size, slot) = some_or!(v, return Err(()));
                 let slot = unsafe { slot.deref(pool) };
-                if let Ok(()) = slot.cas::<false>(
+                if let Ok(()) = slot.cas::<REC>(
                     PShared::null(),
                     slot_new,
                     &mut try_slot_insert.slot_cas,
