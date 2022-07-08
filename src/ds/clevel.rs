@@ -2264,7 +2264,7 @@ mod tests {
     use crate::{
         pmem::RootObj,
         test_utils::tests::{
-            check_res, compose, decompose, produce_res, run_test, TestRootObj, JOB_FINISHED,
+            run_test, TestRootObj,
         },
     };
 
@@ -2414,8 +2414,25 @@ mod tests {
 
         run_test::<TestRootObj<Clevel<usize, usize>>, InsSch>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
+}
 
-    const INS_DEL_LOOK_CNT: usize = 100_000;
+#[cfg(test)]
+mod test {
+    use crate::{
+        pmem::RootObj,
+        test_utils::tests::{
+            check_res, compose, decompose, produce_res, run_test, TestRootObj, JOB_FINISHED,
+        },
+    };
+
+    use super::*;
+
+    const NR_THREAD: usize = 12;
+    const INS_DEL_LOOK_CNT: usize = 20_000;
+
+    static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
+    static mut RECV: Option<mpsc::Receiver<()>> = None;
+
 
     struct InsDelLook {
         resize_loop: ResizeLoop<usize, usize>,
@@ -2488,7 +2505,7 @@ mod tests {
 
     #[test]
     fn clevel_ins_del_look() {
-        const FILE_NAME: &str = "clevel_ins_del_look";
+        const FILE_NAME: &str = "clevel";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         let (send, recv) = mpsc::channel();
