@@ -12,8 +12,8 @@ objs = {
         "targets": {
             "memento_list": {'data_id': '', 'label': "List-mmt", 'marker': 'o', 'color': 'k', 'style': '-'},
             'Tracking': {'data_id': '', 'label': "Tracking", 'marker': 's', 'color': 'hotpink', 'style': '--'},
-            'Capsules': {'data_id': '', 'label': "Capusles", 'marker': 's', 'color': 'c', 'style': '--'},
-            'Capsules-Opt': {'data_id': '', 'label': "Capusles-Opt", 'marker': 's', 'color': 'orange', 'style': '--'},
+            'Capsules': {'data_id': '', 'label': "Capsules", 'marker': 's', 'color': 'c', 'style': '--'},
+            'Capsules-Opt': {'data_id': '', 'label': "Capsules-Opt", 'marker': 's', 'color': 'orange', 'style': '--'},
         },
     },
 }
@@ -108,7 +108,7 @@ for obj in objs:
                 style = targets[t]['style']
                 marker = targets[t]['marker']
                 throughputs = data[(data['target'] == t) &
-                                (data['insert'] == ins_rt) & (data['key range'] == kr)]
+                                   (data['insert'] == ins_rt) & (data['key range'] == kr)]
 
                 if throughputs.empty:
                     continue
@@ -118,7 +118,7 @@ for obj in objs:
                     gap = len(threads)-len(throughputs)
                     throughputs += [None]*gap
                 plot_lines.append({'x': threads, 'y': throughputs,
-                                'label': label, 'marker': shape, 'color': color, 'style': style})
+                                   'label': label, 'marker': shape, 'color': color, 'style': style})
 
             # Draw
             if workload == 'read-intensive' and kr == 500:
@@ -126,7 +126,7 @@ for obj in objs:
             else:
                 ylabel = ''
             ax = draw('Threads', ylabel,
-                    plot_lines, "./out/{}".format(plot_id), 8)
+                      plot_lines, "./out/{}".format(plot_id), 8)
         axLine, axLabel = ax.get_legend_handles_labels()
         print(axLabel)
         draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
