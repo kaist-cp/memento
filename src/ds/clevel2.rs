@@ -106,6 +106,76 @@ impl<K, V: Collectable> Insert<K, V> {
     }
 }
 
+/// Move if resized client
+#[derive(Debug)]
+pub struct MoveIfResized<K, V: Collectable> {
+    move_if_resized_inner: MoveIfResizedInner<K, V>,
+}
+
+impl<K, V: Collectable> Default for MoveIfResized<K, V> {
+    fn default() -> Self {
+        Self {
+            move_if_resized_inner: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for MoveIfResized<K, V> {
+    fn filter(
+        move_if_resized: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        MoveIfResizedInner::filter(&mut move_if_resized.move_if_resized_inner, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> MoveIfResized<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.move_if_resized_inner.clear();
+    }
+}
+
+/// Move if resized client
+#[derive(Debug)]
+pub struct MoveIfResizedInner<K, V: Collectable> {
+    context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    cas: Cas,
+}
+
+impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
+    fn default() -> Self {
+        Self {
+            context_new_chk: Default::default(),
+            cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for MoveIfResizedInner<K, V> {
+    fn filter(
+        move_if_resized_inner: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut move_if_resized_inner.context_new_chk, tid, gc, pool);
+        Cas::filter(&mut move_if_resized_inner.cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> MoveIfResizedInner<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.context_new_chk.clear();
+        self.cas.clear();
+    }
+}
+
 /// Insert inner client
 #[derive(Debug)]
 pub struct InsertInner<K, V: Collectable> {
@@ -388,7 +458,7 @@ pub struct Clevel<K, V: Collectable> {
 
 impl<K, V: Collectable> Collectable for Clevel<K, V> {
     fn filter(clevel: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        todo!()
+        PAtomic::filter(&mut clevel.context, tid, gc, pool);
     }
 }
 
