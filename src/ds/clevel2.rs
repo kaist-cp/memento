@@ -416,6 +416,262 @@ impl<K, V: Collectable> Delete<K, V> {
     }
 }
 
+/// ResizeLoop client
+#[derive(Debug)]
+pub struct ResizeLoop<K, V: Collectable> {
+    recv_chk: Checkpoint<bool>,
+    resize: Resize<K, V>,
+}
+
+impl<K, V: Collectable> Default for ResizeLoop<K, V> {
+    fn default() -> Self {
+        Self {
+            recv_chk: Default::default(),
+            resize: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for ResizeLoop<K, V> {
+    fn filter(
+        resize_loop: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut resize_loop.recv_chk, tid, gc, pool);
+        Resize::filter(&mut resize_loop.resize, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> ResizeLoop<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.recv_chk.clear();
+        self.resize.clear();
+    }
+}
+
+/// Resize client
+#[derive(Debug)]
+pub struct Resize<K, V: Collectable> {
+    resize_inner: ResizeInner<K, V>,
+}
+
+impl<K, V: Collectable> Default for Resize<K, V> {
+    fn default() -> Self {
+        Self {
+            resize_inner: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Resize<K, V> {
+    fn filter(resize: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        ResizeInner::filter(&mut resize.resize_inner, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> Resize<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.resize_inner.clear();
+    }
+}
+
+/// Resize client
+#[derive(Debug)]
+pub struct ResizeInner<K, V: Collectable> {
+    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    context_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for ResizeInner<K, V> {
+    fn default() -> Self {
+        Self {
+            context_chk: Default::default(),
+            context_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for ResizeInner<K, V> {
+    fn filter(
+        resize_inner: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut resize_inner.context_chk, tid, gc, pool);
+        Cas::filter(&mut resize_inner.context_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> ResizeInner<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.context_chk.clear();
+        self.context_cas.clear();
+    }
+}
+
+/// Resize client
+#[derive(Debug)]
+pub struct ResizeClean<K, V: Collectable> {
+    slot_slot_ptr_chk: Checkpoint<(PPtr<PAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    slot_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for ResizeClean<K, V> {
+    fn default() -> Self {
+        Self {
+            slot_slot_ptr_chk: Default::default(),
+            slot_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for ResizeClean<K, V> {
+    fn filter(
+        resize_clean: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut resize_clean.slot_slot_ptr_chk, tid, gc, pool);
+        Cas::filter(&mut resize_clean.slot_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> ResizeClean<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.slot_slot_ptr_chk.clear();
+        self.slot_cas.clear();
+    }
+}
+
+/// Resize client
+#[derive(Debug)]
+pub struct ResizeMove<K, V: Collectable> {
+    resize_move_inner: ResizeMoveInner<K, V>,
+}
+
+impl<K, V: Collectable> Default for ResizeMove<K, V> {
+    fn default() -> Self {
+        Self {
+            resize_move_inner: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for ResizeMove<K, V> {
+    fn filter(
+        resize_move: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        ResizeMoveInner::filter(&mut resize_move.resize_move_inner, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> ResizeMove<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.resize_move_inner.clear();
+    }
+}
+
+/// Resize client
+#[derive(Debug)]
+pub struct ResizeMoveInner<K, V: Collectable> {
+    resize_move_slot_insert: ResizeMoveSlotInsert<K, V>,
+    add_lv: AddLevel<K, V>,
+}
+
+impl<K, V: Collectable> Default for ResizeMoveInner<K, V> {
+    fn default() -> Self {
+        Self {
+            resize_move_slot_insert: Default::default(),
+            add_lv: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for ResizeMoveInner<K, V> {
+    fn filter(
+        resize_move_inner: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        ResizeMoveSlotInsert::filter(
+            &mut resize_move_inner.resize_move_slot_insert,
+            tid,
+            gc,
+            pool,
+        );
+        AddLevel::filter(&mut resize_move_inner.add_lv, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> ResizeMoveInner<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.resize_move_slot_insert.clear();
+        self.add_lv.clear();
+    }
+}
+
+/// Resize client
+#[derive(Debug)]
+pub struct ResizeMoveSlotInsert<K, V: Collectable> {
+    slot_slot_first_chk: Checkpoint<(PPtr<PAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    slot_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for ResizeMoveSlotInsert<K, V> {
+    fn default() -> Self {
+        Self {
+            slot_slot_first_chk: Default::default(),
+            slot_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for ResizeMoveSlotInsert<K, V> {
+    fn filter(
+        resize_move_slot_insert: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(
+            &mut resize_move_slot_insert.slot_slot_first_chk,
+            tid,
+            gc,
+            pool,
+        );
+        Cas::filter(&mut resize_move_slot_insert.slot_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> ResizeMoveSlotInsert<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.slot_slot_first_chk.clear();
+        self.slot_cas.clear();
+    }
+}
+
 #[derive(Debug, Default)]
 struct Slot<K, V: Collectable> {
     key: K,
