@@ -286,55 +286,55 @@ for obj, obj_info in objs.items():
     axLine, axLabel = axes[0].get_legend_handles_labels()
     draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
 
-# 2. single-thread throughput (bar graph)
-for obj, obj_info in objs.items():
-    targets = obj_info['targets']
-    dfs = []
-    dfs_xlabel = []
+# # 2. single-thread throughput (bar graph)
+# for obj, obj_info in objs.items():
+#     targets = obj_info['targets']
+#     dfs = []
+#     dfs_xlabel = []
 
-    for ix, dist in enumerate(["Uniform", "Self Similar"]):
-        plt.clf()
-        bd_datas = []
+#     for ix, dist in enumerate(["Uniform", "Self Similar"]):
+#         plt.clf()
+#         bd_datas = []
 
-        for wl in "insert", "pos_search", "neg_search", "delete":
+#         for wl in "insert", "pos_search", "neg_search", "delete":
 
-            wl_datas = {"workload": obj_info['bench_kinds']
-                        ['throughput']['workloads'][wl]['label_single']}
+#             wl_datas = {"workload": obj_info['bench_kinds']
+#                         ['throughput']['workloads'][wl]['label_single']}
 
-            for t, t_plot in targets.items():
-                filepath = get_filepath('throughput', dist.replace(" ", ""), wl, t)
+#             for t, t_plot in targets.items():
+#                 filepath = get_filepath('throughput', dist.replace(" ", ""), wl, t)
 
-                # filepath = "./out/THROUGHPUT/{}/{}/{}.out".format(
-                #     dist.upper(), wl, t)
+#                 # filepath = "./out/THROUGHPUT/{}/{}/{}.out".format(
+#                 #     dist.upper(), wl, t)
 
-                if not os.path.isfile(filepath):
-                    continue
+#                 if not os.path.isfile(filepath):
+#                     continue
 
-                _, data = read_throughputs(filepath)
-                wl_datas[t] = data[0]
-            bd_datas.append(wl_datas)
+#                 _, data = read_throughputs(filepath)
+#                 wl_datas[t] = data[0]
+#             bd_datas.append(wl_datas)
 
-        dfs.append(pd.DataFrame.from_dict(bd_datas))
-        dfs_xlabel.append('('+chr(ix+ord('a'))+') '+dist)
+#         dfs.append(pd.DataFrame.from_dict(bd_datas))
+#         dfs_xlabel.append('('+chr(ix+ord('a'))+') '+dist)
 
-    # draw graph, not save
-    fig, axes = plt.subplots(1, 2, figsize=(6, 1.0))
-    for ix, df in enumerate(dfs):
-        colors = [objs["hash"]["targets"][target]["color"]
-                  for target in df.columns[1:]]
-        p = df.plot(ax=axes[ix], x="workload",
-                    xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False, color=colors)
+#     # draw graph, not save
+#     fig, axes = plt.subplots(1, 2, figsize=(6, 1.0))
+#     for ix, df in enumerate(dfs):
+#         colors = [objs["hash"]["targets"][target]["color"]
+#                   for target in df.columns[1:]]
+#         p = df.plot(ax=axes[ix], x="workload",
+#                     xlabel=dfs_xlabel[ix], kind="bar", rot=0, legend=False, color=colors)
 
-        axes[0].set_yticks([0, 0.5, 1, 1.5])
-        axes[1].set_yticks([0, 1, 2])
-        axes[ix].tick_params(axis='y', labelsize=7)
-        p.tick_params(axis='x', labelsize=5)
-        p.set_xlabel(dfs_xlabel[ix], fontsize=7)
-        p.grid(True, axis='y', linestyle='--')
-    axes[0].set_ylabel("Throughput (M op/s)", fontsize=7)
+#         axes[0].set_yticks([0, 0.5, 1, 1.5])
+#         axes[1].set_yticks([0, 1, 2])
+#         axes[ix].tick_params(axis='y', labelsize=7)
+#         p.tick_params(axis='x', labelsize=5)
+#         p.set_xlabel(dfs_xlabel[ix], fontsize=7)
+#         p.grid(True, axis='y', linestyle='--')
+#     axes[0].set_ylabel("Throughput (M op/s)", fontsize=7)
 
-    # save
-    figpath = "./out/hash-throughput-single.svg"
-    plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
-    print(figpath)
+#     # save
+#     figpath = "./out/hash-throughput-single.svg"
+#     plt.savefig(figpath, bbox_inches='tight', pad_inches=0, dpi=300)
+#     print(figpath)
 
