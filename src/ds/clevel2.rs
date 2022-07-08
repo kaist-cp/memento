@@ -1446,6 +1446,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     pub fn resize_loop(
         &self,
         resize_recv: &mpsc::Receiver<()>,
+        resize_loop: &mut ResizeLoop<K, V>,
         tid: usize,
         guard: &mut Guard,
         pool: &PoolHandle,
@@ -1903,7 +1904,7 @@ mod tests {
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
     struct Smoke {
-        // resize: ResizeLoop<usize, usize>,
+        resize: ResizeLoop<usize, usize>,
         insert: [Insert<usize, usize>; SMOKE_CNT],
         delete: [Delete<usize, usize>; SMOKE_CNT],
     }
@@ -1911,7 +1912,7 @@ mod tests {
     impl Default for Smoke {
         fn default() -> Self {
             Self {
-                // resize: Default::default(),
+                resize: Default::default(),
                 insert: array_init::array_init(|_| Insert::<usize, usize>::default()),
                 delete: array_init::array_init(|_| Delete::<usize, usize>::default()),
             }
@@ -1921,7 +1922,7 @@ mod tests {
     impl Collectable for Smoke {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..SMOKE_CNT {
-                // ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
+                ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
                 Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
             }
@@ -1937,7 +1938,7 @@ mod tests {
                 1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
-                    kv.resize_loop(&recv, tid, guard, pool);
+                    kv.resize_loop(&recv, &mut mmt.resize, tid, guard, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
@@ -1976,14 +1977,14 @@ mod tests {
 
     struct InsSch {
         insert: [Insert<usize, usize>; INS_SCH_CNT],
-        // resize: ResizeLoop<usize, usize>,
+        resize: ResizeLoop<usize, usize>,
     }
 
     impl Default for InsSch {
         fn default() -> Self {
             Self {
                 insert: array_init::array_init(|_| Insert::<usize, usize>::default()),
-                // resize: Default::default(),
+                resize: Default::default(),
             }
         }
     }
@@ -1992,7 +1993,7 @@ mod tests {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..INS_SCH_CNT {
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
-                // ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
+                ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
             }
         }
     }
@@ -2005,7 +2006,7 @@ mod tests {
                 1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
-                    kv.resize_loop(&recv, tid, guard, pool);
+                    kv.resize_loop(&recv, &mut mmt.resize, tid, guard, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
@@ -2044,7 +2045,7 @@ mod tests {
     const INS_DEL_LOOK_CNT: usize = 300_000;
 
     struct InsDelLook {
-        // resize_loop: ResizeLoop<usize, usize>,
+        resize_loop: ResizeLoop<usize, usize>,
         inserts: [Insert<usize, usize>; INS_DEL_LOOK_CNT],
         deletes: [Delete<usize, usize>; INS_DEL_LOOK_CNT],
     }
@@ -2052,7 +2053,7 @@ mod tests {
     impl Default for InsDelLook {
         fn default() -> Self {
             Self {
-                // resize_loop: Default::default(),
+                resize_loop: Default::default(),
                 inserts: array_init::array_init(|_| Default::default()),
                 deletes: array_init::array_init(|_| Default::default()),
             }
@@ -2062,7 +2063,7 @@ mod tests {
     impl Collectable for InsDelLook {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..INS_DEL_LOOK_CNT {
-                // ResizeLoop::filter(&mut m.resize_loop, tid, gc, pool);
+                ResizeLoop::filter(&mut m.resize_loop, tid, gc, pool);
                 Insert::filter(&mut m.inserts[i], tid, gc, pool);
                 Delete::filter(&mut m.deletes[i], tid, gc, pool);
             }
@@ -2082,7 +2083,7 @@ mod tests {
                 2 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
-                    kv.resize_loop(&recv, tid, guard, pool);
+                    kv.resize_loop(&recv, &mut mmt.resize_loop, tid, guard, pool);
                 }
                 // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
                 _ => {
