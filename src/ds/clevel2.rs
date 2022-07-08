@@ -526,10 +526,10 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     // TODO: memento
     fn resize_move_slot_insert<'g>(
         &'g self,
-        slot_ptr: PShared<'_, Slot<K, V>>,
-        key_tag: u16,
-        key_hashes: [u32; 2],
-        first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
+        slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
+        key_tag: u16,                      // must be stable
+        key_hashes: [u32; 2],              // must be stable
+        first_level_data: &'g [MaybeUninit<Bucket<K, V>>], // no need to be stable
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<(), ()> {
@@ -541,6 +541,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             .dedup();
         for i in 0..SLOTS_IN_BUCKET {
             for key_hash in key_hashes.clone() {
+                // TODO: checkpoint Some(slot, slot_first_level)
                 let slot = unsafe {
                     first_level_data[key_hash]
                         .assume_init_ref()
@@ -562,6 +563,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                     return Ok(());
                 }
 
+                // TODO: CAS
                 if slot
                     .compare_exchange(
                         PShared::null(),
@@ -577,6 +579,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             }
         }
 
+        // TODO: checkpoint None
         Err(())
     }
 
@@ -584,11 +587,11 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     fn resize_move_inner<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
-        slot_ptr: PShared<'_, Slot<K, V>>,
-        key_tag: u16,
-        key_hashes: [u32; 2],
+        slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
+        key_tag: u16,                      // must be stable
+        key_hashes: [u32; 2],              // must be stable
         first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
+        first_level_data: &'g [MaybeUninit<Bucket<K, V>>], // no need to be stable
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<
@@ -597,6 +600,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             &'g [MaybeUninit<Bucket<K, V>>],
         ),
         (
+            PShared<'g, Context<K, V>>,
             &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
             &'g [MaybeUninit<Bucket<K, V>>],
         ),
@@ -615,7 +619,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
         let fst_lv_ref = unsafe { fst_lv.deref(pool) };
         let fst_lv_data = unsafe { fst_lv_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
-        Err((fst_lv_ref, fst_lv_data))
+        Err((ctx, fst_lv_ref, fst_lv_data))
     }
 
     // TODO: memento
@@ -645,9 +649,9 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             pool,
         );
 
-        while let Err((fst_lv_ref, fst_lv_data)) = res {
+        while let Err((ctx, fst_lv_ref, fst_lv_data)) = res {
             res = self.resize_move_inner(
-                context,
+                ctx,
                 slot_ptr,
                 key_tag,
                 key_hashes,
@@ -703,7 +707,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
 
                                 // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
                                 // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                                // TODO: should we do it...?
                                 if slot_ptr.tag() == 1 {
                                     slot_ptr = slot.load(Ordering::Acquire, guard);
                                     continue;
@@ -738,6 +741,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             }
 
             let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
+            // TODO: checkpoint context_new
             let mut context_new = alloc_persist(
                 Context {
                     first_level: first_level.into(),
