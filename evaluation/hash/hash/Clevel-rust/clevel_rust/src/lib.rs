@@ -140,7 +140,7 @@ pub extern "C" fn run_resize_loop(
 ) {
     let mut guard = epoch::pin();
     let recv = unsafe { RECV.as_ref().unwrap() };
-    obj.resize_loop::<_, _, false>(recv, &mut m.resize_loop, tid, &mut guard, pool);
+    obj.resize_loop::<false>(recv, &mut m.resize_loop, tid, &mut guard, pool);
 }
 
 #[no_mangle]
