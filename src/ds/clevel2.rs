@@ -529,15 +529,15 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         guard: &mut Guard,
         pool: &PoolHandle,
     ) {
+        // TODO: if checkpoint recv.is_ok()
         while let Ok(()) = resize_recv.recv() {
-            // println!("[resize_loop] do resize!");
+            println!("[resize_loop] do resize!");
             self.resize(guard, pool);
             guard.repin_after(|| {});
         }
     }
 
     fn resize(&self, guard: &Guard, pool: &PoolHandle) {
-        // // // println!("[resize]");
         let mut context = self.context.load(Ordering::Acquire, guard);
         loop {
             let mut context_ref = unsafe { context.deref(pool) };
@@ -553,10 +553,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             let last_level_size = last_level_data.len();
 
             // if we don't need to resize, break out.
-            // println!(
-            //     "[reisze] resize_size: {}, last_level_size: {}",
-            //     context_ref.resize_size, last_level_size
-            // );
             if context_ref.resize_size < last_level_size {
                 break;
             }
@@ -570,9 +566,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                     .deref(pool)
             };
             let mut first_level_size = first_level_data.len();
-            // println!(
-            //     "[resize] last_level_size: {last_level_size}, first_level_size: {first_level_size}"
-            // );
 
             for (_bid, bucket) in last_level_data.iter().enumerate() {
                 for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
@@ -608,8 +601,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                         },
                         continue
                     );
-
-                    // // // println!("[resize] moving ({}, {}, {})...", last_level_size, bid, sid);
 
                     let mut moved = false;
                     loop {
@@ -666,10 +657,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                         if moved {
                             break;
                         }
-
-                        // println!(
-                        //     "[resize] resizing again for ({last_level_size}, {bid}, {sid})..."
-                        // );
 
                         // The first level is full. Resize and retry.
                         let (context_new, _) =
@@ -729,8 +716,6 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                 }
                 break;
             }
-
-            // println!("[resize] done!");
         }
     }
 }
@@ -893,6 +878,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             }
         }
 
+        // TODO: checkpoint result as slot is None
         Err(())
     }
 
