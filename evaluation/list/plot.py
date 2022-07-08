@@ -121,7 +121,7 @@ for obj in objs:
                                    'label': label, 'marker': shape, 'color': color, 'style': style})
 
             # Draw
-            if workload == 'read-intensive' and kr == 500:
+            if kr == 20:
                 ylabel = 'Throughput (M op/s)'
             else:
                 ylabel = ''

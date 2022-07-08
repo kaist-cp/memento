@@ -58,7 +58,7 @@ show_cfg
 
 # 2. Benchmarking list performance
 
-for key_range in 500 2000; do
+for key_range in 20 100 500 2000; do
     ### Read & Update intensive for tracking
     (cd src/tracking; ./figures_compile.sh $key_range)
     (cd src/tracking; ./figures_run.sh $key_range $TEST_DUR $TEST_CNT)

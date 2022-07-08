@@ -367,8 +367,7 @@ throughputRaw = {}
 # threads = np.array([1, 12, 24, 36, 48, 60, 72, 84, 96])
 threads = np.array([1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24,
                    28, 32, 36, 40, 44, 48, 52, 56, 60, 64])
-# key_ranges = (500, 1500, 1000, 2000, 4000)
-key_ranges = (500, 2000,)
+key_ranges = (20, 100, 500, 2000,)
 
 outdir = "Figures/"
 algorithms = ['Tracking',
