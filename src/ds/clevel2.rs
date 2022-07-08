@@ -1195,7 +1195,6 @@ mod tests {
     use crossbeam_utils::thread;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
@@ -1210,6 +1209,7 @@ mod tests {
 
     impl RootObj<Smoke> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            const COUNT: usize = 100_000;
             let kv = &self.obj;
 
             match tid {
@@ -1311,6 +1311,7 @@ mod tests {
 
     impl RootObj<InsDelLook> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            const COUNT: usize = 1_000_000;
             let kv = &self.obj;
 
             match tid {
