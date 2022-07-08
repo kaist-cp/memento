@@ -555,7 +555,11 @@ impl<K, V: Collectable> ResizeInner<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct ResizeClean<K, V: Collectable> {
-    slot_slot_ptr_chk: Checkpoint<(PPtr<PAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    slot_slot_ptr_chk: Checkpoint<(
+        PPtr<DetectableCASAtomic<Slot<K, V>>>,
+        PAtomic<Slot<K, V>>,
+        PPtr<Node<Bucket<K, V>>>,
+    )>,
     slot_cas: Cas,
     resize_move: ResizeMove<K, V>,
 }
@@ -729,6 +733,14 @@ struct Bucket<K, V: Collectable> {
     slots: [DetectableCASAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
+impl<K, V: Collectable> Default for Bucket<K, V> {
+    fn default() -> Self {
+        Self {
+            slots: array_init::array_init(|_| DetectableCASAtomic::<_>::default()),
+        }
+    }
+}
+
 impl<K, V: Collectable> Collectable for Bucket<K, V> {
     fn filter(bucket: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         for slot in bucket.slots.iter_mut() {
@@ -737,7 +749,7 @@ impl<K, V: Collectable> Collectable for Bucket<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Node<T: Collectable> {
     data: PAtomic<[MaybeUninit<T>]>,
     next: DetectableCASAtomic<Self>,
@@ -1288,7 +1300,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
                 if !out {
                     if slot
-                        .cas::<false>(
+                        .cas::<REC>(
                             PShared::null(),
                             slot_ptr,
                             &mut resize_move_slot_insert.slot_cas,
@@ -1473,7 +1485,37 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
-        // TODO: if REC checkpoint (slot, slot_ptr) cas resize_move
+        if REC {
+            if let Some(chk) = resize_clean.slot_slot_ptr_chk.peek(tid, pool) {
+                let (slot, slot_ptr, fst_lv_ref) = (
+                    unsafe { chk.0.deref(pool) },
+                    chk.1.load(Ordering::Relaxed, guard),
+                    unsafe { chk.2.deref(pool) },
+                );
+
+                if slot
+                    .cas::<REC>(
+                        slot_ptr,
+                        slot_ptr.with_tag(1),
+                        &mut resize_clean.slot_cas,
+                        tid,
+                        guard,
+                        pool,
+                    )
+                    .is_ok()
+                {
+                    first_level_ref = self.resize_move::<REC>(
+                        context,
+                        slot_ptr,
+                        fst_lv_ref,
+                        &mut resize_clean.resize_move,
+                        tid,
+                        guard,
+                        pool,
+                    );
+                }
+            }
+        }
 
         for (_, bucket) in last_level_data.iter().enumerate() {
             for (_, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
@@ -1492,7 +1534,22 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                                 continue;
                             }
 
-                            // TODO: checkpoint (slot, slot_ptr)
+                            let chk = resize_clean.slot_slot_ptr_chk.checkpoint::<false, _>(
+                                || unsafe {
+                                    (
+                                        slot.as_pptr(pool),
+                                        PAtomic::from(slot_ptr),
+                                        first_level_ref.as_pptr(pool),
+                                    )
+                                },
+                                tid,
+                                pool,
+                            );
+                            let (slot, mut slot_ptr) = (
+                                unsafe { chk.0.deref(pool) },
+                                chk.1.load(Ordering::Relaxed, guard),
+                            );
+
                             if let Err(e) = slot.cas::<false>(
                                 slot_ptr,
                                 slot_ptr.with_tag(1),
