@@ -420,6 +420,48 @@ impl<K, V> Drop for Clevel<K, V> {
 }
 
 impl<K: PartialEq + Hash, V> Clevel<K, V> {
+    // TODO: memento
+    fn next_level<'g>(
+        &self,
+        first_level: &Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        next_level_size: usize,
+        backoff: &Backoff,
+        tid: usize,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<PShared<'g, Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>>, ()> {
+        let next_level = first_level.next.load(Ordering::Acquire, guard);
+        // TODO: checkpoint next_level
+        if !next_level.is_null() {
+            return Ok(next_level);
+        }
+
+        if let Ok(_g) = self.add_level_lock.try_lock::<false>(tid) {
+            // TODO: REC
+            let next_node = new_node(next_level_size, pool).into_shared(guard);
+            // TODO: checkpoint next_node
+            // TODO: CAS
+            let res = first_level
+                .next
+                .compare_exchange(
+                    PShared::null(),
+                    next_node,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    guard,
+                )
+                .unwrap_or_else(|err| {
+                    unsafe { guard.defer_pdestroy(next_node) };
+                    err.current
+                });
+
+            return Ok(res);
+        }
+
+        Err(())
+    }
+
+    // TODO: memento
     fn add_level<'g>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
@@ -434,35 +476,18 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
 
         // insert a new level to the next of the first level.
         let backoff = Backoff::default();
-        let next_level = loop {
-            let next_level = first_level.next.load(Ordering::Acquire, guard);
-            // TODO: checkpoint next_level
-            if !next_level.is_null() {
-                break next_level;
+        let next_level = if let Ok(n) =
+            self.next_level(first_level, next_level_size, &backoff, tid, guard, pool)
+        {
+            n
+        } else {
+            loop {
+                if let Ok(n) =
+                    self.next_level(first_level, next_level_size, &backoff, tid, guard, pool)
+                {
+                    break n;
+                }
             }
-
-            if let Ok(_g) = self.add_level_lock.try_lock::<false>(tid) {
-                // TODO: REC
-                let next_node = new_node(next_level_size, pool).into_shared(guard);
-                // TODO: checkpoint next_node
-                // TODO: CAS
-                let res = first_level
-                    .next
-                    .compare_exchange(
-                        PShared::null(),
-                        next_node,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                        guard,
-                    )
-                    .unwrap_or_else(|err| {
-                        unsafe { guard.defer_pdestroy(next_node) };
-                        err.current
-                    });
-                break res;
-            }
-
-            backoff.snooze();
         };
 
         // update context.
