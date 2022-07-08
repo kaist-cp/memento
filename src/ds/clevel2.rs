@@ -1134,7 +1134,7 @@ mod tests {
     use crossbeam_utils::thread;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 1_000_001;
+    const COUNT: usize = 10_000;
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
@@ -1198,8 +1198,9 @@ mod tests {
 
     impl RootObj<InsSch> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut InsSch, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let kv = &self.obj;
+            const INS_SCH_CNT: usize = 1_000;
 
+            let kv = &self.obj;
             match tid {
                 // T1: Resize loop
                 1 => {
@@ -1209,7 +1210,7 @@ mod tests {
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
-                    for i in 0..COUNT {
+                    for i in 0..INS_SCH_CNT {
                         let _ = kv.insert(i, i, &send, &guard, pool);
 
                         if kv.search(&i, &guard, pool) != Some(&i) {
