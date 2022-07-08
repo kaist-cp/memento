@@ -23,9 +23,9 @@ use tinyvec::*;
 
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::Checkpoint;
-use crate::pmem::persist_obj;
+use crate::ploc::{Cas, Checkpoint};
 use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
+use crate::pmem::{persist_obj, PPtr};
 use crate::PDefault;
 
 use super::tlock::ThreadRecoverableSpinLock;
@@ -106,6 +106,181 @@ impl<K, V: Collectable> Insert<K, V> {
     }
 }
 
+/// Insert inner client
+#[derive(Debug)]
+pub struct InsertInner<K, V: Collectable> {
+    insert_inner_inner: InsertInnerInner<K, V>,
+}
+
+impl<K, V: Collectable> Default for InsertInner<K, V> {
+    fn default() -> Self {
+        Self {
+            insert_inner_inner: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for InsertInner<K, V> {
+    fn filter(
+        insert_inner: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        InsertInnerInner::filter(&mut insert_inner.insert_inner_inner, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> InsertInner<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.insert_inner_inner.clear();
+    }
+}
+
+/// Insert inner inner client
+#[derive(Debug)]
+pub struct InsertInnerInner<K, V: Collectable> {
+    try_slot_insert: TrySlotInsert<K, V>,
+    add_lv: AddLevel<K, V>,
+}
+
+impl<K, V: Collectable> Default for InsertInnerInner<K, V> {
+    fn default() -> Self {
+        Self {
+            try_slot_insert: Default::default(),
+            add_lv: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for InsertInnerInner<K, V> {
+    fn filter(
+        insert_inner_inner: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        TrySlotInsert::filter(&mut insert_inner_inner.try_slot_insert, tid, gc, pool);
+        AddLevel::filter(&mut insert_inner_inner.add_lv, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> InsertInnerInner<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_slot_insert.clear();
+        self.add_lv.clear();
+    }
+}
+
+/// Try slot insert client
+#[derive(Debug)]
+pub struct TrySlotInsert<K, V: Collectable> {
+    slot_chk: Checkpoint<(usize, PPtr<PAtomic<Slot<K, V>>>)>,
+    cas: Cas,
+}
+
+impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
+    fn default() -> Self {
+        Self {
+            slot_chk: Default::default(),
+            cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for TrySlotInsert<K, V> {
+    fn filter(
+        try_slot_insert: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Checkpoint::filter(&mut try_slot_insert.slot_chk, tid, gc, pool);
+        Cas::filter(&mut try_slot_insert.cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> TrySlotInsert<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.slot_chk.clear();
+        self.cas.clear();
+    }
+}
+
+/// Add level client
+#[derive(Debug)]
+pub struct AddLevel<K, V: Collectable> {
+    next_level: NextLevel<K, V>,
+    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    context_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for AddLevel<K, V> {
+    fn default() -> Self {
+        Self {
+            next_level: Default::default(),
+            context_chk: Default::default(),
+            context_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for AddLevel<K, V> {
+    fn filter(add_lv: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        NextLevel::filter(&mut add_lv.next_level, tid, gc, pool);
+        Checkpoint::filter(&mut add_lv.context_chk, tid, gc, pool);
+        Cas::filter(&mut add_lv.context_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> AddLevel<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.next_level.clear();
+        self.context_chk.clear();
+        self.context_cas.clear();
+    }
+}
+
+/// Next level client
+#[derive(Debug)]
+pub struct NextLevel<K, V: Collectable> {
+    next_node_chk: Checkpoint<PAtomic<Node<Bucket<K, V>>>>,
+    next_cas: Cas,
+}
+
+impl<K, V: Collectable> Default for NextLevel<K, V> {
+    fn default() -> Self {
+        Self {
+            next_node_chk: Default::default(),
+            next_cas: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for NextLevel<K, V> {
+    fn filter(add_lv: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut add_lv.next_node_chk, tid, gc, pool);
+        Cas::filter(&mut add_lv.next_cas, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> NextLevel<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.next_node_chk.clear();
+        self.next_cas.clear();
+    }
+}
+
 #[derive(Debug, Default)]
 struct Slot<K, V: Collectable> {
     key: K,
@@ -124,6 +299,14 @@ struct Bucket<K, V: Collectable> {
     slots: [PAtomic<Slot<K, V>>; SLOTS_IN_BUCKET],
 }
 
+impl<K, V: Collectable> Collectable for Bucket<K, V> {
+    fn filter(bucket: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        for slot in bucket.slots.iter_mut() {
+            PAtomic::filter(slot, tid, gc, pool);
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Node<T> {
     data: PAtomic<[MaybeUninit<T>]>,
@@ -136,6 +319,20 @@ impl<T> From<PAtomic<[MaybeUninit<T>]>> for Node<T> {
             data,
             next: PAtomic::default(),
         }
+    }
+}
+
+impl<T: Collectable> Collectable for Node<T> {
+    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        let guard = unsafe { epoch::unprotected() };
+
+        let mut data = node.data.load(Ordering::SeqCst, guard);
+        let data_ref = unsafe { data.deref_mut(pool) };
+        for b in data_ref.iter_mut() {
+            MaybeUninit::<T>::mark(b, tid, gc); // TODO: mark?
+        }
+
+        PAtomic::filter(&mut node.next, tid, gc, pool);
     }
 }
 
@@ -175,6 +372,12 @@ struct Context<K, V: Collectable> {
     ///
     /// invariant: resize_size = first_level_size / 2 / 2
     resize_size: usize,
+}
+
+impl<K, V: Collectable> Collectable for Context<K, V> {
+    fn filter(context: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        PAtomic::filter(&mut context.last_level, tid, gc, pool);
+    }
 }
 
 #[derive(Debug)]
@@ -996,12 +1199,11 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             for i in 0..SLOTS_IN_BUCKET {
                 for key_hash in key_hashes.clone() {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
+                    // TODO: checkpoint slot
 
                     if !slot.load(Ordering::Acquire, guard).is_null() {
                         continue;
                     }
-
-                    // TODO: checkpoint slot (seungmin: 위에서 load하기 전에 해야하는거 아닌지?)
 
                     // TODO: CAS
                     if let Ok(slot_ptr) = slot.compare_exchange(
