@@ -524,15 +524,23 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     }
 
     // TODO: memento
-    fn resize_move_slot_insert<'g>(
-        &'g self,
+    fn resize_move_slot_insert(
+        &self,
         slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
         key_tag: u16,                      // must be stable
         key_hashes: [u32; 2],              // must be stable
-        first_level_data: &'g [MaybeUninit<Bucket<K, V>>], // no need to be stable
-        guard: &'g Guard,
-        pool: &'g PoolHandle,
+        first_level_ref: &Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        guard: &Guard,
+        pool: &PoolHandle,
     ) -> Result<(), ()> {
+        // TODO: if REC checkpoint Some(slot, slot_first_level) cas
+
+        let mut first_level_data = unsafe {
+            first_level_ref
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+        };
         let first_level_size = first_level_data.len();
         let key_hashes = key_hashes
             .into_iter()
@@ -591,25 +599,20 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         key_tag: u16,                      // must be stable
         key_hashes: [u32; 2],              // must be stable
         first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        first_level_data: &'g [MaybeUninit<Bucket<K, V>>], // no need to be stable
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<
-        (
-            &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-            &'g [MaybeUninit<Bucket<K, V>>],
-        ),
+        &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
         (
             PShared<'g, Context<K, V>>,
             &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-            &'g [MaybeUninit<Bucket<K, V>>],
         ),
     > {
         if self
-            .resize_move_slot_insert(slot_ptr, key_tag, key_hashes, first_level_data, guard, pool)
+            .resize_move_slot_insert(slot_ptr, key_tag, key_hashes, first_level_ref, guard, pool)
             .is_ok()
         {
-            return Ok((first_level_ref, first_level_data));
+            return Ok(first_level_ref);
         }
 
         // The first level is full. Resize and retry.
@@ -618,8 +621,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         let ctx_ref = unsafe { ctx.deref(pool) };
         let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
         let fst_lv_ref = unsafe { fst_lv.deref(pool) };
-        let fst_lv_data = unsafe { fst_lv_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
-        Err((ctx, fst_lv_ref, fst_lv_data))
+        Err((ctx, fst_lv_ref))
     }
 
     // TODO: memento
@@ -628,14 +630,9 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         context: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
         first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
         guard: &'g Guard,
         pool: &'g PoolHandle,
-    ) -> (
-        &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        &'g [MaybeUninit<Bucket<K, V>>],
-    ) {
-        let mut first_level_size = first_level_data.len();
+    ) -> &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>> {
         let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
 
         let mut res = self.resize_move_inner(
@@ -644,31 +641,73 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             key_tag,
             key_hashes,
             first_level_ref,
-            first_level_data,
             guard,
             pool,
         );
 
-        while let Err((ctx, fst_lv_ref, fst_lv_data)) = res {
-            res = self.resize_move_inner(
-                ctx,
-                slot_ptr,
-                key_tag,
-                key_hashes,
-                fst_lv_ref,
-                fst_lv_data,
-                guard,
-                pool,
-            );
+        while let Err((ctx, fst_lv_ref)) = res {
+            res =
+                self.resize_move_inner(ctx, slot_ptr, key_tag, key_hashes, fst_lv_ref, guard, pool);
         }
 
         res.unwrap()
     }
 
     // TODO: memento
+    fn resize_clean<'g>(
+        &'g self,
+        context: PShared<'g, Context<K, V>>,
+        mut first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        last_level_data: &'g [MaybeUninit<Bucket<K, V>>], // must be stable
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) {
+        // TODO: if REC checkpoint (slot, slot_ptr) cas resize_move
+
+        for (_, bucket) in last_level_data.iter().enumerate() {
+            for (_, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
+                let slot_ptr = some_or!(
+                    {
+                        let mut slot_ptr = slot.load(Ordering::Acquire, guard);
+                        loop {
+                            if slot_ptr.is_null() {
+                                break None;
+                            }
+
+                            // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
+                            // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
+                            if slot_ptr.tag() == 1 {
+                                slot_ptr = slot.load(Ordering::Acquire, guard);
+                                continue;
+                            }
+
+                            // TODO: checkpoint (slot, slot_ptr)
+                            if let Err(e) = slot.compare_exchange(
+                                slot_ptr,
+                                slot_ptr.with_tag(1),
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                guard,
+                            ) {
+                                slot_ptr = e.current;
+                                continue;
+                            }
+
+                            break Some(slot_ptr);
+                        }
+                    },
+                    continue
+                );
+
+                first_level_ref = self.resize_move(context, slot_ptr, first_level_ref, guard, pool);
+            }
+        }
+    }
+
+    // TODO: memento
     fn resize_inner<'g>(
         &'g self,
-        mut context: PShared<'g, Context<K, V>>,
+        mut context: PShared<'g, Context<K, V>>, // must be stable
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<(), PShared<'g, Context<K, V>>> {
@@ -691,58 +730,8 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
 
         let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let mut first_level_ref = unsafe { first_level.deref(pool) };
-        let mut first_level_data = unsafe {
-            first_level_ref
-                .data
-                .load(Ordering::Relaxed, guard)
-                .deref(pool)
-        };
-        let mut first_level_size = first_level_data.len();
 
-        for (_bid, bucket) in last_level_data.iter().enumerate() {
-            for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
-                let slot_ptr = some_or!(
-                    {
-                        let mut slot_ptr = slot.load(Ordering::Acquire, guard);
-                        loop {
-                            if slot_ptr.is_null() {
-                                break None;
-                            }
-
-                            // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
-                            // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                            if slot_ptr.tag() == 1 {
-                                slot_ptr = slot.load(Ordering::Acquire, guard);
-                                continue;
-                            }
-
-                            if let Err(e) = slot.compare_exchange(
-                                slot_ptr,
-                                slot_ptr.with_tag(1),
-                                Ordering::AcqRel,
-                                Ordering::Acquire,
-                                guard,
-                            ) {
-                                slot_ptr = e.current;
-                                continue;
-                            }
-
-                            break Some(slot_ptr);
-                        }
-                    },
-                    continue
-                );
-
-                (first_level_ref, first_level_data) = self.resize_move(
-                    context,
-                    slot_ptr,
-                    first_level_ref,
-                    first_level_data,
-                    guard,
-                    pool,
-                );
-            }
-        }
+        self.resize_clean(context, first_level_ref, last_level_data, guard, pool);
 
         let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
         // TODO: checkpoint context_new
@@ -792,14 +781,17 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         return Err(context_new);
     }
 
+    // TODO: memento
     fn resize(&self, guard: &Guard, pool: &PoolHandle) {
         let context = self.context.load(Ordering::Acquire, guard);
+        // TODO: checkpoint context
         let mut res = self.resize_inner(context, guard, pool);
         while let Err(e) = res {
             res = self.resize_inner(e, guard, pool);
         }
     }
 
+    // TODO: memento
     pub fn resize_loop(
         &self,
         resize_recv: &mpsc::Receiver<()>,
