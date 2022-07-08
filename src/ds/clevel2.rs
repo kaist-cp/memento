@@ -304,16 +304,18 @@ impl<K, V: Collectable> TrySlotInsert<K, V> {
 #[derive(Debug)]
 pub struct AddLevel<K, V: Collectable> {
     next_level: NextLevel<K, V>,
-    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     context_cas: Cas,
+    len_chk: Checkpoint<usize>,
 }
 
 impl<K, V: Collectable> Default for AddLevel<K, V> {
     fn default() -> Self {
         Self {
             next_level: Default::default(),
-            context_chk: Default::default(),
+            context_new_chk: Default::default(),
             context_cas: Default::default(),
+            len_chk: Default::default(),
         }
     }
 }
@@ -321,8 +323,9 @@ impl<K, V: Collectable> Default for AddLevel<K, V> {
 impl<K, V: Collectable> Collectable for AddLevel<K, V> {
     fn filter(add_lv: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         NextLevel::filter(&mut add_lv.next_level, tid, gc, pool);
-        Checkpoint::filter(&mut add_lv.context_chk, tid, gc, pool);
+        Checkpoint::filter(&mut add_lv.context_new_chk, tid, gc, pool);
         Cas::filter(&mut add_lv.context_cas, tid, gc, pool);
+        Checkpoint::filter(&mut add_lv.len_chk, tid, gc, pool);
     }
 }
 
@@ -331,8 +334,9 @@ impl<K, V: Collectable> AddLevel<K, V> {
     #[inline]
     pub fn clear(&mut self) {
         self.next_level.clear();
-        self.context_chk.clear();
+        self.context_new_chk.clear();
         self.context_cas.clear();
+        self.len_chk.clear();
     }
 }
 
@@ -505,7 +509,7 @@ impl<K, V: Collectable> Resize<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct ResizeInner<K, V: Collectable> {
-    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     context_cas: Cas,
     resize_clean: ResizeClean<K, V>,
 }
@@ -513,7 +517,7 @@ pub struct ResizeInner<K, V: Collectable> {
 impl<K, V: Collectable> Default for ResizeInner<K, V> {
     fn default() -> Self {
         Self {
-            context_chk: Default::default(),
+            context_new_chk: Default::default(),
             context_cas: Default::default(),
             resize_clean: Default::default(),
         }
@@ -527,7 +531,7 @@ impl<K, V: Collectable> Collectable for ResizeInner<K, V> {
         gc: &mut GarbageCollection,
         pool: &mut PoolHandle,
     ) {
-        Checkpoint::filter(&mut resize_inner.context_chk, tid, gc, pool);
+        Checkpoint::filter(&mut resize_inner.context_new_chk, tid, gc, pool);
         Cas::filter(&mut resize_inner.context_cas, tid, gc, pool);
         ResizeClean::filter(&mut resize_inner.resize_clean, tid, gc, pool);
     }
@@ -537,7 +541,7 @@ impl<K, V: Collectable> ResizeInner<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
-        self.context_chk.clear();
+        self.context_new_chk.clear();
         self.context_cas.clear();
         self.resize_clean.clear();
     }
@@ -1127,7 +1131,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
     fn add_level<'g, const REC: bool>(
         &'g self,
-        mut context: PShared<'g, Context<K, V>>,
+        context: PShared<'g, Context<K, V>>, // no need to be stable
         first_level: &'g Node<Bucket<K, V>>, // must be stable
         add_lv: &mut AddLevel<K, V>,
         tid: usize,
@@ -1167,16 +1171,25 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
-        // TODO: checkpoint context_new
-        let mut context_new = alloc_persist(
-            Context {
-                first_level: PAtomic::from(next_level),
-                last_level: context_ref.last_level.clone(),
-                resize_size: level_size_prev(level_size_prev(next_level_size)),
-            },
-            pool,
-        )
-        .into_shared(guard);
+
+        let context_new = add_lv
+            .context_new_chk
+            .checkpoint::<REC, _>(
+                || {
+                    let n = alloc_persist(
+                        Context {
+                            first_level: PAtomic::from(next_level),
+                            last_level: context_ref.last_level.clone(),
+                            resize_size: level_size_prev(level_size_prev(next_level_size)),
+                        },
+                        pool,
+                    );
+                    PAtomic::from(n)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
         let context_new_ref = unsafe { context_new.deref(pool) };
 
         let mut res = self.context.cas::<REC>(
@@ -1188,33 +1201,36 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             pool,
         );
 
-        while let Err(e) = res {
-            context = e;
-            let context_ref = unsafe { e.deref(pool) };
+        while let Err(ctx) = res {
+            let ctx_ref = unsafe { ctx.deref(pool) };
 
-            // TODO: checkpoint len
-            if unsafe {
-                context_ref
-                    .first_level
-                    .load(Ordering::Acquire, guard)
-                    .deref(pool)
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            }
-            .len()
-                >= next_level_size
-            {
-                return (context, false);
+            let len = add_lv.len_chk.checkpoint::<REC, _>(
+                || {
+                    unsafe {
+                        ctx_ref
+                            .first_level
+                            .load(Ordering::Acquire, guard)
+                            .deref(pool)
+                            .data
+                            .load(Ordering::Relaxed, guard)
+                            .deref(pool)
+                    }
+                    .len()
+                },
+                tid,
+                pool,
+            );
+            if len >= next_level_size {
+                return (ctx, false);
             }
 
             context_new_ref.last_level.store(
-                context_ref.last_level.load(Ordering::Acquire, guard),
+                ctx_ref.last_level.load(Ordering::Acquire, guard),
                 Ordering::Relaxed,
             ); // Exploit invariant
 
             res = self.context.cas::<false>(
-                context,
+                ctx,
                 context_new,
                 &mut add_lv.context_cas,
                 tid,
@@ -1481,16 +1497,25 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         );
 
         let next_level = last_level_ref.next.load(Ordering::Acquire, guard, pool);
-        // TODO: checkpoint context_new
-        let mut context_new = alloc_persist(
-            Context {
-                first_level: first_level.into(),
-                last_level: next_level.into(),
-                resize_size: context_ref.resize_size,
-            },
-            pool,
-        )
-        .into_shared(guard);
+        let mut context_new = resize_inner
+            .context_new_chk
+            .checkpoint::<REC, _>(
+                || {
+                    let n = alloc_persist(
+                        Context {
+                            first_level: first_level.into(),
+                            last_level: next_level.into(),
+                            resize_size: context_ref.resize_size,
+                        },
+                        pool,
+                    );
+                    PAtomic::from(n)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
+
         let context_new_ref = unsafe { context_new.deref_mut(pool) };
 
         let mut res = self.context.cas::<REC>(
@@ -1505,10 +1530,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         while let Err(e) = res {
             context = e;
             let context_ref = unsafe { e.deref(pool) };
+
+            // exploit invariant
             context_new_ref.first_level.store(
                 context_ref.first_level.load(Ordering::Acquire, guard),
                 Ordering::Relaxed,
             );
+            // TODO: AtomicUsize
             context_new_ref.resize_size =
                 cmp::max(context_new_ref.resize_size, context_ref.resize_size);
 
