@@ -1063,8 +1063,7 @@ impl<K, V: Collectable> Drop for Clevel<K, V> {
 }
 
 impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
-    // TODO: memento
-    fn next_level<'g>(
+    fn next_level<'g, const REC: bool>(
         &self,
         first_level: &Node<Bucket<K, V>>,
         next_level_size: usize,
@@ -1104,8 +1103,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(())
     }
 
-    // TODO: memento
-    fn add_level<'g>(
+    fn add_level<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<Bucket<K, V>>, // must be stable
@@ -1121,14 +1119,19 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         // insert a new level to the next of the first level.
         let backoff = Backoff::default();
         let next_level = if let Ok(n) =
-            self.next_level(first_level, next_level_size, &backoff, tid, guard, pool)
+            self.next_level::<REC>(first_level, next_level_size, &backoff, tid, guard, pool)
         {
             n
         } else {
             loop {
-                if let Ok(n) =
-                    self.next_level(first_level, next_level_size, &backoff, tid, guard, pool)
-                {
+                if let Ok(n) = self.next_level::<false>(
+                    first_level,
+                    next_level_size,
+                    &backoff,
+                    tid,
+                    guard,
+                    pool,
+                ) {
                     break n;
                 }
             }
@@ -1196,8 +1199,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         (context_new, true)
     }
 
-    // TODO: memento
-    fn resize_move_slot_insert(
+    fn resize_move_slot_insert<const REC: bool>(
         &self,
         slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
         key_tag: u16,                      // must be stable
@@ -1265,8 +1267,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(())
     }
 
-    // TODO: memento
-    fn resize_move_inner<'g>(
+    fn resize_move_inner<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
@@ -1279,7 +1280,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<&'g Node<Bucket<K, V>>, (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>)> {
         if self
-            .resize_move_slot_insert(
+            .resize_move_slot_insert::<REC>(
                 slot_ptr,
                 key_tag,
                 key_hashes,
@@ -1294,7 +1295,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         // The first level is full. Resize and retry.
-        let (context_new, _) = self.add_level(
+        let (context_new, _) = self.add_level::<REC>(
             context,
             first_level_ref,
             &mut resize_move_inner.add_lv,
@@ -1309,8 +1310,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err((ctx, fst_lv_ref))
     }
 
-    // TODO: memento
-    fn resize_move<'g>(
+    fn resize_move<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
@@ -1322,7 +1322,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) -> &'g Node<Bucket<K, V>> {
         let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
 
-        let mut res = self.resize_move_inner(
+        let mut res = self.resize_move_inner::<REC>(
             context,
             slot_ptr,
             key_tag,
@@ -1335,7 +1335,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         );
 
         while let Err((ctx, fst_lv_ref)) = res {
-            res = self.resize_move_inner(
+            res = self.resize_move_inner::<false>(
                 ctx,
                 slot_ptr,
                 key_tag,
@@ -1351,8 +1351,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         res.unwrap()
     }
 
-    // TODO: memento
-    fn resize_clean<'g>(
+    fn resize_clean<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
         mut first_level_ref: &'g Node<Bucket<K, V>>,
@@ -1399,7 +1398,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     continue
                 );
 
-                first_level_ref = self.resize_move(
+                first_level_ref = self.resize_move::<false>(
                     context,
                     slot_ptr,
                     first_level_ref,
@@ -1412,8 +1411,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // TODO: memento
-    fn resize_inner<'g>(
+    fn resize_inner<'g, const REC: bool>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>, // must be stable
         resize_inner: &mut ResizeInner<K, V>,
@@ -1441,7 +1439,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let mut first_level_ref = unsafe { first_level.deref(pool) };
 
-        self.resize_clean(
+        self.resize_clean::<REC>(
             context,
             first_level_ref,
             last_level_data,
@@ -1497,18 +1495,22 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         return Err(context_new);
     }
 
-    // TODO: memento
-    fn resize(&self, resize: &mut Resize<K, V>, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    fn resize<const REC: bool>(
+        &self,
+        resize: &mut Resize<K, V>,
+        tid: usize,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) {
         let context = self.context.load(Ordering::Acquire, guard);
         // TODO: checkpoint context
-        let mut res = self.resize_inner(context, &mut resize.resize_inner, tid, guard, pool);
+        let mut res = self.resize_inner::<REC>(context, &mut resize.resize_inner, tid, guard, pool);
         while let Err(e) = res {
-            res = self.resize_inner(e, &mut resize.resize_inner, tid, guard, pool);
+            res = self.resize_inner::<false>(e, &mut resize.resize_inner, tid, guard, pool);
         }
     }
 
-    // TODO: memento
-    pub fn resize_loop(
+    pub fn resize_loop<const REC: bool>(
         &self,
         resize_recv: &mpsc::Receiver<()>,
         resize_loop: &mut ResizeLoop<K, V>,
@@ -1519,7 +1521,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         // TODO: if checkpoint recv.is_ok()
         while let Ok(()) = resize_recv.recv() {
             // println!("[resize_loop] do resize!");
-            self.resize(&mut resize_loop.resize, tid, guard, pool);
+            self.resize::<false>(&mut resize_loop.resize, tid, guard, pool);
             guard.repin_after(|| {});
         }
     }
@@ -1623,8 +1625,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Some(&unsafe { find_result?.slot_ptr.deref(pool) }.value)
     }
 
-    // TODO: memento
-    fn try_slot_insert<'g>(
+    fn try_slot_insert<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>, // no need to be stable
         slot_new: PShared<'g, Slot<K, V>>,   // must be stable
@@ -1684,8 +1685,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(())
     }
 
-    // TODO: memento
-    fn insert_inner_inner<'g>(
+    fn insert_inner_inner<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>, // no need to be stable
         slot: PShared<'g, Slot<K, V>>,       // must be stable
@@ -1697,7 +1697,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         pool: &'g PoolHandle,
     ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
     {
-        if let Ok(result) = self.try_slot_insert(context, slot, key_hashes, guard, pool) {
+        if let Ok(result) = self.try_slot_insert::<REC>(context, slot, key_hashes, guard, pool) {
             return Ok((context, result));
         }
 
@@ -1706,7 +1706,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let context_ref = unsafe { context.deref(pool) };
         let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let first_level_ref = unsafe { first_level.deref(pool) };
-        let (context_new, added) = self.add_level(
+        let (context_new, added) = self.add_level::<REC>(
             context,
             first_level_ref,
             &mut insert_inner_inner.add_lv,
@@ -1720,8 +1720,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(context_new)
     }
 
-    // TODO: memento
-    fn insert_inner<'g>(
+    fn insert_inner<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>, // no need to be stable
         slot: PShared<'g, Slot<K, V>>,       // must be stable
@@ -1732,7 +1731,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        let mut res = self.insert_inner_inner(
+        let mut res = self.insert_inner_inner::<REC>(
             context,
             slot,
             key_hashes,
@@ -1744,7 +1743,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         );
 
         while let Err(context_new) = res {
-            res = self.insert_inner_inner(
+            res = self.insert_inner_inner::<false>(
                 context_new,
                 slot,
                 key_hashes,
@@ -1759,8 +1758,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         res.unwrap()
     }
 
-    // TODO: memento
-    fn move_if_resized_inner<'g>(
+    fn move_if_resized_inner<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>, // must be stable
         insert_result: FindResult<'g, K, V>, // no need to be stable
@@ -1807,7 +1805,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             return Ok(());
         }
 
-        let (context_insert, insert_result_insert) = self.insert_inner(
+        let (context_insert, insert_result_insert) = self.insert_inner::<REC>(
             context_new,
             insert_result.slot_ptr,
             key_hashes,
@@ -1825,8 +1823,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err((context_insert, insert_result_insert))
     }
 
-    // TODO: memento
-    fn move_if_resized<'g>(
+    fn move_if_resized<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>, // must be stable
         insert_result: FindResult<'g, K, V>, // ?
@@ -1837,7 +1834,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) {
-        let mut res = self.move_if_resized_inner(
+        let mut res = self.move_if_resized_inner::<REC>(
             context,
             insert_result,
             key_hashes,
@@ -1848,7 +1845,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             pool,
         );
         while let Err((context, insert_result)) = res {
-            res = self.move_if_resized_inner(
+            res = self.move_if_resized_inner::<false>(
                 context, // stable by move_if_resized_inner
                 insert_result,
                 key_hashes,
@@ -1897,7 +1894,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             return Err(InsertError::Occupied);
         }
 
-        let (context_new, insert_result) = self.insert_inner(
+        let (context_new, insert_result) = self.insert_inner::<REC>(
             context,
             slot,
             key_hashes,
@@ -1907,7 +1904,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             guard,
             pool,
         );
-        self.move_if_resized(
+        self.move_if_resized::<REC>(
             context_new,   // stable by insert_inner
             insert_result, // stable by insert_inner
             key_hashes,
@@ -1920,8 +1917,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(())
     }
 
-    // TODO: memento
-    fn try_delete(
+    fn try_delete<const REC: bool>(
         &self,
         key: &K,
         try_del: &mut TryDelete<K, V>,
@@ -1954,19 +1950,19 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         return Ok(true);
     }
 
-    pub fn delete(
+    pub fn delete<const REC: bool>(
         &self,
         key: &K,
         delete: &mut Delete<K, V>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
-        if let Ok(ret) = self.try_delete(key, &mut delete.try_delete, guard, pool) {
+        if let Ok(ret) = self.try_delete::<REC>(key, &mut delete.try_delete, guard, pool) {
             return ret;
         }
 
         loop {
-            if let Ok(ret) = self.try_delete(key, &mut delete.try_delete, guard, pool) {
+            if let Ok(ret) = self.try_delete::<false>(key, &mut delete.try_delete, guard, pool) {
                 return ret;
             }
         }
@@ -2035,7 +2031,7 @@ mod tests {
                 1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
-                    kv.resize_loop(&recv, &mut mmt.resize, tid, guard, pool);
+                    kv.resize_loop::<true>(&recv, &mut mmt.resize, tid, guard, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
@@ -2047,7 +2043,7 @@ mod tests {
                     }
 
                     for i in 0..SMOKE_CNT {
-                        assert!(kv.delete(&i, &mut mmt.delete[i], &guard, pool));
+                        assert!(kv.delete::<true>(&i, &mut mmt.delete[i], &guard, pool));
                         assert_eq!(kv.search(&i, &guard, pool), None);
                     }
                 }
@@ -2103,7 +2099,7 @@ mod tests {
                 1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
-                    kv.resize_loop(&recv, &mut mmt.resize, tid, guard, pool);
+                    kv.resize_loop::<true>(&recv, &mut mmt.resize, tid, guard, pool);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
@@ -2180,7 +2176,7 @@ mod tests {
                 2 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
-                    kv.resize_loop(&recv, &mut mmt.resize_loop, tid, guard, pool);
+                    kv.resize_loop::<true>(&recv, &mut mmt.resize_loop, tid, guard, pool);
                 }
                 // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
                 _ => {
@@ -2200,7 +2196,7 @@ mod tests {
                         produce_res(tid, i, value);
 
                         // delete and lookup
-                        assert!(kv.delete(&key, &mut mmt.deletes[i], &guard, pool));
+                        assert!(kv.delete::<true>(&key, &mut mmt.deletes[i], &guard, pool));
                         let res = kv.search(&key, &guard, pool);
                         assert!(res.is_none());
                     }
