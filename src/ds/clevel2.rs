@@ -24,7 +24,7 @@ use tinyvec::*;
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::{Cas, Checkpoint};
-use crate::pmem::{global_pool, Collectable, GarbageCollection, PoolHandle};
+use crate::pmem::{global_pool, AsPPtr, Collectable, GarbageCollection, PoolHandle};
 use crate::pmem::{persist_obj, PPtr};
 use crate::PDefault;
 
@@ -740,7 +740,7 @@ impl<T: Collectable> Collectable for Node<T> {
         let mut data = node.data.load(Ordering::SeqCst, guard);
         let data_ref = unsafe { data.deref_mut(pool) };
         for b in data_ref.iter_mut() {
-            MaybeUninit::<T>::mark(b, tid, gc); // TODO: mark?
+            MaybeUninit::<T>::mark(b, tid, gc);
         }
 
         PAtomic::filter(&mut node.next, tid, gc, pool);
@@ -1920,22 +1920,38 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     fn try_delete<const REC: bool>(
         &self,
         key: &K,
-        try_del: &mut TryDelete<K, V>,
+        try_delete: &mut TryDelete<K, V>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<bool, ()> {
         let (key_tag, key_hashes) = hashes(&key);
         let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
-        // TODO: checkpoint find_result
-        let find_result = some_or!(find_result, {
+
+        let (slot, slot_ptr) = match find_result {
+            Some(res) => (
+                unsafe { res.slot.as_pptr(pool) },
+                PAtomic::from(res.slot_ptr),
+            ),
+            None => (PPtr::null(), PAtomic::null()),
+        };
+
+        let chk = try_delete
+            .find_result_chk
+            .checkpoint::<REC, _>(|| (slot, slot_ptr), tid, pool);
+
+        if chk.0.is_null() {
+            // slot is null if find result is none
             return Ok(false);
-        });
+        }
+
+        let slot = unsafe { chk.0.deref(pool) };
+        let slot_ptr = chk.1.load(Ordering::Relaxed, guard);
 
         // TODO: CAS
-        if find_result
-            .slot
+        if slot
             .compare_exchange(
-                find_result.slot_ptr,
+                slot_ptr,
                 PShared::null(),
                 Ordering::AcqRel,
                 Ordering::Relaxed,
@@ -1946,7 +1962,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             return Err(());
         }
 
-        unsafe { guard.defer_pdestroy(find_result.slot_ptr) };
+        unsafe { guard.defer_pdestroy(slot_ptr) };
         return Ok(true);
     }
 
@@ -1954,15 +1970,17 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         &self,
         key: &K,
         delete: &mut Delete<K, V>,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
-        if let Ok(ret) = self.try_delete::<REC>(key, &mut delete.try_delete, guard, pool) {
+        if let Ok(ret) = self.try_delete::<REC>(key, &mut delete.try_delete, tid, guard, pool) {
             return ret;
         }
 
         loop {
-            if let Ok(ret) = self.try_delete::<false>(key, &mut delete.try_delete, guard, pool) {
+            if let Ok(ret) = self.try_delete::<false>(key, &mut delete.try_delete, tid, guard, pool)
+            {
                 return ret;
             }
         }
@@ -2043,7 +2061,7 @@ mod tests {
                     }
 
                     for i in 0..SMOKE_CNT {
-                        assert!(kv.delete::<true>(&i, &mut mmt.delete[i], &guard, pool));
+                        assert!(kv.delete::<true>(&i, &mut mmt.delete[i], tid, &guard, pool));
                         assert_eq!(kv.search(&i, &guard, pool), None);
                     }
                 }
@@ -2196,7 +2214,7 @@ mod tests {
                         produce_res(tid, i, value);
 
                         // delete and lookup
-                        assert!(kv.delete::<true>(&key, &mut mmt.deletes[i], &guard, pool));
+                        assert!(kv.delete::<true>(&key, &mut mmt.deletes[i], tid, &guard, pool));
                         let res = kv.search(&key, &guard, pool);
                         assert!(res.is_none());
                     }
