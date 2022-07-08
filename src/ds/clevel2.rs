@@ -410,15 +410,11 @@ impl<K, V> Drop for Clevel<K, V> {
                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
                     let slot_ptr = slot.load(Ordering::Relaxed, guard);
                     if !slot_ptr.is_null() {
-                        unsafe {
-                            guard.defer_pdestroy(slot_ptr);
-                        }
+                        unsafe { guard.defer_pdestroy(slot_ptr) };
                     }
                 }
             }
-            unsafe {
-                guard.defer_pdestroy(node);
-            }
+            unsafe { guard.defer_pdestroy(node) };
             node = next;
         }
     }
@@ -428,7 +424,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     fn add_level<'g>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
-        first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>, // must be stable
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
@@ -443,10 +439,14 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         } else {
             self.add_level_lock.lock(); // TODO: persistent try lock
             let next_level = first_level.next.load(Ordering::Acquire, guard);
+            // TODO: checkpoint next_level
+
             let next_level = if !next_level.is_null() {
                 next_level
             } else {
-                let next_node = new_node(next_level_size, pool);
+                let next_node = new_node(next_level_size, pool).into_shared(guard);
+                // TODO: checkpoint next_node
+                // TODO: CAS
                 first_level
                     .next
                     .compare_exchange(
@@ -456,16 +456,18 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                         Ordering::Acquire,
                         guard,
                     )
-                    .unwrap_or_else(|err| err.current)
+                    .unwrap_or_else(|err| {
+                        unsafe { guard.defer_pdestroy(next_node) };
+                        err.current
+                    })
             };
-            unsafe {
-                self.add_level_lock.unlock();
-            }
+            unsafe { self.add_level_lock.unlock() };
             next_level
         };
 
         // update context.
         let context_ref = unsafe { context.deref(pool) };
+        // TODO: checkpoint context_new
         let mut context_new = alloc_persist(
             Context {
                 first_level: PAtomic::from(next_level),
@@ -473,54 +475,56 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                 resize_size: level_size_prev(level_size_prev(next_level_size)),
             },
             pool,
+        )
+        .into_shared(guard);
+        let context_new_ref = unsafe { context_new.deref(pool) };
+
+        // TODO: cas
+        let mut res = self.context.compare_exchange(
+            context,
+            context_new,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            guard,
         );
-        // TODO: checkpoint context_new
-        loop {
-            context = ok_or!(
-                self.context.compare_exchange(
-                    context,
-                    context_new,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard
-                ),
-                e,
-                {
-                    context = e.current;
-                    context_new = e.new; // TODO: need?
-                    let context_ref = unsafe { e.current.deref(pool) };
 
-                    if unsafe {
-                        context_ref
-                            .first_level
-                            .load(Ordering::Acquire, guard)
-                            .deref(pool)
-                            .data
-                            .load(Ordering::Relaxed, guard)
-                            .deref(pool)
-                    }
-                    .len()
-                        >= next_level_size
-                    {
-                        return (context, false);
-                    }
+        while let Err(e) = res {
+            context = e.current;
+            let context_ref = unsafe { e.current.deref(pool) };
 
-                    // We thought this is unreachable but indeed reachable...
-                    // TODO: because resizer switch the context? (i.e. advance the last level, but not first level)
-                    let context_new_ref = unsafe { context_new.deref(pool) };
-                    context_new_ref.last_level.store(
-                        context_ref.last_level.load(Ordering::Acquire, guard),
-                        Ordering::Relaxed,
-                    );
-                    continue;
-                }
+            // TODO: checkpoint len
+            if unsafe {
+                context_ref
+                    .first_level
+                    .load(Ordering::Acquire, guard)
+                    .deref(pool)
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            }
+            .len()
+                >= next_level_size
+            {
+                return (context, false);
+            }
+
+            context_new_ref.last_level.store(
+                context_ref.last_level.load(Ordering::Acquire, guard),
+                Ordering::Relaxed,
+            ); // Exploit invariant
+
+            // TODO: cas
+            res = self.context.compare_exchange(
+                context,
+                context_new,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                guard,
             );
-
-            break;
         }
 
         fence(Ordering::SeqCst);
-        (context, true)
+        (context_new, true)
     }
 
     // TODO: memento
@@ -775,9 +779,7 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
             );
         }
 
-        unsafe {
-            guard.defer_pdestroy(last_level);
-        }
+        unsafe { guard.defer_pdestroy(last_level) };
         return Err(context_new);
     }
 
@@ -1167,9 +1169,7 @@ impl<K: Debug + Display + PartialEq + Hash, V: Debug> Clevel<K, V> {
             return Err(());
         }
 
-        unsafe {
-            guard.defer_pdestroy(find_result.slot_ptr);
-        }
+        unsafe { guard.defer_pdestroy(find_result.slot_ptr) };
         return Ok(true);
     }
 
