@@ -2260,12 +2260,10 @@ pub enum InsertError {
 }
 
 #[cfg(test)]
-mod tests {
+mod smoke_test {
     use crate::{
         pmem::RootObj,
-        test_utils::tests::{
-            run_test, TestRootObj,
-        },
+        test_utils::tests::{run_test, TestRootObj},
     };
 
     use super::*;
@@ -2425,14 +2423,16 @@ mod test {
         },
     };
 
+    #[cfg(feature = "simulate_tcrash")]
+    use crate::test_utils::tests::RESIZE_LOOP_UNIX_TID;
+
     use super::*;
 
     const NR_THREAD: usize = 12;
-    const INS_DEL_LOOK_CNT: usize = 20_000;
+    const INS_DEL_LOOK_CNT: usize = 10_000;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
-
 
     struct InsDelLook {
         resize_loop: ResizeLoop<usize, usize>,
@@ -2468,16 +2468,26 @@ mod test {
                 // T1: Check the execution results of other threads
                 1 => {
                     check_res(tid, NR_THREAD, INS_DEL_LOOK_CNT);
+
+                    // drop sends
+                    for send in unsafe { SEND.as_mut().unwrap() } {
+                        if let Some(send) = send.take() {
+                            drop(send);
+                        }
+                    }
                 }
                 // T2: Resize loop
                 2 => {
+                    #[cfg(feature = "simulate_tcrash")]
+                    RESIZE_LOOP_UNIX_TID.store(unsafe { libc::gettid() }, Ordering::SeqCst);
+
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
                     kv.resize_loop::<true>(&recv, &mut mmt.resize_loop, tid, guard, pool);
                 }
                 // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
                 _ => {
-                    let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
+                    let send = unsafe { SEND.as_mut().unwrap()[tid].as_ref().unwrap() };
                     for i in 0..INS_DEL_LOOK_CNT {
                         let key = compose(tid, i, i % tid);
 
