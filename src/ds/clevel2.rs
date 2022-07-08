@@ -524,12 +524,107 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
     }
 
     // TODO: memento
+    fn resize_move_slot_insert<'g>(
+        &'g self,
+        slot_ptr: PShared<'_, Slot<K, V>>,
+        key_tag: u16,
+        key_hashes: [u32; 2],
+        first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<(), ()> {
+        let first_level_size = first_level_data.len();
+        let key_hashes = key_hashes
+            .into_iter()
+            .map(|key_hash| key_hash as usize % first_level_size)
+            .sorted()
+            .dedup();
+        for i in 0..SLOTS_IN_BUCKET {
+            for key_hash in key_hashes.clone() {
+                let slot = unsafe {
+                    first_level_data[key_hash]
+                        .assume_init_ref()
+                        .slots
+                        .get_unchecked(i)
+                };
+
+                let slot_first_level = slot.load(Ordering::Acquire, guard);
+                if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
+                    // 2-byte tag checking
+                    if slot_first_level.high_tag() != key_tag as usize {
+                        continue;
+                    }
+
+                    if slot.key != unsafe { slot_ptr.deref(pool) }.key {
+                        continue;
+                    }
+
+                    return Ok(());
+                }
+
+                if slot
+                    .compare_exchange(
+                        PShared::null(),
+                        slot_ptr,
+                        Ordering::AcqRel,
+                        Ordering::Relaxed,
+                        guard,
+                    )
+                    .is_ok()
+                {
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(())
+    }
+
+    // TODO: memento
+    fn resize_move_inner<'g>(
+        &'g self,
+        context: PShared<'g, Context<K, V>>,
+        slot_ptr: PShared<'_, Slot<K, V>>,
+        key_tag: u16,
+        key_hashes: [u32; 2],
+        first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<
+        (
+            &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+            &'g [MaybeUninit<Bucket<K, V>>],
+        ),
+        (
+            &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+            &'g [MaybeUninit<Bucket<K, V>>],
+        ),
+    > {
+        if self
+            .resize_move_slot_insert(slot_ptr, key_tag, key_hashes, first_level_data, guard, pool)
+            .is_ok()
+        {
+            return Ok((first_level_ref, first_level_data));
+        }
+
+        // The first level is full. Resize and retry.
+        let (context_new, _) = self.add_level(context, first_level_ref, guard, pool);
+        let ctx = context_new;
+        let ctx_ref = unsafe { ctx.deref(pool) };
+        let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
+        let fst_lv_ref = unsafe { fst_lv.deref(pool) };
+        let fst_lv_data = unsafe { fst_lv_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+        Err((fst_lv_ref, fst_lv_data))
+    }
+
+    // TODO: memento
     fn resize_move<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
-        mut first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
-        mut first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
+        first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (
@@ -537,65 +632,33 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         &'g [MaybeUninit<Bucket<K, V>>],
     ) {
         let mut first_level_size = first_level_data.len();
-        loop {
-            let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
-            let key_hashes = key_hashes
-                .into_iter()
-                .map(|key_hash| key_hash as usize % first_level_size)
-                .sorted()
-                .dedup();
-            for i in 0..SLOTS_IN_BUCKET {
-                for key_hash in key_hashes.clone() {
-                    let slot = unsafe {
-                        first_level_data[key_hash]
-                            .assume_init_ref()
-                            .slots
-                            .get_unchecked(i)
-                    };
+        let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
 
-                    let slot_first_level = slot.load(Ordering::Acquire, guard);
-                    if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
-                        // 2-byte tag checking
-                        if slot_first_level.high_tag() != key_tag as usize {
-                            continue;
-                        }
+        let mut res = self.resize_move_inner(
+            context,
+            slot_ptr,
+            key_tag,
+            key_hashes,
+            first_level_ref,
+            first_level_data,
+            guard,
+            pool,
+        );
 
-                        if slot.key != unsafe { slot_ptr.deref(pool) }.key {
-                            continue;
-                        }
-
-                        return (first_level_ref, first_level_data);
-                    }
-
-                    if slot
-                        .compare_exchange(
-                            PShared::null(),
-                            slot_ptr,
-                            Ordering::AcqRel,
-                            Ordering::Relaxed,
-                            guard,
-                        )
-                        .is_ok()
-                    {
-                        return (first_level_ref, first_level_data);
-                    }
-                }
-            }
-
-            // The first level is full. Resize and retry.
-            let (context_new, _) = self.add_level(context, first_level_ref, guard, pool);
-            let ctx = context_new;
-            let ctx_ref = unsafe { ctx.deref(pool) };
-            let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
-            first_level_ref = unsafe { fst_lv.deref(pool) };
-            first_level_data = unsafe {
-                first_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            first_level_size = first_level_data.len();
+        while let Err((fst_lv_ref, fst_lv_data)) = res {
+            res = self.resize_move_inner(
+                context,
+                slot_ptr,
+                key_tag,
+                key_hashes,
+                fst_lv_ref,
+                fst_lv_data,
+                guard,
+                pool,
+            );
         }
+
+        res.unwrap()
     }
 
     fn resize(&self, guard: &Guard, pool: &PoolHandle) {
