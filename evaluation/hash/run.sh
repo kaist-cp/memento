@@ -38,7 +38,7 @@ function bench() {
 
     # set workload parameters
     HASH_SIZE=16777216      # Initial capacity of hash table
-    OP=50000000            # op num for each Load, Run phase
+    OP=200000000            # op num for each Load, Run phase
     SKIP_LOAD=false         # skip Load phase or not
     READ_RT=0               # rate of read operation (Run phase)
     INSERT_RT=1             # rate of insert operation (Run phase)
