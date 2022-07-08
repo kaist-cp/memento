@@ -1194,15 +1194,26 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     {
         let (key_tag, key_hashes) = hashes(&key);
         let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
-        // TODO: checkpoint: find_result
-        if find_result.is_some() {
+
+        let chk = insert.found_slot.checkpoint::<REC, _>(
+            || {
+                let found = find_result.is_some();
+                let slot = if found {
+                    PAtomic::null()
+                } else {
+                    PAtomic::from(
+                        alloc_persist(Slot { key, value }, pool).with_high_tag(key_tag as usize),
+                    )
+                };
+                (found, slot)
+            },
+            tid,
+            pool,
+        );
+        let (found, slot) = (chk.0, chk.1.load(Ordering::Relaxed, guard));
+        if found {
             return Err(InsertError::Occupied);
         }
-
-        // TODO: checkpoint: slot (maybe with find_result)
-        let slot = alloc_persist(Slot { key, value }, pool)
-            .with_high_tag(key_tag as usize)
-            .into_shared(guard);
 
         let (context_new, insert_result) =
             self.insert_inner(context, slot, key_hashes, resize_send, tid, guard, pool);
