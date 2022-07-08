@@ -665,128 +665,138 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         res.unwrap()
     }
 
-    fn resize(&self, guard: &Guard, pool: &PoolHandle) {
-        let mut context = self.context.load(Ordering::Acquire, guard);
-        loop {
-            let mut context_ref = unsafe { context.deref(pool) };
+    // TODO: memento
+    fn resize_inner<'g>(
+        &'g self,
+        mut context: PShared<'g, Context<K, V>>,
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> Result<(), PShared<'g, Context<K, V>>> {
+        let mut context_ref = unsafe { context.deref(pool) };
 
-            let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
-            let last_level_ref = unsafe { last_level.deref(pool) };
-            let last_level_data = unsafe {
-                last_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            let last_level_size = last_level_data.len();
+        let last_level = context_ref.last_level.load(Ordering::Acquire, guard);
+        let last_level_ref = unsafe { last_level.deref(pool) };
+        let last_level_data = unsafe {
+            last_level_ref
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+        };
+        let last_level_size = last_level_data.len();
 
-            // if we don't need to resize, break out.
-            if context_ref.resize_size < last_level_size {
-                break;
-            }
+        // if we don't need to resize, break out.
+        if context_ref.resize_size < last_level_size {
+            return Ok(());
+        }
 
-            let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-            let mut first_level_ref = unsafe { first_level.deref(pool) };
-            let mut first_level_data = unsafe {
-                first_level_ref
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            };
-            let mut first_level_size = first_level_data.len();
+        let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+        let mut first_level_ref = unsafe { first_level.deref(pool) };
+        let mut first_level_data = unsafe {
+            first_level_ref
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+        };
+        let mut first_level_size = first_level_data.len();
 
-            for (_bid, bucket) in last_level_data.iter().enumerate() {
-                for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
-                    let slot_ptr = some_or!(
-                        {
-                            let mut slot_ptr = slot.load(Ordering::Acquire, guard);
-                            loop {
-                                if slot_ptr.is_null() {
-                                    break None;
-                                }
-
-                                // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
-                                // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                                if slot_ptr.tag() == 1 {
-                                    slot_ptr = slot.load(Ordering::Acquire, guard);
-                                    continue;
-                                }
-
-                                if let Err(e) = slot.compare_exchange(
-                                    slot_ptr,
-                                    slot_ptr.with_tag(1),
-                                    Ordering::AcqRel,
-                                    Ordering::Acquire,
-                                    guard,
-                                ) {
-                                    slot_ptr = e.current;
-                                    continue;
-                                }
-
-                                break Some(slot_ptr);
+        for (_bid, bucket) in last_level_data.iter().enumerate() {
+            for (_sid, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
+                let slot_ptr = some_or!(
+                    {
+                        let mut slot_ptr = slot.load(Ordering::Acquire, guard);
+                        loop {
+                            if slot_ptr.is_null() {
+                                break None;
                             }
-                        },
-                        continue
-                    );
 
-                    (first_level_ref, first_level_data) = self.resize_move(
-                        context,
-                        slot_ptr,
-                        first_level_ref,
-                        first_level_data,
-                        guard,
-                        pool,
-                    );
-                }
+                            // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
+                            // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
+                            if slot_ptr.tag() == 1 {
+                                slot_ptr = slot.load(Ordering::Acquire, guard);
+                                continue;
+                            }
+
+                            if let Err(e) = slot.compare_exchange(
+                                slot_ptr,
+                                slot_ptr.with_tag(1),
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                guard,
+                            ) {
+                                slot_ptr = e.current;
+                                continue;
+                            }
+
+                            break Some(slot_ptr);
+                        }
+                    },
+                    continue
+                );
+
+                (first_level_ref, first_level_data) = self.resize_move(
+                    context,
+                    slot_ptr,
+                    first_level_ref,
+                    first_level_data,
+                    guard,
+                    pool,
+                );
             }
+        }
 
-            let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
-            // TODO: checkpoint context_new
-            let mut context_new = alloc_persist(
-                Context {
-                    first_level: first_level.into(),
-                    last_level: next_level.into(),
-                    resize_size: context_ref.resize_size,
-                },
-                pool,
-            )
-            .into_shared(guard);
-            let context_new_ref = unsafe { context_new.deref_mut(pool) };
+        let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
+        // TODO: checkpoint context_new
+        let mut context_new = alloc_persist(
+            Context {
+                first_level: first_level.into(),
+                last_level: next_level.into(),
+                resize_size: context_ref.resize_size,
+            },
+            pool,
+        )
+        .into_shared(guard);
+        let context_new_ref = unsafe { context_new.deref_mut(pool) };
+
+        // TODO: CAS
+        let mut res = self.context.compare_exchange(
+            context,
+            context_new,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            guard,
+        );
+
+        while let Err(e) = res {
+            context = e.current;
+            let context_ref = unsafe { e.current.deref(pool) };
+            context_new_ref.first_level.store(
+                context_ref.first_level.load(Ordering::Acquire, guard),
+                Ordering::Relaxed,
+            );
+            context_new_ref.resize_size =
+                cmp::max(context_new_ref.resize_size, context_ref.resize_size);
 
             // TODO: CAS
-            let mut res = self.context.compare_exchange(
+            res = self.context.compare_exchange(
                 context,
                 context_new,
                 Ordering::AcqRel,
                 Ordering::Acquire,
                 guard,
             );
+        }
 
-            while let Err(e) = res {
-                context = e.current;
-                let context_ref = unsafe { e.current.deref(pool) };
-                context_new_ref.first_level.store(
-                    context_ref.first_level.load(Ordering::Acquire, guard),
-                    Ordering::Relaxed,
-                );
-                context_new_ref.resize_size =
-                    cmp::max(context_new_ref.resize_size, context_ref.resize_size);
+        unsafe {
+            guard.defer_pdestroy(last_level);
+        }
+        return Err(context_new);
+    }
 
-                // TODO: CAS
-                res = self.context.compare_exchange(
-                    context,
-                    context_new,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    guard,
-                );
-            }
-
-            unsafe {
-                guard.defer_pdestroy(last_level);
-            }
-            context = context_new;
-            break;
+    fn resize(&self, guard: &Guard, pool: &PoolHandle) {
+        let context = self.context.load(Ordering::Acquire, guard);
+        let mut res = self.resize_inner(context, guard, pool);
+        while let Err(e) = res {
+            res = self.resize_inner(e, guard, pool);
         }
     }
 
