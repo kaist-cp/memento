@@ -671,7 +671,8 @@ impl<K, V: Collectable> ResizeMoveInner<K, V> {
 /// Resize client
 #[derive(Debug)]
 pub struct ResizeMoveSlotInsert<K, V: Collectable> {
-    slot_slot_first_chk: Checkpoint<(PPtr<PAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    slot_slot_first_chk:
+        Checkpoint<Option<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
     slot_cas: Cas,
 }
 
@@ -1261,7 +1262,47 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
-        // TODO: if REC checkpoint Some(slot, slot_first_level) cas
+        if REC {
+            if let Some(v) = resize_move_slot_insert.slot_slot_first_chk.peek(tid, pool) {
+                let chk = some_or!(v, return Err(()));
+                let (slot, slot_first_level) = (
+                    unsafe { chk.0.deref(pool) },
+                    chk.1.load(Ordering::Relaxed, guard),
+                );
+
+                let mut out = false;
+                if let Some(slot_ref) = unsafe { slot_first_level.as_ref(pool) } {
+                    // 2-byte tag checking
+                    if slot_first_level.high_tag() != key_tag as usize {
+                        out = true;
+                    }
+
+                    if slot_ref.key != unsafe { slot_ptr.deref(pool) }.key {
+                        out = true;
+                    }
+
+                    if !out {
+                        return Ok(());
+                    }
+                }
+
+                if !out {
+                    if slot
+                        .cas::<false>(
+                            PShared::null(),
+                            slot_ptr,
+                            &mut resize_move_slot_insert.slot_cas,
+                            tid,
+                            guard,
+                            pool,
+                        )
+                        .is_ok()
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         let mut first_level_data = unsafe {
             first_level_ref
@@ -1277,22 +1318,38 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             .dedup();
         for i in 0..SLOTS_IN_BUCKET {
             for key_hash in key_hashes.clone() {
-                // TODO: checkpoint Some(slot, slot_first_level)
-                let slot = unsafe {
-                    first_level_data[key_hash]
-                        .assume_init_ref()
-                        .slots
-                        .get_unchecked(i)
-                };
+                let chk = resize_move_slot_insert
+                    .slot_slot_first_chk
+                    .checkpoint::<false, _>(
+                        || {
+                            let slot = unsafe {
+                                first_level_data[key_hash]
+                                    .assume_init_ref()
+                                    .slots
+                                    .get_unchecked(i)
+                            };
+                            let slot_first_level = slot.load(Ordering::Acquire, guard, pool);
+                            Some((
+                                unsafe { slot.as_pptr(pool) },
+                                PAtomic::from(slot_first_level),
+                            ))
+                        },
+                        tid,
+                        pool,
+                    );
+                let chk = chk.unwrap();
+                let (slot, slot_first_level) = (
+                    unsafe { chk.0.deref(pool) },
+                    chk.1.load(Ordering::Relaxed, guard),
+                );
 
-                let slot_first_level = slot.load(Ordering::Acquire, guard, pool);
-                if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
+                if let Some(slot_ref) = unsafe { slot_first_level.as_ref(pool) } {
                     // 2-byte tag checking
                     if slot_first_level.high_tag() != key_tag as usize {
                         continue;
                     }
 
-                    if slot.key != unsafe { slot_ptr.deref(pool) }.key {
+                    if slot_ref.key != unsafe { slot_ptr.deref(pool) }.key {
                         continue;
                     }
 
@@ -1315,7 +1372,9 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        // TODO: checkpoint None
+        let _ = resize_move_slot_insert
+            .slot_slot_first_chk
+            .checkpoint::<false, _>(|| None, tid, pool);
         Err(())
     }
 
