@@ -17,6 +17,7 @@ use crossbeam_utils::Backoff;
 use etrace::*;
 use fasthash::Murmur3HasherExt;
 use itertools::*;
+use lazy_static::__Deref;
 use libc::c_void;
 use parking_lot::{lock_api::RawMutex, RawMutex as RawMutexImpl};
 use tinyvec::*;
@@ -150,6 +151,7 @@ impl<K, V: Collectable> MoveIfResized<K, V> {
 /// Move if resized client
 #[derive(Debug)]
 pub struct MoveIfResizedInner<K, V: Collectable> {
+    prev_slot_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
     context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     slot_cas: Cas,
     insert_inner: InsertInner<K, V>,
@@ -158,6 +160,7 @@ pub struct MoveIfResizedInner<K, V: Collectable> {
 impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
     fn default() -> Self {
         Self {
+            prev_slot_chk: Default::default(),
             context_new_chk: Default::default(),
             slot_cas: Default::default(),
             insert_inner: Default::default(),
@@ -172,6 +175,7 @@ impl<K, V: Collectable> Collectable for MoveIfResizedInner<K, V> {
         gc: &mut GarbageCollection,
         pool: &mut PoolHandle,
     ) {
+        Checkpoint::filter(&mut move_if_resized_inner.prev_slot_chk, tid, gc, pool);
         Checkpoint::filter(&mut move_if_resized_inner.context_new_chk, tid, gc, pool);
         Cas::filter(&mut move_if_resized_inner.slot_cas, tid, gc, pool);
         InsertInner::filter(&mut move_if_resized_inner.insert_inner, tid, gc, pool);
@@ -182,6 +186,7 @@ impl<K, V: Collectable> MoveIfResizedInner<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
+        self.prev_slot_chk.clear();
         self.context_new_chk.clear();
         self.slot_cas.clear();
         self.insert_inner.clear();
@@ -1014,7 +1019,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                     guard.defer_pdestroy(find_result.slot_ptr);
                 },
                 Err(e) => {
-                    // TODO: CAS: with_tid(0)
                     // exploit invariant
                     if e.current.with_tid(0) == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
@@ -1084,11 +1088,9 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             return Ok(next_level);
         }
 
-        if let Ok(_g) = self.add_level_lock.try_lock::<false>(tid) {
-            // TODO: REC
+        if let Ok(_g) = self.add_level_lock.try_lock::<REC>(tid) {
             let next_node = new_node(next_level_size, pool).into_shared(guard);
             // TODO: checkpoint next_node
-            // TODO: CAS
             let res = first_level.next.cas::<REC>(
                 PShared::null(),
                 next_node,
@@ -1162,7 +1164,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         .into_shared(guard);
         let context_new_ref = unsafe { context_new.deref(pool) };
 
-        // TODO: cas
         let mut res = self.context.cas::<REC>(
             context,
             context_new,
@@ -1197,7 +1198,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 Ordering::Relaxed,
             ); // Exploit invariant
 
-            // TODO: cas
             res = self.context.cas::<false>(
                 context,
                 context_new,
@@ -1261,7 +1261,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     return Ok(());
                 }
 
-                // TODO: CAS
                 if slot
                     .cas::<false>(
                         PShared::null(),
@@ -1479,7 +1478,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         .into_shared(guard);
         let context_new_ref = unsafe { context_new.deref_mut(pool) };
 
-        // TODO: CAS
         let mut res = self.context.cas::<REC>(
             context,
             context_new,
@@ -1499,7 +1497,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             context_new_ref.resize_size =
                 cmp::max(context_new_ref.resize_size, context_ref.resize_size);
 
-            // TODO: CAS
             res = self.context.cas::<false>(
                 context,
                 context_new,
@@ -1684,7 +1681,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                         continue;
                     }
 
-                    // TODO: CAS
                     if let Ok(()) = slot.cas::<false>(
                         PShared::null(),
                         slot_new,
@@ -1799,14 +1795,28 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
-        // TODO: checkpoint insert_result (only prev_slot)
+        let prev_slot = unsafe {
+            move_if_resize_inner
+                .prev_slot_chk
+                .checkpoint::<REC, _>(|| insert_result.slot.as_pptr(pool), tid, pool)
+                .deref(pool)
+        };
 
         // If the inserted slot is being resized, try again.
         fence(Ordering::SeqCst);
 
         // If the context remains the same, it's done.
-        // TODO: checkpoint context_new
-        let context_new = self.context.load(Ordering::Acquire, guard, pool);
+        let context_new = move_if_resize_inner
+            .context_new_chk
+            .checkpoint::<REC, _>(
+                || {
+                    let context_new = self.context.load(Ordering::Acquire, guard, pool);
+                    PAtomic::from(context_new)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
         if context == context_new {
             return Ok(());
         }
@@ -1820,7 +1830,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         // Move the slot if the slot is not already (being) moved.
         //
         // the resize thread may already have passed the slot. I need to move it.
-        // TODO: CAS
         if insert_result
             .slot
             .cas::<REC>(
@@ -1846,8 +1855,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             guard,
             pool,
         );
-        insert_result
-            .slot
+        prev_slot
             .inner
             .store(PShared::null().with_tag(1), Ordering::Release); // exploit invariant
 
@@ -1980,7 +1988,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let slot = unsafe { chk.0.deref(pool) };
         let slot_ptr = chk.1.load(Ordering::Relaxed, guard);
 
-        // TODO: CAS
         if slot
             .cas::<REC>(
                 slot_ptr,
