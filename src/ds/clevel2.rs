@@ -339,14 +339,16 @@ impl<K, V: Collectable> AddLevel<K, V> {
 /// Next level client
 #[derive(Debug)]
 pub struct NextLevel<K, V: Collectable> {
-    next_node_chk: Checkpoint<PAtomic<Node<Bucket<K, V>>>>,
+    next_level_chk: Checkpoint<PAtomic<Node<Bucket<K, V>>>>,
+    my_node_chk: Checkpoint<PAtomic<Node<Bucket<K, V>>>>,
     next_cas: Cas,
 }
 
 impl<K, V: Collectable> Default for NextLevel<K, V> {
     fn default() -> Self {
         Self {
-            next_node_chk: Default::default(),
+            next_level_chk: Default::default(),
+            my_node_chk: Default::default(),
             next_cas: Default::default(),
         }
     }
@@ -354,7 +356,8 @@ impl<K, V: Collectable> Default for NextLevel<K, V> {
 
 impl<K, V: Collectable> Collectable for NextLevel<K, V> {
     fn filter(add_lv: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut add_lv.next_node_chk, tid, gc, pool);
+        Checkpoint::filter(&mut add_lv.next_level_chk, tid, gc, pool);
+        Checkpoint::filter(&mut add_lv.my_node_chk, tid, gc, pool);
         Cas::filter(&mut add_lv.next_cas, tid, gc, pool);
     }
 }
@@ -363,7 +366,8 @@ impl<K, V: Collectable> NextLevel<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
-        self.next_node_chk.clear();
+        self.next_level_chk.clear();
+        self.my_node_chk.clear();
         self.next_cas.clear();
     }
 }
@@ -1082,29 +1086,40 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<PShared<'g, Node<Bucket<K, V>>>, ()> {
-        let next_level = first_level.next.load(Ordering::Acquire, guard, pool);
-        // TODO: checkpoint next_level
+        let next_level = mmt
+            .next_level_chk
+            .checkpoint::<REC, _>(
+                || {
+                    let next_level = first_level.next.load(Ordering::Acquire, guard, pool);
+                    PAtomic::from(next_level)
+                },
+                tid,
+                pool,
+            )
+            .load(Ordering::Relaxed, guard);
         if !next_level.is_null() {
             return Ok(next_level);
         }
 
         if let Ok(_g) = self.add_level_lock.try_lock::<REC>(tid) {
-            let next_node = new_node(next_level_size, pool).into_shared(guard);
-            // TODO: checkpoint next_node
+            let my_node = mmt
+                .my_node_chk
+                .checkpoint::<REC, _>(|| PAtomic::from(new_node(next_level_size, pool)), tid, pool)
+                .load(Ordering::Relaxed, guard);
             let res = first_level.next.cas::<REC>(
                 PShared::null(),
-                next_node,
+                my_node,
                 &mut mmt.next_cas,
                 tid,
                 guard,
                 pool,
             );
             if let Err(e) = res {
-                unsafe { guard.defer_pdestroy(next_node) };
+                unsafe { guard.defer_pdestroy(my_node) };
                 return Ok(e);
             }
 
-            return Ok(next_node);
+            return Ok(my_node);
         }
 
         Err(())
