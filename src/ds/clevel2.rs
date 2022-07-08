@@ -82,12 +82,16 @@ fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
 #[derive(Debug)]
 pub struct Insert<K, V: Collectable> {
     found_slot: Checkpoint<(bool, PAtomic<Slot<K, V>>)>,
+    insert_inner: InsertInner<K, V>,
+    move_if_resized: MoveIfResized<K, V>,
 }
 
 impl<K, V: Collectable> Default for Insert<K, V> {
     fn default() -> Self {
         Self {
             found_slot: Default::default(),
+            insert_inner: Default::default(),
+            move_if_resized: Default::default(),
         }
     }
 }
@@ -95,6 +99,8 @@ impl<K, V: Collectable> Default for Insert<K, V> {
 impl<K, V: Collectable> Collectable for Insert<K, V> {
     fn filter(insert: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut insert.found_slot, tid, gc, pool);
+        InsertInner::filter(&mut insert.insert_inner, tid, gc, pool);
+        MoveIfResized::filter(&mut insert.move_if_resized, tid, gc, pool);
     }
 }
 
@@ -103,6 +109,8 @@ impl<K, V: Collectable> Insert<K, V> {
     #[inline]
     pub fn clear(&mut self) {
         self.found_slot.clear();
+        self.insert_inner.clear();
+        self.move_if_resized.clear();
     }
 }
 
@@ -144,6 +152,7 @@ impl<K, V: Collectable> MoveIfResized<K, V> {
 pub struct MoveIfResizedInner<K, V: Collectable> {
     context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     cas: Cas,
+    insert_inner: InsertInner<K, V>,
 }
 
 impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
@@ -151,6 +160,7 @@ impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
         Self {
             context_new_chk: Default::default(),
             cas: Default::default(),
+            insert_inner: Default::default(),
         }
     }
 }
@@ -164,6 +174,7 @@ impl<K, V: Collectable> Collectable for MoveIfResizedInner<K, V> {
     ) {
         Checkpoint::filter(&mut move_if_resized_inner.context_new_chk, tid, gc, pool);
         Cas::filter(&mut move_if_resized_inner.cas, tid, gc, pool);
+        InsertInner::filter(&mut move_if_resized_inner.insert_inner, tid, gc, pool);
     }
 }
 
@@ -173,6 +184,7 @@ impl<K, V: Collectable> MoveIfResizedInner<K, V> {
     pub fn clear(&mut self) {
         self.context_new_chk.clear();
         self.cas.clear();
+        self.insert_inner.clear();
     }
 }
 
@@ -486,6 +498,7 @@ impl<K, V: Collectable> Resize<K, V> {
 pub struct ResizeInner<K, V: Collectable> {
     context_chk: Checkpoint<PAtomic<Context<K, V>>>,
     context_cas: Cas,
+    resize_clean: ResizeClean<K, V>,
 }
 
 impl<K, V: Collectable> Default for ResizeInner<K, V> {
@@ -493,6 +506,7 @@ impl<K, V: Collectable> Default for ResizeInner<K, V> {
         Self {
             context_chk: Default::default(),
             context_cas: Default::default(),
+            resize_clean: Default::default(),
         }
     }
 }
@@ -506,6 +520,7 @@ impl<K, V: Collectable> Collectable for ResizeInner<K, V> {
     ) {
         Checkpoint::filter(&mut resize_inner.context_chk, tid, gc, pool);
         Cas::filter(&mut resize_inner.context_cas, tid, gc, pool);
+        ResizeClean::filter(&mut resize_inner.resize_clean, tid, gc, pool);
     }
 }
 
@@ -515,6 +530,7 @@ impl<K, V: Collectable> ResizeInner<K, V> {
     pub fn clear(&mut self) {
         self.context_chk.clear();
         self.context_cas.clear();
+        self.resize_clean.clear();
     }
 }
 
@@ -523,6 +539,7 @@ impl<K, V: Collectable> ResizeInner<K, V> {
 pub struct ResizeClean<K, V: Collectable> {
     slot_slot_ptr_chk: Checkpoint<(PPtr<PAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
     slot_cas: Cas,
+    resize_move: ResizeMove<K, V>,
 }
 
 impl<K, V: Collectable> Default for ResizeClean<K, V> {
@@ -530,6 +547,7 @@ impl<K, V: Collectable> Default for ResizeClean<K, V> {
         Self {
             slot_slot_ptr_chk: Default::default(),
             slot_cas: Default::default(),
+            resize_move: Default::default(),
         }
     }
 }
@@ -543,6 +561,7 @@ impl<K, V: Collectable> Collectable for ResizeClean<K, V> {
     ) {
         Checkpoint::filter(&mut resize_clean.slot_slot_ptr_chk, tid, gc, pool);
         Cas::filter(&mut resize_clean.slot_cas, tid, gc, pool);
+        ResizeMove::filter(&mut resize_clean.resize_move, tid, gc, pool);
     }
 }
 
@@ -552,6 +571,7 @@ impl<K, V: Collectable> ResizeClean<K, V> {
     pub fn clear(&mut self) {
         self.slot_slot_ptr_chk.clear();
         self.slot_cas.clear();
+        self.resize_move.clear();
     }
 }
 
@@ -1089,6 +1109,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         &'g self,
         mut context: PShared<'g, Context<K, V>>,
         first_level: &'g Node<Bucket<K, V>>, // must be stable
+        add_lv: &mut AddLevel<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1182,6 +1203,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         key_tag: u16,                      // must be stable
         key_hashes: [u32; 2],              // must be stable
         first_level_ref: &Node<Bucket<K, V>>,
+        resize_move_slot_insert: &mut ResizeMoveSlotInsert<K, V>,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<(), ()> {
@@ -1251,19 +1273,35 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         key_tag: u16,                      // must be stable
         key_hashes: [u32; 2],              // must be stable
         first_level_ref: &'g Node<Bucket<K, V>>,
+        resize_move_inner: &mut ResizeMoveInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> Result<&'g Node<Bucket<K, V>>, (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>)> {
         if self
-            .resize_move_slot_insert(slot_ptr, key_tag, key_hashes, first_level_ref, guard, pool)
+            .resize_move_slot_insert(
+                slot_ptr,
+                key_tag,
+                key_hashes,
+                first_level_ref,
+                &mut resize_move_inner.resize_move_slot_insert,
+                guard,
+                pool,
+            )
             .is_ok()
         {
             return Ok(first_level_ref);
         }
 
         // The first level is full. Resize and retry.
-        let (context_new, _) = self.add_level(context, first_level_ref, tid, guard, pool);
+        let (context_new, _) = self.add_level(
+            context,
+            first_level_ref,
+            &mut resize_move_inner.add_lv,
+            tid,
+            guard,
+            pool,
+        );
         let ctx = context_new;
         let ctx_ref = unsafe { ctx.deref(pool) };
         let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
@@ -1277,6 +1315,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         context: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
         first_level_ref: &'g Node<Bucket<K, V>>,
+        resize_move: &mut ResizeMove<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1289,6 +1328,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             key_tag,
             key_hashes,
             first_level_ref,
+            &mut resize_move.resize_move_inner,
             tid,
             guard,
             pool,
@@ -1296,7 +1336,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         while let Err((ctx, fst_lv_ref)) = res {
             res = self.resize_move_inner(
-                ctx, slot_ptr, key_tag, key_hashes, fst_lv_ref, tid, guard, pool,
+                ctx,
+                slot_ptr,
+                key_tag,
+                key_hashes,
+                fst_lv_ref,
+                &mut resize_move.resize_move_inner,
+                tid,
+                guard,
+                pool,
             );
         }
 
@@ -1309,6 +1357,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         context: PShared<'g, Context<K, V>>,
         mut first_level_ref: &'g Node<Bucket<K, V>>,
         last_level_data: &'g [MaybeUninit<Bucket<K, V>>], // must be stable
+        resize_clean: &mut ResizeClean<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1350,8 +1399,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     continue
                 );
 
-                first_level_ref =
-                    self.resize_move(context, slot_ptr, first_level_ref, tid, guard, pool);
+                first_level_ref = self.resize_move(
+                    context,
+                    slot_ptr,
+                    first_level_ref,
+                    &mut resize_clean.resize_move,
+                    tid,
+                    guard,
+                    pool,
+                );
             }
         }
     }
@@ -1360,6 +1416,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     fn resize_inner<'g>(
         &'g self,
         mut context: PShared<'g, Context<K, V>>, // must be stable
+        resize_inner: &mut ResizeInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1384,7 +1441,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let mut first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let mut first_level_ref = unsafe { first_level.deref(pool) };
 
-        self.resize_clean(context, first_level_ref, last_level_data, tid, guard, pool);
+        self.resize_clean(
+            context,
+            first_level_ref,
+            last_level_data,
+            &mut resize_inner.resize_clean,
+            tid,
+            guard,
+            pool,
+        );
 
         let next_level = last_level_ref.next.load(Ordering::Acquire, guard);
         // TODO: checkpoint context_new
@@ -1433,12 +1498,12 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     }
 
     // TODO: memento
-    fn resize(&self, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    fn resize(&self, resize: &mut Resize<K, V>, tid: usize, guard: &Guard, pool: &PoolHandle) {
         let context = self.context.load(Ordering::Acquire, guard);
         // TODO: checkpoint context
-        let mut res = self.resize_inner(context, tid, guard, pool);
+        let mut res = self.resize_inner(context, &mut resize.resize_inner, tid, guard, pool);
         while let Err(e) = res {
-            res = self.resize_inner(e, tid, guard, pool);
+            res = self.resize_inner(e, &mut resize.resize_inner, tid, guard, pool);
         }
     }
 
@@ -1454,7 +1519,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         // TODO: if checkpoint recv.is_ok()
         while let Ok(()) = resize_recv.recv() {
             // println!("[resize_loop] do resize!");
-            self.resize(tid, guard, pool);
+            self.resize(&mut resize_loop.resize, tid, guard, pool);
             guard.repin_after(|| {});
         }
     }
@@ -1626,6 +1691,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         slot: PShared<'g, Slot<K, V>>,       // must be stable
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
+        insert_inner_inner: &mut InsertInnerInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1640,7 +1706,14 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let context_ref = unsafe { context.deref(pool) };
         let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let first_level_ref = unsafe { first_level.deref(pool) };
-        let (context_new, added) = self.add_level(context, first_level_ref, tid, guard, pool);
+        let (context_new, added) = self.add_level(
+            context,
+            first_level_ref,
+            &mut insert_inner_inner.add_lv,
+            tid,
+            guard,
+            pool,
+        );
         if added {
             let _ = resize_send.send(());
         }
@@ -1654,12 +1727,21 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         slot: PShared<'g, Slot<K, V>>,       // must be stable
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
+        insert_inner: &mut InsertInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        let mut res =
-            self.insert_inner_inner(context, slot, key_hashes, resize_send, tid, guard, pool);
+        let mut res = self.insert_inner_inner(
+            context,
+            slot,
+            key_hashes,
+            resize_send,
+            &mut insert_inner.insert_inner_inner,
+            tid,
+            guard,
+            pool,
+        );
 
         while let Err(context_new) = res {
             res = self.insert_inner_inner(
@@ -1667,6 +1749,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 slot,
                 key_hashes,
                 resize_send,
+                &mut insert_inner.insert_inner_inner,
                 tid,
                 guard,
                 pool,
@@ -1683,6 +1766,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         insert_result: FindResult<'g, K, V>, // no need to be stable
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
+        move_if_resize_inner: &mut MoveIfResizedInner<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1728,6 +1812,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             insert_result.slot_ptr,
             key_hashes,
             resize_send,
+            &mut move_if_resize_inner.insert_inner,
             tid,
             guard,
             pool,
@@ -1747,6 +1832,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         insert_result: FindResult<'g, K, V>, // ?
         key_hashes: [u32; 2],
         resize_send: &mpsc::Sender<()>,
+        move_if_resized: &mut MoveIfResized<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
@@ -1756,6 +1842,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             insert_result,
             key_hashes,
             resize_send,
+            &mut move_if_resized.move_if_resized_inner,
             tid,
             guard,
             pool,
@@ -1766,6 +1853,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 insert_result,
                 key_hashes,
                 resize_send,
+                &mut move_if_resized.move_if_resized_inner,
                 tid,
                 guard,
                 pool,
@@ -1809,13 +1897,22 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             return Err(InsertError::Occupied);
         }
 
-        let (context_new, insert_result) =
-            self.insert_inner(context, slot, key_hashes, resize_send, tid, guard, pool);
+        let (context_new, insert_result) = self.insert_inner(
+            context,
+            slot,
+            key_hashes,
+            resize_send,
+            &mut insert.insert_inner,
+            tid,
+            guard,
+            pool,
+        );
         self.move_if_resized(
             context_new,   // stable by insert_inner
             insert_result, // stable by insert_inner
             key_hashes,
             resize_send,
+            &mut insert.move_if_resized,
             tid,
             guard,
             pool,
@@ -2042,7 +2139,7 @@ mod tests {
         run_test::<TestRootObj<Clevel<usize, usize>>, InsSch>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 
-    const INS_DEL_LOOK_CNT: usize = 300_000;
+    const INS_DEL_LOOK_CNT: usize = 100_000;
 
     struct InsDelLook {
         resize_loop: ResizeLoop<usize, usize>,
