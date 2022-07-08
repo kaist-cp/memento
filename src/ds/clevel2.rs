@@ -351,6 +351,71 @@ impl<K, V: Collectable> NextLevel<K, V> {
     }
 }
 
+/// Delete client
+#[derive(Debug)]
+pub struct TryDelete<K, V: Collectable> {
+    delete_cas: Cas,
+    find_result_chk: Checkpoint<(PPtr<PAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+}
+
+impl<K, V: Collectable> Default for TryDelete<K, V> {
+    fn default() -> Self {
+        Self {
+            delete_cas: Default::default(),
+            find_result_chk: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for TryDelete<K, V> {
+    fn filter(
+        try_delete: &mut Self,
+        tid: usize,
+        gc: &mut GarbageCollection,
+        pool: &mut PoolHandle,
+    ) {
+        Cas::filter(&mut try_delete.delete_cas, tid, gc, pool);
+        Checkpoint::filter(&mut try_delete.find_result_chk, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> TryDelete<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.delete_cas.clear();
+        self.find_result_chk.clear();
+    }
+}
+
+/// Delete client
+#[derive(Debug)]
+pub struct Delete<K, V: Collectable> {
+    try_delete: TryDelete<K, V>,
+}
+
+impl<K, V: Collectable> Default for Delete<K, V> {
+    fn default() -> Self {
+        Self {
+            try_delete: Default::default(),
+        }
+    }
+}
+
+impl<K, V: Collectable> Collectable for Delete<K, V> {
+    fn filter(delete: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        TryDelete::filter(&mut delete.try_delete, tid, gc, pool);
+    }
+}
+
+impl<K, V: Collectable> Delete<K, V> {
+    /// Clear
+    #[inline]
+    pub fn clear(&mut self) {
+        self.try_delete.clear();
+    }
+}
+
 #[derive(Debug, Default)]
 struct Slot<K, V: Collectable> {
     key: K,
@@ -1502,7 +1567,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     }
 
     // TODO: memento
-    fn try_delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) -> Result<bool, ()> {
+    fn try_delete(
+        &self,
+        key: &K,
+        try_del: &mut TryDelete<K, V>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> Result<bool, ()> {
         let (key_tag, key_hashes) = hashes(&key);
         let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
         // TODO: checkpoint find_result
@@ -1529,13 +1600,19 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         return Ok(true);
     }
 
-    pub fn delete(&self, key: &K, guard: &Guard, pool: &PoolHandle) -> bool {
-        if let Ok(ret) = self.try_delete(key, guard, pool) {
+    pub fn delete(
+        &self,
+        key: &K,
+        delete: &mut Delete<K, V>,
+        guard: &Guard,
+        pool: &PoolHandle,
+    ) -> bool {
+        if let Ok(ret) = self.try_delete(key, &mut delete.try_delete, guard, pool) {
             return ret;
         }
 
         loop {
-            if let Ok(ret) = self.try_delete(key, guard, pool) {
+            if let Ok(ret) = self.try_delete(key, &mut delete.try_delete, guard, pool) {
                 return ret;
             }
         }
@@ -1572,7 +1649,7 @@ mod tests {
     struct Smoke {
         // resize: ResizeLoop<usize, usize>,
         insert: [Insert<usize, usize>; SMOKE_CNT],
-        // delete: [Delete<usize, usize>; SMOKE_CNT],
+        delete: [Delete<usize, usize>; SMOKE_CNT],
     }
 
     impl Default for Smoke {
@@ -1580,7 +1657,7 @@ mod tests {
             Self {
                 // resize: Default::default(),
                 insert: array_init::array_init(|_| Insert::<usize, usize>::default()),
-                // delete: array_init::array_init(|_| Delete::<usize, usize>::default()),
+                delete: array_init::array_init(|_| Delete::<usize, usize>::default()),
             }
         }
     }
@@ -1590,7 +1667,7 @@ mod tests {
             for i in 0..SMOKE_CNT {
                 // ResizeLoop::<usize, usize>::filter(&mut m.resize, tid, gc, pool);
                 Insert::<usize, usize>::filter(&mut m.insert[i], tid, gc, pool);
-                // Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
+                Delete::<usize, usize>::filter(&mut m.delete[i], tid, gc, pool);
             }
         }
     }
@@ -1616,7 +1693,7 @@ mod tests {
                     }
 
                     for i in 0..SMOKE_CNT {
-                        assert!(kv.delete(&i, &guard, pool));
+                        assert!(kv.delete(&i, &mut mmt.delete[i], &guard, pool));
                         assert_eq!(kv.search(&i, &guard, pool), None);
                     }
                 }
@@ -1708,12 +1785,12 @@ mod tests {
         run_test::<TestRootObj<Clevel<usize, usize>>, InsSch>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
     }
 
-    const INS_DEL_LOOK_CNT: usize = 1_000_000;
+    const INS_DEL_LOOK_CNT: usize = 300_000;
 
     struct InsDelLook {
         // resize_loop: ResizeLoop<usize, usize>,
         inserts: [Insert<usize, usize>; INS_DEL_LOOK_CNT],
-        // deletes: [Delete<usize, usize>; INS_DEL_LOOK_CNT],
+        deletes: [Delete<usize, usize>; INS_DEL_LOOK_CNT],
     }
 
     impl Default for InsDelLook {
@@ -1721,7 +1798,7 @@ mod tests {
             Self {
                 // resize_loop: Default::default(),
                 inserts: array_init::array_init(|_| Default::default()),
-                // deletes: array_init::array_init(|_| Default::default()),
+                deletes: array_init::array_init(|_| Default::default()),
             }
         }
     }
@@ -1731,7 +1808,7 @@ mod tests {
             for i in 0..INS_DEL_LOOK_CNT {
                 // ResizeLoop::filter(&mut m.resize_loop, tid, gc, pool);
                 Insert::filter(&mut m.inserts[i], tid, gc, pool);
-                // Delete::filter(&mut m.deletes[i], tid, gc, pool);
+                Delete::filter(&mut m.deletes[i], tid, gc, pool);
             }
         }
     }
@@ -1769,7 +1846,7 @@ mod tests {
                         produce_res(tid, i, value);
 
                         // delete and lookup
-                        assert!(kv.delete(&key, &guard, pool));
+                        assert!(kv.delete(&key, &mut mmt.deletes[i], &guard, pool));
                         let res = kv.search(&key, &guard, pool);
                         assert!(res.is_none());
                     }
