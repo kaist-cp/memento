@@ -9,6 +9,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc;
 
 use cfg_if::cfg_if;
@@ -799,7 +800,7 @@ struct Context<K, V: Collectable> {
     /// Should resize until the last level's size > resize_size
     ///
     /// invariant: resize_size = first_level_size / 2 / 2
-    resize_size: usize,
+    resize_size: AtomicUsize,
 }
 
 impl<K, V: Collectable> Collectable for Context<K, V> {
@@ -837,7 +838,7 @@ impl<K, V: Collectable> PDefault for Clevel<K, V> {
             Context {
                 first_level: first_level.into(),
                 last_level: last_level.into(),
-                resize_size: 0,
+                resize_size: AtomicUsize::new(0),
             },
             pool,
         )
@@ -1184,7 +1185,9 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                         Context {
                             first_level: PAtomic::from(next_level),
                             last_level: context_ref.last_level.clone(),
-                            resize_size: level_size_prev(level_size_prev(next_level_size)),
+                            resize_size: AtomicUsize::new(level_size_prev(level_size_prev(
+                                next_level_size,
+                            ))),
                         },
                         pool,
                     );
@@ -1483,7 +1486,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let last_level_size = last_level_data.len();
 
         // if we don't need to resize, break out.
-        if context_ref.resize_size < last_level_size {
+        if context_ref.resize_size.load(Ordering::Relaxed) < last_level_size {
             return Ok(());
         }
 
@@ -1509,7 +1512,9 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                         Context {
                             first_level: first_level.into(),
                             last_level: next_level.into(),
-                            resize_size: context_ref.resize_size,
+                            resize_size: AtomicUsize::new(
+                                context_ref.resize_size.load(Ordering::Relaxed),
+                            ),
                         },
                         pool,
                     );
@@ -1540,9 +1545,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 context_ref.first_level.load(Ordering::Acquire, guard),
                 Ordering::Relaxed,
             );
-            // TODO: AtomicUsize
-            context_new_ref.resize_size =
-                cmp::max(context_new_ref.resize_size, context_ref.resize_size);
+            context_new_ref.resize_size.store(
+                cmp::max(
+                    context_new_ref.resize_size.load(Ordering::Relaxed),
+                    context_ref.resize_size.load(Ordering::Relaxed),
+                ),
+                Ordering::Relaxed,
+            );
 
             res = self.context.cas::<false>(
                 context,
@@ -1726,7 +1735,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         // top-to-bottom search
         for array in arrays.into_iter().rev() {
             let size = array.len();
-            if context_ref.resize_size >= size {
+            if context_ref.resize_size.load(Ordering::Relaxed) >= size {
                 break;
             }
 
@@ -1792,7 +1801,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         // No remaining slots. Resize.
-        // TODO: checkpoint context? (depending on add_level)
         let context_ref = unsafe { context.deref(pool) };
         let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
         let first_level_ref = unsafe { first_level.deref(pool) };
@@ -1887,7 +1895,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         // If the inserted array is not being resized, it's done.
         let context_new_ref = unsafe { context_new.deref(pool) };
-        if context_new_ref.resize_size < insert_result.size {
+        if context_new_ref.resize_size.load(Ordering::Relaxed) < insert_result.size {
             return Ok(());
         }
 
