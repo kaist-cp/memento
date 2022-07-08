@@ -523,17 +523,78 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
         (context, true)
     }
 
-    pub fn resize_loop(
-        &self,
-        resize_recv: &mpsc::Receiver<()>,
-        guard: &mut Guard,
-        pool: &PoolHandle,
+    // TODO: memento
+    fn resize_move<'g>(
+        &'g self,
+        context: PShared<'g, Context<K, V>>,
+        slot_ptr: PShared<'_, Slot<K, V>>,
+        mut first_level_ref: &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        mut first_level_data: &'g [MaybeUninit<Bucket<K, V>>],
+        guard: &'g Guard,
+        pool: &'g PoolHandle,
+    ) -> (
+        &'g Node<PAtomic<[MaybeUninit<Bucket<K, V>>]>>,
+        &'g [MaybeUninit<Bucket<K, V>>],
     ) {
-        // TODO: if checkpoint recv.is_ok()
-        while let Ok(()) = resize_recv.recv() {
-            println!("[resize_loop] do resize!");
-            self.resize(guard, pool);
-            guard.repin_after(|| {});
+        let mut first_level_size = first_level_data.len();
+        loop {
+            let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
+            let key_hashes = key_hashes
+                .into_iter()
+                .map(|key_hash| key_hash as usize % first_level_size)
+                .sorted()
+                .dedup();
+            for i in 0..SLOTS_IN_BUCKET {
+                for key_hash in key_hashes.clone() {
+                    let slot = unsafe {
+                        first_level_data[key_hash]
+                            .assume_init_ref()
+                            .slots
+                            .get_unchecked(i)
+                    };
+
+                    let slot_first_level = slot.load(Ordering::Acquire, guard);
+                    if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
+                        // 2-byte tag checking
+                        if slot_first_level.high_tag() != key_tag as usize {
+                            continue;
+                        }
+
+                        if slot.key != unsafe { slot_ptr.deref(pool) }.key {
+                            continue;
+                        }
+
+                        return (first_level_ref, first_level_data);
+                    }
+
+                    if slot
+                        .compare_exchange(
+                            PShared::null(),
+                            slot_ptr,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                            guard,
+                        )
+                        .is_ok()
+                    {
+                        return (first_level_ref, first_level_data);
+                    }
+                }
+            }
+
+            // The first level is full. Resize and retry.
+            let (context_new, _) = self.add_level(context, first_level_ref, guard, pool);
+            let ctx = context_new;
+            let ctx_ref = unsafe { ctx.deref(pool) };
+            let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
+            first_level_ref = unsafe { fst_lv.deref(pool) };
+            first_level_data = unsafe {
+                first_level_ref
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            };
+            first_level_size = first_level_data.len();
         }
     }
 
@@ -602,77 +663,14 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                         continue
                     );
 
-                    let mut moved = false;
-                    loop {
-                        let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(pool) }.key);
-                        let key_hashes = key_hashes
-                            .into_iter()
-                            .map(|key_hash| key_hash as usize % first_level_size)
-                            .sorted()
-                            .dedup();
-                        for i in 0..SLOTS_IN_BUCKET {
-                            for key_hash in key_hashes.clone() {
-                                let slot = unsafe {
-                                    first_level_data[key_hash]
-                                        .assume_init_ref()
-                                        .slots
-                                        .get_unchecked(i)
-                                };
-
-                                let slot_first_level = slot.load(Ordering::Acquire, guard);
-                                if let Some(slot) = unsafe { slot_first_level.as_ref(pool) } {
-                                    // 2-byte tag checking
-                                    if slot_first_level.high_tag() != key_tag as usize {
-                                        continue;
-                                    }
-
-                                    if slot.key != unsafe { slot_ptr.deref(pool) }.key {
-                                        continue;
-                                    }
-
-                                    moved = true;
-                                    break;
-                                }
-
-                                if slot
-                                    .compare_exchange(
-                                        PShared::null(),
-                                        slot_ptr,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
-                                        guard,
-                                    )
-                                    .is_ok()
-                                {
-                                    moved = true;
-                                    break;
-                                }
-                            }
-
-                            if moved {
-                                break;
-                            }
-                        }
-
-                        if moved {
-                            break;
-                        }
-
-                        // The first level is full. Resize and retry.
-                        let (context_new, _) =
-                            self.add_level(context, first_level_ref, guard, pool);
-                        context = context_new;
-                        context_ref = unsafe { context.deref(pool) };
-                        first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-                        first_level_ref = unsafe { first_level.deref(pool) };
-                        first_level_data = unsafe {
-                            first_level_ref
-                                .data
-                                .load(Ordering::Relaxed, guard)
-                                .deref(pool)
-                        };
-                        first_level_size = first_level_data.len();
-                    }
+                    (first_level_ref, first_level_data) = self.resize_move(
+                        context,
+                        slot_ptr,
+                        first_level_ref,
+                        first_level_data,
+                        guard,
+                        pool,
+                    );
                 }
             }
 
@@ -716,6 +714,20 @@ impl<K: PartialEq + Hash, V> Clevel<K, V> {
                 }
                 break;
             }
+        }
+    }
+
+    pub fn resize_loop(
+        &self,
+        resize_recv: &mpsc::Receiver<()>,
+        guard: &mut Guard,
+        pool: &PoolHandle,
+    ) {
+        // TODO: if checkpoint recv.is_ok()
+        while let Ok(()) = resize_recv.recv() {
+            println!("[resize_loop] do resize!");
+            self.resize(guard, pool);
+            guard.repin_after(|| {});
         }
     }
 }
@@ -1120,7 +1132,7 @@ mod tests {
     use crossbeam_utils::thread;
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 10_000;
+    const COUNT: usize = 100_000;
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
