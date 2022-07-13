@@ -126,6 +126,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let cas_state = mmt.state(tid, exec_info);
 
         if let CasState::Failure = cas_state {
+            exec_info.local_max_time[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
             let cur = self.inner.load(Ordering::SeqCst, guard);
             return Some(Err(self.load_help(cur, exec_info, guard)));
         }
