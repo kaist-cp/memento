@@ -369,7 +369,7 @@ pub mod tests {
             {
                 if cnt > 300 {
                     println!("Stop testing. Maybe there is a bug... (1)");
-                    std::process::exit(1);
+                    unsafe { libc::exit(1) };
                 }
 
                 if cnt % 10 == 0 {
@@ -400,7 +400,7 @@ pub mod tests {
                 cnt += 1;
                 if cnt == 10_000_000_000 {
                     println!("Stop testing. Maybe there is a bug... (2)");
-                    std::process::exit(2);
+                    unsafe { libc::exit(2) };
                 }
             }
         }

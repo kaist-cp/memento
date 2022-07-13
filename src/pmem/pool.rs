@@ -187,7 +187,9 @@ impl PoolHandle {
                                 #[cfg(feature = "simulate_tcrash")]
                                 if tid == 1 {
                                     println!("Stop testing becuase Thread 1 panicked. Maybe there is a assertion bug.");
-                                    std::process::exit(10);
+                                    unsafe {
+                                        libc::exit(10);
+                                    }
                                 }
                             }
                         }
