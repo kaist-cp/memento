@@ -21,7 +21,7 @@ use crossbeam_utils::CachePadded;
 use std::thread;
 
 #[cfg(feature = "simulate_tcrash")]
-use crate::test_utils::tests::UNIX_TIDS;
+use crate::test_utils::tests::{disable_killed, UNIX_TIDS};
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
@@ -143,16 +143,13 @@ impl PoolHandle {
                                 if UNIX_TIDS[tid].load(Ordering::SeqCst) == -1 {
                                     return ptr::null_mut();
                                 }
-                                UNIX_TIDS[tid].store(unsafe { libc::gettid() }, Ordering::SeqCst);
                             }
 
                             let _ = root_obj.run(root_mmt, tid, &guard, pool_handle);
 
                             #[cfg(feature = "simulate_tcrash")]
-                            {
-                                // Prevent being selected by `kill_random` on the main thread
-                                UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
-                            }
+                            disable_killed(tid);
+
                             ptr::null_mut()
                         }
 

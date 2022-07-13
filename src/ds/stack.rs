@@ -47,7 +47,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::pmem::ralloc::GarbageCollection;
-    use crate::pmem::{PoolHandle, RootObj};
+    use crate::pmem::*;
     use crate::test_utils::tests::*;
 
     pub(crate) struct PushPop<S, const NR_THREAD: usize, const COUNT: usize>
@@ -119,8 +119,16 @@ pub(crate) mod tests {
                 }
                 // Threads other than T1 perform { push; pop; }
                 _ => {
+                    #[cfg(feature = "simulate_tcrash")]
+                    let rand = rdtscp() as usize % COUNT;
+
                     // push; pop;
                     for i in 0..COUNT {
+                        #[cfg(feature = "simulate_tcrash")]
+                        if rand == i {
+                            enable_killed(tid);
+                        }
+
                         let _ = self.obj.push::<true>(
                             compose(tid, i, i % tid),
                             &mut push_pop.pushes[i],

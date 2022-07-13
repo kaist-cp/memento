@@ -103,7 +103,7 @@ pub mod tests {
     use {
         crate::ploc::NR_MAX_THREADS,
         crate::pmem::rdtscp,
-        libc::{size_t, SIGUSR1, SIGUSR2},
+        libc::{size_t, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32},
     };
 
@@ -250,8 +250,7 @@ pub mod tests {
             std::panic::always_abort();
 
             // Install signal handler
-            let _ = unsafe { libc::signal(SIGUSR1, kill_random as size_t) };
-            let _ = unsafe { libc::signal(SIGUSR2, self_panic as size_t) };
+            let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
 
             // Start test
             let handle = std::thread::spawn(move || {
@@ -273,6 +272,8 @@ pub mod tests {
 
                 TEST_FINISHED.store(true, Ordering::SeqCst);
             });
+
+            kill_random();
             let _ = handle.join();
         }
     }
@@ -305,16 +306,8 @@ pub mod tests {
     #[cfg(feature = "simulate_tcrash")]
     pub fn kill_random() {
         let pid = unsafe { libc::getpid() };
-        // let tid = unsafe { libc::gettid() };
-        // println!("[kill_random] Pick one thread to kill. (unix_pid: {pid}, unix_tid: {tid})");
         loop {
-            // it prevents an infinity loop that occurs when the main thread receives a signal right after installing the handler but before spawning child threads.
-            if !TEST_STARTED.load(Ordering::SeqCst) {
-                // println!("[kill_random] No one killed. Because test is not yet started.");
-                return;
-            }
             if TEST_FINISHED.load(Ordering::SeqCst) {
-                // println!("[kill_random] No one killed. Because test was already finished.");
                 return;
             }
 
@@ -322,22 +315,30 @@ pub mod tests {
             let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
 
             if rand_tid > 1 && unix_tid > pid {
-                // println!("[kill_random] Kill thread {rand_tid} (unix_tid: {unix_tid})");
-                unsafe {
-                    // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
-                    let _ = libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2);
-                };
+                println!("[kill_random] kill t{rand_tid}");
+                let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
                 return;
             }
         }
     }
 
-    /// child thread handler: self panic
-    #[allow(box_pointers)]
+    /// child thread handler: thread exit
     #[cfg(feature = "simulate_tcrash")]
-    pub fn self_panic(_signum: usize) {
+    pub fn texit(_signum: usize) {
         // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
         let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
+    }
+
+    /// Enable being selected by `kill_random` on the main thread
+    #[cfg(feature = "simulate_tcrash")]
+    pub fn enable_killed(tid: usize) {
+        UNIX_TIDS[tid].store(unsafe { libc::gettid() }, Ordering::SeqCst);
+    }
+
+    /// Disable being selected by `kill_random` on the main thread
+    #[cfg(feature = "simulate_tcrash")]
+    pub fn disable_killed(tid: usize) {
+        UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
     }
 
     /// (tid, seq, value) -> unique v
@@ -371,17 +372,17 @@ pub mod tests {
                     std::process::exit(1);
                 }
 
-                println!(
-                    "[run] t{tid} JOB_FINISHED: {} (unix_tid: {my_unix_tid}, cnt: {cnt})",
-                    JOB_FINISHED.load(Ordering::SeqCst)
-                );
+                if cnt % 10 == 0 {
+                    println!(
+                        "[run] t{tid} JOB_FINISHED: {} (unix_tid: {my_unix_tid}, cnt: {cnt})",
+                        JOB_FINISHED.load(Ordering::SeqCst)
+                    );
+                }
 
                 std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
                 cnt += 1;
             }
         }
-        #[cfg(feature = "simulate_tcrash")]
-        println!("[run] t{tid} pass the busy lock (unix_tid: {my_unix_tid})");
 
         // Wait until other threads are prevented from being selected by `kill_random` on the main thread.
         #[cfg(feature = "simulate_tcrash")]
@@ -397,7 +398,7 @@ pub mod tests {
                     break;
                 }
                 cnt += 1;
-                if cnt == 30_000_000_000 {
+                if cnt == 10_000_000_000 {
                     println!("Stop testing. Maybe there is a bug... (2)");
                     std::process::exit(2);
                 }

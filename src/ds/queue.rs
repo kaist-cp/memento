@@ -414,8 +414,16 @@ mod test {
                 }
                 // Threads other than T1 perform { enq; deq; }
                 _ => {
+                    #[cfg(feature = "simulate_tcrash")]
+                    let rand = rdtscp() as usize % COUNT;
+
                     // enq; deq;
                     for i in 0..COUNT {
+                        #[cfg(feature = "simulate_tcrash")]
+                        if rand == i {
+                            enable_killed(tid);
+                        }
+
                         let _ = self.obj.enqueue::<true>(
                             compose(tid, i, i % tid),
                             &mut enq_deq.enqs[i],

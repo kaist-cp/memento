@@ -21,8 +21,7 @@ use tinyvec::*;
 use crate::pepoch::atomic::cut_as_high_tag_len;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
-use crate::pmem::{global_pool, AsPPtr, Collectable, GarbageCollection, PoolHandle};
-use crate::pmem::{persist_obj, PPtr};
+use crate::pmem::*;
 use crate::PDefault;
 
 use super::tlock::ThreadRecoverableSpinLock;
@@ -1732,10 +1731,25 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             guard.repin_after(|| {});
         }
 
+        #[cfg(feature = "simulate_tcrash")]
+        let mut cnt = 0;
+        #[cfg(feature = "simulate_tcrash")]
+        let rand = rdtscp() as usize % 5;
+
         while resize_loop
             .recv_chk
             .checkpoint::<false, _>(|| resize_recv.recv().is_ok(), tid, pool)
         {
+            #[cfg(feature = "simulate_tcrash")]
+            {
+                use crate::test_utils::tests::*;
+                if cnt == rand {
+                    RESIZE_LOOP_UNIX_TID.store(unsafe { libc::gettid() }, Ordering::SeqCst);
+                    enable_killed(tid);
+                }
+                cnt += 1;
+            }
+
             // println!("[resize_loop] do resize!");
             self.resize::<REC>(&mut resize_loop.resize, tid, guard, pool);
             guard.repin_after(|| {});
@@ -2416,15 +2430,7 @@ mod smoke_test {
 
 #[cfg(test)]
 mod test {
-    use crate::{
-        pmem::RootObj,
-        test_utils::tests::{
-            check_res, compose, decompose, produce_res, run_test, TestRootObj, JOB_FINISHED,
-        },
-    };
-
-    #[cfg(feature = "simulate_tcrash")]
-    use crate::test_utils::tests::RESIZE_LOOP_UNIX_TID;
+    use crate::test_utils::tests::*;
 
     use super::*;
 
@@ -2478,17 +2484,22 @@ mod test {
                 }
                 // T2: Resize loop
                 2 => {
-                    #[cfg(feature = "simulate_tcrash")]
-                    RESIZE_LOOP_UNIX_TID.store(unsafe { libc::gettid() }, Ordering::SeqCst);
-
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
                     kv.resize_loop::<true>(&recv, &mut mmt.resize_loop, tid, guard, pool);
                 }
                 // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
                 _ => {
+                    #[cfg(feature = "simulate_tcrash")]
+                    let rand = rdtscp() as usize % INS_DEL_LOOK_CNT;
+
                     let send = unsafe { SEND.as_mut().unwrap()[tid].as_ref().unwrap() };
                     for i in 0..INS_DEL_LOOK_CNT {
+                        #[cfg(feature = "simulate_tcrash")]
+                        if rand == i {
+                            enable_killed(tid);
+                        }
+
                         let key = compose(tid, i, i % tid);
 
                         // insert and lookup

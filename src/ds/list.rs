@@ -662,8 +662,16 @@ mod test {
                 }
                 // Threads other than T1 perform { insert; lookup; delete; lookup; }
                 _ => {
+                    #[cfg(feature = "simulate_tcrash")]
+                    let rand = rdtscp() as usize % COUNT;
+
                     // enq; deq;
                     for i in 0..COUNT {
+                        #[cfg(feature = "simulate_tcrash")]
+                        if rand == i {
+                            enable_killed(tid);
+                        }
+
                         let key = compose(tid, i, i % tid);
 
                         // insert and lookup

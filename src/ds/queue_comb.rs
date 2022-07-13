@@ -332,10 +332,9 @@ impl CombiningQueue {
 mod test {
     use std::sync::atomic::Ordering;
 
-    use crate::pmem::{Collectable, GarbageCollection, PoolHandle, RootObj};
-    use crate::test_utils::tests::{
-        check_res, compose, decompose, produce_res, run_test, TestRootObj, JOB_FINISHED,
-    };
+    use crate::pmem::*;
+    use crate::test_utils::tests::*;
+
     use crossbeam_epoch::Guard;
 
     use super::{CombiningQueue, Dequeue, Enqueue};
@@ -384,8 +383,16 @@ mod test {
                 }
                 // other threads: { enq; deq; }
                 _ => {
+                    #[cfg(feature = "simulate_tcrash")]
+                    let rand = rdtscp() as usize % COUNT;
+
                     // enq; deq;
                     for i in 0..COUNT {
+                        #[cfg(feature = "simulate_tcrash")]
+                        if rand == i {
+                            enable_killed(tid);
+                        }
+
                         let _ = queue.comb_enqueue::<true>(
                             compose(tid, i, i % tid),
                             &mut enq_deq.enqs[i],
