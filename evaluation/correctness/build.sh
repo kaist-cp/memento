@@ -2,7 +2,6 @@
 
 PMEM_PATH="/mnt/pmem0"
 
-make -j
 SCRIPT_DIR=`dirname $(realpath "$0")`
 OUT_PATH="$SCRIPT_DIR/out"
 mkdir -p $OUT_PATH
