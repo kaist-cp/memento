@@ -77,7 +77,7 @@ fn hashes<T: Hash>(t: &T) -> (u16, [u32; 2]) {
 /// Insert client
 #[derive(Debug)]
 pub struct Insert<K, V: Collectable> {
-    found_slot: Checkpoint<(bool, PAtomic<Slot<K, V>>)>,
+    found_slot: Checkpoint<(bool, PAtomic<Slot<K, V>>, PAtomic<Context<K, V>>)>,
     insert_inner: InsertInner<K, V>,
     move_if_resized: MoveIfResized<K, V>,
 }
@@ -298,6 +298,7 @@ impl<K, V: Collectable> TrySlotInsert<K, V> {
 /// Add level client
 #[derive(Debug)]
 pub struct AddLevel<K, V: Collectable> {
+    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
     next_level: NextLevel<K, V>,
     context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     context_cas: Cas,
@@ -307,6 +308,7 @@ pub struct AddLevel<K, V: Collectable> {
 impl<K, V: Collectable> Default for AddLevel<K, V> {
     fn default() -> Self {
         Self {
+            context_chk: Default::default(),
             next_level: Default::default(),
             context_new_chk: Default::default(),
             context_cas: Default::default(),
@@ -317,6 +319,7 @@ impl<K, V: Collectable> Default for AddLevel<K, V> {
 
 impl<K, V: Collectable> Collectable for AddLevel<K, V> {
     fn filter(add_lv: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Checkpoint::filter(&mut add_lv.context_chk, tid, gc, pool);
         NextLevel::filter(&mut add_lv.next_level, tid, gc, pool);
         Checkpoint::filter(&mut add_lv.context_new_chk, tid, gc, pool);
         Cas::filter(&mut add_lv.context_cas, tid, gc, pool);
@@ -328,6 +331,7 @@ impl<K, V: Collectable> AddLevel<K, V> {
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
+        self.context_chk.clear();
         self.next_level.clear();
         self.context_new_chk.clear();
         self.context_cas.clear();
@@ -1160,20 +1164,30 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     fn add_level<'g, const REC: bool>(
         &'g self,
         context: PShared<'g, Context<K, V>>, // no need to be stable
-        first_level: &'g Node<Bucket<K, V>>, // must be stable
         add_lv: &mut AddLevel<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
-        let first_level_data =
-            unsafe { first_level.data.load(Ordering::Relaxed, guard).deref(pool) };
+        let context = add_lv
+            .context_chk
+            .checkpoint::<REC, _>(|| PAtomic::from(context), tid, pool)
+            .load(Ordering::Relaxed, guard);
+        let context_ref = unsafe { context.deref(pool) };
+        let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
+        let first_level_ref = unsafe { first_level.deref(pool) };
+        let first_level_data = unsafe {
+            first_level_ref
+                .data
+                .load(Ordering::Relaxed, guard)
+                .deref(pool)
+        };
         let next_level_size = level_size_next(first_level_data.len());
 
         // insert a new level to the next of the first level.
         let backoff = Backoff::default();
         let next_level = if let Ok(n) = self.next_level::<REC>(
-            first_level,
+            first_level_ref,
             next_level_size,
             &mut add_lv.next_level,
             tid,
@@ -1185,7 +1199,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             loop {
                 backoff.snooze();
                 if let Ok(n) = self.next_level::<false>(
-                    first_level,
+                    first_level_ref,
                     next_level_size,
                     &mut add_lv.next_level,
                     tid,
@@ -1431,7 +1445,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         // The first level is full. Resize and retry.
         let (context_new, _) = self.add_level::<REC>(
             context,
-            first_level_ref,
             &mut resize_move_inner.add_lv,
             tid,
             guard,
@@ -1970,12 +1983,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         // No remaining slots. Resize.
-        let context_ref = unsafe { context.deref(pool) };
-        let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-        let first_level_ref = unsafe { first_level.deref(pool) };
         let (context_new, added) = self.add_level::<REC>(
             context,
-            first_level_ref,
             &mut insert_inner_inner.add_lv,
             tid,
             guard,
@@ -2153,10 +2162,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         V: Clone,
     {
         let (key_tag, key_hashes) = hashes(&key);
-        let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
 
         let chk = insert.found_slot.checkpoint::<REC, _>(
             || {
+                let (context, find_result) = self.find(&key, key_tag, key_hashes, guard, pool);
                 let found = find_result.is_some();
                 let slot = if found {
                     PAtomic::null()
@@ -2165,12 +2174,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                         alloc_persist(Slot { key, value }, pool).with_high_tag(key_tag as usize),
                     )
                 };
-                (found, slot)
+                (found, slot, PAtomic::from(context))
             },
             tid,
             pool,
         );
-        let (found, slot) = (chk.0, chk.1.load(Ordering::Relaxed, guard));
+        let (found, slot, context) = (
+            chk.0,
+            chk.1.load(Ordering::Relaxed, guard),
+            chk.2.load(Ordering::Relaxed, guard),
+        );
         if found {
             return Err(InsertError::Occupied);
         }
@@ -2201,25 +2214,29 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     fn try_delete<const REC: bool>(
         &self,
         key: &K,
+        key_tag: u16,
+        key_hashes: [u32; 2],
         try_delete: &mut TryDelete<K, V>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
     ) -> Result<bool, ()> {
-        let (key_tag, key_hashes) = hashes(&key);
-        let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
+        let chk = try_delete.find_result_chk.checkpoint::<REC, _>(
+            || {
+                let (_, find_result) = self.find(key, key_tag, key_hashes, guard, pool);
 
-        let (slot, slot_ptr) = match find_result {
-            Some(res) => (
-                unsafe { res.slot.as_pptr(pool) },
-                PAtomic::from(res.slot_ptr),
-            ),
-            None => (PPtr::null(), PAtomic::null()),
-        };
-
-        let chk = try_delete
-            .find_result_chk
-            .checkpoint::<REC, _>(|| (slot, slot_ptr), tid, pool);
+                let (slot, slot_ptr) = match find_result {
+                    Some(res) => (
+                        unsafe { res.slot.as_pptr(pool) },
+                        PAtomic::from(res.slot_ptr),
+                    ),
+                    None => (PPtr::null(), PAtomic::null()),
+                };
+                (slot, slot_ptr)
+            },
+            tid,
+            pool,
+        );
 
         if chk.0.is_null() {
             // slot is null if find result is none
@@ -2255,13 +2272,30 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         guard: &Guard,
         pool: &PoolHandle,
     ) -> bool {
-        if let Ok(ret) = self.try_delete::<REC>(key, &mut delete.try_delete, tid, guard, pool) {
+        let (key_tag, key_hashes) = hashes(&key);
+
+        if let Ok(ret) = self.try_delete::<REC>(
+            key,
+            key_tag,
+            key_hashes,
+            &mut delete.try_delete,
+            tid,
+            guard,
+            pool,
+        ) {
             return ret;
         }
 
         loop {
-            if let Ok(ret) = self.try_delete::<false>(key, &mut delete.try_delete, tid, guard, pool)
-            {
+            if let Ok(ret) = self.try_delete::<false>(
+                key,
+                key_tag,
+                key_hashes,
+                &mut delete.try_delete,
+                tid,
+                guard,
+                pool,
+            ) {
                 return ret;
             }
         }

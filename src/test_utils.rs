@@ -1,4 +1,5 @@
 //! Utilities
+#![allow(unused)]
 
 pub(crate) mod ordo {
     use std::{
