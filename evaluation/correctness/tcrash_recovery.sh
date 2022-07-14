@@ -23,19 +23,33 @@ function dmsg() {
     echo "[$time] $msg" >> $OUT_PATH/$target.out
 }
 
-function run() {
+function run_bg() {
     target=$1
     dmsg "run $target"
 
     rm -rf $PMEM_PATH/test/$target/*
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out
+    RUST_MIN_STACK=100737418200 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out &
 }
 
 # Test thread crash and recovery run.
 for i in $(seq 1 $CNT_CRASH); do
     dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
-    run $target
+    start=$(date +%s%N)
+    run_bg $target
+    pid_bg=$!
 
+    limit=$((100 * 10**9))
+    while ps | grep $pid_bg > /dev/null; do
+        current=$(date +%s%N)
+        elapsed=$(($current-$start))
+        if [ $elapsed -gt $limit ]; then
+            kill -9 $pid_bg || true
+            dmsg "kill $pid_bg because it has been running for over 100 seconds."
+            break
+        fi
+    done
+
+    wait $pid_bg
     ext=$?
     if [ $ext -eq 0 ]; then
         dmsg "ok"

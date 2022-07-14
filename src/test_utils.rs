@@ -391,16 +391,10 @@ pub mod tests {
                 continue;
             }
 
-            let mut cnt: usize = 0;
             loop {
                 let unix_tid = unix_tid.load(Ordering::SeqCst);
                 if unix_tid <= 0 || unix_tid == RESIZE_LOOP_UNIX_TID.load(Ordering::SeqCst) {
                     break;
-                }
-                cnt += 1;
-                if cnt == 10_000_000_000 {
-                    println!("Stop testing. Maybe there is a bug... (2)");
-                    unsafe { libc::exit(2) };
                 }
             }
         }
