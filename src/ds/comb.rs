@@ -187,8 +187,13 @@ impl Combining {
             if activate < deactivate {
                 return mmt.peek_retval();
             }
-            if activate == deactivate {
-                return latest_state.return_value[tid];
+
+            // NOTE: In this case, latest thread-local activate(`request[tid].actviate`) value can be either mmt.activate or mmt.activate + 1
+            // - Case 1: act 5, deact 5 (mmt-local act 5, thread-local act 5) -> In this case, it is safe to overwrite the thread-local act in request[tid]. And if this thread was a combiner, he has to finalize the combine.
+            // - Case 2: act 5, deact 5 (mmt-local act 5, thread-local act 6) -> In this case, it should not overwrite the thread-local act in request[tid]
+            // - Case 3: act 6, deact 5 (mmt-local act 6, thread-local act 6) -> In this case, it is safe to overwrite the thread-local act in request[tid]
+            if activate < s.request[tid].activate.load(Ordering::Relaxed) {
+                return mmt.peek_retval();
             }
         }
 
