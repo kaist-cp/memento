@@ -29,7 +29,7 @@ use super::tlock::ThreadRecoverableSpinLock;
 const TINY_VEC_CAPACITY: usize = 8;
 
 cfg_if! {
-    if #[cfg(feature = "stress")] {
+    if #[cfg(any(feature = "stress", feature = "simulate_tcrash"))] {
         // For stress test.
 
         const SLOTS_IN_BUCKET: usize = 1;
