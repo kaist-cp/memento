@@ -484,7 +484,6 @@ pub trait RootObj<M: Collectable + Default>: PDefault + Collectable {
 #[cfg(test)]
 mod tests {
     use crossbeam_epoch::Guard;
-    use env_logger as _;
     use log::{self as _, debug};
 
     use crate::pmem::pool::*;
@@ -521,8 +520,6 @@ mod tests {
     // check flag=1 => value=42
     #[test]
     fn check_inv() {
-        env_logger::init();
-
         run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1);
     }
 }
