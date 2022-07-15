@@ -394,7 +394,7 @@ mod test {
                         }
 
                         let _ = queue.comb_enqueue::<true>(
-                            compose(tid, i, i % tid),
+                            compose(tid, i),
                             &mut enq_deq.enqs[i],
                             tid,
                             guard,
@@ -403,11 +403,11 @@ mod test {
 
                         let res =
                             queue.comb_dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
-                        let (tid, i, value) = decompose(res);
-                        assert!(value != CombiningQueue::EMPTY);
+                        assert!(res != CombiningQueue::EMPTY);
+                        let (tid, i) = decompose(res);
 
                         // Transfer the deq result to the result array
-                        produce_res(tid, i, value);
+                        produce_res(tid, i);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

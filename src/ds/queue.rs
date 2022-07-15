@@ -425,7 +425,7 @@ mod test {
                         }
 
                         let _ = self.obj.enqueue::<true>(
-                            compose(tid, i, i % tid),
+                            compose(tid, i),
                             &mut enq_deq.enqs[i],
                             tid,
                             guard,
@@ -437,8 +437,8 @@ mod test {
                         assert!(res.is_some());
 
                         // Transfer the deq result to the result array
-                        let (tid, i, value) = decompose(res.unwrap());
-                        produce_res(tid, i, value);
+                        let (tid, i) = decompose(res.unwrap());
+                        produce_res(tid, i);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

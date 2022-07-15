@@ -672,7 +672,7 @@ mod test {
                             enable_killed(tid);
                         }
 
-                        let key = compose(tid, i, i % tid);
+                        let key = compose(tid, i);
 
                         // insert and lookup
                         // println!("insert k: {key}");
@@ -698,8 +698,8 @@ mod test {
                         // println!("lookup k: {key} -> value: {}", res.unwrap());
 
                         // Transfer the lookup result to the result array
-                        let (tid, i, value) = decompose(*res.unwrap());
-                        produce_res(tid, i, value);
+                        let (tid, i) = decompose(*res.unwrap());
+                        produce_res(tid, i);
 
                         // delete and lookup
                         // println!("delete k: {key}");

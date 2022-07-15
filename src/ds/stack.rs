@@ -130,7 +130,7 @@ pub(crate) mod tests {
                         }
 
                         let _ = self.obj.push::<true>(
-                            compose(tid, i, i % tid),
+                            compose(tid, i),
                             &mut push_pop.pushes[i],
                             tid,
                             guard,
@@ -142,8 +142,8 @@ pub(crate) mod tests {
                         assert!(res.is_some());
 
                         // Transfer the pop result to the result array
-                        let (tid, i, value) = decompose(res.unwrap());
-                        produce_res(tid, i, value);
+                        let (tid, i) = decompose(res.unwrap());
+                        produce_res(tid, i);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);

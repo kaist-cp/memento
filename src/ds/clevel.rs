@@ -2500,7 +2500,7 @@ mod test {
                             enable_killed(tid);
                         }
 
-                        let key = compose(tid, i, i % tid);
+                        let key = compose(tid, i);
 
                         // insert and lookup
                         assert!(kv
@@ -2510,8 +2510,8 @@ mod test {
                         assert!(res.is_some());
 
                         // transfer the lookup result to the result array
-                        let (tid, i, value) = decompose(*res.unwrap());
-                        produce_res(tid, i, value);
+                        let (tid, i) = decompose(*res.unwrap());
+                        produce_res(tid, i);
 
                         // delete and lookup
                         assert!(kv.delete::<true>(&key, &mut mmt.deletes[i], tid, &guard, pool));

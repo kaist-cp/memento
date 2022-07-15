@@ -89,7 +89,6 @@ pub mod tests {
     #![allow(dead_code)]
 
     use crossbeam_epoch::Guard;
-    use std::collections::HashMap;
     use std::io::Error;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
@@ -196,16 +195,15 @@ pub mod tests {
     use lazy_static::lazy_static;
 
     const MAX_THREADS: usize = 64;
+    const MAX_COUNT: usize = 1_000_000;
+    const NONE: usize = usize::MAX;
 
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
         pub static ref RESULTS: [AtomicUsize; MAX_THREADS] =
             array_init::array_init(|_| AtomicUsize::new(0));
-        // pub static ref RESULTS_TCRASH: Mutex<HashMap<(usize, usize), usize>> =
-        //     Mutex::new(HashMap::new()); // (tid, op seq) -> value
-
-        pub static ref RESULTS_TCRASH: [Mutex<HashMap<usize, usize>>; MAX_THREADS] =
-        array_init::array_init(|_| Mutex::new(HashMap::new())); // per-thread op seq -> value
+        pub static ref RESULTS_TCRASH: [[AtomicUsize; MAX_COUNT]; MAX_THREADS] =
+            array_init::array_init(|_| array_init::array_init(|_| AtomicUsize::new(NONE)));
     }
 
     pub trait Poisonable<T> {
@@ -341,20 +339,16 @@ pub mod tests {
         UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
     }
 
-    /// (tid, seq, value) -> unique v
+    /// (tid, seq) -> unique repr
     ///
     /// - tid must be less than 100
-    /// - value must be less than 100
-    pub(crate) fn compose(tid: usize, seq: usize, value: usize) -> usize {
-        seq * 10000 + tid * 100 + value
+    pub(crate) fn compose(tid: usize, seq: usize) -> usize {
+        seq * 100 + tid
     }
 
-    /// unique v -> (tid, seq, value)
-    ///
-    /// - tid must be less than 100
-    /// - value must be less than 100
-    pub(crate) fn decompose(value: usize) -> (usize, usize, usize) {
-        ((value / 100) % 100, value / 10000, value % 100)
+    /// unique repr -> (tid, seq)
+    pub(crate) fn decompose(repr: usize) -> (usize, usize) {
+        (repr % 100, repr / 100)
     }
 
     #[allow(unused_variables)]
@@ -400,27 +394,30 @@ pub mod tests {
         }
 
         // Check results
-        let mut results: [HashMap<usize, usize>; MAX_THREADS] =
-            array_init::array_init(|i| RESULTS_TCRASH[i].lock_poisonable().clone());
         let mut nr_has_res = 0;
-
-        for (tid, result) in results.iter_mut().enumerate() {
-            if result.is_empty() {
+        for (tid, result) in RESULTS_TCRASH.iter().enumerate() {
+            // check empty
+            if result.iter().all(|x| x.load(Ordering::SeqCst) == NONE) {
                 continue;
             }
 
-            for seq in 0..count {
-                assert_eq!(result.remove(&seq).unwrap(), seq % tid);
-            }
-            assert!(result.is_empty());
+            // check values
+            assert!((0..count)
+                .map(|seq| seq)
+                .all(|seq| result[seq].swap(NONE, Ordering::SeqCst) == get_val(tid, seq)));
+            assert!(result.iter().all(|x| x.load(Ordering::SeqCst) == NONE));
             nr_has_res += 1;
         }
         assert!(nr_has_res == nr_wait);
     }
 
-    pub(crate) fn produce_res(tid: usize, seq: usize, value: usize) {
-        if let Some(prev) = RESULTS_TCRASH[tid].lock_poisonable().insert(seq, value) {
-            assert_eq!(prev, value);
-        }
+    pub(crate) fn produce_res(tid: usize, seq: usize) {
+        let value = get_val(tid, seq);
+        let prev = RESULTS_TCRASH[tid][seq].swap(value, Ordering::SeqCst);
+        assert!(prev == NONE || prev == value);
+    }
+
+    pub(crate) fn get_val(tid: usize, seq: usize) -> usize {
+        seq % tid
     }
 }
