@@ -2443,7 +2443,9 @@ mod test {
     struct InsDelLook {
         resize_loop: ResizeLoop<usize, usize>,
         inserts: [Insert<usize, usize>; INS_DEL_LOOK_CNT],
+        ins_lookups: [Checkpoint<Option<usize>>; INS_DEL_LOOK_CNT],
         deletes: [Delete<usize, usize>; INS_DEL_LOOK_CNT],
+        del_lookups: [Checkpoint<Option<usize>>; INS_DEL_LOOK_CNT],
     }
 
     impl Default for InsDelLook {
@@ -2451,7 +2453,9 @@ mod test {
             Self {
                 resize_loop: Default::default(),
                 inserts: array_init::array_init(|_| Default::default()),
+                ins_lookups: array_init::array_init(|_| Default::default()),
                 deletes: array_init::array_init(|_| Default::default()),
+                del_lookups: array_init::array_init(|_| Default::default()),
             }
         }
     }
@@ -2506,16 +2510,24 @@ mod test {
                         assert!(kv
                             .insert::<true>(key, key, &send, &mut mmt.inserts[i], tid, &guard, pool)
                             .is_ok());
-                        let res = kv.search(&key, &guard, pool);
+                        let res = &mut mmt.ins_lookups[i].checkpoint::<true, _>(
+                            || kv.search(&key, &guard, pool).map_or(None, |v| Some(*v)),
+                            tid,
+                            pool,
+                        );
                         assert!(res.is_some());
 
                         // transfer the lookup result to the result array
-                        let (tid, i) = decompose(*res.unwrap());
+                        let (tid, i) = decompose(res.unwrap());
                         produce_res(tid, i);
 
                         // delete and lookup
                         assert!(kv.delete::<true>(&key, &mut mmt.deletes[i], tid, &guard, pool));
-                        let res = kv.search(&key, &guard, pool);
+                        let res = &mut mmt.del_lookups[i].checkpoint::<true, _>(
+                            || kv.search(&key, &guard, pool).map_or(None, |v| Some(*v)),
+                            tid,
+                            pool,
+                        );
                         assert!(res.is_none());
                     }
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
