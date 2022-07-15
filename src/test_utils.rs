@@ -91,7 +91,6 @@ pub mod tests {
     use crossbeam_epoch::Guard;
     use std::io::Error;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Mutex, MutexGuard};
     use tempfile::NamedTempFile;
 
     use crate::pmem::pool::*;
@@ -204,21 +203,6 @@ pub mod tests {
             array_init::array_init(|_| AtomicUsize::new(0));
         pub static ref RESULTS_TCRASH: [[AtomicUsize; MAX_COUNT]; MAX_THREADS] =
             array_init::array_init(|_| array_init::array_init(|_| AtomicUsize::new(NONE)));
-    }
-
-    pub trait Poisonable<T> {
-        fn lock_poisonable(&self) -> MutexGuard<'_, T>;
-    }
-
-    impl<T> Poisonable<T> for Mutex<T> {
-        fn lock_poisonable(&self) -> MutexGuard<'_, T> {
-            loop {
-                match self.lock() {
-                    Ok(guard) => return guard,
-                    Err(_) => self.clear_poison(),
-                }
-            }
-        }
     }
 
     #[cfg(feature = "simulate_tcrash")]
