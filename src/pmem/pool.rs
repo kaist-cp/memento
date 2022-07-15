@@ -183,14 +183,6 @@ impl PoolHandle {
                             _ => {
                                 thread::sleep(std::time::Duration::from_secs(1));
                                 println!("PANIC: Root memento No.{} re-executed.", tid);
-
-                                #[cfg(feature = "simulate_tcrash")]
-                                if tid == 1 {
-                                    println!("Stop testing becuase Thread 1 panicked. Maybe there is a assertion bug.");
-                                    unsafe {
-                                        libc::exit(10);
-                                    }
-                                }
                             }
                         }
                     }

@@ -210,7 +210,6 @@ pub mod tests {
         pub static ref UNIX_TIDS: [AtomicI32; NR_MAX_THREADS] =
             array_init::array_init(|_| AtomicI32::new(0));
         pub static ref RESIZE_LOOP_UNIX_TID: AtomicI32 = AtomicI32::new(0);
-        pub static ref TEST_STARTED: AtomicBool = AtomicBool::new(false);
         pub static ref TEST_FINISHED: AtomicBool = AtomicBool::new(false);
     }
 
@@ -237,20 +236,13 @@ pub mod tests {
             // Start test
             let handle = std::thread::spawn(move || {
                 // initialze test variables
-                // let unix_tid = unsafe { libc::gettid() };
-                // println!("Initialze test variables (unix_tid: {unix_tid})");
                 lazy_static::initialize(&JOB_FINISHED);
                 lazy_static::initialize(&RESULTS);
                 lazy_static::initialize(&RESULTS_TCRASH);
                 lazy_static::initialize(&UNIX_TIDS);
-                lazy_static::initialize(&TEST_STARTED);
                 lazy_static::initialize(&TEST_FINISHED);
 
-                TEST_STARTED.store(true, Ordering::SeqCst);
-
-                // println!("Start test (unix_tid: {unix_tid})");
                 run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
-                // println!("Finish test (unix_tid: {unix_tid})");
 
                 TEST_FINISHED.store(true, Ordering::SeqCst);
             });
@@ -275,13 +267,7 @@ pub mod tests {
             .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap());
 
         // run root memento(s)
-        let execute = std::env::var("POOL_EXECUTE");
-        if execute.is_ok() && execute.unwrap() == "0" {
-            // println!("[run_test] no execute");
-        } else {
-            // println!("[run_test] execute");
-            pool_handle.execute::<O, M>();
-        }
+        pool_handle.execute::<O, M>();
     }
 
     /// main thread handler: kill random child thread
