@@ -13,7 +13,7 @@ use std::arch::x86::{_mm_mfence, _mm_sfence, clflush};
 use std::arch::x86_64::_MM_HINT_ET1;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __rdtscp, _mm_clflush, _mm_lfence, _mm_mfence, _mm_prefetch, _mm_sfence, _rdtsc,
+    __rdtscp, _mm_lfence, _mm_mfence, _mm_prefetch, _mm_sfence, _rdtsc,
 };
 
 /// Synchronize caches and memories and acts like a write barrier
@@ -90,7 +90,7 @@ pub fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
             cur += 1 << CACHE_LINE_SHIFT;
         }
     }
-    if (fence) {
+    if fence {
         sfence();
     }
 }

@@ -1,5 +1,4 @@
 //! Utilities
-#![allow(unused)]
 
 pub(crate) mod ordo {
     use std::{
@@ -200,9 +199,7 @@ pub mod tests {
 
     lazy_static! {
         pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
-        pub static ref RESULTS: [AtomicUsize; MAX_THREADS] =
-            array_init::array_init(|_| AtomicUsize::new(0));
-        pub static ref RESULTS_TCRASH: [[AtomicUsize; MAX_COUNT]; MAX_THREADS] =
+        pub static ref RESULTS: [[AtomicUsize; MAX_COUNT]; MAX_THREADS] =
             array_init::array_init(|_| array_init::array_init(|_| AtomicUsize::new(NONE)));
     }
 
@@ -223,6 +220,9 @@ pub mod tests {
         O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
     {
+        lazy_static::initialize(&JOB_FINISHED);
+        lazy_static::initialize(&RESULTS);
+
         #[cfg(not(feature = "simulate_tcrash"))]
         {
             run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
@@ -239,9 +239,6 @@ pub mod tests {
             // Start test
             let handle = std::thread::spawn(move || {
                 // initialze test variables
-                lazy_static::initialize(&JOB_FINISHED);
-                lazy_static::initialize(&RESULTS);
-                lazy_static::initialize(&RESULTS_TCRASH);
                 lazy_static::initialize(&UNIX_TIDS);
                 lazy_static::initialize(&TEST_FINISHED);
 
@@ -393,7 +390,7 @@ pub mod tests {
 
         // Check results
         let mut nr_has_res = 0;
-        for (tid, result) in RESULTS_TCRASH.iter().enumerate() {
+        for (tid, result) in RESULTS.iter().enumerate() {
             // check empty
             if result.iter().all(|x| x.load(Ordering::SeqCst) == NONE) {
                 continue;
@@ -411,7 +408,7 @@ pub mod tests {
 
     pub(crate) fn produce_res(tid: usize, seq: usize) {
         let value = get_val(tid, seq);
-        let prev = RESULTS_TCRASH[tid][seq].swap(value, Ordering::SeqCst);
+        let prev = RESULTS[tid][seq].swap(value, Ordering::SeqCst);
         assert!(prev == NONE || prev == value);
     }
 

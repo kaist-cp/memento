@@ -526,7 +526,7 @@ mod test {
         *,
     };
     use crate::{
-        pmem::{ralloc::Collectable, rdtscp, RootObj},
+        pmem::{ralloc::Collectable, RootObj},
         test_utils::tests::*,
     };
 
@@ -553,33 +553,54 @@ mod test {
         }
     }
 
-    impl RootObj<Increments> for TestRootObj<Counter> {
-        fn run(&self, mmt: &mut Increments, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    impl RootObj<DetectableCas> for TestRootObj<DetectableCASAtomic<usize>> {
+        fn run(
+            &self,
+            _cas_test: &mut DetectableCas,
+            tid: usize,
+            _guard: &Guard,
+            _pool: &PoolHandle,
+        ) {
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
                     // Wait for all other threads to finish
-                    while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+                    // while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
-                    // Check results
-                    assert_eq!(self.obj.peek(guard, pool), NR_THREAD * COUNT);
+                    // // Check results
+                    // // TODO: Use from-old-to-new pair
+                    // let mut last_tid = 0;
+                    // for t in 2..NR_THREAD + 2 {
+                    //     let cnt = RESULTS[t].load(Ordering::SeqCst);
+                    //     if cnt == COUNT {
+                    //         continue;
+                    //     }
+                    //     assert_eq!(cnt, COUNT - 1);
+                    //     assert_eq!(last_tid, 0);
+                    //     last_tid = t;
+                    // }
                 }
                 // Threads other than T1 perform CAS
                 _ => {
-                    #[cfg(feature = "simulate_tcrash")]
-                    let rand = rdtscp() as usize % COUNT;
+                    // let new = unsafe { PShared::from_usize(tid) };
+                    // for i in 0..COUNT {
+                    //     let old = loop {
+                    //         let old = self.obj.load(Ordering::SeqCst, guard, pool);
+                    //         if self
+                    //             .obj
+                    //             .cas::<true>(old, new, &mut cas_test.cases[i], tid, guard, pool)
+                    //             .is_ok()
+                    //         {
+                    //             break old;
+                    //         }
+                    //     };
 
-                    for i in 0..COUNT {
-                        #[cfg(feature = "simulate_tcrash")]
-                        if rand == i {
-                            enable_killed(tid);
-                        }
+                    //     // Transfer the old value to the result array
+                    //     // TODO: Use from-old-to-new pair
+                    //     let _ = RESULTS[old.into_usize()].fetch_add(1, Ordering::SeqCst);
+                    // }
 
-                        self.obj
-                            .increment::<true>(&mut mmt.increments[i], tid, guard, pool);
-                    }
-
-                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+                    // let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
