@@ -292,7 +292,7 @@ pub mod tests {
                     .map(|_| {
                         let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
                     })
-                    .map_err(|e| assert!(e == UNIX_TID_FINISH, "{e}"));
+                    .map_err(|e| assert!(e == UNIX_TID_FINISH, "tid: {rand_tid}, e: {e}"));
                 return;
             }
         }
@@ -316,11 +316,16 @@ pub mod tests {
     pub fn disable_killed(tid: usize) {
         use crossbeam_utils::Backoff;
 
+        // TODO: 리팩토링하며 삭제. checker만을 위한 예외처리임.
+        if tid <= 1 {
+            return;
+        }
+
         let unix_tid = unsafe { libc::gettid() };
         if let Err(e) =
             UNIX_TIDS[tid].compare_exchange(unix_tid, -1, Ordering::SeqCst, Ordering::SeqCst)
         {
-            assert!(e == -unix_tid, "{e}");
+            assert!(e == -unix_tid, "tid: {tid}, e: {e}");
 
             // Wait until main thread kills me
             let backoff = Backoff::new();
