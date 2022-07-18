@@ -414,35 +414,39 @@ mod test {
     use super::*;
     use crate::{
         pepoch::atomic::Pointer,
-        pmem::{ralloc::Collectable, RootObj},
+        ploc::Checkpoint,
+        pmem::{ralloc::Collectable, rdtscp, RootObj},
         test_utils::tests::*,
     };
 
     const NR_THREAD: usize = 12;
     const COUNT: usize = 100_000;
 
-    struct DetectableCas {
+    struct Increment {
+        old_new: [Checkpoint<(PAtomic<usize>, PAtomic<usize>)>; COUNT],
         cases: [Cas; COUNT],
     }
 
-    impl Default for DetectableCas {
+    impl Default for Increment {
         fn default() -> Self {
             Self {
-                cases: array_init::array_init(|_| Cas::default()),
+                old_new: array_init::array_init(|_| Default::default()),
+                cases: array_init::array_init(|_| Default::default()),
             }
         }
     }
 
-    impl Collectable for DetectableCas {
+    impl Collectable for Increment {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..COUNT {
+                Checkpoint::filter(&mut m.old_new[i], tid, gc, pool);
                 Cas::filter(&mut m.cases[i], tid, gc, pool);
             }
         }
     }
 
-    impl RootObj<DetectableCas> for TestRootObj<DetectableCASAtomic<usize>> {
-        fn run(&self, cas_test: &mut DetectableCas, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    impl RootObj<Increment> for TestRootObj<DetectableCASAtomic<usize>> {
+        fn run(&self, mmt: &mut Increment, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
@@ -450,36 +454,45 @@ mod test {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check results
-                    // TODO: Use from-old-to-new pair
-                    let mut last_tid = 0;
-                    for t in 2..NR_THREAD + 2 {
-                        let cnt = RESULTS[t].load(Ordering::SeqCst);
-                        if cnt == COUNT {
-                            continue;
-                        }
-                        assert_eq!(cnt, COUNT - 1);
-                        assert_eq!(last_tid, 0);
-                        last_tid = t;
-                    }
+                    assert_eq!(
+                        self.obj.load(Ordering::SeqCst, guard, pool).into_usize(),
+                        NR_THREAD * COUNT
+                    );
                 }
                 // Threads other than T1 perform CAS
                 _ => {
-                    let new = unsafe { PShared::from_usize(tid) };
+                    #[cfg(feature = "simulate_tcrash")]
+                    let rand = rdtscp() as usize % COUNT;
+
                     for i in 0..COUNT {
-                        let old = loop {
-                            let old = self.obj.load(Ordering::SeqCst, guard, pool);
+                        #[cfg(feature = "simulate_tcrash")]
+                        if rand == i {
+                            enable_killed(tid);
+                        }
+
+                        loop {
+                            let (old, new) = mmt.old_new[i].checkpoint::<true, _>(
+                                || {
+                                    let old = self.obj.load(Ordering::SeqCst, guard, pool);
+                                    let new = unsafe { PShared::from_usize(old.into_usize() + 1) };
+                                    (PAtomic::from(old), PAtomic::from(new))
+                                },
+                                tid,
+                                pool,
+                            );
+                            let (old, new) = (
+                                old.load(Ordering::Relaxed, guard),
+                                new.load(Ordering::Relaxed, guard),
+                            );
+
                             if self
                                 .obj
-                                .cas::<true>(old, new, &mut cas_test.cases[i], tid, guard, pool)
+                                .cas::<true>(old, new, &mut mmt.cases[i], tid, guard, pool)
                                 .is_ok()
                             {
-                                break old;
+                                break;
                             }
-                        };
-
-                        // Transfer the old value to the result array
-                        // TODO: Use from-old-to-new pair
-                        let _ = RESULTS[old.into_usize()].fetch_add(1, Ordering::SeqCst);
+                        }
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
@@ -497,7 +510,7 @@ mod test {
         const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<DetectableCASAtomic<usize>>, DetectableCas>(
+        run_test::<TestRootObj<DetectableCASAtomic<usize>>, Increment>(
             FILE_NAME,
             FILE_SIZE,
             NR_THREAD + 1,
