@@ -212,6 +212,8 @@ pub mod tests {
         pub static ref RESIZE_LOOP_UNIX_TID: AtomicI32 = AtomicI32::new(0);
         pub static ref TEST_FINISHED: AtomicBool = AtomicBool::new(false);
     }
+    #[cfg(feature = "simulate_tcrash")]
+    const UNIX_TID_FINISH: i32 = i32::MIN;
 
     /// run test op
     #[allow(box_pointers)]
@@ -284,7 +286,13 @@ pub mod tests {
 
             if rand_tid > 1 && unix_tid > pid {
                 println!("[kill_random] kill t{rand_tid}");
-                let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
+
+                let _ = UNIX_TIDS[rand_tid]
+                    .compare_exchange(unix_tid, -unix_tid, Ordering::SeqCst, Ordering::SeqCst)
+                    .map(|_| {
+                        let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
+                    })
+                    .map_err(|e| assert!(e == UNIX_TID_FINISH, "{e}"));
                 return;
             }
         }
@@ -306,7 +314,20 @@ pub mod tests {
     /// Disable being selected by `kill_random` on the main thread
     #[cfg(feature = "simulate_tcrash")]
     pub fn disable_killed(tid: usize) {
-        UNIX_TIDS[tid].store(-1, Ordering::SeqCst);
+        use crossbeam_utils::Backoff;
+
+        let unix_tid = unsafe { libc::gettid() };
+        if let Err(e) =
+            UNIX_TIDS[tid].compare_exchange(unix_tid, -1, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            assert!(e == -unix_tid, "{e}");
+
+            // Wait until main thread kills me
+            let backoff = Backoff::new();
+            loop {
+                backoff.snooze();
+            }
+        }
     }
 
     /// (tid, seq) -> unique repr
@@ -349,6 +370,7 @@ pub mod tests {
         }
 
         // Wait until other threads are prevented from being selected by `kill_random` on the main thread.
+        // TODO: 테스트할 스레드 번호들을 정확히 안다면, 이 wait 로직 뺄 수 있을듯. 위에서 unix_tid 전부 `UNIX_TID_FINISH`가 될때까지 기다리면 됨.
         #[cfg(feature = "simulate_tcrash")]
         for unix_tid in UNIX_TIDS.iter() {
             if my_unix_tid == unix_tid.load(Ordering::SeqCst) {
