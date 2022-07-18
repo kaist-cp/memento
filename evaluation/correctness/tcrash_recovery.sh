@@ -28,7 +28,7 @@ function run_bg() {
     dmsg "run $target"
 
     rm -rf $PMEM_PATH/test/$target/*
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out &
+    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* $target::test --nocapture &>> $OUT_PATH/$target.out &
 }
 
 # Test thread crash and recovery run.

@@ -409,44 +409,152 @@ impl Cas {
     }
 }
 
+mod counter {
+    #![allow(unreachable_pub)]
+    #![allow(dead_code)]
+
+    use std::sync::atomic::Ordering;
+
+    use crossbeam_epoch::{unprotected, Guard};
+
+    use crate::{
+        pepoch::{atomic::Pointer, PAtomic, PShared},
+        ploc::Checkpoint,
+        pmem::{Collectable, GarbageCollection, PoolHandle},
+        PDefault,
+    };
+
+    use super::{Cas, DetectableCASAtomic};
+
+    #[derive(Default)]
+    pub struct Increment {
+        old_new: Checkpoint<(PAtomic<usize>, PAtomic<usize>)>,
+        cas: Cas,
+    }
+
+    impl Collectable for Increment {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            Collectable::filter(&mut s.old_new, tid, gc, pool);
+            Collectable::filter(&mut s.cas, tid, gc, pool);
+        }
+    }
+
+    impl PDefault for Increment {
+        fn pdefault(_: &PoolHandle) -> Self {
+            Default::default()
+        }
+    }
+
+    #[derive(Debug, Default)]
+    pub struct Counter {
+        cnt: DetectableCASAtomic<usize>,
+    }
+
+    impl Collectable for Counter {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            Collectable::filter(&mut s.cnt, tid, gc, pool);
+        }
+    }
+
+    impl PDefault for Counter {
+        fn pdefault(pool: &PoolHandle) -> Self {
+            let s = Self::default();
+            assert_eq!(s.peek(unsafe { unprotected() }, pool), 0);
+            s
+        }
+    }
+
+    impl Counter {
+        pub fn increment<const REC: bool>(
+            &self,
+            inc: &mut Increment,
+            tid: usize,
+            guard: &Guard,
+            pool: &PoolHandle,
+        ) {
+            if self.try_increment::<REC>(inc, tid, guard, pool).is_ok() {
+                return;
+            }
+
+            loop {
+                if self.try_increment::<false>(inc, tid, guard, pool).is_ok() {
+                    return;
+                }
+            }
+        }
+
+        fn try_increment<const REC: bool>(
+            &self,
+            inc: &mut Increment,
+            tid: usize,
+            guard: &Guard,
+            pool: &PoolHandle,
+        ) -> Result<(), ()> {
+            let (old, new) = inc.old_new.checkpoint::<REC, _>(
+                || {
+                    let old = self.peek(guard, pool);
+                    let new = unsafe { PShared::from_usize(old + 1) };
+                    (
+                        PAtomic::from(unsafe { PShared::from_usize(old) }),
+                        PAtomic::from(new),
+                    )
+                },
+                tid,
+                pool,
+            );
+            let (old, new) = (
+                old.load(Ordering::Relaxed, guard),
+                new.load(Ordering::Relaxed, guard),
+            );
+
+            self.cnt
+                .cas::<REC>(old, new, &mut inc.cas, tid, guard, pool)
+                .map_err(|_| ())
+        }
+
+        #[inline]
+        pub fn peek(&self, guard: &Guard, pool: &PoolHandle) -> usize {
+            self.cnt.load(Ordering::SeqCst, guard, pool).into_usize()
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::{
+        counter::{Counter, Increment},
+        *,
+    };
     use crate::{
-        pepoch::atomic::Pointer,
-        ploc::Checkpoint,
         pmem::{ralloc::Collectable, rdtscp, RootObj},
         test_utils::tests::*,
     };
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 100_000;
+    const COUNT: usize = 10_000;
 
-    struct Increment {
-        old_new: [Checkpoint<(PAtomic<usize>, PAtomic<usize>)>; COUNT],
-        cases: [Cas; COUNT],
+    struct Increments {
+        increments: [Increment; COUNT],
     }
 
-    impl Default for Increment {
+    impl Default for Increments {
         fn default() -> Self {
             Self {
-                old_new: array_init::array_init(|_| Default::default()),
-                cases: array_init::array_init(|_| Default::default()),
+                increments: array_init::array_init(|_| Default::default()),
             }
         }
     }
 
-    impl Collectable for Increment {
+    impl Collectable for Increments {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..COUNT {
-                Checkpoint::filter(&mut m.old_new[i], tid, gc, pool);
-                Cas::filter(&mut m.cases[i], tid, gc, pool);
+                Increment::filter(&mut m.increments[i], tid, gc, pool);
             }
         }
     }
 
-    impl RootObj<Increment> for TestRootObj<DetectableCASAtomic<usize>> {
-        fn run(&self, mmt: &mut Increment, tid: usize, guard: &Guard, pool: &PoolHandle) {
+    impl RootObj<Increments> for TestRootObj<Counter> {
+        fn run(&self, mmt: &mut Increments, tid: usize, guard: &Guard, pool: &PoolHandle) {
             match tid {
                 // T1: Check the execution results of other threads
                 1 => {
@@ -454,10 +562,7 @@ mod test {
                     while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
 
                     // Check results
-                    assert_eq!(
-                        self.obj.load(Ordering::SeqCst, guard, pool).into_usize(),
-                        NR_THREAD * COUNT
-                    );
+                    assert_eq!(self.obj.peek(guard, pool), NR_THREAD * COUNT);
                 }
                 // Threads other than T1 perform CAS
                 _ => {
@@ -470,29 +575,8 @@ mod test {
                             enable_killed(tid);
                         }
 
-                        loop {
-                            let (old, new) = mmt.old_new[i].checkpoint::<true, _>(
-                                || {
-                                    let old = self.obj.load(Ordering::SeqCst, guard, pool);
-                                    let new = unsafe { PShared::from_usize(old.into_usize() + 1) };
-                                    (PAtomic::from(old), PAtomic::from(new))
-                                },
-                                tid,
-                                pool,
-                            );
-                            let (old, new) = (
-                                old.load(Ordering::Relaxed, guard),
-                                new.load(Ordering::Relaxed, guard),
-                            );
-
-                            if self
-                                .obj
-                                .cas::<true>(old, new, &mut mmt.cases[i], tid, guard, pool)
-                                .is_ok()
-                            {
-                                break;
-                            }
-                        }
+                        self.obj
+                            .increment::<true>(&mut mmt.increments[i], tid, guard, pool);
                     }
 
                     let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
@@ -510,10 +594,6 @@ mod test {
         const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<DetectableCASAtomic<usize>>, Increment>(
-            FILE_NAME,
-            FILE_SIZE,
-            NR_THREAD + 1,
-        )
+        run_test::<TestRootObj<Counter>, Increments>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
     }
 }
