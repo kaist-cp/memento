@@ -62,17 +62,9 @@ impl<K, V: Collectable> Collectable for Harris<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Help {
     cas: Cas,
-}
-
-impl Default for Help {
-    fn default() -> Self {
-        Self {
-            cas: Default::default(),
-        }
-    }
 }
 
 impl Collectable for Help {
@@ -256,6 +248,14 @@ enum ListErr {
     Fail,
 }
 
+/// Insertion error
+#[derive(Debug)]
+pub struct KeyExists;
+
+/// Deletion error
+#[derive(Debug)]
+pub struct NotFound;
+
 /// List
 #[derive(Debug)]
 pub struct List<K, V: Collectable> {
@@ -331,8 +331,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         }
 
         // cleanup marked nodes between prev and curr
-        let _ = prev
-            .cas::<REC>(prev_next, curr, &mut help.cas, tid, guard, pool)
+        prev.cas::<REC>(prev_next, curr, &mut help.cas, tid, guard, pool)
             .map_err(|_| ())?;
 
         // defer_destroy from cursor.prev.load() to cursor.curr (exclusive)
@@ -462,8 +461,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
             chk.3.load(Ordering::Relaxed, guard),
         );
 
-        let _ = self
-            .help::<REC>(prev, prev_next, curr, &mut try_ins.help, tid, guard, pool)
+        self.help::<REC>(prev, prev_next, curr, &mut try_ins.help, tid, guard, pool)
             .map_err(|_| ListErr::Retry)?;
 
         if found {
@@ -485,7 +483,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
-    ) -> Result<(), ()> {
+    ) -> Result<(), KeyExists> {
         let node = ins
             .node
             .checkpoint::<REC, _>(
@@ -500,24 +498,16 @@ impl<K: Ord, V: Collectable> List<K, V> {
             .load(Ordering::Relaxed, guard);
         let node_ref = unsafe { node.deref(pool) };
 
-        let () =
-            match self.try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool) {
-                Ok(()) => return Ok(()),
-                Err(ListErr::Fail) => return Err(()),
-                Err(ListErr::Retry) => (),
-            };
+        match self.try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool) {
+            Ok(()) => return Ok(()),
+            Err(ListErr::Fail) => return Err(KeyExists),
+            Err(ListErr::Retry) => (),
+        };
 
         loop {
-            let () = match self.try_insert::<REC>(
-                node,
-                &node_ref.key,
-                &mut ins.try_ins,
-                tid,
-                guard,
-                pool,
-            ) {
+            match self.try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool) {
                 Ok(()) => return Ok(()),
-                Err(ListErr::Fail) => return Err(()),
+                Err(ListErr::Fail) => return Err(KeyExists),
                 Err(ListErr::Retry) => (),
             };
         }
@@ -598,17 +588,17 @@ impl<K: Ord, V: Collectable> List<K, V> {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
-    ) -> Result<(), ()> {
-        let () = match self.try_delete::<REC>(key, &mut del.try_del, tid, guard, pool) {
+    ) -> Result<(), NotFound> {
+        match self.try_delete::<REC>(key, &mut del.try_del, tid, guard, pool) {
             Ok(()) => return Ok(()),
-            Err(ListErr::Fail) => return Err(()),
+            Err(ListErr::Fail) => return Err(NotFound),
             Err(ListErr::Retry) => (),
         };
 
         loop {
-            let () = match self.try_delete::<false>(key, &mut del.try_del, tid, guard, pool) {
+            match self.try_delete::<false>(key, &mut del.try_del, tid, guard, pool) {
                 Ok(()) => return Ok(()),
-                Err(ListErr::Fail) => return Err(()),
+                Err(ListErr::Fail) => return Err(NotFound),
                 Err(ListErr::Retry) => (),
             };
         }

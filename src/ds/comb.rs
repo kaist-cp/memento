@@ -394,7 +394,7 @@ pub mod combining_lock {
         }
 
         /// lock
-        pub fn lock<const REC: bool>(&self, tid: usize) -> () {
+        pub fn lock<const REC: bool>(&self, tid: usize) {
             let backoff = Backoff::new();
             loop {
                 if let Ok(ret) = self.try_lock::<REC>(tid) {
@@ -412,6 +412,10 @@ pub mod combining_lock {
         }
 
         /// unlock
+        ///
+        /// # Safety
+        ///
+        /// TODO: Write Safety section
         ///
         /// unlock the lock with given ptr
         pub unsafe fn unlock(&self, ptr: usize) {

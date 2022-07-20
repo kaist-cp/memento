@@ -26,7 +26,7 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::all)]
 #![deny(unreachable_pub)]
-// #![deny(single_use_lifetimes)] // Allowed
+#![deny(single_use_lifetimes)]
 #![deny(unused_lifetimes)]
 // #![deny(unstable_features)] // Allowed due to below
 #![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default

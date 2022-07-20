@@ -247,7 +247,7 @@ pub mod tests {
     /// child thread handler: thread exit
     pub fn texit(_signum: usize) {
         // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
-        let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
+        unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -294,14 +294,14 @@ pub mod tests {
         info: &'a TestInfo,
     }
 
-    impl<'a> Testee<'a> {
+    impl Testee<'_> {
         #[inline]
         pub fn report(&self, seq: usize, val: TestValue) {
             self.info.report(seq, val)
         }
     }
 
-    impl<'a> Drop for Testee<'a> {
+    impl Drop for Testee<'_> {
         fn drop(&mut self) {
             self.info.finish();
         }
@@ -411,7 +411,7 @@ pub mod tests {
         }
 
         // TODO: add killed
-        pub fn testee<'a>(&'a self, tid: usize, checked: bool) -> Testee<'a> {
+        pub fn testee(&self, tid: usize, checked: bool) -> Testee<'_> {
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
 

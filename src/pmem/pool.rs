@@ -137,7 +137,7 @@ impl PoolHandle {
                             pool_handle.barrier_wait(tid, nr_memento);
 
                             // Run memento
-                            let _ = root_obj.run(root_mmt, tid, &guard, pool_handle);
+                            root_obj.run(root_mmt, tid, &guard, pool_handle);
 
                             #[cfg(feature = "simulate_tcrash")]
                             disable_killed(tid);
@@ -195,7 +195,7 @@ impl PoolHandle {
         #[cfg(feature = "simulate_tcrash")]
         let _dummy_alloc = self.alloc::<usize>();
 
-        let _ = BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
+        BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
             loop {
                 if BARRIER_WAIT[other].load(Ordering::SeqCst) {
