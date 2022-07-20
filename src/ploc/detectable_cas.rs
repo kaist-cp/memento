@@ -409,6 +409,7 @@ impl Cas {
     }
 }
 
+#[allow(unused)]
 #[cfg(test)]
 mod test {
     use crate::{
@@ -567,36 +568,36 @@ mod test {
 
     impl RootObj<Updates> for TestRootObj<Location<TestValue>> {
         fn run(&self, mmt: &mut Updates, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+            let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
 
-            for seq in 0..NR_COUNT {
-                let node = mmt.nodes[seq]
-                    .checkpoint::<true, _>(
-                        || {
-                            let node = Node {
-                                data: TestValue::new(tid, seq),
-                            };
-                            PAtomic::new(node, pool)
-                        },
-                        tid,
-                        pool,
-                    )
-                    .load(Ordering::Relaxed, guard);
+            // for seq in 0..NR_COUNT {
+            //     let node = mmt.nodes[seq]
+            //         .checkpoint::<true, _>(
+            //             || {
+            //                 let node = Node {
+            //                     data: TestValue::new(tid, seq),
+            //                 };
+            //                 PAtomic::new(node, pool)
+            //             },
+            //             tid,
+            //             pool,
+            //         )
+            //         .load(Ordering::Relaxed, guard);
 
-                if let Some(val) =
-                    self.obj
-                        .update::<true>(node, &mut mmt.upds[seq].0, tid, guard, pool)
-                {
-                    testee.report(seq, val);
-                }
+            //     if let Some(val) =
+            //         self.obj
+            //             .update::<true>(node, &mut mmt.upds[seq].0, tid, guard, pool)
+            //     {
+            //         testee.report(seq, val);
+            //     }
 
-                if let Some(val) =
-                    self.obj
-                        .update::<true>(PShared::null(), &mut mmt.upds[seq].1, tid, guard, pool)
-                {
-                    testee.report(seq, val);
-                }
-            }
+            //     if let Some(val) =
+            //         self.obj
+            //             .update::<true>(PShared::null(), &mut mmt.upds[seq].1, tid, guard, pool)
+            //     {
+            //         testee.report(seq, val);
+            //     }
+            // }
         }
     }
 
