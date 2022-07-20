@@ -250,7 +250,7 @@ pub mod tests {
         let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub struct TestValue {
         data: usize,
     }

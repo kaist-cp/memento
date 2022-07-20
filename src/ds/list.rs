@@ -621,13 +621,13 @@ mod test {
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 10_000;
+    const NR_COUNT: usize = 10_000;
 
     struct InsDelLook {
-        inserts: [Insert<usize, usize>; COUNT],
-        ins_lookups: [Lookup<usize, usize>; COUNT],
-        deletes: [Delete<usize, usize>; COUNT],
-        del_lookups: [Lookup<usize, usize>; COUNT],
+        inserts: [Insert<TestValue, TestValue>; NR_COUNT],
+        ins_lookups: [Lookup<TestValue, TestValue>; NR_COUNT],
+        deletes: [Delete<TestValue, TestValue>; NR_COUNT],
+        del_lookups: [Lookup<TestValue, TestValue>; NR_COUNT],
     }
 
     impl Default for InsDelLook {
@@ -643,7 +643,7 @@ mod test {
 
     impl Collectable for InsDelLook {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            for i in 0..COUNT {
+            for i in 0..NR_COUNT {
                 Insert::filter(&mut m.inserts[i], tid, gc, pool);
                 Lookup::filter(&mut m.ins_lookups[i], tid, gc, pool);
                 Delete::filter(&mut m.deletes[i], tid, gc, pool);
@@ -652,73 +652,43 @@ mod test {
         }
     }
 
-    impl RootObj<InsDelLook> for TestRootObj<List<usize, usize>> {
+    impl RootObj<InsDelLook> for TestRootObj<List<TestValue, TestValue>> {
+        // TODO: Change test
         fn run(&self, ins_del_look: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            match tid {
-                // T1: Check the execution results of other threads
-                1 => {
-                    // Check results
-                    check_res(tid, NR_THREAD, COUNT);
-                }
-                // Threads other than T1 perform { insert; lookup; delete; lookup; }
-                _ => {
-                    #[cfg(feature = "simulate_tcrash")]
-                    let rand = rdtscp() as usize % COUNT;
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
-                    // enq; deq;
-                    for i in 0..COUNT {
-                        #[cfg(feature = "simulate_tcrash")]
-                        if rand == i {
-                            enable_killed(tid);
-                        }
+            for seq in 0..NR_COUNT {
+                let key = TestValue::new(tid, seq);
 
-                        let key = compose(tid, i);
+                // insert and lookup
+                // println!("insert k: {key}");
+                assert!(self
+                    .obj
+                    .insert::<true>(key, key, &mut ins_del_look.inserts[seq], tid, guard, pool,)
+                    .is_ok());
+                let res = self.obj.lookup::<true>(
+                    &key,
+                    &mut ins_del_look.ins_lookups[seq],
+                    tid,
+                    guard,
+                    pool,
+                );
 
-                        // insert and lookup
-                        // println!("insert k: {key}");
-                        assert!(self
-                            .obj
-                            .insert::<true>(
-                                key,
-                                key,
-                                &mut ins_del_look.inserts[i],
-                                tid,
-                                guard,
-                                pool,
-                            )
-                            .is_ok());
-                        let res = self.obj.lookup::<true>(
-                            &key,
-                            &mut ins_del_look.ins_lookups[i],
-                            tid,
-                            guard,
-                            pool,
-                        );
-                        assert!(res.is_some());
-                        // println!("lookup k: {key} -> value: {}", res.unwrap());
+                testee.report(seq, *res.unwrap());
 
-                        // Transfer the lookup result to the result array
-                        let (tid, i) = decompose(*res.unwrap());
-                        produce_res(tid, i);
-
-                        // delete and lookup
-                        // println!("delete k: {key}");
-                        assert!(self
-                            .obj
-                            .delete::<true>(&key, &mut ins_del_look.deletes[i], tid, guard, pool)
-                            .is_ok());
-                        let res = self.obj.lookup::<true>(
-                            &key,
-                            &mut ins_del_look.del_lookups[i],
-                            tid,
-                            guard,
-                            pool,
-                        );
-                        assert!(res.is_none());
-                    }
-
-                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
-                }
+                // delete and lookup
+                assert!(self
+                    .obj
+                    .delete::<true>(&key, &mut ins_del_look.deletes[seq], tid, guard, pool)
+                    .is_ok());
+                let res = self.obj.lookup::<true>(
+                    &key,
+                    &mut ins_del_look.del_lookups[seq],
+                    tid,
+                    guard,
+                    pool,
+                );
+                assert!(res.is_none());
             }
         }
     }
@@ -728,10 +698,8 @@ mod test {
         const FILE_NAME: &str = "list";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<List<usize, usize>>, InsDelLook>(
-            FILE_NAME,
-            FILE_SIZE,
-            NR_THREAD + 1,
+        run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         );
     }
 }
