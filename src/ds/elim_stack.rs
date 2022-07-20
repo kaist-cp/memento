@@ -394,18 +394,16 @@ mod tests {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 5_000;
+    const NR_COUNT: usize = 10_000;
 
-    const FILE_SIZE: usize = 32 * 1024 * 1024 * 1024;
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     // We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     fn push_pop() {
         const FILE_NAME: &str = "elim_stack";
-        run_test::<TestRootObj<ElimStack<usize>>, PushPop<_, NR_THREAD, COUNT>>(
-            FILE_NAME,
-            FILE_SIZE,
-            NR_THREAD + 1,
+        run_test::<TestRootObj<ElimStack<TestValue>>, PushPop<_, NR_THREAD, NR_COUNT>>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         )
     }
 }
