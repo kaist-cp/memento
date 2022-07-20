@@ -325,6 +325,8 @@ pub mod tests {
         const STATE_FINISHED: i32 = i32::MAX;
 
         fn new(nr_count: usize) -> Self {
+            assert!(nr_count <= Self::MAX_COUNT);
+
             let crash_seq;
             #[cfg(not(feature = "no_crash_test"))]
             {
@@ -396,6 +398,8 @@ pub mod tests {
         const MAX_THREAD: usize = 100;
 
         fn new(nr_thread: usize, nr_count: usize) -> Self {
+            assert!(nr_thread <= Self::MAX_THREAD);
+
             Self {
                 infos: array_init::array_init(|_| TestInfo::new(nr_count)),
                 nr_thread,
@@ -461,29 +465,6 @@ pub mod tests {
         }
 
         fn check(&self) {
-            // // Wait for all other threads to finish
-            // #[cfg(feature = "simulate_tcrash")]
-            // let my_unix_tid = unsafe { libc::gettid() };
-            // #[cfg(feature = "simulate_tcrash")]
-            // let mut cnt = 0;
-            // while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {
-            //     #[cfg(feature = "simulate_tcrash")]
-            //     {
-            //         if cnt > 300 {
-            //             println!("Stop testing. Maybe there is a bug... (1)");
-            //             unsafe { libc::exit(1) };
-            //         }
-
-            //         if cnt % 10 == 0 {
-            //             let nr_finished = JOB_FINISHED.load(Ordering::SeqCst);
-            //             println!("[run] t{tid} JOB_FINISHED: {nr_finished} (unix_tid: {my_unix_tid}, cnt: {cnt})");
-            //         }
-
-            //         std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
-            //         cnt += 1;
-            //     }
-            // }
-
             let mut checked_map = vec![vec![false; self.nr_count]; self.nr_thread + 1];
 
             for results in self.infos.iter().filter_map(|info| {
