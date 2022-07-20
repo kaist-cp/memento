@@ -374,75 +374,48 @@ mod test {
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 12;
-    const COUNT: usize = 20_000;
+    const NR_COUNT: usize = 20_000;
 
     struct EnqDeq {
-        enqs: [Enqueue<usize>; COUNT],
-        deqs: [Dequeue<usize>; COUNT],
+        enqs: [Enqueue<TestValue>; NR_COUNT],
+        deqs: [Dequeue<TestValue>; NR_COUNT],
     }
 
     impl Default for EnqDeq {
         fn default() -> Self {
             Self {
-                enqs: array_init::array_init(|_| Enqueue::<usize>::default()),
-                deqs: array_init::array_init(|_| Dequeue::<usize>::default()),
+                enqs: array_init::array_init(|_| Default::default()),
+                deqs: array_init::array_init(|_| Default::default()),
             }
         }
     }
 
     impl Collectable for EnqDeq {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            for i in 0..COUNT {
+            for i in 0..NR_COUNT {
                 Enqueue::filter(&mut m.enqs[i], tid, gc, pool);
                 Dequeue::filter(&mut m.deqs[i], tid, gc, pool);
             }
         }
     }
 
-    impl RootObj<EnqDeq> for TestRootObj<Queue<usize>> {
+    impl RootObj<EnqDeq> for TestRootObj<Queue<TestValue>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            match tid {
-                // T1: Check the execution results of other threads
-                1 => {
-                    // Wait for all other threads to finish
-                    check_res(tid, NR_THREAD, COUNT);
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
-                    // Check queue is empty
-                    let mut tmp_deq = Dequeue::<usize>::default();
-                    let must_none = self.obj.dequeue::<true>(&mut tmp_deq, tid, guard, pool);
-                    assert!(must_none.is_none());
-                }
-                // Threads other than T1 perform { enq; deq; }
-                _ => {
-                    #[cfg(feature = "simulate_tcrash")]
-                    let rand = rdtscp() as usize % COUNT;
+            for seq in 0..NR_COUNT {
+                let _ = self.obj.enqueue::<true>(
+                    TestValue::new(tid, seq),
+                    &mut enq_deq.enqs[seq],
+                    tid,
+                    guard,
+                    pool,
+                );
+                let res = self
+                    .obj
+                    .dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
 
-                    // enq; deq;
-                    for i in 0..COUNT {
-                        #[cfg(feature = "simulate_tcrash")]
-                        if rand == i {
-                            enable_killed(tid);
-                        }
-
-                        let _ = self.obj.enqueue::<true>(
-                            compose(tid, i),
-                            &mut enq_deq.enqs[i],
-                            tid,
-                            guard,
-                            pool,
-                        );
-                        let res = self
-                            .obj
-                            .dequeue::<true>(&mut enq_deq.deqs[i], tid, guard, pool);
-                        assert!(res.is_some());
-
-                        // Transfer the deq result to the result array
-                        let (tid, i) = decompose(res.unwrap());
-                        produce_res(tid, i);
-                    }
-
-                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
-                }
+                testee.report(seq, res.unwrap());
             }
         }
     }
@@ -456,6 +429,8 @@ mod test {
         const FILE_NAME: &str = "queue";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<Queue<usize>>, EnqDeq>(FILE_NAME, FILE_SIZE, NR_THREAD + 1)
+        run_test::<TestRootObj<Queue<TestValue>>, EnqDeq>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
     }
 }
