@@ -8,5 +8,5 @@ mkdir -p $OUT_PATH
 mkdir -p $PMEM_PATH/test
 cargo clean
 
-cargo build --tests --release --features=simulate_tcrash
+cargo build --tests --release --features=no_persist
 rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
