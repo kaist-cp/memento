@@ -311,7 +311,7 @@ pub mod tests {
     struct TestInfo {
         state: AtomicI32,
         crash_seq: usize,
-        is_testee: AtomicBool,
+        checked: AtomicBool,
         results: [AtomicUsize; Self::MAX_COUNT],
     }
 
@@ -341,15 +341,18 @@ pub mod tests {
             Self {
                 state: AtomicI32::new(Self::STATE_INIT),
                 crash_seq,
-                is_testee: AtomicBool::new(false),
+                checked: AtomicBool::new(false),
                 results: array_init::array_init(|_| AtomicUsize::new(Self::RESULT_INIT)),
             }
         }
 
         fn report(&self, seq: usize, val: TestValue) {
-            let val = val.into_usize();
-            let prev = self.results[seq].swap(val, Ordering::SeqCst);
-            assert!(prev == Self::RESULT_INIT || prev == val);
+            let uval = val.into_usize();
+            let prev = self.results[seq].swap(uval, Ordering::SeqCst);
+            assert!(
+                prev == Self::RESULT_INIT || prev == uval,
+                "prev: {prev}, val: {uval}"
+            );
 
             if self.crash_seq == seq {
                 self.enable_killed();
@@ -407,12 +410,20 @@ pub mod tests {
             }
         }
 
-        pub fn testee<'a>(&'a self, tid: usize) -> Testee<'a> {
+        // TODO: add killed
+        pub fn testee<'a>(&'a self, tid: usize, checked: bool) -> Testee<'a> {
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
 
-            info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
-            info.is_testee.store(true, Ordering::SeqCst);
+            let state = if checked {
+                TestInfo::STATE_INIT
+            } else {
+                TestInfo::STATE_FINISHED
+            };
+
+            info.state.store(state, Ordering::SeqCst);
+            info.checked.store(checked, Ordering::SeqCst);
+
             Testee { info }
         }
 
@@ -467,11 +478,11 @@ pub mod tests {
         fn check(&self) {
             let mut checked_map = vec![vec![false; self.nr_count]; self.nr_thread + 1];
 
-            for results in self.infos.iter().filter_map(|info| {
-                info.is_testee
-                    .load(Ordering::SeqCst)
-                    .then_some(&info.results)
-            }) {
+            for results in self
+                .infos
+                .iter()
+                .filter_map(|info| info.checked.load(Ordering::SeqCst).then_some(&info.results))
+            {
                 for result in (0..self.nr_count).map(|i| results[i].load(Ordering::SeqCst)) {
                     assert_ne!(result, TestInfo::RESULT_INIT);
                     let (tid, seq) = TestValue::decompose(TestValue { data: result });

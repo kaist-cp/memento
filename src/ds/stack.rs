@@ -103,7 +103,7 @@ pub(crate) mod tests {
             guard: &Guard,
             pool: &PoolHandle,
         ) {
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid) };
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             // push; pop;
             for seq in 0..COUNT {

@@ -103,7 +103,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 .inner
                 .compare_exchange(
                     tmp_new,
-                    new.with_tid(0),
+                    new.with_aux_bit(0).with_tid(0),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     guard,
@@ -142,7 +142,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             if mmt.checkpoint >= vchk {
                 let _ = self.inner.compare_exchange(
                     new.with_aux_bit(Cas::parity_to_bit(vchk_par)).with_tid(tid),
-                    new.with_tid(0),
+                    new.with_aux_bit(0).with_tid(0),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     guard,
@@ -164,7 +164,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 .inner
                 .compare_exchange(
                     cur,
-                    new.with_tid(0),
+                    new.with_aux_bit(0).with_tid(0),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     guard,
@@ -275,7 +275,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&exec_info.cas_info.help[winner_bit][winner_tid], false);
             match self.inner.compare_exchange(
                 old,
-                old.with_tid(0),
+                old.with_aux_bit(0).with_tid(0),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
@@ -409,198 +409,192 @@ impl Cas {
     }
 }
 
-mod counter {
-    #![allow(unreachable_pub)]
-    #![allow(dead_code)]
-
-    use std::sync::atomic::Ordering;
-
-    use crossbeam_epoch::{unprotected, Guard};
-
-    use crate::{
-        pepoch::{atomic::Pointer, PAtomic, PShared},
-        ploc::Checkpoint,
-        pmem::{Collectable, GarbageCollection, PoolHandle},
-        PDefault,
-    };
-
-    use super::{Cas, DetectableCASAtomic};
-
-    #[derive(Default)]
-    pub struct Increment {
-        old_new: Checkpoint<(PAtomic<usize>, PAtomic<usize>)>,
-        cas: Cas,
-    }
-
-    impl Collectable for Increment {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            Collectable::filter(&mut s.old_new, tid, gc, pool);
-            Collectable::filter(&mut s.cas, tid, gc, pool);
-        }
-    }
-
-    impl PDefault for Increment {
-        fn pdefault(_: &PoolHandle) -> Self {
-            Default::default()
-        }
-    }
-
-    #[derive(Debug, Default)]
-    pub struct Counter {
-        cnt: DetectableCASAtomic<usize>,
-    }
-
-    impl Collectable for Counter {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            Collectable::filter(&mut s.cnt, tid, gc, pool);
-        }
-    }
-
-    impl PDefault for Counter {
-        fn pdefault(pool: &PoolHandle) -> Self {
-            let s = Self::default();
-            assert_eq!(s.peek(unsafe { unprotected() }, pool), 0);
-            s
-        }
-    }
-
-    impl Counter {
-        pub fn increment<const REC: bool>(
-            &self,
-            inc: &mut Increment,
-            tid: usize,
-            guard: &Guard,
-            pool: &PoolHandle,
-        ) {
-            if self.try_increment::<REC>(inc, tid, guard, pool).is_ok() {
-                return;
-            }
-
-            loop {
-                if self.try_increment::<false>(inc, tid, guard, pool).is_ok() {
-                    return;
-                }
-            }
-        }
-
-        fn try_increment<const REC: bool>(
-            &self,
-            inc: &mut Increment,
-            tid: usize,
-            guard: &Guard,
-            pool: &PoolHandle,
-        ) -> Result<(), ()> {
-            let (old, new) = inc.old_new.checkpoint::<REC, _>(
-                || {
-                    let old = self.peek(guard, pool);
-                    let new = unsafe { PShared::from_usize(old + 1) };
-                    (
-                        PAtomic::from(unsafe { PShared::from_usize(old) }),
-                        PAtomic::from(new),
-                    )
-                },
-                tid,
-                pool,
-            );
-            let (old, new) = (
-                old.load(Ordering::Relaxed, guard),
-                new.load(Ordering::Relaxed, guard),
-            );
-
-            self.cnt
-                .cas::<REC>(old, new, &mut inc.cas, tid, guard, pool)
-                .map_err(|_| ())
-        }
-
-        #[inline]
-        pub fn peek(&self, guard: &Guard, pool: &PoolHandle) -> usize {
-            self.cnt.load(Ordering::SeqCst, guard, pool).into_usize()
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use super::{
-        counter::{Counter, Increment},
-        *,
-    };
     use crate::{
         pmem::{ralloc::Collectable, RootObj},
         test_utils::tests::*,
     };
 
-    const NR_THREAD: usize = 12;
-    const COUNT: usize = 10_000;
+    use std::sync::atomic::Ordering;
 
-    struct Increments {
-        increments: [Increment; COUNT],
+    use crossbeam_epoch::Guard;
+    use etrace::some_or;
+
+    use crate::{
+        pepoch::{PAtomic, PShared},
+        ploc::Checkpoint,
+        pmem::{GarbageCollection, PoolHandle},
+        PDefault,
+    };
+
+    use super::{Cas, DetectableCASAtomic};
+
+    #[derive(Debug)]
+    pub(crate) struct Node<T: Collectable> {
+        pub(crate) data: T,
     }
 
-    impl Default for Increments {
+    impl<T: Collectable> Collectable for Node<T> {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            Collectable::filter(&mut s.data, tid, gc, pool);
+        }
+    }
+
+    pub(crate) struct Update<T: Collectable> {
+        old: Checkpoint<PAtomic<Node<T>>>,
+        cas: Cas,
+    }
+
+    impl<T: Collectable> Collectable for Update<T> {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            Collectable::filter(&mut s.old, tid, gc, pool);
+            Collectable::filter(&mut s.cas, tid, gc, pool);
+        }
+    }
+
+    impl<T: Collectable> Default for Update<T> {
         fn default() -> Self {
             Self {
-                increments: array_init::array_init(|_| Default::default()),
+                old: Default::default(),
+                cas: Default::default(),
             }
         }
     }
 
-    impl Collectable for Increments {
-        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            for i in 0..COUNT {
-                Increment::filter(&mut m.increments[i], tid, gc, pool);
+    #[derive(Debug)]
+    pub(crate) struct Location<T: Collectable> {
+        loc: DetectableCASAtomic<Node<T>>,
+    }
+
+    impl<T: Collectable> Collectable for Location<T> {
+        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            Collectable::filter(&mut s.loc, tid, gc, pool);
+        }
+    }
+
+    impl<T: Collectable> Default for Location<T> {
+        fn default() -> Self {
+            Self {
+                loc: Default::default(),
             }
         }
     }
 
-    impl RootObj<DetectableCas> for TestRootObj<DetectableCASAtomic<usize>> {
-        fn run(
+    impl<T: Collectable> PDefault for Location<T> {
+        fn pdefault(_: &PoolHandle) -> Self {
+            Self::default()
+        }
+    }
+
+    impl<T: Collectable> Location<T> {
+        pub(crate) fn update<const REC: bool>(
             &self,
-            _cas_test: &mut DetectableCas,
+            node: PShared<'_, Node<T>>,
+            upd: &mut Update<T>,
             tid: usize,
-            _guard: &Guard,
-            _pool: &PoolHandle,
-        ) {
-            match tid {
-                // T1: Check the execution results of other threads
-                1 => {
-                    // Wait for all other threads to finish
-                    // while JOB_FINISHED.load(Ordering::SeqCst) != NR_THREAD {}
+            guard: &Guard,
+            pool: &PoolHandle,
+        ) -> Option<T> {
+            if let Ok(v) = self.try_update::<REC>(node, upd, tid, guard, pool) {
+                return v;
+            }
 
-                    // // Check results
-                    // // TODO: Use from-old-to-new pair
-                    // let mut last_tid = 0;
-                    // for t in 2..NR_THREAD + 2 {
-                    //     let cnt = RESULTS[t].load(Ordering::SeqCst);
-                    //     if cnt == COUNT {
-                    //         continue;
-                    //     }
-                    //     assert_eq!(cnt, COUNT - 1);
-                    //     assert_eq!(last_tid, 0);
-                    //     last_tid = t;
-                    // }
+            loop {
+                if let Ok(v) = self.try_update::<false>(node, upd, tid, guard, pool) {
+                    return v;
                 }
-                // Threads other than T1 perform CAS
-                _ => {
-                    // let new = unsafe { PShared::from_usize(tid) };
-                    // for i in 0..COUNT {
-                    //     let old = loop {
-                    //         let old = self.obj.load(Ordering::SeqCst, guard, pool);
-                    //         if self
-                    //             .obj
-                    //             .cas::<true>(old, new, &mut cas_test.cases[i], tid, guard, pool)
-                    //             .is_ok()
-                    //         {
-                    //             break old;
-                    //         }
-                    //     };
+            }
+        }
 
-                    //     // Transfer the old value to the result array
-                    //     // TODO: Use from-old-to-new pair
-                    //     let _ = RESULTS[old.into_usize()].fetch_add(1, Ordering::SeqCst);
-                    // }
+        fn try_update<const REC: bool>(
+            &self,
+            node: PShared<'_, Node<T>>,
+            upd: &mut Update<T>,
+            tid: usize,
+            guard: &Guard,
+            pool: &PoolHandle,
+        ) -> Result<Option<T>, ()> {
+            let old = upd
+                .old
+                .checkpoint::<REC, _>(
+                    || {
+                        let old = self.loc.load(Ordering::SeqCst, guard, pool);
+                        PAtomic::from(old)
+                    },
+                    tid,
+                    pool,
+                )
+                .load(Ordering::Relaxed, guard);
 
-                    // let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
+            let _ = self
+                .loc
+                .cas::<REC>(old, node, &mut upd.cas, tid, guard, pool)
+                .map_err(|_| ())?;
+
+            unsafe {
+                let old_ref = some_or!(old.as_ref(pool), return Ok(None));
+                Ok(Some(std::ptr::read(&old_ref.data as *const _)))
+            }
+        }
+    }
+
+    const NR_THREAD: usize = 2;
+    const NR_COUNT: usize = 10_000;
+
+    struct Updates {
+        nodes: [Checkpoint<PAtomic<Node<TestValue>>>; NR_COUNT],
+        upds: [(Update<TestValue>, Update<TestValue>); NR_COUNT],
+    }
+
+    impl Default for Updates {
+        fn default() -> Self {
+            Self {
+                nodes: array_init::array_init(|_| Default::default()),
+                upds: array_init::array_init(|_| Default::default()),
+            }
+        }
+    }
+
+    impl Collectable for Updates {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..NR_COUNT {
+                Collectable::filter(&mut m.nodes[i], tid, gc, pool);
+                Collectable::filter(&mut m.upds[i], tid, gc, pool);
+            }
+        }
+    }
+
+    impl RootObj<Updates> for TestRootObj<Location<TestValue>> {
+        fn run(&self, mmt: &mut Updates, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+
+            for seq in 0..NR_COUNT {
+                let node = mmt.nodes[seq]
+                    .checkpoint::<true, _>(
+                        || {
+                            let node = Node {
+                                data: TestValue::new(tid, seq),
+                            };
+                            PAtomic::new(node, pool)
+                        },
+                        tid,
+                        pool,
+                    )
+                    .load(Ordering::Relaxed, guard);
+
+                if let Some(val) =
+                    self.obj
+                        .update::<true>(node, &mut mmt.upds[seq].0, tid, guard, pool)
+                {
+                    testee.report(seq, val);
+                }
+
+                if let Some(val) =
+                    self.obj
+                        .update::<true>(PShared::null(), &mut mmt.upds[seq].1, tid, guard, pool)
+                {
+                    testee.report(seq, val);
                 }
             }
         }
@@ -612,13 +606,11 @@ mod test {
     //   - where +2 is a pointer to Root, DetectableCASAtomic
     #[test]
     fn detectable_cas() {
-        // const FILE_NAME: &str = "detectable_cas";
-        // const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        const FILE_NAME: &str = "detectable_cas";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        // run_test::<TestRootObj<DetectableCASAtomic<usize>>, DetectableCas>(
-        //     FILE_NAME,
-        //     FILE_SIZE,
-        //     NR_THREAD + 1,
-        // )
+        run_test::<TestRootObj<Location<TestValue>>, Updates>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
     }
 }

@@ -5,11 +5,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_utils::CachePadded;
 
-use crate::{pmem::{
-    ll::persist_obj,
-    ralloc::{Collectable, GarbageCollection},
-    rdtscp, PoolHandle, CACHE_LINE_SHIFT,
-}, test_utils::ordo::get_ordo_boundary};
+use crate::{
+    pmem::{
+        ll::persist_obj,
+        ralloc::{Collectable, GarbageCollection},
+        rdtscp, PoolHandle, CACHE_LINE_SHIFT,
+    },
+    test_utils::ordo::get_ordo_boundary,
+};
 
 use super::{CASCheckpointArr, CasInfo};
 
@@ -300,7 +303,8 @@ where
         let (_, latest) = self.stale_latest_idx();
 
         if self.is_valid(latest, tid, pool) {
-            pool.exec_info.local_max_time[tid].store(self.saved[latest].1.into(), Ordering::Relaxed);
+            pool.exec_info.local_max_time[tid]
+                .store(self.saved[latest].1.into(), Ordering::Relaxed);
             Some((self.saved[latest].0).clone())
         } else {
             None
