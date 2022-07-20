@@ -89,17 +89,16 @@ pub mod tests {
     #![allow(dead_code)]
 
     use crossbeam_epoch::Guard;
+    use crossbeam_utils::Backoff;
     use std::io::Error;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{fence, AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
     use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::PDefault;
 
-    #[cfg(feature = "simulate_tcrash")]
     use {
-        crate::ploc::NR_MAX_THREADS,
         crate::pmem::rdtscp,
         libc::{size_t, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32},
@@ -191,65 +190,40 @@ pub mod tests {
         }
     }
 
-    use lazy_static::lazy_static;
-
-    const MAX_THREADS: usize = 64;
-    const MAX_COUNT: usize = 1_000_000;
-    const NONE: usize = usize::MAX;
-
-    lazy_static! {
-        pub static ref JOB_FINISHED: AtomicUsize = AtomicUsize::new(0);
-        pub static ref RESULTS: [[AtomicUsize; MAX_COUNT]; MAX_THREADS] =
-            array_init::array_init(|_| array_init::array_init(|_| AtomicUsize::new(NONE)));
-    }
-
-    #[cfg(feature = "simulate_tcrash")]
-    lazy_static! {
-        pub static ref UNIX_TIDS: [AtomicI32; NR_MAX_THREADS] =
-            array_init::array_init(|_| AtomicI32::new(0));
-        pub static ref RESIZE_LOOP_UNIX_TID: AtomicI32 = AtomicI32::new(0);
-        pub static ref TEST_FINISHED: AtomicBool = AtomicBool::new(false);
-    }
-    #[cfg(feature = "simulate_tcrash")]
-    const UNIX_TID_FINISH: i32 = i32::MIN;
+    pub static mut TESTER: Option<Tester> = None;
 
     /// run test op
     #[allow(box_pointers)]
-    pub fn run_test<O, M>(pool_name: &'static str, pool_len: usize, nr_memento: usize)
-    where
+    pub fn run_test<O, M>(
+        pool_name: &'static str,
+        pool_len: usize,
+        nr_memento: usize,
+        nr_count: usize,
+    ) where
         O: RootObj<M> + Send + Sync + 'static,
         M: Collectable + Default + Send + Sync,
     {
-        lazy_static::initialize(&JOB_FINISHED);
-        lazy_static::initialize(&RESULTS);
+        // Assertion err causes abort.
+        std::panic::always_abort();
 
-        #[cfg(not(feature = "simulate_tcrash"))]
-        {
+        // Install signal handler
+        let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
+
+        // Initialize tester
+        unsafe { TESTER = Some(Tester::new(nr_memento, nr_count)) };
+        let tester = unsafe { TESTER.as_ref().unwrap() };
+        fence(Ordering::SeqCst);
+
+        // Start test
+        let handle = std::thread::spawn(move || {
             run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
-        }
+        });
 
-        #[cfg(feature = "simulate_tcrash")]
-        {
-            // Assertion err causes abort.
-            std::panic::always_abort();
+        tester.kill();
+        let _ = handle.join();
 
-            // Install signal handler
-            let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
-
-            // Start test
-            let handle = std::thread::spawn(move || {
-                // initialze test variables
-                lazy_static::initialize(&UNIX_TIDS);
-                lazy_static::initialize(&TEST_FINISHED);
-
-                run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
-
-                TEST_FINISHED.store(true, Ordering::SeqCst);
-            });
-
-            kill_random();
-            let _ = handle.join();
-        }
+        // Check test results
+        tester.check();
     }
 
     pub fn run_test_inner<O, M>(pool_name: &str, pool_len: usize, nr_memento: usize)
@@ -270,149 +244,266 @@ pub mod tests {
         pool_handle.execute::<O, M>();
     }
 
-    /// main thread handler: kill random child thread
-    #[cfg(feature = "simulate_tcrash")]
-    pub fn kill_random() {
-        let pid = unsafe { libc::getpid() };
-        loop {
-            if TEST_FINISHED.load(Ordering::SeqCst) {
-                return;
-            }
-
-            let rand_tid = rdtscp() as usize % UNIX_TIDS.len();
-            let unix_tid = UNIX_TIDS[rand_tid].load(Ordering::SeqCst);
-
-            if rand_tid > 1 && unix_tid > pid {
-                println!("[kill_random] kill t{rand_tid}");
-
-                let _ = UNIX_TIDS[rand_tid]
-                    .compare_exchange(unix_tid, -unix_tid, Ordering::SeqCst, Ordering::SeqCst)
-                    .map(|_| {
-                        let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
-                    })
-                    .map_err(|e| assert!(e == UNIX_TID_FINISH, "tid: {rand_tid}, e: {e}"));
-                return;
-            }
-        }
-    }
-
     /// child thread handler: thread exit
-    #[cfg(feature = "simulate_tcrash")]
     pub fn texit(_signum: usize) {
         // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
         let _ = unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
-    /// Enable being selected by `kill_random` on the main thread
-    #[cfg(feature = "simulate_tcrash")]
-    pub fn enable_killed(tid: usize) {
-        UNIX_TIDS[tid].store(unsafe { libc::gettid() }, Ordering::SeqCst);
+    #[derive(Debug, Clone, Copy)]
+    pub struct TestValue {
+        data: usize,
     }
 
-    /// Disable being selected by `kill_random` on the main thread
-    #[cfg(feature = "simulate_tcrash")]
-    pub fn disable_killed(tid: usize) {
-        use crossbeam_utils::Backoff;
+    impl TestValue {
+        const TID_LIMIT: usize = 100;
 
-        // TODO: 리팩토링하며 삭제. checker만을 위한 예외처리임.
-        if tid <= 1 {
-            return;
+        /// (tid, seq) -> unique repr
+        ///
+        /// - tid must be less than TID_LIMIT
+        #[inline]
+        pub fn new(tid: usize, seq: usize) -> Self {
+            Self::compose(tid, seq)
         }
 
-        let unix_tid = unsafe { libc::gettid() };
-        if let Err(e) =
-            UNIX_TIDS[tid].compare_exchange(unix_tid, -1, Ordering::SeqCst, Ordering::SeqCst)
-        {
-            assert!(e == -unix_tid, "tid: {tid}, e: {e}");
+        #[inline]
+        fn compose(tid: usize, seq: usize) -> Self {
+            Self {
+                data: seq * Self::TID_LIMIT + tid,
+            }
+        }
 
-            // Wait until main thread kills me
-            let backoff = Backoff::new();
-            loop {
+        /// unique repr -> (tid, seq)
+        #[inline]
+        fn decompose(repr: Self) -> (usize, usize) {
+            (repr.data % Self::TID_LIMIT, repr.data / Self::TID_LIMIT)
+        }
+
+        #[inline]
+        fn into_usize(self) -> usize {
+            self.data
+        }
+    }
+
+    impl Collectable for TestValue {
+        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+    }
+
+    #[derive(Debug)]
+    pub struct Testee<'a> {
+        info: &'a TestInfo,
+    }
+
+    impl<'a> Testee<'a> {
+        #[inline]
+        pub fn report(&self, seq: usize, val: TestValue) {
+            self.info.report(seq, val)
+        }
+    }
+
+    impl<'a> Drop for Testee<'a> {
+        fn drop(&mut self) {
+            self.info.finish();
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestInfo {
+        state: AtomicI32,
+        crash_seq: usize,
+        is_testee: AtomicBool,
+        results: [AtomicUsize; Self::MAX_COUNT],
+    }
+
+    impl TestInfo {
+        const MAX_COUNT: usize = 1_000_000;
+
+        const RESULT_INIT: usize = 0;
+
+        const STATE_INIT: i32 = 0;
+        const STATE_KILLED: i32 = -1;
+        const STATE_FINISHED: i32 = i32::MAX;
+
+        fn new(nr_count: usize) -> Self {
+            let crash_seq;
+            #[cfg(not(feature = "no_crash_test"))]
+            {
+                crash_seq = rdtscp() as usize % nr_count;
+            }
+
+            #[cfg(feature = "no_crash_test")]
+            {
+                crash_seq = usize::MAX;
+            }
+
+            Self {
+                state: AtomicI32::new(Self::STATE_INIT),
+                crash_seq,
+                is_testee: AtomicBool::new(false),
+                results: array_init::array_init(|_| AtomicUsize::new(Self::RESULT_INIT)),
+            }
+        }
+
+        fn report(&self, seq: usize, val: TestValue) {
+            let val = val.into_usize();
+            let prev = self.results[seq].swap(val, Ordering::SeqCst);
+            assert!(prev == Self::RESULT_INIT || prev == val);
+
+            if self.crash_seq == seq {
+                self.enable_killed();
+            }
+        }
+
+        /// Enable being selected by `kill()`
+        // TODO: How to kill resizer in clevel?
+        #[inline]
+        fn enable_killed(&self) {
+            let unix_tid = unsafe { libc::gettid() };
+            self.state.store(unix_tid, Ordering::SeqCst);
+        }
+
+        fn finish(&self) {
+            let unix_tid = unsafe { libc::gettid() };
+            if self
+                .state
+                .compare_exchange(
+                    unix_tid,
+                    Self::STATE_FINISHED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                return;
+            }
+
+            let backoff = Backoff::default();
+            while self.state.load(Ordering::SeqCst) == Self::STATE_KILLED {
+                // Wait until main thread kills tid
                 backoff.snooze();
             }
         }
     }
 
-    /// (tid, seq) -> unique repr
-    ///
-    /// - tid must be less than 100
-    pub(crate) fn compose(tid: usize, seq: usize) -> usize {
-        seq * 100 + tid
+    #[derive(Debug)]
+    pub struct Tester {
+        infos: [TestInfo; Self::MAX_THREAD],
+        nr_thread: usize,
+        nr_count: usize,
     }
 
-    /// unique repr -> (tid, seq)
-    pub(crate) fn decompose(repr: usize) -> (usize, usize) {
-        (repr % 100, repr / 100)
-    }
+    impl Tester {
+        const MAX_THREAD: usize = 100;
 
-    #[allow(unused_variables)]
-    pub(crate) fn check_res(tid: usize, nr_wait: usize, count: usize) {
-        // Wait for all other threads to finish
-        #[cfg(feature = "simulate_tcrash")]
-        let my_unix_tid = unsafe { libc::gettid() };
-        #[cfg(feature = "simulate_tcrash")]
-        let mut cnt = 0;
-        while JOB_FINISHED.load(Ordering::SeqCst) < nr_wait {
-            #[cfg(feature = "simulate_tcrash")]
-            {
-                if cnt > 300 {
-                    println!("Stop testing. Maybe there is a bug... (1)");
-                    unsafe { libc::exit(1) };
-                }
-
-                if cnt % 10 == 0 {
-                    println!(
-                        "[run] t{tid} JOB_FINISHED: {} (unix_tid: {my_unix_tid}, cnt: {cnt})",
-                        JOB_FINISHED.load(Ordering::SeqCst)
-                    );
-                }
-
-                std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
-                cnt += 1;
+        fn new(nr_thread: usize, nr_count: usize) -> Self {
+            Self {
+                infos: array_init::array_init(|_| TestInfo::new(nr_count)),
+                nr_thread,
+                nr_count,
             }
         }
 
-        // Wait until other threads are prevented from being selected by `kill_random` on the main thread.
-        // TODO: 테스트할 스레드 번호들을 정확히 안다면, 이 wait 로직 뺄 수 있을듯. 위에서 unix_tid 전부 `UNIX_TID_FINISH`가 될때까지 기다리면 됨.
-        #[cfg(feature = "simulate_tcrash")]
-        for unix_tid in UNIX_TIDS.iter() {
-            if my_unix_tid == unix_tid.load(Ordering::SeqCst) {
-                continue;
-            }
+        pub fn testee<'a>(&'a self, tid: usize) -> Testee<'a> {
+            let inner_tid = tid - 1;
+            let info = &self.infos[inner_tid];
+
+            info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
+            info.is_testee.store(true, Ordering::SeqCst);
+            Testee { info }
+        }
+
+        /// Kill arbitrary child thread
+        pub(crate) fn kill(&self) {
+            let pid = unsafe { libc::getpid() };
+            let backoff = Backoff::new();
 
             loop {
-                let unix_tid = unix_tid.load(Ordering::SeqCst);
-                if unix_tid <= 0 || unix_tid == RESIZE_LOOP_UNIX_TID.load(Ordering::SeqCst) {
-                    break;
+                let mut done = true;
+                for (tid, state) in (0..self.nr_thread)
+                    .map(|tid| (tid, self.infos[tid].state.load(Ordering::SeqCst)))
+                {
+                    if state == TestInfo::STATE_FINISHED {
+                        continue;
+                    }
+
+                    done = false;
+
+                    if state == TestInfo::STATE_INIT {
+                        continue;
+                    }
+
+                    let unix_tid = state;
+
+                    if let Err(e) = self.infos[tid].state.compare_exchange(
+                        unix_tid,
+                        TestInfo::STATE_KILLED,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        assert_eq!(e, TestInfo::STATE_FINISHED);
+                    } else {
+                        println!("[Tester] Killing t{}", tid + 1);
+                        let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
+                        self.infos[tid]
+                            .state
+                            .store(TestInfo::STATE_INIT, Ordering::SeqCst);
+                        return;
+                    }
+                }
+
+                if done {
+                    println!("[Tester] No kill");
+                    return;
+                }
+
+                backoff.snooze();
+            }
+        }
+
+        fn check(&self) {
+            // // Wait for all other threads to finish
+            // #[cfg(feature = "simulate_tcrash")]
+            // let my_unix_tid = unsafe { libc::gettid() };
+            // #[cfg(feature = "simulate_tcrash")]
+            // let mut cnt = 0;
+            // while JOB_FINISHED.load(Ordering::SeqCst) < NR_THREAD {
+            //     #[cfg(feature = "simulate_tcrash")]
+            //     {
+            //         if cnt > 300 {
+            //             println!("Stop testing. Maybe there is a bug... (1)");
+            //             unsafe { libc::exit(1) };
+            //         }
+
+            //         if cnt % 10 == 0 {
+            //             let nr_finished = JOB_FINISHED.load(Ordering::SeqCst);
+            //             println!("[run] t{tid} JOB_FINISHED: {nr_finished} (unix_tid: {my_unix_tid}, cnt: {cnt})");
+            //         }
+
+            //         std::thread::sleep(std::time::Duration::from_secs_f64(0.1));
+            //         cnt += 1;
+            //     }
+            // }
+
+            let mut checked_map = vec![vec![false; self.nr_count]; self.nr_thread + 1];
+
+            for results in self.infos.iter().filter_map(|info| {
+                info.is_testee
+                    .load(Ordering::SeqCst)
+                    .then_some(&info.results)
+            }) {
+                for result in (0..self.nr_count).map(|i| results[i].load(Ordering::SeqCst)) {
+                    assert_ne!(result, TestInfo::RESULT_INIT);
+                    let (tid, seq) = TestValue::decompose(TestValue { data: result });
+                    assert!(!checked_map[tid][seq]);
+                    checked_map[tid][seq] = true;
                 }
             }
         }
+    }
 
-        // Check results
-        let mut nr_has_res = 0;
-        for (tid, result) in RESULTS.iter().enumerate() {
-            // check empty
-            if result.iter().all(|x| x.load(Ordering::SeqCst) == NONE) {
-                continue;
-            }
-
-            // check values
-            assert!((0..count)
-                .map(|seq| seq)
-                .all(|seq| result[seq].swap(NONE, Ordering::SeqCst) == get_val(tid, seq)));
-            assert!(result.iter().all(|x| x.load(Ordering::SeqCst) == NONE));
-            nr_has_res += 1;
+    impl Drop for Tester {
+        fn drop(&mut self) {
+            self.check();
         }
-        assert!(nr_has_res == nr_wait);
-    }
-
-    pub(crate) fn produce_res(tid: usize, seq: usize) {
-        let value = get_val(tid, seq);
-        let prev = RESULTS[tid][seq].swap(value, Ordering::SeqCst);
-        assert!(prev == NONE || prev == value);
-    }
-
-    pub(crate) fn get_val(tid: usize, seq: usize) -> usize {
-        seq % tid
     }
 }

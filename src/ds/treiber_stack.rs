@@ -360,10 +360,8 @@ mod tests {
     #[test]
     fn push_pop() {
         const FILE_NAME: &str = "treiber_stack";
-        run_test::<TestRootObj<TreiberStack<usize>>, PushPop<_, NR_THREAD, COUNT>>(
-            FILE_NAME,
-            FILE_SIZE,
-            NR_THREAD + 1,
+        run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, NR_THREAD, NR_COUNT>>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         )
     }
 }

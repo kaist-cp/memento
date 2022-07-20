@@ -424,10 +424,11 @@ impl Drop for Guard {
     fn drop(&mut self) {
         if let Some(local) = unsafe { self.local.as_ref() } {
             // A guard with an owner prevents it from being dropped when a thread panic occurs.
+            // TODO: we use texit, not panic
             if local.owner().is_some() && std::thread::panicking() {
                 return;
             }
-            local.unpin();
+            // local.unpin();
         }
     }
 }

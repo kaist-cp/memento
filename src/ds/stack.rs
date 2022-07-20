@@ -40,9 +40,6 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-
-    use std::sync::atomic::Ordering;
-
     use crossbeam_epoch::Guard;
 
     use super::*;
@@ -52,7 +49,7 @@ pub(crate) mod tests {
 
     pub(crate) struct PushPop<S, const NR_THREAD: usize, const COUNT: usize>
     where
-        S: Stack<usize>,
+        S: Stack<TestValue>,
     {
         pushes: [S::Push; COUNT],
         pops: [S::Pop; COUNT],
@@ -60,7 +57,7 @@ pub(crate) mod tests {
 
     impl<S, const NR_THREAD: usize, const COUNT: usize> Default for PushPop<S, NR_THREAD, COUNT>
     where
-        S: Stack<usize>,
+        S: Stack<TestValue>,
     {
         fn default() -> Self {
             Self {
@@ -72,7 +69,7 @@ pub(crate) mod tests {
 
     impl<S, const NR_THREAD: usize, const COUNT: usize> Collectable for PushPop<S, NR_THREAD, COUNT>
     where
-        S: Stack<usize>,
+        S: Stack<TestValue>,
     {
         fn filter(
             push_pop: &mut Self,
@@ -92,7 +89,7 @@ pub(crate) mod tests {
     impl<S, const NR_THREAD: usize, const COUNT: usize> RootObj<PushPop<S, NR_THREAD, COUNT>>
         for TestRootObj<S>
     where
-        S: Stack<usize>,
+        S: Stack<TestValue>,
     {
         /// Concurrent stack test that repeats push and pop
         ///
@@ -106,48 +103,22 @@ pub(crate) mod tests {
             guard: &Guard,
             pool: &PoolHandle,
         ) {
-            match tid {
-                // T1: Check the execution results of other threads
-                1 => {
-                    // Check results
-                    check_res(tid, NR_THREAD, COUNT);
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid) };
 
-                    // Check empty
-                    let mut tmp_pop = S::Pop::default();
-                    let must_none = self.obj.pop::<true>(&mut tmp_pop, tid, guard, pool);
-                    assert!(must_none.is_none());
-                }
-                // Threads other than T1 perform { push; pop; }
-                _ => {
-                    #[cfg(feature = "simulate_tcrash")]
-                    let rand = rdtscp() as usize % COUNT;
+            // push; pop;
+            for seq in 0..COUNT {
+                let _ = self.obj.push::<true>(
+                    TestValue::new(tid, seq),
+                    &mut push_pop.pushes[seq],
+                    tid,
+                    guard,
+                    pool,
+                );
+                let res = self
+                    .obj
+                    .pop::<true>(&mut push_pop.pops[seq], tid, guard, pool);
 
-                    // push; pop;
-                    for i in 0..COUNT {
-                        #[cfg(feature = "simulate_tcrash")]
-                        if rand == i {
-                            enable_killed(tid);
-                        }
-
-                        let _ = self.obj.push::<true>(
-                            compose(tid, i),
-                            &mut push_pop.pushes[i],
-                            tid,
-                            guard,
-                            pool,
-                        );
-                        let res = self
-                            .obj
-                            .pop::<true>(&mut push_pop.pops[i], tid, guard, pool);
-                        assert!(res.is_some());
-
-                        // Transfer the pop result to the result array
-                        let (tid, i) = decompose(res.unwrap());
-                        produce_res(tid, i);
-                    }
-
-                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
-                }
+                testee.report(seq, res.unwrap());
             }
         }
     }

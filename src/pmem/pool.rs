@@ -167,7 +167,8 @@ impl PoolHandle {
 
                         // Join
                         // - Exit on success, re-run memento on failure
-                        // - The guard used in case of failure is also not cleaned up. A guard that loses its owner should be used well by the thread created in the next iteration.
+                        // - The guard used in case of failure is also not cleaned up.
+                        //   A guard that loses its owner should be used well by the thread created in the next iteration.
                         let mut status = ptr::null_mut();
                         let _ = unsafe { libc::pthread_join(native, &mut status) };
                         match status as *const _ as usize {
@@ -184,8 +185,8 @@ impl PoolHandle {
             handles.push(th);
         }
 
-        while !handles.is_empty() {
-            let _ = handles.pop().unwrap().join();
+        while let Some(h) = handles.pop() {
+            let _ = h.join();
         }
     }
 
@@ -504,6 +505,6 @@ mod tests {
     // check flag=1 => value=42
     #[test]
     fn check_inv() {
-        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1);
+        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 0);
     }
 }
