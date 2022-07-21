@@ -20,9 +20,6 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use std::thread;
 
-#[cfg(feature = "simulate_tcrash")]
-use crate::test_utils::tests::disable_killed;
-
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
     RootObj,       // root obj
@@ -139,9 +136,6 @@ impl PoolHandle {
                             // Run memento
                             root_obj.run(root_mmt, tid, &guard, pool_handle);
 
-                            #[cfg(feature = "simulate_tcrash")]
-                            disable_killed(tid);
-
                             ptr::null_mut()
                         }
 
@@ -190,17 +184,9 @@ impl PoolHandle {
     }
 
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {
-        // To guarantee that Ralloc's thread-local free list `TCache` was initialized before the thread crash simulation.
-        #[cfg(feature = "simulate_tcrash")]
-        let _dummy_alloc = self.alloc::<usize>();
-
         BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
-            loop {
-                if BARRIER_WAIT[other].load(Ordering::SeqCst) {
-                    break;
-                }
-            }
+            while !BARRIER_WAIT[other].load(Ordering::SeqCst) {}
         }
     }
 

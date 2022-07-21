@@ -309,7 +309,9 @@ pub mod tests {
 
     impl Drop for Testee<'_> {
         fn drop(&mut self) {
-            self.info.finish();
+            if !std::thread::panicking() {
+                self.info.finish();
+            }
         }
     }
 
@@ -389,7 +391,7 @@ pub mod tests {
             }
 
             let backoff = Backoff::default();
-            while self.state.load(Ordering::SeqCst) == Self::STATE_KILLED {
+            loop {
                 // Wait until main thread kills tid
                 backoff.snooze();
             }
@@ -465,9 +467,6 @@ pub mod tests {
                     } else {
                         println!("[Tester] Killing t{}", tid + 1);
                         let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
-                        self.infos[tid]
-                            .state
-                            .store(TestInfo::STATE_INIT, Ordering::SeqCst);
                         return;
                     }
                 }
