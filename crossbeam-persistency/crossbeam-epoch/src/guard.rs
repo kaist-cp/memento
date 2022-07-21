@@ -427,7 +427,7 @@ impl Drop for Guard {
             if local.owner().is_some() && std::thread::panicking() {
                 return;
             }
-            local.unpin();
+            // local.unpin(); // TODO: Retirement policy
         }
     }
 }

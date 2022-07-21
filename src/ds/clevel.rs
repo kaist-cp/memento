@@ -1044,7 +1044,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                 },
                 Err(e) => {
                     // exploit invariant
-                    if e.current.with_tid(0) == find_result.slot_ptr.with_tag(1) {
+                    if e.current.with_aux_bit(0).with_tid(0) == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
                     }
@@ -1443,13 +1443,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         // The first level is full. Resize and retry.
-        let (context_new, _) = self.add_level::<REC>(
-            context,
-            &mut resize_move_inner.add_lv,
-            tid,
-            guard,
-            pool,
-        );
+        let (context_new, _) =
+            self.add_level::<REC>(context, &mut resize_move_inner.add_lv, tid, guard, pool);
         let ctx = context_new;
         let ctx_ref = unsafe { ctx.deref(pool) };
         let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
@@ -1983,13 +1978,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         // No remaining slots. Resize.
-        let (context_new, added) = self.add_level::<REC>(
-            context,
-            &mut insert_inner_inner.add_lv,
-            tid,
-            guard,
-            pool,
-        );
+        let (context_new, added) =
+            self.add_level::<REC>(context, &mut insert_inner_inner.add_lv, tid, guard, pool);
         if added {
             let _ = resize_send.send(());
         }
@@ -2308,15 +2298,14 @@ pub enum InsertError {
 }
 
 #[cfg(test)]
-mod smoke_test {
+mod simple_test {
     use crate::{
         pmem::RootObj,
-        test_utils::tests::{run_test, TestRootObj},
+        test_utils::tests::{run_test, TestRootObj, TESTER},
     };
 
     use super::*;
 
-    const NR_THREAD: usize = 12;
     const SMOKE_CNT: usize = 100_000;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
@@ -2350,6 +2339,7 @@ mod smoke_test {
 
     impl RootObj<Smoke> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut Smoke, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
             let kv = &self.obj;
 
             match tid {
@@ -2379,7 +2369,7 @@ mod smoke_test {
 
     #[test]
     fn smoke() {
-        const FILE_NAME: &str = "smoke";
+        const FILE_NAME: &str = "clevel_smoke";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         let (send, recv) = mpsc::channel();
@@ -2389,7 +2379,7 @@ mod smoke_test {
             RECV = Some(recv);
         }
 
-        run_test::<TestRootObj<Clevel<usize, usize>>, Smoke>(FILE_NAME, FILE_SIZE, 2);
+        run_test::<TestRootObj<Clevel<usize, usize>>, Smoke>(FILE_NAME, FILE_SIZE, 2, SMOKE_CNT);
     }
 
     const INS_SCH_CNT: usize = 3_000;
@@ -2419,6 +2409,8 @@ mod smoke_test {
 
     impl RootObj<InsSch> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut InsSch, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
+
             let kv = &self.obj;
             match tid {
                 // T1: Resize loop
@@ -2444,21 +2436,28 @@ mod smoke_test {
 
     #[test]
     fn insert_search() {
-        const FILE_NAME: &str = "insert_search";
+        const NR_THREAD: usize = 12;
+
+        const FILE_NAME: &str = "clevel_insert_search";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         let (send, recv) = mpsc::channel();
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             RECV = Some(recv);
-            for tid in 2..=NR_THREAD + 1 {
+            for tid in 2..=NR_THREAD {
                 let sends = SEND.as_mut().unwrap();
                 sends[tid] = Some(send.clone());
             }
         }
         drop(send);
 
-        run_test::<TestRootObj<Clevel<usize, usize>>, InsSch>(FILE_NAME, FILE_SIZE, NR_THREAD + 1);
+        run_test::<TestRootObj<Clevel<usize, usize>>, InsSch>(
+            FILE_NAME,
+            FILE_SIZE,
+            NR_THREAD,
+            INS_SCH_CNT,
+        );
     }
 }
 
@@ -2468,18 +2467,18 @@ mod test {
 
     use super::*;
 
-    const NR_THREAD: usize = 12;
-    const INS_DEL_LOOK_CNT: usize = 10_000;
+    const NR_THREAD: usize = 1 /* Resizer */ + 10 /* Testee */;
+    const NR_COUNT: usize = 10_000;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
     struct InsDelLook {
-        resize_loop: ResizeLoop<usize, usize>,
-        inserts: [Insert<usize, usize>; INS_DEL_LOOK_CNT],
-        ins_lookups: [Checkpoint<Option<usize>>; INS_DEL_LOOK_CNT],
-        deletes: [Delete<usize, usize>; INS_DEL_LOOK_CNT],
-        del_lookups: [Checkpoint<Option<usize>>; INS_DEL_LOOK_CNT],
+        resize_loop: ResizeLoop<TestValue, TestValue>,
+        inserts: [Insert<TestValue, TestValue>; NR_COUNT],
+        ins_lookups: [Checkpoint<Option<TestValue>>; NR_COUNT],
+        deletes: [Delete<TestValue, TestValue>; NR_COUNT],
+        del_lookups: [Checkpoint<Option<TestValue>>; NR_COUNT],
     }
 
     impl Default for InsDelLook {
@@ -2496,7 +2495,7 @@ mod test {
 
     impl Collectable for InsDelLook {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            for i in 0..INS_DEL_LOOK_CNT {
+            for i in 0..NR_COUNT {
                 ResizeLoop::filter(&mut m.resize_loop, tid, gc, pool);
                 Insert::filter(&mut m.inserts[i], tid, gc, pool);
                 Delete::filter(&mut m.deletes[i], tid, gc, pool);
@@ -2504,67 +2503,70 @@ mod test {
         }
     }
 
-    impl RootObj<InsDelLook> for TestRootObj<Clevel<usize, usize>> {
+    impl RootObj<InsDelLook> for TestRootObj<Clevel<TestValue, TestValue>> {
         fn run(&self, mmt: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let kv = &self.obj;
-
             match tid {
-                // T1: Check the execution results of other threads
+                // T1: Resize loop
                 1 => {
-                    check_res(tid, NR_THREAD, INS_DEL_LOOK_CNT);
+                    let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
 
-                    // drop sends
-                    for send in unsafe { SEND.as_mut().unwrap() } {
-                        if let Some(send) = send.take() {
-                            drop(send);
-                        }
-                    }
-                }
-                // T2: Resize loop
-                2 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     let guard = unsafe { (guard as *const _ as *mut Guard).as_mut() }.unwrap();
-                    kv.resize_loop::<true>(&recv, &mut mmt.resize_loop, tid, guard, pool);
+                    self.obj
+                        .resize_loop::<true>(&recv, &mut mmt.resize_loop, tid, guard, pool);
                 }
                 // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
                 _ => {
-                    #[cfg(feature = "simulate_tcrash")]
-                    let rand = rdtscp() as usize % INS_DEL_LOOK_CNT;
+                    let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
                     let send = unsafe { SEND.as_mut().unwrap()[tid].as_ref().unwrap() };
-                    for i in 0..INS_DEL_LOOK_CNT {
-                        #[cfg(feature = "simulate_tcrash")]
-                        if rand == i {
-                            enable_killed(tid);
-                        }
-
-                        let key = compose(tid, i);
+                    for seq in 0..NR_COUNT {
+                        let key = TestValue::new(tid, seq);
 
                         // insert and lookup
-                        assert!(kv
-                            .insert::<true>(key, key, &send, &mut mmt.inserts[i], tid, &guard, pool)
+                        assert!(self
+                            .obj
+                            .insert::<true>(
+                                key,
+                                key,
+                                &send,
+                                &mut mmt.inserts[seq],
+                                tid,
+                                guard,
+                                pool
+                            )
                             .is_ok());
-                        let res = &mut mmt.ins_lookups[i].checkpoint::<true, _>(
-                            || kv.search(&key, &guard, pool).map_or(None, |v| Some(*v)),
+                        let res = mmt.ins_lookups[seq].checkpoint::<true, _>(
+                            || {
+                                self.obj
+                                    .search(&key, &guard, pool)
+                                    .map_or(None, |v| Some(*v))
+                            },
                             tid,
                             pool,
                         );
-                        assert!(res.is_some());
 
-                        // transfer the lookup result to the result array
-                        let (tid, i) = decompose(res.unwrap());
-                        produce_res(tid, i);
+                        testee.report(seq, res.unwrap());
 
                         // delete and lookup
-                        assert!(kv.delete::<true>(&key, &mut mmt.deletes[i], tid, &guard, pool));
-                        let res = &mut mmt.del_lookups[i].checkpoint::<true, _>(
-                            || kv.search(&key, &guard, pool).map_or(None, |v| Some(*v)),
+                        assert!(self.obj.delete::<true>(
+                            &key,
+                            &mut mmt.deletes[seq],
+                            tid,
+                            guard,
+                            pool
+                        ));
+                        let res = mmt.del_lookups[seq].checkpoint::<true, _>(
+                            || {
+                                self.obj
+                                    .search(&key, &guard, pool)
+                                    .map_or(None, |v| Some(*v))
+                            },
                             tid,
                             pool,
                         );
                         assert!(res.is_none());
                     }
-                    let _ = JOB_FINISHED.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
@@ -2572,24 +2574,38 @@ mod test {
 
     #[test]
     fn clevel_ins_del_look() {
-        const FILE_NAME: &str = "clevel";
+        const FILE_NAME: &str = "clevel_ins_del_look";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         let (send, recv) = mpsc::channel();
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             RECV = Some(recv);
-            for tid in 3..=NR_THREAD + 2 {
+            for tid in 2..=NR_THREAD {
                 let sends = SEND.as_mut().unwrap();
                 sends[tid] = Some(send.clone());
             }
         }
         drop(send);
 
-        run_test::<TestRootObj<Clevel<usize, usize>>, InsDelLook>(
-            FILE_NAME,
-            FILE_SIZE,
-            NR_THREAD + 2,
+        let _ = std::thread::spawn(|| {
+            let tester = loop {
+                fence(Ordering::SeqCst);
+                if let Some(t) = unsafe { TESTER.as_ref() } {
+                    break t;
+                }
+            };
+
+            while !tester.is_finished() {}
+
+            // drop sends
+            for send in unsafe { SEND.as_mut().unwrap() } {
+                let _ = send.take();
+            }
+        });
+
+        run_test::<TestRootObj<Clevel<TestValue, TestValue>>, InsDelLook>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         );
     }
 }

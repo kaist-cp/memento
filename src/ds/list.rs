@@ -644,40 +644,31 @@ mod test {
 
     impl RootObj<InsDelLook> for TestRootObj<List<TestValue, TestValue>> {
         // TODO: Change test
-        fn run(&self, ins_del_look: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
+        fn run(&self, mmt: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             for seq in 0..NR_COUNT {
                 let key = TestValue::new(tid, seq);
 
                 // insert and lookup
-                // println!("insert k: {key}");
                 assert!(self
                     .obj
-                    .insert::<true>(key, key, &mut ins_del_look.inserts[seq], tid, guard, pool,)
+                    .insert::<true>(key, key, &mut mmt.inserts[seq], tid, guard, pool)
                     .is_ok());
-                let res = self.obj.lookup::<true>(
-                    &key,
-                    &mut ins_del_look.ins_lookups[seq],
-                    tid,
-                    guard,
-                    pool,
-                );
+                let res =
+                    self.obj
+                        .lookup::<true>(&key, &mut mmt.ins_lookups[seq], tid, guard, pool);
 
                 testee.report(seq, *res.unwrap());
 
                 // delete and lookup
                 assert!(self
                     .obj
-                    .delete::<true>(&key, &mut ins_del_look.deletes[seq], tid, guard, pool)
+                    .delete::<true>(&key, &mut mmt.deletes[seq], tid, guard, pool)
                     .is_ok());
-                let res = self.obj.lookup::<true>(
-                    &key,
-                    &mut ins_del_look.del_lookups[seq],
-                    tid,
-                    guard,
-                    pool,
-                );
+                let res =
+                    self.obj
+                        .lookup::<true>(&key, &mut mmt.del_lookups[seq], tid, guard, pool);
                 assert!(res.is_none());
             }
         }

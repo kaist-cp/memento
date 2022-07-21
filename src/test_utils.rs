@@ -251,7 +251,7 @@ pub mod tests {
         unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct TestValue {
         data: usize,
     }
@@ -377,23 +377,19 @@ pub mod tests {
 
         fn finish(&self) {
             let unix_tid = unsafe { libc::gettid() };
-            if self
-                .state
-                .compare_exchange(
-                    unix_tid,
-                    Self::STATE_FINISHED,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                )
-                .is_ok()
-            {
-                return;
-            }
-
-            let backoff = Backoff::default();
-            loop {
-                // Wait until main thread kills tid
-                backoff.snooze();
+            if let Err(e) = self.state.compare_exchange(
+                unix_tid,
+                Self::STATE_FINISHED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                if e == Self::STATE_KILLED {
+                    let backoff = Backoff::default();
+                    loop {
+                        // Wait until main thread kills tid
+                        backoff.snooze();
+                    }
+                }
             }
         }
     }
@@ -433,6 +429,11 @@ pub mod tests {
             info.checked.store(checked, Ordering::SeqCst);
 
             Testee { info }
+        }
+
+        pub fn is_finished(&self) -> bool {
+            (0..self.nr_thread)
+                .all(|tid| self.infos[tid].state.load(Ordering::SeqCst) == TestInfo::STATE_FINISHED)
         }
 
         /// Kill arbitrary child thread
@@ -495,12 +496,6 @@ pub mod tests {
                     checked_map[tid][seq] = true;
                 }
             }
-        }
-    }
-
-    impl Drop for Tester {
-        fn drop(&mut self) {
-            self.check();
         }
     }
 }
