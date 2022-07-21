@@ -2574,7 +2574,7 @@ mod test {
 
     #[test]
     fn clevel_ins_del_look() {
-        const FILE_NAME: &str = "clevel_ins_del_look";
+        const FILE_NAME: &str = "clevel";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         let (send, recv) = mpsc::channel();
