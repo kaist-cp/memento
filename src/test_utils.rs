@@ -247,6 +247,7 @@ pub mod tests {
     /// child thread handler: thread exit
     pub fn texit(_signum: usize) {
         // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
+        let _ = std::rt::panic_count::increase();
         unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
