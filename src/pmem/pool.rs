@@ -171,13 +171,12 @@ impl PoolHandle {
                         //   A guard that loses its owner should be used well by the thread created in the next iteration.
                         let mut status = ptr::null_mut();
                         let _ = unsafe { libc::pthread_join(native, &mut status) };
-                        match status as *const _ as usize {
-                            0 => break,
-                            _ => {
-                                thread::sleep(std::time::Duration::from_secs(1));
-                                println!("PANIC: Root memento No.{} re-executed.", tid);
-                            }
+
+                        if status as *const _ as usize == 0 {
+                            break;
                         }
+
+                        println!("PANIC: Root memento No.{} re-executed.", tid);
                     }
                 });
                 let _ = h.join();
