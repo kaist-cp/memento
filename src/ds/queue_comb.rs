@@ -281,7 +281,7 @@ impl CombiningQueue {
     const EMPTY: usize = usize::MAX;
 
     pub fn comb_dequeue<const REC: bool>(
-        &mut self,
+        &self,
         deq: &mut Dequeue,
         tid: usize,
         guard: &Guard,
@@ -328,73 +328,71 @@ impl CombiningQueue {
         Self::EMPTY
     }
 }
-// #[cfg(test)]
-// mod test {
-//     use crate::pmem::*;
-//     use crate::test_utils::tests::*;
+#[cfg(test)]
+mod test {
+    use crate::pmem::*;
+    use crate::test_utils::tests::*;
 
-//     use crossbeam_epoch::Guard;
+    use crossbeam_epoch::Guard;
 
-//     use super::{CombiningQueue, Dequeue, Enqueue};
+    use super::{CombiningQueue, Dequeue, Enqueue};
 
-//     const NR_THREAD: usize = 12;
-//     const NR_COUNT: usize = 20_000;
+    const NR_THREAD: usize = 12;
+    const NR_COUNT: usize = 20_000;
 
-//     struct EnqDeq {
-//         enqs: [Enqueue<TestValue>; NR_COUNT],
-//         deqs: [Dequeue<TestValue>; NR_COUNT],
-//     }
+    struct EnqDeq {
+        enqs: [Enqueue; NR_COUNT],
+        deqs: [Dequeue; NR_COUNT],
+    }
 
-//     impl Default for EnqDeq {
-//         fn default() -> Self {
-//             Self {
-//                 enqs: array_init::array_init(|_| Default::default()),
-//                 deqs: array_init::array_init(|_| Default::default()),
-//             }
-//         }
-//     }
+    impl Default for EnqDeq {
+        fn default() -> Self {
+            Self {
+                enqs: array_init::array_init(|_| Default::default()),
+                deqs: array_init::array_init(|_| Default::default()),
+            }
+        }
+    }
 
-//     impl Collectable for EnqDeq {
-//         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-//             for i in 0..NR_COUNT {
-//                 Enqueue::filter(&mut m.enqs[i], tid, gc, pool);
-//                 Dequeue::filter(&mut m.deqs[i], tid, gc, pool);
-//             }
-//         }
-//     }
+    impl Collectable for EnqDeq {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..NR_COUNT {
+                Enqueue::filter(&mut m.enqs[i], tid, gc, pool);
+                Dequeue::filter(&mut m.deqs[i], tid, gc, pool);
+            }
+        }
+    }
 
-//     impl RootObj<EnqDeq> for TestRootObj<CombiningQueue<TestValue>> {
-//         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
-//             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+    impl RootObj<EnqDeq> for TestRootObj<CombiningQueue> {
+        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
-//             for seq in 0..NR_COUNT {
-//                 let _ = self.obj.enqueue::<true>(
-//                     TestValue::new(tid, seq),
-//                     &mut enq_deq.enqs[seq],
-//                     tid,
-//                     guard,
-//                     pool,
-//                 );
-//                 let res = self
-//                     .obj
-//                     .dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
+            for seq in 0..NR_COUNT {
+                let _ = self.obj.comb_enqueue::<true>(
+                    TestValue::new(tid, seq).into_usize(),
+                    &mut enq_deq.enqs[seq],
+                    tid,
+                    guard,
+                    pool,
+                );
+                let res = self
+                    .obj
+                    .comb_dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
 
-//                 testee.report(seq, res.unwrap());
-//             }
-//         }
-//     }
+                testee.report(seq, TestValue::from_usize(res));
+            }
+        }
+    }
 
-//     // - We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
-//     // - You can check gc operation from the second time you open the pool:
-//     //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
-//     //   - where +2 is a pointer to Root, Queue
-//     #[test]
-//     fn enq_deq() {
-//         const FILE_NAME: &str = "queue_comb";
-//         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+    // - We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
+    // - You can check gc operation from the second time you open the pool:
+    //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
+    //   - where +2 is a pointer to Root, Queue
+    #[test]
+    fn enq_deq() {
+        const FILE_NAME: &str = "queue_comb";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-//         run_test::<TestRootObj<CombiningQueue<TestValue>>, EnqDeq>(
-//             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
-//         );
-//     }
-// }
+        run_test::<TestRootObj<CombiningQueue>, EnqDeq>(FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT);
+    }
+}

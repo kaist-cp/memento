@@ -280,8 +280,13 @@ pub mod tests {
         }
 
         #[inline]
-        fn into_usize(self) -> usize {
+        pub fn into_usize(self) -> usize {
             self.data
+        }
+
+        #[inline]
+        pub fn from_usize(data: usize) -> Self {
+            Self { data }
         }
     }
 
