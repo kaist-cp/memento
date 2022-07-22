@@ -484,16 +484,19 @@ pub mod tests {
         fn check(&self) {
             let mut checked_map = vec![vec![false; self.nr_count]; self.nr_thread + 1];
 
-            for results in self
-                .infos
-                .iter()
-                .filter_map(|info| info.checked.load(Ordering::SeqCst).then_some(&info.results))
-            {
-                for result in (0..self.nr_count).map(|i| results[i].load(Ordering::SeqCst)) {
-                    assert_ne!(result, TestInfo::RESULT_INIT);
-                    let (tid, seq) = TestValue::decompose(TestValue { data: result });
-                    assert!(!checked_map[tid][seq]);
-                    checked_map[tid][seq] = true;
+            for (to_tid, results) in self.infos.iter().enumerate().filter_map(|(tid, info)| {
+                info.checked
+                    .load(Ordering::SeqCst)
+                    .then_some((tid, &info.results))
+            }) {
+                for (to_seq, result) in (0..self.nr_count)
+                    .map(|i| results[i].load(Ordering::SeqCst))
+                    .enumerate()
+                {
+                    assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
+                    let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
+                    assert!(!checked_map[to_tid][to_seq], "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}");
+                    checked_map[to_tid][to_seq] = true;
                 }
             }
         }

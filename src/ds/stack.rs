@@ -118,6 +118,7 @@ pub(crate) mod tests {
                     .obj
                     .pop::<true>(&mut push_pop.pops[seq], tid, guard, pool);
 
+                assert!(res.is_some(), "{tid} {seq}");
                 testee.report(seq, res.unwrap());
             }
         }

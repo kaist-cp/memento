@@ -659,6 +659,7 @@ mod test {
                     self.obj
                         .lookup::<true>(&key, &mut mmt.ins_lookups[seq], tid, guard, pool);
 
+                assert!(res.is_some(), "tid:{tid}, seq:{seq}");
                 testee.report(seq, *res.unwrap());
 
                 // delete and lookup
@@ -669,7 +670,8 @@ mod test {
                 let res =
                     self.obj
                         .lookup::<true>(&key, &mut mmt.del_lookups[seq], tid, guard, pool);
-                assert!(res.is_none());
+
+                assert!(res.is_none(), "tid:{tid}, seq:{seq}");
             }
         }
     }

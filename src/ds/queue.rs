@@ -415,6 +415,7 @@ mod test {
                     .obj
                     .dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
 
+                assert!(res.is_some(), "tid:{tid}, seq:{seq}");
                 testee.report(seq, res.unwrap());
             }
         }
