@@ -337,8 +337,8 @@ mod test {
 
     use super::{CombiningQueue, Dequeue, Enqueue};
 
-    const NR_THREAD: usize = 12;
-    const NR_COUNT: usize = 20_000;
+    const NR_THREAD: usize = 4;
+    const NR_COUNT: usize = 100_000;
 
     struct EnqDeq {
         enqs: [Enqueue; NR_COUNT],

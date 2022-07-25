@@ -610,8 +610,8 @@ mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
-    const NR_THREAD: usize = 12;
-    const NR_COUNT: usize = 10_000;
+    const NR_THREAD: usize = 4;
+    const NR_COUNT: usize = 100_000;
 
     struct InsDelLook {
         inserts: [Insert<TestValue, TestValue>; NR_COUNT],
