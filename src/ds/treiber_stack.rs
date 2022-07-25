@@ -218,8 +218,9 @@ impl<T: Clone + Collectable> TreiberStack<T> {
                 || {
                     let top = self.top.load(Ordering::SeqCst, guard, pool);
                     let node_ref = unsafe { node.deref(pool) };
+                    // TODO: check if same & otherwise store/flush
                     node_ref.next.store(top, Ordering::SeqCst);
-                    persist_obj(&node_ref.next, false); // we do CAS right after that
+                    persist_obj(&node_ref.next, true);
                     PAtomic::from(top)
                 },
                 tid,

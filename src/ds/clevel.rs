@@ -1268,6 +1268,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 return (ctx, false);
             }
 
+            // TODO: check if same & flush otherwise
             context_new_ref.last_level.store(
                 ctx_ref.last_level.load(Ordering::Acquire, guard),
                 Ordering::Relaxed,

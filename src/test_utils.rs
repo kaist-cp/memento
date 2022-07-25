@@ -74,13 +74,10 @@ pub(crate) mod ordo {
 
     pub(crate) fn get_ordo_boundary() -> u64 {
         let num_cpus = num_cpus::get();
-        let mut global_offset = 0;
 
-        for c in (0..num_cpus).combinations(2) {
-            global_offset =
-                global_offset.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])));
-        }
-        global_offset
+        (0..num_cpus).combinations(2).fold(0, |global_offset, c| {
+            global_offset.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])))
+        })
     }
 }
 
