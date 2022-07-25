@@ -429,7 +429,7 @@ pub mod tests {
             info.state.store(state, Ordering::SeqCst);
             info.checked.store(checked, Ordering::SeqCst);
 
-            println!("{tid}'s test info: {:?}", info);
+            println!("{tid}'s test crash seq: {}", info.crash_seq);
 
             Testee { info }
         }
