@@ -246,6 +246,7 @@ pub mod tests {
 
     /// child thread handler: thread exit
     pub fn texit(_signum: usize) {
+        println!("Killed...");
         // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
         let _ = std::rt::panic_count::increase();
         unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
@@ -428,6 +429,8 @@ pub mod tests {
             info.state.store(state, Ordering::SeqCst);
             info.checked.store(checked, Ordering::SeqCst);
 
+            println!("{tid}'s test info: {:?}", info);
+
             Testee { info }
         }
 
@@ -495,7 +498,11 @@ pub mod tests {
                 {
                     assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
                     let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
-                    assert!(!checked_map[to_tid][to_seq], "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}");
+                    assert!(
+                        !checked_map[to_tid][to_seq],
+                        "From: (tid:{}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
+                        from_tid + 1
+                    );
                     checked_map[to_tid][to_seq] = true;
                 }
             }

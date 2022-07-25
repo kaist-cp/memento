@@ -67,6 +67,13 @@ impl<T: Collectable> SMONode for Node<T> {
     }
 }
 
+impl<T: Collectable> Drop for Node<T> {
+    fn drop(&mut self) {
+        let data = unsafe { *(&self.data as *const _ as *const usize) };
+        println!("Node dropped: {{ data: {data}, repl: {:?} }}", self.repl);
+    }
+}
+
 /// Try exchange memento
 #[derive(Debug)]
 pub struct TryExchange<T: Clone + Collectable> {
