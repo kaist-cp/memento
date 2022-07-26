@@ -35,8 +35,8 @@
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
 #![feature(new_uninit)] // for clevel
 #![feature(core_intrinsics)]
-#![feature(panic_always_abort)] // to simulate thread crash
 #![feature(update_panic_count)] // to simulate thread crash
+#![feature(backtrace)] // to debug thread crash
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![recursion_limit = "512"]

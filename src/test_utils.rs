@@ -87,6 +87,7 @@ pub mod tests {
 
     use crossbeam_epoch::Guard;
     use crossbeam_utils::Backoff;
+    use std::backtrace::Backtrace;
     use std::io::Error;
     use std::sync::atomic::{fence, AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
@@ -201,7 +202,11 @@ pub mod tests {
         M: Collectable + Default + Send + Sync,
     {
         // Assertion err causes abort.
-        std::panic::always_abort();
+        std::panic::set_hook(Box::new(|info| {
+            println!("Thread panicked. panic info: {info}");
+            println!("{}", Backtrace::capture());
+            unsafe { libc::abort() };
+        }));
 
         // Install signal handler
         let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
