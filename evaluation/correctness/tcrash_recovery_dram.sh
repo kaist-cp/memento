@@ -29,7 +29,7 @@ function run_bg() {
     dmsg "run $target"
 
     rm -rf $PMEM_PATH/test/$target/*
-    RUST_BACKTRACE=1 RUST_MIN_STACK=10737418200 $SCRIPT_DIR/../../target/release/deps/memento-* ds::$target::test --nocapture &>> $OUT_PATH/$target.out &
+    RUST_BACKTRACE=1 RUST_MIN_STACK=10737418200 $SCRIPT_DIR/../../target/release/deps/memento-* $target::test --nocapture &>> $OUT_PATH/$target.out &
 }
 
 # Test thread crash and recovery run.

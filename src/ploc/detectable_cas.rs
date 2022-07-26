@@ -442,19 +442,19 @@ mod test {
         }
     }
 
-    pub(crate) struct Update<T: Collectable> {
+    pub(crate) struct Swap<T: Collectable> {
         old: Checkpoint<PAtomic<Node<T>>>,
         cas: Cas,
     }
 
-    impl<T: Collectable> Collectable for Update<T> {
+    impl<T: Collectable> Collectable for Swap<T> {
         fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             Collectable::filter(&mut s.old, tid, gc, pool);
             Collectable::filter(&mut s.cas, tid, gc, pool);
         }
     }
 
-    impl<T: Collectable> Default for Update<T> {
+    impl<T: Collectable> Default for Swap<T> {
         fn default() -> Self {
             Self {
                 old: Default::default(),
@@ -489,34 +489,58 @@ mod test {
     }
 
     impl<T: Collectable> Location<T> {
-        pub(crate) fn update<const REC: bool>(
+        pub(crate) fn cas_wo_failure<const REC: bool>(
             &self,
-            node: PShared<'_, Node<T>>,
-            upd: &mut Update<T>,
+            old: PShared<'_, Node<T>>,
+            new: PShared<'_, Node<T>>,
+            cas: &mut Cas,
             tid: usize,
             guard: &Guard,
             pool: &PoolHandle,
-        ) -> Option<T> {
-            if let Ok(v) = self.try_update::<REC>(node, upd, tid, guard, pool) {
-                return v;
+        ) {
+            if self.loc.cas::<REC>(old, new, cas, tid, guard, pool).is_ok() {
+                return;
             }
 
             loop {
-                if let Ok(v) = self.try_update::<false>(node, upd, tid, guard, pool) {
-                    return v;
+                if self
+                    .loc
+                    .cas::<false>(old, new, cas, tid, guard, pool)
+                    .is_ok()
+                {
+                    return;
                 }
             }
         }
 
-        fn try_update<const REC: bool>(
+        pub(crate) fn swap<'g, const REC: bool>(
             &self,
-            node: PShared<'_, Node<T>>,
-            upd: &mut Update<T>,
+            new: PShared<'_, Node<T>>,
+            swap: &mut Swap<T>,
             tid: usize,
-            guard: &Guard,
+            guard: &'g Guard,
             pool: &PoolHandle,
-        ) -> Result<Option<T>, ()> {
-            let old = upd
+        ) -> PShared<'g, Node<T>> {
+            if let Ok(old) = self.try_swap::<REC>(new, swap, tid, guard, pool) {
+                return old;
+            }
+
+            loop {
+                if let Ok(old) = self.try_swap::<false>(new, swap, tid, guard, pool) {
+                    return old;
+                }
+            }
+        }
+
+        fn try_swap<'g, const REC: bool>(
+            &self,
+            new: PShared<'_, Node<T>>,
+            swap: &mut Swap<T>,
+            tid: usize,
+            guard: &'g Guard,
+            pool: &PoolHandle,
+        ) -> Result<PShared<'g, Node<T>>, ()> {
+            let old = swap
                 .old
                 .checkpoint::<REC, _>(
                     || {
@@ -528,24 +552,19 @@ mod test {
                 )
                 .load(Ordering::Relaxed, guard);
 
-            let _ = self
-                .loc
-                .cas::<REC>(old, node, &mut upd.cas, tid, guard, pool)
-                .map_err(|_| ())?;
-
-            unsafe {
-                let old_ref = some_or!(old.as_ref(pool), return Ok(None));
-                Ok(Some(std::ptr::read(&old_ref.data as *const _)))
-            }
+            self.loc
+                .cas::<REC>(old, new, &mut swap.cas, tid, guard, pool)
+                .map(|_| old)
+                .map_err(|_| ())
         }
     }
 
-    const NR_THREAD: usize = 2;
-    const NR_COUNT: usize = 10_000;
+    const NR_THREAD: usize = 8;
+    const NR_COUNT: usize = 100_000;
 
     struct Updates {
         nodes: [Checkpoint<PAtomic<Node<TestValue>>>; NR_COUNT],
-        upds: [(Update<TestValue>, Update<TestValue>); NR_COUNT],
+        upds: [(Cas, Swap<TestValue>); NR_COUNT],
     }
 
     impl Default for Updates {
@@ -568,36 +587,37 @@ mod test {
 
     impl RootObj<Updates> for TestRootObj<Location<TestValue>> {
         fn run(&self, mmt: &mut Updates, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+            let loc = &self.obj;
 
-            // for seq in 0..NR_COUNT {
-            //     let node = mmt.nodes[seq]
-            //         .checkpoint::<true, _>(
-            //             || {
-            //                 let node = Node {
-            //                     data: TestValue::new(tid, seq),
-            //                 };
-            //                 PAtomic::new(node, pool)
-            //             },
-            //             tid,
-            //             pool,
-            //         )
-            //         .load(Ordering::Relaxed, guard);
+            for seq in 0..NR_COUNT {
+                let node = mmt.nodes[seq]
+                    .checkpoint::<true, _>(
+                        || {
+                            let node = Node {
+                                data: TestValue::new(tid, seq),
+                            };
+                            PAtomic::new(node, pool)
+                        },
+                        tid,
+                        pool,
+                    )
+                    .load(Ordering::Relaxed, guard);
 
-            //     if let Some(val) =
-            //         self.obj
-            //             .update::<true>(node, &mut mmt.upds[seq].0, tid, guard, pool)
-            //     {
-            //         testee.report(seq, val);
-            //     }
+                loc.cas_wo_failure::<true>(
+                    PShared::null(),
+                    node,
+                    &mut mmt.upds[seq].0,
+                    tid,
+                    guard,
+                    pool,
+                );
 
-            //     if let Some(val) =
-            //         self.obj
-            //             .update::<true>(PShared::null(), &mut mmt.upds[seq].1, tid, guard, pool)
-            //     {
-            //         testee.report(seq, val);
-            //     }
-            // }
+                let old = loc.swap::<true>(PShared::null(), &mut mmt.upds[seq].1, tid, guard, pool);
+                let val = unsafe { std::ptr::read(&old.deref(pool).data) };
+
+                testee.report(seq, val);
+            }
         }
     }
 
