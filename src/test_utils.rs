@@ -203,7 +203,7 @@ pub mod tests {
     {
         // Assertion err causes abort.
         std::panic::set_hook(Box::new(|info| {
-            println!("Thread panicked. panic info: {info}");
+            println!("Thread {} {info}", unsafe { libc::gettid() });
             println!("{}", Backtrace::capture());
             unsafe { libc::abort() };
         }));
