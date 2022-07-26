@@ -9,10 +9,9 @@ CNT_BUGS=30     # Number of saving bugs
 # Initialize
 nr_bug=0
 SCRIPT_DIR=`dirname $(realpath "$0")`
-OUT_PATH="$SCRIPT_DIR/out/${target}_${COMMIT}"
+OUT_PATH="$SCRIPT_DIR/out_${COMMIT}/${target}"
 out_bug_path=$OUT_PATH/bug${nr_bug}
 mkdir -p $PMEM_PATH/test
-mkdir -p $SCRIPT_DIR/out/
 mkdir -p $OUT_PATH
 
 OUT_LOG=$OUT_PATH/log.out

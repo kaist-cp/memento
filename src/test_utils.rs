@@ -400,7 +400,7 @@ pub mod tests {
     }
 
     impl Tester {
-        const MAX_THREAD: usize = 100;
+        const MAX_THREAD: usize = 30;
 
         fn new(nr_thread: usize, nr_count: usize) -> Self {
             assert!(nr_thread <= Self::MAX_THREAD);
@@ -493,12 +493,12 @@ pub mod tests {
                     .map(|i| results[i].load(Ordering::SeqCst))
                     .enumerate()
                 {
-                    assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
+                    assert_ne!(result, TestInfo::RESULT_INIT, "tid:{}, seq:{to_seq}", to_tid + 1);
                     let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
                     assert!(
                         !checked_map[to_tid][to_seq],
-                        "From: (tid:{}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
-                        from_tid + 1
+                        "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{}, seq:{to_seq}",
+                        to_tid + 1
                     );
                     checked_map[to_tid][to_seq] = true;
                 }
