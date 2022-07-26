@@ -67,7 +67,11 @@ impl<T> PPtr<T> {
     /// When multiple pools are opened at the same time, the ptr of pool1 should not use the starting address of pool2.
     pub unsafe fn deref(self, pool: &PoolHandle) -> &'_ T {
         let addr = pool.start() + self.offset;
-        debug_assert!(self != PPtr::null() && pool.valid(addr));
+        debug_assert!(
+            self != PPtr::null() && pool.valid(addr),
+            "offset: {}",
+            self.offset
+        );
 
         &*(addr as *const T)
     }
@@ -80,7 +84,11 @@ impl<T> PPtr<T> {
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn deref_mut(self, pool: &PoolHandle) -> &'_ mut T {
         let addr = pool.start() + self.offset;
-        debug_assert!(self != PPtr::null() && pool.valid(addr));
+        debug_assert!(
+            self != PPtr::null() && pool.valid(addr),
+            "offset: {}",
+            self.offset
+        );
         &mut *(addr as *mut T)
     }
 }
