@@ -196,7 +196,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         self.load_help(cur, &pool.exec_info, guard)
     }
 
-    const PATIENCE: u64 = 40000;
+    // const PATIENCE: u64 = 40000; // TODO: uncomment
 
     #[inline]
     fn load_help<'g>(
@@ -241,7 +241,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
                     // if patience is over, I have to help it.
                     let now = exec_info.exec_time();
-                    if now > start + Self::PATIENCE {
+                    if now > start + exec_info.tsc_offset { // TODO: use PATIENCE
                         break 'chk start;
                     }
                 }
@@ -559,7 +559,7 @@ mod test {
         }
     }
 
-    const NR_THREAD: usize = 8;
+    const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 100_000;
 
     struct Updates {

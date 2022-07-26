@@ -4,8 +4,7 @@
 PMEM_PATH="/mnt/pmem0"
 COMMIT=$(git log -1 --format="%h")
 target=$1
-CNT_CRASH=10   # Number of crash test
-CNT_BUGS=3     # Number of saving bugs
+CNT_BUGS=30     # Number of saving bugs
 
 # Initialize
 nr_bug=0
@@ -42,9 +41,11 @@ function run_bg() {
 }
 
 # Test thread crash and recovery run.
-for i in $(seq 1 $CNT_CRASH); do
+i=0
+while true; do
+    i=$(($i+1))
     log_tmp="$(mktemp)"
-    dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i/$CNT_CRASH ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
+    dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
     start=$(date +%s%N)
     run_bg $target
     pid_bg=$!
