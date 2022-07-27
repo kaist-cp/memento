@@ -9,8 +9,8 @@ build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["use_clwb"]
-no_crash_test = []
+default = ["use_clwb", "tcrash"]
+tcrash = []
 no_persist = []
 use_clflushopt = []
 use_clwb = []

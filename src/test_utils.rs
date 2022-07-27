@@ -87,8 +87,6 @@ pub(crate) mod ordo {
 
 #[doc(hidden)]
 pub mod tests {
-    #![allow(dead_code)]
-
     use crossbeam_epoch::Guard;
     use crossbeam_utils::Backoff;
     use std::backtrace::Backtrace;
@@ -101,7 +99,7 @@ pub mod tests {
     use crate::PDefault;
 
     use {
-        crate::pmem::rdtscp,
+        crate::pmem::*,
         libc::{size_t, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32},
     };
@@ -225,7 +223,9 @@ pub mod tests {
             run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
         });
 
+        #[cfg(feature = "tcrash")]
         tester.kill();
+
         let _ = handle.join();
 
         // Check test results
@@ -325,9 +325,11 @@ pub mod tests {
     #[derive(Debug)]
     struct TestInfo {
         state: AtomicI32,
-        crash_seq: usize,
         checked: AtomicBool,
         results: [AtomicUsize; Self::MAX_COUNT],
+
+        #[cfg(feature = "tcrash")]
+        crash_seq: usize,
     }
 
     impl TestInfo {
@@ -342,22 +344,13 @@ pub mod tests {
         fn new(nr_count: usize) -> Self {
             assert!(nr_count <= Self::MAX_COUNT);
 
-            let crash_seq;
-            #[cfg(not(feature = "no_crash_test"))]
-            {
-                crash_seq = rdtscp() as usize % nr_count;
-            }
-
-            #[cfg(feature = "no_crash_test")]
-            {
-                crash_seq = usize::MAX;
-            }
-
             Self {
                 state: AtomicI32::new(Self::STATE_INIT),
-                crash_seq,
                 checked: AtomicBool::new(false),
                 results: array_init::array_init(|_| AtomicUsize::new(Self::RESULT_INIT)),
+
+                #[cfg(feature = "tcrash")]
+                crash_seq: rdtscp() as usize % nr_count,
             }
         }
 
@@ -369,6 +362,7 @@ pub mod tests {
                 "prev: {prev}, val: {uval}"
             );
 
+            #[cfg(feature = "tcrash")]
             if self.crash_seq == seq {
                 self.enable_killed();
             }
@@ -376,6 +370,7 @@ pub mod tests {
 
         /// Enable being selected by `kill()`
         // TODO: How to kill resizer in clevel?
+        #[cfg(feature = "tcrash")]
         #[inline]
         fn enable_killed(&self) {
             let unix_tid = unsafe { libc::gettid() };
@@ -435,6 +430,7 @@ pub mod tests {
             info.state.store(state, Ordering::SeqCst);
             info.checked.store(checked, Ordering::SeqCst);
 
+            #[cfg(feature = "tcrash")]
             println!("{tid}'s test crash seq: {}", info.crash_seq);
 
             Testee { info }
@@ -446,6 +442,7 @@ pub mod tests {
         }
 
         /// Kill arbitrary child thread
+        #[cfg(feature = "tcrash")]
         pub(crate) fn kill(&self) {
             let pid = unsafe { libc::getpid() };
             let backoff = Backoff::new();
