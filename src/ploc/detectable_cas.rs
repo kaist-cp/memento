@@ -1,11 +1,12 @@
 //! General SMO
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{compiler_fence, AtomicU64, Ordering};
 
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
 
 use crate::{
+    impl_left_bits,
     pepoch::{PAtomic, PShared},
     pmem::{lfence, ll::persist_obj, sfence, Collectable, GarbageCollection, PoolHandle},
     PDefault,
@@ -13,7 +14,138 @@ use crate::{
 
 use super::{ExecInfo, Timestamp, NR_MAX_THREADS};
 
-pub(crate) type CASCheckpointArr = [CachePadded<AtomicU64>; NR_MAX_THREADS + 1];
+#[derive(Debug, Clone, Copy)]
+struct CasTimestamp(u64);
+
+impl From<CasTimestamp> for u64 {
+    #[inline]
+    fn from(ct: CasTimestamp) -> u64 {
+        ct.0
+    }
+}
+
+impl CasTimestamp {
+    /// 62-bit timestamp with parity and failure bit
+    #[inline]
+    fn new(parity: bool, fail: bool, ts: Timestamp) -> Self {
+        Self::encode(parity, fail, ts)
+    }
+
+    const POS_PARITY_BITS: u32 = 0;
+    const NR_PARITY_BITS: u32 = 1;
+    impl_left_bits!(
+        parity_bits,
+        Self::POS_PARITY_BITS,
+        Self::NR_PARITY_BITS,
+        u64
+    );
+
+    const POS_FAIL_BITS: u32 = Self::POS_PARITY_BITS + Self::NR_PARITY_BITS;
+    const NR_FAIL_BITS: u32 = 1;
+    impl_left_bits!(fail_bits, Self::POS_FAIL_BITS, Self::NR_FAIL_BITS, u64);
+
+    #[inline]
+    fn encode(parity: bool, fail: bool, ts: Timestamp) -> Self {
+        let p = Self::parity_bits()
+            & (parity as u64).rotate_right(Self::POS_PARITY_BITS + Self::NR_PARITY_BITS);
+        let f = Self::fail_bits()
+            & (fail as u64).rotate_right(Self::POS_FAIL_BITS + Self::NR_FAIL_BITS);
+        let t = !Self::parity_bits() & !Self::fail_bits() & u64::from(ts);
+        Self(p | f | t)
+    }
+
+    #[inline]
+    /// Decompose Timestamp into parity and failure flag and timestamp
+    fn decode(&self) -> (bool, bool, Timestamp) {
+        (
+            (self.0 & Self::parity_bits())
+                .rotate_left(Self::POS_PARITY_BITS + Self::NR_PARITY_BITS)
+                != 0,
+            (self.0 & Self::fail_bits()).rotate_left(Self::POS_FAIL_BITS + Self::NR_FAIL_BITS) != 0,
+            Timestamp::from(!(Self::parity_bits() | Self::fail_bits()) & self.0),
+        )
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CASOwnArr {
+    inner: [CachePadded<AtomicU64>; NR_MAX_THREADS + 1],
+}
+
+impl Default for CASOwnArr {
+    fn default() -> Self {
+        Self {
+            inner: array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
+        }
+    }
+}
+
+impl CASOwnArr {
+    #[inline]
+    fn load(&self, tid: usize) -> CasTimestamp {
+        CasTimestamp(self.inner[tid].load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    fn store(&self, tid: usize, ct: CasTimestamp) {
+        self.inner[tid].store(ct.into(), Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub(crate) fn max_ts(&self) -> Timestamp {
+        self.inner.iter().fold(Timestamp::from(0), |max, own| {
+            let ct = CasTimestamp(own.load(Ordering::Relaxed));
+            let (_, _, t) = ct.decode();
+            std::cmp::max(max, t)
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CASHelpArr {
+    inner: [[CachePadded<AtomicU64>; NR_MAX_THREADS + 1]; 2],
+}
+
+impl Default for CASHelpArr {
+    fn default() -> Self {
+        Self {
+            inner: [
+                array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
+                array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
+            ],
+        }
+    }
+}
+
+impl CASHelpArr {
+    #[inline]
+    pub(crate) fn load(&self, parity: bool, tid: usize) -> Timestamp {
+        Timestamp::from(self.inner[parity as usize][tid].load(Ordering::SeqCst))
+    }
+
+    #[inline]
+    pub(crate) fn compare_exchange(
+        &self,
+        parity: bool,
+        tid: usize,
+        old: Timestamp,
+        new: Timestamp,
+    ) -> Result<(), ()> {
+        self.inner[parity as usize][tid]
+            .compare_exchange(old.into(), new.into(), Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| persist_obj(&self.inner[parity as usize][tid], false))
+            .map_err(|_| ())
+    }
+
+    #[inline]
+    pub(crate) fn max_ts(&self) -> Timestamp {
+        let max = self.inner.iter().flatten().fold(0, |max, help| {
+            let t = help.load(Ordering::Relaxed);
+            std::cmp::max(max, t)
+        });
+        Timestamp::from(max)
+    }
+}
 
 /// Detectable CAS Atomic pointer
 #[derive(Debug)]
@@ -67,9 +199,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
         }
 
-        let prev_chk = Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
-        let parity = !Cas::parity_from_timestamp(prev_chk);
-        let tmp_new = new.with_aux_bit(Cas::parity_to_bit(parity)).with_tid(tid);
+        let pt_own = pool.exec_info.cas_info.own.load(tid);
+        let (p_own, _, _) = pt_own.decode();
+
+        let tmp_new = new.with_aux_bit(!p_own as _).with_tid(tid);
 
         loop {
             let res = self.inner.compare_exchange(
@@ -95,8 +228,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, true);
 
             // Checkpoint success
-            mmt.checkpoint_succ(parity, tid, &pool.exec_info);
-            lfence();
+            mmt.checkpoint_succ(!p_own, tid, &pool.exec_info);
 
             // By inserting a pointer with tid removed, it prevents further helping.
             let _ = self
@@ -123,43 +255,46 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         exec_info: &ExecInfo,
         guard: &'g Guard,
     ) -> Option<Result<(), PShared<'g, N>>> {
-        let cas_state = mmt.state(tid, exec_info);
+        let pft_mmt = mmt.checkpoint;
+        let (_, f_mmt, t_mmt) = pft_mmt.decode();
+        let t_local = exec_info.local_max_time.load(tid);
 
-        if let CasState::Failure = cas_state {
-            exec_info.local_max_time[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
-            let cur = self.inner.load(Ordering::SeqCst, guard);
-            return Some(Err(self.load_help(cur, exec_info, guard)));
-        }
+        let pt_own = exec_info.cas_info.own.load(tid);
+        let (p_own, _, t_own) = pt_own.decode();
 
-        let vchk = Timestamp::from(exec_info.cas_info.own[tid].load(Ordering::Relaxed));
-        let vchk_par = Cas::parity_from_timestamp(vchk);
-
-        if let CasState::Success = cas_state {
-            if mmt.checkpoint > vchk {
-                exec_info.cas_info.own[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
+        if t_mmt > t_local {
+            if f_mmt {
+                // failed
+                exec_info.local_max_time.store(tid, t_mmt);
+                let cur = self.inner.load(Ordering::SeqCst, guard);
+                return Some(Err(self.load_help(cur, exec_info, guard)));
             }
 
-            if mmt.checkpoint >= vchk {
-                let _ = self.inner.compare_exchange(
-                    new.with_aux_bit(Cas::parity_to_bit(vchk_par)).with_tid(tid),
-                    new.with_aux_bit(0).with_tid(0),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                );
-            }
+            if t_mmt != Timestamp::from(0) {
+                // already successful
+                if t_mmt >= t_own {
+                    exec_info.cas_info.own.store(tid, pft_mmt);
+                    let _ = self.inner.compare_exchange(
+                        new.with_aux_bit(p_own as _).with_tid(tid),
+                        new.with_aux_bit(0).with_tid(0),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                        guard,
+                    );
+                }
 
-            exec_info.local_max_time[tid].store(mmt.checkpoint.into(), Ordering::Relaxed);
-            return Some(Ok(()));
+                exec_info.local_max_time.store(tid, t_mmt);
+                return Some(Ok(()));
+            }
         }
 
         let cur = self.inner.load(Ordering::SeqCst, guard);
-        let next_par = !vchk_par;
 
         // Check if the CAS I did before crash remains as it is
-        if cur == new.with_aux_bit(Cas::parity_to_bit(next_par)).with_tid(tid) {
+        if cur.with_aux_bit(0) == new.with_aux_bit(0).with_tid(tid) {
             persist_obj(&self.inner, true);
-            mmt.checkpoint_succ(next_par, tid, exec_info);
+            mmt.checkpoint_succ(!p_own, tid, exec_info);
+
             let _ = self
                 .inner
                 .compare_exchange(
@@ -170,20 +305,18 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     guard,
                 )
                 .map_err(|_| sfence);
+
             return Some(Ok(()));
         }
 
-        // After successful CAS, check if I received help
-        let pchk = Timestamp::from(
-            exec_info.cas_info.help[Cas::parity_to_bit(next_par)][tid].load(Ordering::SeqCst),
-        );
-        if vchk >= pchk {
+        let t_help = exec_info.cas_info.help.load(!p_own, tid);
+        if t_own >= t_help {
             return None;
         }
 
         // Success because the checkpoint written by the helper is higher than the last CAS
         // Since the value of location has already been changed, I just need to finalize my checkpoint.
-        mmt.checkpoint_succ(next_par, tid, exec_info);
+        mmt.checkpoint_succ(!p_own, tid, exec_info);
         sfence();
 
         Some(Ok(()))
@@ -241,17 +374,18 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
                     // if patience is over, I have to help it.
                     let now = exec_info.exec_time();
-                    if now > start + exec_info.tsc_offset { // TODO: use PATIENCE
+                    if now > start + exec_info.tsc_offset {
+                        // TODO: use PATIENCE
                         break 'chk start;
                     }
                 }
             };
 
             let winner_tid = old.tid();
-            let winner_bit = old.aux_bit();
+            let winner_parity = old.aux_bit() != 0;
 
             // check if winner thread's pcheckpoint is stale
-            let pchk = exec_info.cas_info.help[winner_bit][winner_tid].load(Ordering::SeqCst);
+            let pchk = exec_info.cas_info.help.load(winner_parity, winner_tid);
             if chk <= pchk {
                 // Someone may already help it. I should retry to load.
                 old = self.inner.load(Ordering::SeqCst, guard);
@@ -262,8 +396,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, false);
 
             // CAS winner thread's pcheckpoint
-            if exec_info.cas_info.help[winner_bit][winner_tid]
-                .compare_exchange(pchk, chk, Ordering::SeqCst, Ordering::SeqCst)
+            if exec_info
+                .cas_info
+                .help
+                .compare_exchange(winner_parity, winner_tid, pchk, chk)
                 .is_err()
             {
                 // Someone may already help it. I should retry to load.
@@ -272,7 +408,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // help pointer to be clean.
-            persist_obj(&exec_info.cas_info.help[winner_bit][winner_tid], false);
             match self.inner.compare_exchange(
                 old,
                 old.with_aux_bit(0).with_tid(0),
@@ -295,17 +430,17 @@ unsafe impl<N: Collectable> Sync for DetectableCASAtomic<N> {}
 #[derive(Debug)]
 pub(crate) struct CasInfo {
     /// Per-thread CAS self-successful time
-    pub(crate) own: CASCheckpointArr,
+    pub(crate) own: CASOwnArr,
 
     /// Per-thread Last time receiving CAS helping
-    pub(crate) help: &'static [CASCheckpointArr; 2],
+    pub(crate) help: &'static CASHelpArr,
 }
 
-impl From<&'static [CASCheckpointArr; 2]> for CasInfo {
-    fn from(chk_ref: &'static [CASCheckpointArr; 2]) -> Self {
+impl CasInfo {
+    pub(crate) fn new(help: &'static CASHelpArr) -> Self {
         Self {
-            own: array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
-            help: chk_ref,
+            own: CASOwnArr::default(),
+            help,
         }
     }
 }
@@ -313,98 +448,61 @@ impl From<&'static [CASCheckpointArr; 2]> for CasInfo {
 /// Compare and Set memento
 #[derive(Debug)]
 pub struct Cas {
-    checkpoint: Timestamp,
+    checkpoint: CasTimestamp,
 }
 
 impl Default for Cas {
     fn default() -> Self {
         Self {
-            checkpoint: Timestamp::from(Cas::NOT_CHECKED),
+            checkpoint: CasTimestamp(0),
         }
     }
 }
 
 impl Collectable for Cas {
-    fn filter(cas: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
-        // Among CAS clients, those with max checkpoint are recorded in vcheckpoint
-        let vchk = Timestamp::from(pool.exec_info.cas_info.own[tid].load(Ordering::Relaxed));
+    fn filter(mmt: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
+        // Among CAS clients, those with max checkpoint are recorded
+        let (_, _, t_mmt) = mmt.checkpoint.decode();
 
-        if cas.checkpoint > vchk {
-            pool.exec_info.cas_info.own[tid].store(cas.checkpoint.into(), Ordering::Relaxed);
+        let own = pool.exec_info.cas_info.own.load(tid);
+        let (_, _, t_own) = own.decode();
+
+        if t_mmt > t_own {
+            pool.exec_info.cas_info.own.store(tid, mmt.checkpoint);
         }
     }
-}
-
-enum CasState {
-    NotChecked,
-    Success,
-    Failure,
 }
 
 impl Cas {
     #[inline]
     fn checkpoint_succ(&mut self, parity: bool, tid: usize, exec_info: &ExecInfo) {
         let t = exec_info.exec_time();
-        let new_chk = Timestamp::new(if parity { Self::PARITY } else { 0 }, t);
-        self.checkpoint = new_chk;
-        persist_obj(&self.checkpoint, false);
-        exec_info.cas_info.own[tid].store(new_chk.into(), Ordering::Relaxed);
-        exec_info.local_max_time[tid].store(new_chk.into(), Ordering::Relaxed);
-    }
+        lfence();
+        let ts_succ = CasTimestamp::new(parity, false, t);
 
-    fn state(&self, tid: usize, exec_info: &ExecInfo) -> CasState {
-        if self.checkpoint == Timestamp::from(0)
-            || self.checkpoint
-                < Timestamp::from(exec_info.local_max_time[tid].load(Ordering::Relaxed))
-        {
-            return CasState::NotChecked;
-        }
+        self.checkpoint = ts_succ;
+        persist_obj(&self.checkpoint, false); // CAS soon
 
-        if self.is_failed() {
-            return CasState::Failure;
-        }
+        compiler_fence(Ordering::Release);
 
-        CasState::Success
+        exec_info.cas_info.own.store(tid, ts_succ);
+        exec_info.local_max_time.store(tid, t);
     }
 
     #[inline]
     fn checkpoint_fail(&mut self, tid: usize, exec_info: &ExecInfo) {
         let t = exec_info.exec_time();
-        let new_chk = Timestamp::new(Self::FAILED, t);
-        self.checkpoint = new_chk;
+        lfence();
+        let ts_fail = CasTimestamp::new(false, true, t);
+        self.checkpoint = ts_fail;
         persist_obj(&self.checkpoint, true);
-        exec_info.local_max_time[tid].store(new_chk.into(), Ordering::Relaxed);
-    }
-
-    #[inline]
-    fn is_failed(&self) -> bool {
-        let tag = self.checkpoint.high_tag();
-        tag & Self::FAILED != 0
-    }
-
-    const NOT_CHECKED: u64 = 0;
-    const FAILED: u64 = 1;
-    const PARITY: u64 = 2;
-
-    #[inline]
-    fn parity_from_timestamp(t: Timestamp) -> bool {
-        let tag = t.high_tag();
-        tag & Self::PARITY != 0
-    }
-
-    #[inline]
-    fn parity_to_bit(p: bool) -> usize {
-        if p {
-            1
-        } else {
-            0
-        }
+        exec_info.local_max_time.store(tid, t);
     }
 
     /// Clear
     #[inline]
     pub fn clear(&mut self) {
-        self.checkpoint = Timestamp::from(Cas::NOT_CHECKED);
+        self.checkpoint = CasTimestamp::new(false, false, Timestamp::from(0));
         persist_obj(&self.checkpoint, false);
     }
 }

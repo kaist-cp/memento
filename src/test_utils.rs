@@ -13,7 +13,10 @@ pub(crate) mod ordo {
     use itertools::Itertools;
     use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
 
-    use crate::pmem::{lfence, rdtscp};
+    use crate::{
+        ploc::Timestamp,
+        pmem::{lfence, rdtscp},
+    };
 
     fn set_affinity(c: usize) {
         unsafe {
@@ -72,12 +75,13 @@ pub(crate) mod ordo {
         min
     }
 
-    pub(crate) fn get_ordo_boundary() -> u64 {
+    pub(crate) fn get_ordo_boundary() -> Timestamp {
         let num_cpus = num_cpus::get();
 
-        (0..num_cpus).combinations(2).fold(0, |global_offset, c| {
-            global_offset.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])))
-        })
+        let global_off = (0..num_cpus).combinations(2).fold(0, |off, c| {
+            off.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])))
+        });
+        Timestamp::from(global_off)
     }
 }
 
@@ -498,7 +502,12 @@ pub mod tests {
                     .map(|i| results[i].load(Ordering::SeqCst))
                     .enumerate()
                 {
-                    assert_ne!(result, TestInfo::RESULT_INIT, "tid:{}, seq:{to_seq}", to_tid + 1);
+                    assert_ne!(
+                        result,
+                        TestInfo::RESULT_INIT,
+                        "tid:{}, seq:{to_seq}",
+                        to_tid + 1
+                    );
                     let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
                     assert!(
                         !checked_map[to_tid][to_seq],

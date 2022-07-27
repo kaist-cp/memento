@@ -1,7 +1,9 @@
 //! Atomic Update Common
 
-use core::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    ops::{Add, Sub},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use crossbeam_utils::CachePadded;
 
@@ -14,7 +16,7 @@ use crate::{
     test_utils::ordo::get_ordo_boundary,
 };
 
-use super::{CASCheckpointArr, CasInfo};
+use super::{CASHelpArr, CasInfo};
 
 pub(crate) const NR_MAX_THREADS: usize = 511;
 
@@ -55,7 +57,7 @@ pub fn decompose_aux_bit(data: usize) -> (usize, usize) {
 }
 
 /// Timestamp struct
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Timestamp(u64);
 
 impl From<u64> for Timestamp {
@@ -72,82 +74,53 @@ impl From<Timestamp> for u64 {
     }
 }
 
-impl PartialOrd for Timestamp {
+impl Add for Timestamp {
+    type Output = Self;
+
     #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+    fn add(self, rhs: Self) -> Self::Output {
+        Timestamp::from(self.0 + rhs.0)
     }
 }
 
-impl Ord for Timestamp {
+impl Sub for Timestamp {
+    type Output = Self;
+
     #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let (_, t1) = self.decompose();
-        let (_, t2) = other.decompose();
-        t1.cmp(&t2)
+    fn sub(self, rhs: Self) -> Self::Output {
+        Timestamp::from(self.0 - rhs.0)
     }
 }
 
-impl fmt::Debug for Timestamp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (aux, time) = self.decompose();
+#[derive(Debug)]
+pub(crate) struct LocalMaxTime {
+    inner: [AtomicU64; NR_MAX_THREADS + 1],
+}
 
-        f.debug_struct("Timestamp")
-            .field("aux", &aux)
-            .field("timestamp", &time)
-            .finish()
+impl Default for LocalMaxTime {
+    fn default() -> Self {
+        Self {
+            inner: array_init::array_init(|_| AtomicU64::new(0)),
+        }
     }
 }
 
-impl Timestamp {
-    /// 62-bit timestamp with 2-bit high tag
+impl LocalMaxTime {
     #[inline]
-    pub fn new(high_tag: u64, t: u64) -> Self {
-        Self(Self::compose_high_tag(high_tag, t))
-    }
-
-    const POS_HIGH_BITS: u32 = 0;
-    const NR_HIGH_BITS: u32 = 2;
-    impl_left_bits!(high_bits, 0, 2, u64);
-
-    #[inline]
-    fn compose_high_tag(high_tag: u64, data: u64) -> u64 {
-        (Self::high_bits() & (high_tag.rotate_right(Self::POS_HIGH_BITS + Self::NR_HIGH_BITS)))
-            | (!Self::high_bits() & data)
+    pub(crate) fn load(&self, tid: usize) -> Timestamp {
+        Timestamp::from(self.inner[tid].load(Ordering::Relaxed))
     }
 
     #[inline]
-    fn decompose_high_tag(data: u64) -> (u64, u64) {
-        (
-            (data & Self::high_bits()).rotate_left(Self::POS_HIGH_BITS + Self::NR_HIGH_BITS),
-            !Self::high_bits() & data,
-        )
-    }
-
-    /// Decompose Timestamp into high tag and time value
-    #[inline]
-    pub fn decompose(&self) -> (u64, u64) {
-        let (htag, t) = Self::decompose_high_tag(self.0);
-        (htag, t)
-    }
-
-    /// Get high tag part
-    #[inline]
-    pub fn high_tag(&self) -> u64 {
-        self.decompose().0
-    }
-
-    /// Get time part
-    #[inline]
-    pub fn time(&self) -> u64 {
-        self.decompose().1
+    pub(crate) fn store(&self, tid: usize, t: Timestamp) {
+        self.inner[tid].store(t.into(), Ordering::Relaxed);
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct ExecInfo {
     /// Maximum checkpoint time checked per thread
-    pub(crate) local_max_time: [AtomicU64; NR_MAX_THREADS + 1],
+    pub(crate) local_max_time: LocalMaxTime,
 
     /// Maximum checkpoint time in last execution (not changed after main execution)
     pub(crate) global_max_time: Timestamp,
@@ -162,16 +135,16 @@ pub(crate) struct ExecInfo {
     pub(crate) init_time: Timestamp,
 
     /// Global tsc offset
-    pub(crate) tsc_offset: u64,
+    pub(crate) tsc_offset: Timestamp,
 }
 
-impl From<&'static [CASCheckpointArr; 2]> for ExecInfo {
-    fn from(chk_ref: &'static [CASCheckpointArr; 2]) -> Self {
+impl From<&'static CASHelpArr> for ExecInfo {
+    fn from(help: &'static CASHelpArr) -> Self {
         Self {
-            local_max_time: array_init::array_init(|_| AtomicU64::new(0)),
+            local_max_time: LocalMaxTime::default(),
             global_max_time: Timestamp::from(0),
             chk_info: Timestamp::from(0),
-            cas_info: CasInfo::from(chk_ref),
+            cas_info: CasInfo::new(help),
             init_time: Timestamp::from(rdtscp()),
             tsc_offset: get_ordo_boundary(),
         }
@@ -180,24 +153,16 @@ impl From<&'static [CASCheckpointArr; 2]> for ExecInfo {
 
 impl ExecInfo {
     pub(crate) fn set_info(&mut self) {
-        let max = self.cas_info.own.iter().fold(Timestamp::from(0), |m, chk| {
-            let t = Timestamp::from(chk.load(Ordering::Relaxed));
-            std::cmp::max(m, t)
-        });
-        let max = self.cas_info.help.iter().fold(max, |m, chk_arr| {
-            chk_arr.iter().fold(m, |mm, chk| {
-                let t = Timestamp::from(chk.load(Ordering::Relaxed));
-                std::cmp::max(mm, t)
-            })
-        });
+        let max = self.cas_info.own.max_ts();
+        let max = std::cmp::max(max, self.cas_info.help.max_ts());
         let max = std::cmp::max(max, self.chk_info);
 
         self.global_max_time = max;
     }
 
     #[inline]
-    pub(crate) fn exec_time(&self) -> u64 {
-        rdtscp() - self.init_time.time() + self.global_max_time.time()
+    pub(crate) fn exec_time(&self) -> Timestamp {
+        Timestamp::from(rdtscp()) - self.init_time + self.global_max_time
     }
 }
 
@@ -230,7 +195,7 @@ impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
             pool.exec_info.chk_info = chk.saved[latest].1;
         }
 
-        if chk.saved[latest].1.time() > 0 {
+        if chk.saved[latest].1 > Timestamp::from(0) {
             T::filter(&mut chk.saved[latest].0, tid, gc, pool);
         }
     }
@@ -267,7 +232,7 @@ where
         let (stale, _) = self.stale_latest_idx();
 
         // Normal run
-        let t = Timestamp::from(pool.exec_info.exec_time());
+        let t = pool.exec_info.exec_time();
         if std::mem::size_of::<(T, Timestamp)>() <= 1 << CACHE_LINE_SHIFT {
             self.saved[stale] = CachePadded::new((new.clone(), t));
             persist_obj(&*self.saved[stale], true);
@@ -278,15 +243,13 @@ where
             persist_obj(&self.saved[stale].1, true);
         }
 
-        pool.exec_info.local_max_time[tid].store(t.into(), Ordering::Relaxed);
+        pool.exec_info.local_max_time.store(tid, t);
         new
     }
 
     #[inline]
     fn is_valid(&self, idx: usize, tid: usize, pool: &PoolHandle) -> bool {
-        self.saved[idx].1.time() > 0
-            && self.saved[idx].1
-                > Timestamp::from(pool.exec_info.local_max_time[tid].load(Ordering::Relaxed))
+        self.saved[idx].1 > pool.exec_info.local_max_time.load(tid)
     }
 
     #[inline]
@@ -303,8 +266,9 @@ where
         let (_, latest) = self.stale_latest_idx();
 
         if self.is_valid(latest, tid, pool) {
-            pool.exec_info.local_max_time[tid]
-                .store(self.saved[latest].1.into(), Ordering::Relaxed);
+            pool.exec_info
+                .local_max_time
+                .store(tid, self.saved[latest].1);
             Some((self.saved[latest].0).clone())
         } else {
             None

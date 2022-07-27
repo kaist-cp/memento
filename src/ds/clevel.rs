@@ -1057,7 +1057,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
 }
 
 fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bucket<K, V>>> {
-    let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, &pool);
+    let data = POwned::<[MaybeUninit<Bucket<K, V>>]>::init(size, pool);
     let data_ref = unsafe { data.deref(pool) };
     unsafe {
         let _ = libc::memset(
@@ -1323,8 +1323,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     }
                 }
 
-                if !out {
-                    if slot
+                if !out
+                    && slot
                         .cas::<REC>(
                             PShared::null(),
                             slot_ptr,
@@ -1334,9 +1334,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                             pool,
                         )
                         .is_ok()
-                    {
-                        return Ok(());
-                    }
+                {
+                    return Ok(());
                 }
             }
         }
@@ -1699,7 +1698,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         unsafe { guard.defer_pdestroy(last_level) };
-        return Err(context_new);
+        Err(context_new)
     }
 
     fn resize<const REC: bool>(
@@ -2252,7 +2251,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         unsafe { guard.defer_pdestroy(slot_ptr) };
-        return Ok(true);
+        Ok(true)
     }
 
     pub fn delete<const REC: bool>(

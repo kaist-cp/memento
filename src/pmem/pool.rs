@@ -6,26 +6,24 @@ use std::alloc::Layout;
 use std::ffi::{c_void, CString};
 use std::io::Error;
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, mem};
 
-use crate::ploc::{CASCheckpointArr, ExecInfo, NR_MAX_THREADS};
+use crate::ploc::{CASHelpArr, ExecInfo, Timestamp, NR_MAX_THREADS};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
 use crate::*;
 use crossbeam_epoch::{self as epoch};
-use crossbeam_utils::CachePadded;
 use std::thread;
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
-    RootObj,       // root obj
-    CASCheckpoint, // cas general checkpoint
-    NrMemento,     // number of root mementos
-    MementoStart,  // start index of root memento(s)
+    RootObj,      // root obj
+    CASHelpArr,   // cas help array
+    NrMemento,    // number of root mementos
+    MementoStart, // start index of root memento(s)
 }
 
 lazy_static::lazy_static! {
@@ -101,7 +99,7 @@ impl PoolHandle {
             let th = thread::spawn(move || {
                 let h = thread::spawn(move || {
                     loop {
-                        self.exec_info.local_max_time[tid].store(0, Ordering::Relaxed);
+                        self.exec_info.local_max_time.store(tid, Timestamp::from(0));
 
                         struct Args<O: 'static> {
                             m_addr: usize,
@@ -186,7 +184,9 @@ impl PoolHandle {
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {
         BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
-            while !BARRIER_WAIT[other].load(Ordering::SeqCst) {}
+            while !BARRIER_WAIT[other].load(Ordering::SeqCst) {
+                std::hint::spin_loop()
+            }
         }
     }
 
@@ -295,14 +295,11 @@ impl Pool {
 
         unsafe {
             // set general cas checkpoint
-            let cas_chk_arr = RP_malloc(mem::size_of::<[CASCheckpointArr; 2]>() as u64)
-                as *mut [CASCheckpointArr; 2];
-            cas_chk_arr.write(array_init::array_init(|_| {
-                array_init::array_init(|_| CachePadded::new(AtomicU64::new(0)))
-            }));
-            persist_obj(cas_chk_arr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(cas_chk_arr as *mut c_void, RootIdx::CASCheckpoint as u64);
-            let chk_ref = cas_chk_arr.as_ref().unwrap();
+            let cas_help_arr = RP_malloc(mem::size_of::<CASHelpArr>() as u64) as *mut CASHelpArr;
+            cas_help_arr.write(CASHelpArr::default());
+            persist_obj(cas_help_arr.as_mut().unwrap(), true);
+            let _prev = RP_set_root(cas_help_arr as *mut c_void, RootIdx::CASHelpArr as u64);
+            let chk_ref = cas_help_arr.as_ref().unwrap();
 
             // set global pool
             global::init(PoolHandle {
@@ -373,8 +370,7 @@ impl Pool {
         assert_eq!(is_reopen, 1);
 
         // get the starting address of the mapped address and set the global pool
-        let chk_ref = (RP_get_root_c(RootIdx::CASCheckpoint as u64)
-            as *const [CASCheckpointArr; 2])
+        let chk_ref = (RP_get_root_c(RootIdx::CASHelpArr as u64) as *const CASHelpArr)
             .as_ref()
             .unwrap();
 
