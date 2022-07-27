@@ -54,11 +54,12 @@ extern "C" {
 pub(crate) unsafe fn RP_mmapped_addr() -> usize {
     let mut start: *mut i32 = std::ptr::null_mut();
     let mut end: *mut i32 = std::ptr::null_mut();
-    let _ret = RP_region_range(
+    let res = RP_region_range(
         1, // superblock region's index.
         &mut start as *mut *mut _ as *mut *mut c_void,
         &mut end as *mut *mut _ as *mut *mut c_void,
     );
+    assert!(res == 0);
     start as usize
 }
 
