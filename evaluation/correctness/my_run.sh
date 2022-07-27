@@ -10,7 +10,6 @@ CNT_BUGS=30     # Number of saving bugs
 nr_bug=0
 SCRIPT_DIR=`dirname $(realpath "$0")`
 OUT_PATH="$SCRIPT_DIR/out_${COMMIT}/${target}"
-out_bug_path=$OUT_PATH/bug${nr_bug}
 mkdir -p $PMEM_PATH/test
 mkdir -p $OUT_PATH
 
@@ -36,7 +35,7 @@ function run_bg() {
     dmsg "run $target"
 
     rm -rf $PMEM_PATH/test/$target/*
-    RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* $target::test --nocapture &>> $log_tmp &
+    RUST_BACKTRACE=1 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 $SCRIPT_DIR/../../target/release/deps/memento-* $target::test --nocapture &>> $log_tmp &
 }
 
 # Test thread crash and recovery run.
@@ -70,6 +69,7 @@ while true; do
         kill -9 $pid_bg || true
 
         # Save bug pool and logs
+        out_bug_path=$OUT_PATH/bug${nr_bug}_exit${ext}
         mkdir -p $out_bug_path
         cp -r $PMEM_PATH/test/$target/*.pool* $out_bug_path
         cp $log_tmp $out_bug_path/info.txt
@@ -79,7 +79,6 @@ while true; do
         if [ $nr_bug -eq $CNT_BUGS ]; then
             exit
         fi
-        out_bug_path=$OUT_PATH/bug${nr_bug}
     fi
     dmsg "⎿___________________________________________________________________________⏌"
     cat $log_tmp >> $OUT_LOG
