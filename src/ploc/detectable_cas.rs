@@ -202,7 +202,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let pt_own = pool.exec_info.cas_info.own.load(tid);
         let (p_own, _, _) = pt_own.decode();
 
-        let tmp_new = new.with_aux_bit(!p_own as _).with_tid(tid);
+        let tmp_new = new.with_aux_bit((!p_own) as _).with_tid(tid);
 
         loop {
             let res = self.inner.compare_exchange(
@@ -256,11 +256,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         guard: &'g Guard,
     ) -> Option<Result<(), PShared<'g, N>>> {
         let pft_mmt = mmt.checkpoint;
-        let (_, f_mmt, t_mmt) = pft_mmt.decode();
+        let (p_mmt, f_mmt, t_mmt) = pft_mmt.decode();
         let t_local = exec_info.local_max_time.load(tid);
 
         let pt_own = exec_info.cas_info.own.load(tid);
-        let (p_own, _, t_own) = pt_own.decode();
+        let (p_own, f_own, t_own) = pt_own.decode();
 
         if t_mmt > t_local {
             if f_mmt {
@@ -311,6 +311,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         let t_help = exec_info.cas_info.help.load(!p_own, tid);
         if t_own >= t_help {
+            assert_ne!(
+                cur.with_aux_bit(0).with_tid(0),
+                new.with_aux_bit(0).with_tid(0)
+            ); // TODO: erase
             return None;
         }
 
@@ -344,7 +348,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 return old;
             }
 
-            let chk = 'chk: loop {
+            let my_help = 'chk: loop {
                 // get checkpoint timestamp
                 let start = {
                     let fst = exec_info.exec_time();
@@ -384,22 +388,22 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             let winner_tid = old.tid();
             let winner_parity = old.aux_bit() != 0;
 
-            // check if winner thread's pcheckpoint is stale
-            let pchk = exec_info.cas_info.help.load(winner_parity, winner_tid);
-            if chk <= pchk {
+            // check if winner thread's help timestamp is stale
+            let other_help = exec_info.cas_info.help.load(winner_parity, winner_tid);
+            if my_help <= other_help {
                 // Someone may already help it. I should retry to load.
                 old = self.inner.load(Ordering::SeqCst, guard);
                 continue;
             }
 
-            // persist the pointer before CASing winner thread's pcheckpoint
+            // persist the pointer before CASing winner thread's help timestamp
             persist_obj(&self.inner, false);
 
             // CAS winner thread's pcheckpoint
             if exec_info
                 .cas_info
                 .help
-                .compare_exchange(winner_parity, winner_tid, pchk, chk)
+                .compare_exchange(winner_parity, winner_tid, other_help, my_help)
                 .is_err()
             {
                 // Someone may already help it. I should retry to load.
@@ -415,7 +419,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 Ordering::SeqCst,
                 guard,
             ) {
-                Ok(ret) => return ret,
+                Ok(ret) => {
+                    println!("[Help] parity: {winner_parity} / time: {my_help:?} / ptr: {old:?}");
+                    return ret;
+                }
                 Err(e) => {
                     old = e.current;
                 }
@@ -462,7 +469,10 @@ impl Default for Cas {
 impl Collectable for Cas {
     fn filter(mmt: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
         // Among CAS clients, those with max checkpoint are recorded
-        let (_, _, t_mmt) = mmt.checkpoint.decode();
+        let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
+        if f_mmt {
+            return;
+        }
 
         let own = pool.exec_info.cas_info.own.load(tid);
         let (_, _, t_own) = own.decode();
@@ -658,7 +668,7 @@ mod test {
     }
 
     const NR_THREAD: usize = 2;
-    const NR_COUNT: usize = 100_000;
+    const NR_COUNT: usize = 10_000;
 
     struct Updates {
         nodes: [Checkpoint<PAtomic<Node<TestValue>>>; NR_COUNT],

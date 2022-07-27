@@ -48,13 +48,13 @@ while true; do
     run_bg $target
     pid_bg=$!
 
-    limit=$((100 * 10**9))
+    limit=$((10 * 10**9))
     while ps | grep $pid_bg > /dev/null; do
         current=$(date +%s%N)
         elapsed=$(($current-$start))
         if [ $elapsed -gt $limit ]; then
             kill -9 $pid_bg || true
-            dmsg "kill $pid_bg because it has been running for over 100 seconds."
+            dmsg "kill $pid_bg because it has been running for over 10 seconds."
             break
         fi
     done
