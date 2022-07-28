@@ -129,3 +129,65 @@ where
         persist_obj(&*self.saved[1], false);
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crossbeam_epoch::Guard;
+    use itertools::Itertools;
+
+    use super::*;
+    use crate::{
+        pmem::{ralloc::Collectable, rdtscp, RootObj},
+        test_utils::tests::*,
+    };
+
+    const NR_COUNT: usize = 100_000;
+
+    struct Checkpoints {
+        chks: [Checkpoint<usize>; NR_COUNT],
+    }
+
+    impl Default for Checkpoints {
+        fn default() -> Self {
+            Self {
+                chks: array_init::array_init(|_| Default::default()),
+            }
+        }
+    }
+
+    impl Collectable for Checkpoints {
+        fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+            for i in 0..NR_COUNT {
+                Checkpoint::filter(&mut m.chks[i], tid, gc, pool);
+            }
+        }
+    }
+
+    impl RootObj<Checkpoints> for TestRootObj<DummyRootObj> {
+        fn run(&self, chks: &mut Checkpoints, tid: usize, _: &Guard, pool: &PoolHandle) {
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+
+            // let mut items: [usize; NR_COUNT] = array_init::array_init(|i| i);
+            let mut items = (0..NR_COUNT).collect_vec();
+
+            for seq in 0..NR_COUNT {
+                let i = chks.chks[seq].checkpoint::<true, _>(
+                    || rdtscp() as usize % items.len(),
+                    tid,
+                    pool,
+                );
+                // let val = items[i];
+                let val = items.remove(i);
+                testee.report(seq, TestValue::new(tid, val))
+            }
+        }
+    }
+
+    #[test]
+    fn checkpoints() {
+        const FILE_NAME: &str = "checkpoint";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, 1, NR_COUNT);
+    }
+}
