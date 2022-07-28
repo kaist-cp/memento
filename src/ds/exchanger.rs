@@ -7,9 +7,8 @@ use crossbeam_epoch::Guard;
 use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
-        common::Checkpoint,
         insert_delete::{Node as SMONode, SMOAtomic},
-        not_deleted, Traversable,
+        not_deleted, Checkpoint, Traversable,
     },
     pmem::{
         ll::persist_obj,
