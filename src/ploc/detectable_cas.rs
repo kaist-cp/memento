@@ -184,7 +184,7 @@ impl<N: Collectable> From<PShared<'_, N>> for DetectableCASAtomic<N> {
 
 impl<N: Collectable> DetectableCASAtomic<N> {
     /// Compare And Set
-    pub fn cas<'g, const REC: bool>(
+    pub fn cas<'g>(
         &self,
         old: PShared<'_, N>,
         new: PShared<'_, N>,
@@ -192,11 +192,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), PShared<'g, N>> {
-        if REC {
+        if *rec {
             if let Some(ret) = self.cas_result(new, mmt, tid, &pool.exec_info, guard) {
                 return ret;
             }
+            *rec = false;
         }
 
         let pt_own = pool.exec_info.cas_info.own.load(tid);
@@ -267,25 +269,24 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 // failed
                 exec_info.local_max_time.store(tid, t_mmt);
                 let cur = self.inner.load(Ordering::SeqCst, guard);
-                return Some(Err(self.load_help(cur, exec_info, guard)));
+                let cur = self.load_help(cur, exec_info, guard);
+                return Some(Err(cur));
             }
 
-            if t_mmt != Timestamp::from(0) {
-                // already successful
-                if t_mmt >= t_own {
-                    exec_info.cas_info.own.store(tid, pft_mmt);
-                    let _ = self.inner.compare_exchange(
-                        new.with_aux_bit(p_own as _).with_tid(tid),
-                        new.with_aux_bit(0).with_tid(0),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    );
-                }
-
-                exec_info.local_max_time.store(tid, t_mmt);
-                return Some(Ok(()));
+            // already successful
+            if t_mmt >= t_own {
+                exec_info.cas_info.own.store(tid, pft_mmt);
+                let _ = self.inner.compare_exchange(
+                    new.with_aux_bit(p_own as _).with_tid(tid),
+                    new.with_aux_bit(0).with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                );
             }
+
+            exec_info.local_max_time.store(tid, t_mmt);
+            return Some(Ok(()));
         }
 
         let cur = self.inner.load(Ordering::SeqCst, guard);
@@ -311,10 +312,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         let t_help = exec_info.cas_info.help.load(!p_own, tid);
         if t_own >= t_help {
-            assert_ne!(
-                cur.with_aux_bit(0).with_tid(0),
-                new.with_aux_bit(0).with_tid(0)
-            ); // TODO: erase
             return None;
         }
 
@@ -348,7 +345,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 return old;
             }
 
-            let my_help = 'chk: loop {
+            let t_cur = 'chk: loop {
                 // get checkpoint timestamp
                 let start = {
                     let fst = exec_info.exec_time();
@@ -389,8 +386,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             let winner_parity = old.aux_bit() != 0;
 
             // check if winner thread's help timestamp is stale
-            let other_help = exec_info.cas_info.help.load(winner_parity, winner_tid);
-            if my_help <= other_help {
+            let t_help = exec_info.cas_info.help.load(winner_parity, winner_tid);
+            if t_cur <= t_help {
                 // Someone may already help it. I should retry to load.
                 old = self.inner.load(Ordering::SeqCst, guard);
                 continue;
@@ -403,7 +400,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             if exec_info
                 .cas_info
                 .help
-                .compare_exchange(winner_parity, winner_tid, other_help, my_help)
+                .compare_exchange(winner_parity, winner_tid, t_help, t_cur)
                 .is_err()
             {
                 // Someone may already help it. I should retry to load.
@@ -420,7 +417,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 guard,
             ) {
                 Ok(ret) => {
-                    println!("[Help] parity: {winner_parity} / time: {my_help:?} / ptr: {old:?}");
+                    // println!("[Help] parity: {winner_parity} / time: {t_cur:?} / ptr: {old:?}"); // TODO: erase
                     return ret;
                 }
                 Err(e) => {
@@ -597,7 +594,8 @@ mod test {
     }
 
     impl<T: Collectable> Location<T> {
-        pub(crate) fn cas_wo_failure<const REC: bool>(
+        #[inline]
+        pub(crate) fn cas_wo_failure(
             &self,
             old: PShared<'_, Node<T>>,
             new: PShared<'_, Node<T>>,
@@ -605,63 +603,51 @@ mod test {
             tid: usize,
             guard: &Guard,
             pool: &PoolHandle,
+            rec: &mut bool,
         ) {
-            if self.loc.cas::<REC>(old, new, cas, tid, guard, pool).is_ok() {
-                return;
-            }
-
-            loop {
-                if self
-                    .loc
-                    .cas::<false>(old, new, cas, tid, guard, pool)
-                    .is_ok()
-                {
-                    return;
-                }
-            }
+            while self.loc.cas(old, new, cas, tid, guard, pool, rec).is_err() {}
         }
 
-        pub(crate) fn swap<'g, const REC: bool>(
+        pub(crate) fn swap<'g>(
             &self,
             new: PShared<'_, Node<T>>,
             swap: &mut Swap<T>,
             tid: usize,
             guard: &'g Guard,
             pool: &PoolHandle,
+            rec: &mut bool,
         ) -> PShared<'g, Node<T>> {
-            if let Ok(old) = self.try_swap::<REC>(new, swap, tid, guard, pool) {
-                return old;
-            }
-
             loop {
-                if let Ok(old) = self.try_swap::<false>(new, swap, tid, guard, pool) {
+                if let Ok(old) = self.try_swap(new, swap, tid, guard, pool, rec) {
                     return old;
                 }
             }
         }
 
-        fn try_swap<'g, const REC: bool>(
+        fn try_swap<'g>(
             &self,
             new: PShared<'_, Node<T>>,
             swap: &mut Swap<T>,
             tid: usize,
             guard: &'g Guard,
             pool: &PoolHandle,
+            rec: &mut bool,
         ) -> Result<PShared<'g, Node<T>>, ()> {
             let old = swap
                 .old
-                .checkpoint::<REC, _>(
+                .checkpoint::<_>(
                     || {
                         let old = self.loc.load(Ordering::SeqCst, guard, pool);
                         PAtomic::from(old)
                     },
                     tid,
                     pool,
+                    rec,
                 )
                 .load(Ordering::Relaxed, guard);
 
             self.loc
-                .cas::<REC>(old, new, &mut swap.cas, tid, guard, pool)
+                .cas(old, new, &mut swap.cas, tid, guard, pool, rec)
                 .map(|_| old)
                 .map_err(|_| ())
         }
@@ -695,12 +681,13 @@ mod test {
 
     impl RootObj<Updates> for TestRootObj<Location<TestValue>> {
         fn run(&self, mmt: &mut Updates, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let mut rec = true; // TODO: generalize
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
             let loc = &self.obj;
 
             for seq in 0..NR_COUNT {
                 let node = mmt.nodes[seq]
-                    .checkpoint::<true, _>(
+                    .checkpoint::<_>(
                         || {
                             let node = Node {
                                 data: TestValue::new(tid, seq),
@@ -709,19 +696,32 @@ mod test {
                         },
                         tid,
                         pool,
+                        &mut rec,
                     )
                     .load(Ordering::Relaxed, guard);
 
-                loc.cas_wo_failure::<true>(
+                // if node.as_ptr().into_offset() == 142976 {
+                //     println!("asdf");
+                // }
+
+                loc.cas_wo_failure(
                     PShared::null(),
                     node,
                     &mut mmt.upds[seq].0,
                     tid,
                     guard,
                     pool,
+                    &mut rec,
                 );
 
-                let old = loc.swap::<true>(PShared::null(), &mut mmt.upds[seq].1, tid, guard, pool);
+                let old = loc.swap(
+                    PShared::null(),
+                    &mut mmt.upds[seq].1,
+                    tid,
+                    guard,
+                    pool,
+                    &mut rec,
+                );
                 let val = unsafe { std::ptr::read(&old.deref(pool).data) };
 
                 testee.report(seq, val);
