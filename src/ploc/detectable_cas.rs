@@ -517,7 +517,8 @@ impl Cas {
 #[cfg(test)]
 mod test {
     use crate::{
-        pmem::{ralloc::Collectable, RootObj},
+        pepoch::POwned,
+        pmem::{persist_obj, ralloc::Collectable, RootObj},
         test_utils::tests::*,
     };
 
@@ -688,10 +689,14 @@ mod test {
                 let node = mmt.nodes[seq]
                     .checkpoint(
                         || {
-                            let node = Node {
-                                data: TestValue::new(tid, seq),
-                            };
-                            PAtomic::new(node, pool)
+                            let node = POwned::new(
+                                Node {
+                                    data: TestValue::new(tid, seq),
+                                },
+                                pool,
+                            );
+                            persist_obj(unsafe { node.deref(pool) }, true);
+                            PAtomic::from(node)
                         },
                         tid,
                         pool,
