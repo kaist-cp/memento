@@ -293,7 +293,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
         self.top
             .cas(top, next, &mut try_pop.delete, tid, guard, pool, rec)
             .map(|_| unsafe {
-                guard.defer_pdestroy(top);
+                // guard.defer_pdestroy(top);
                 Some(top_ref.data.clone())
             })
             .map_err(|_| TryFail)
