@@ -652,7 +652,7 @@ mod test {
         }
     }
 
-    const NR_THREAD: usize = 2;
+    const NR_THREAD: usize = 4;
     const NR_COUNT: usize = 10_000;
 
     struct Updates {
