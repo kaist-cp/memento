@@ -258,11 +258,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         guard: &'g Guard,
     ) -> Option<Result<(), PShared<'g, N>>> {
         let pft_mmt = mmt.checkpoint;
-        let (p_mmt, f_mmt, t_mmt) = pft_mmt.decode();
+        let (_, f_mmt, t_mmt) = pft_mmt.decode();
         let t_local = exec_info.local_max_time.load(tid);
 
         let pt_own = exec_info.cas_info.own.load(tid);
-        let (p_own, f_own, t_own) = pt_own.decode();
+        let (p_own, _, t_own) = pt_own.decode();
 
         if t_mmt > t_local {
             if f_mmt {
@@ -417,7 +417,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 guard,
             ) {
                 Ok(ret) => {
-                    // println!("[Help] parity: {winner_parity} / time: {t_cur:?} / ptr: {old:?}"); // TODO: erase
                     return ret;
                 }
                 Err(e) => {
@@ -635,7 +634,7 @@ mod test {
         ) -> Result<PShared<'g, Node<T>>, ()> {
             let old = swap
                 .old
-                .checkpoint::<_>(
+                .checkpoint(
                     || {
                         let old = self.loc.load(Ordering::SeqCst, guard, pool);
                         PAtomic::from(old)
@@ -687,7 +686,7 @@ mod test {
 
             for seq in 0..NR_COUNT {
                 let node = mmt.nodes[seq]
-                    .checkpoint::<_>(
+                    .checkpoint(
                         || {
                             let node = Node {
                                 data: TestValue::new(tid, seq),
@@ -699,10 +698,6 @@ mod test {
                         &mut rec,
                     )
                     .load(Ordering::Relaxed, guard);
-
-                // if node.as_ptr().into_offset() == 142976 {
-                //     println!("asdf");
-                // }
 
                 loc.cas_wo_failure(
                     PShared::null(),
