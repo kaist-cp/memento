@@ -214,17 +214,18 @@ impl<T: Clone + Collectable> Collectable for QueueGeneral<T> {
 
 impl<T: Clone + Collectable> QueueGeneral<T> {
     /// Try enqueue
-    pub fn try_enqueue<const REC: bool>(
+    pub fn try_enqueue(
         &self,
         node: PShared<'_, Node<T>>,
         try_enq: &mut TryEnqueue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), TryFail> {
         let tail = try_enq
             .tail
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let tail = loop {
                         let tail = self.tail.load(Ordering::SeqCst, guard);
@@ -248,13 +249,22 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
         let tail_ref = unsafe { tail.deref(pool) };
 
         if tail_ref
             .next
-            .cas::<REC>(PShared::null(), node, &mut try_enq.insert, tid, guard, pool)
+            .cas(
+                PShared::null(),
+                node,
+                &mut try_enq.insert,
+                tid,
+                guard,
+                pool,
+                rec,
+            )
             .is_err()
         {
             return Err(TryFail);
@@ -267,17 +277,18 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
     }
 
     /// Enqueue
-    pub fn enqueue<const REC: bool>(
+    pub fn enqueue(
         &self,
         value: T,
         enq: &mut Enqueue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) {
         let node = enq
             .node
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let node = POwned::new(Node::from(value), pool);
                     persist_obj(unsafe { node.deref(pool) }, true);
@@ -285,19 +296,13 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
-        if self
-            .try_enqueue::<REC>(node, &mut enq.try_enq, tid, guard, pool)
-            .is_ok()
-        {
-            return;
-        }
-
         loop {
             if self
-                .try_enqueue::<false>(node, &mut enq.try_enq, tid, guard, pool)
+                .try_enqueue(node, &mut enq.try_enq, tid, guard, pool, rec)
                 .is_ok()
             {
                 return;
@@ -306,14 +311,15 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
     }
 
     /// Try dequeue
-    pub fn try_dequeue<const REC: bool>(
+    pub fn try_dequeue(
         &self,
         try_deq: &mut TryDequeue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<Option<T>, TryFail> {
-        let chk = try_deq.head_next.checkpoint::<REC, _>(
+        let chk = try_deq.head_next.checkpoint(
             || {
                 let (head, next) = loop {
                     let head = self.head.load(Ordering::SeqCst, guard, pool);
@@ -338,6 +344,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
             },
             tid,
             pool,
+            rec,
         );
         let head = chk.0.load(Ordering::Relaxed, guard);
         let next = chk.1.load(Ordering::Relaxed, guard);
@@ -348,7 +355,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
 
         if self
             .head
-            .cas::<REC>(head, next, &mut try_deq.delete, tid, guard, pool)
+            .cas(head, next, &mut try_deq.delete, tid, guard, pool, rec)
             .is_err()
         {
             return Err(TryFail);
@@ -361,19 +368,16 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
     }
 
     /// Dequeue
-    pub fn dequeue<const REC: bool>(
+    pub fn dequeue(
         &self,
         deq: &mut Dequeue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Option<T> {
-        if let Ok(ret) = self.try_dequeue::<REC>(&mut deq.try_deq, tid, guard, pool) {
-            return ret;
-        }
-
         loop {
-            if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
+            if let Ok(ret) = self.try_dequeue(&mut deq.try_deq, tid, guard, pool, rec) {
                 return ret;
             }
         }
@@ -415,19 +419,21 @@ mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<TestValue>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let mut rec = true; // TODO: generalize
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             for seq in 0..NR_COUNT {
-                let _ = self.obj.enqueue::<true>(
+                let _ = self.obj.enqueue(
                     TestValue::new(tid, seq),
                     &mut enq_deq.enqs[seq],
                     tid,
                     guard,
                     pool,
+                    &mut rec,
                 );
                 let res = self
                     .obj
-                    .dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
+                    .dequeue(&mut enq_deq.deqs[seq], tid, guard, pool, &mut rec);
 
                 assert!(res.is_some(), "tid:{tid}, seq:{seq}");
                 testee.report(seq, res.unwrap());
