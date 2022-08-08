@@ -4,6 +4,7 @@ use std::sync::atomic::{compiler_fence, AtomicU64, Ordering};
 
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
+use std::ops::Deref;
 
 use crate::{
     impl_left_bits,
@@ -67,83 +68,90 @@ impl CasTimestamp {
     }
 }
 
+/// Thread-local CAS-Own timestamp storage
 #[derive(Debug)]
-pub(crate) struct CASOwnArr {
-    inner: [CachePadded<AtomicU64>; NR_MAX_THREADS + 1],
+pub(crate) struct CasOwn {
+    inner: CachePadded<[AtomicU64; 2]>,
 }
 
-impl Default for CASOwnArr {
+impl Default for CasOwn {
     fn default() -> Self {
         Self {
-            inner: array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
+            inner: CachePadded::new([AtomicU64::new(0), AtomicU64::new(0)]),
         }
     }
 }
 
-impl CASOwnArr {
+impl CasOwn {
     #[inline]
-    fn load(&self, tid: usize) -> CasTimestamp {
-        CasTimestamp(self.inner[tid].load(Ordering::Relaxed))
+    fn load(&self, parity: bool) -> Timestamp {
+        Timestamp::from(self.inner[parity as usize].load(Ordering::Relaxed))
     }
 
     #[inline]
-    fn store(&self, tid: usize, ct: CasTimestamp) {
-        self.inner[tid].store(ct.into(), Ordering::Relaxed);
+    fn store(&self, parity: bool, t: Timestamp) {
+        self.inner[parity as usize].store(t.into(), Ordering::Relaxed);
     }
 
     #[inline]
-    pub(crate) fn max_ts(&self) -> Timestamp {
-        self.inner.iter().fold(Timestamp::from(0), |max, own| {
-            let ct = CasTimestamp(own.load(Ordering::Relaxed));
-            let (_, _, t) = ct.decode();
-            std::cmp::max(max, t)
-        })
+    fn max(&self) -> (bool, Timestamp) {
+        let f = Timestamp::from(self.inner[0].load(Ordering::Relaxed));
+        let t = Timestamp::from(self.inner[1].load(Ordering::Relaxed));
+
+        if f > t {
+            (false, f)
+        } else {
+            (true, t)
+        }
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct CASHelpArr {
-    inner: [[CachePadded<AtomicU64>; NR_MAX_THREADS + 1]; 2],
+pub(crate) struct CasHelp {
+    inner: [CachePadded<AtomicU64>; 2],
 }
 
-impl Default for CASHelpArr {
+impl Default for CasHelp {
     fn default() -> Self {
         Self {
             inner: [
-                array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
-                array_init::array_init(|_| CachePadded::new(AtomicU64::new(0))),
+                CachePadded::new(AtomicU64::new(0)),
+                CachePadded::new(AtomicU64::new(0)),
             ],
         }
     }
 }
 
-impl CASHelpArr {
+impl CasHelp {
     #[inline]
-    pub(crate) fn load(&self, parity: bool, tid: usize) -> Timestamp {
-        Timestamp::from(self.inner[parity as usize][tid].load(Ordering::SeqCst))
+    fn load(&self, parity: bool) -> Timestamp {
+        Timestamp::from(self.inner[parity as usize].load(Ordering::SeqCst))
+    }
+
+    #[inline]
+    fn store(&self, parity: bool, t: Timestamp) {
+        self.inner[parity as usize].store(t.into(), Ordering::SeqCst);
     }
 
     #[inline]
     pub(crate) fn compare_exchange(
         &self,
         parity: bool,
-        tid: usize,
         old: Timestamp,
         new: Timestamp,
     ) -> Result<(), ()> {
-        self.inner[parity as usize][tid]
+        self.inner[parity as usize]
             .compare_exchange(old.into(), new.into(), Ordering::SeqCst, Ordering::SeqCst)
-            .map(|_| persist_obj(&self.inner[parity as usize][tid], false))
+            .map(|_| persist_obj(&self.inner[parity as usize], false))
             .map_err(|_| ())
     }
 
     #[inline]
-    pub(crate) fn max_ts(&self) -> Timestamp {
-        let max = self.inner.iter().flatten().fold(0, |max, help| {
-            let t = help.load(Ordering::Relaxed);
-            std::cmp::max(max, t)
-        });
-        Timestamp::from(max)
+    fn max(&self) -> Timestamp {
+        let f = Timestamp::from(self.inner[0].load(Ordering::SeqCst));
+        let t = Timestamp::from(self.inner[1].load(Ordering::SeqCst));
+
+        std::cmp::max(f, t)
     }
 }
 
@@ -201,9 +209,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             *rec = false;
         }
 
-        let pt_own = pool.exec_info.cas_info.own.load(tid);
-        let (p_own, _, _) = pt_own.decode();
-
+        let (p_own, t_own) = pool.exec_info.cas_info.own[tid].max();
         let tmp_new = new.with_aux_bit((!p_own) as _).with_tid(tid);
 
         loop {
@@ -262,11 +268,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         guard: &'g Guard,
     ) -> Option<Result<(), PShared<'g, N>>> {
         let pft_mmt = mmt.checkpoint;
-        let (_, f_mmt, t_mmt) = pft_mmt.decode();
+        let (p_mmt, f_mmt, t_mmt) = pft_mmt.decode();
         let t_local = exec_info.local_max_time.load(tid);
 
-        let pt_own = exec_info.cas_info.own.load(tid);
-        let (p_own, _, t_own) = pt_own.decode();
+        let (p_own, t_own) = exec_info.cas_info.own[tid].max();
 
         if t_mmt > t_local {
             if f_mmt {
@@ -274,12 +279,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 exec_info.local_max_time.store(tid, t_mmt);
                 let cur = self.inner.load(Ordering::SeqCst, guard);
                 let cur = self.load_help(cur, exec_info, guard);
+                // TODO: store own?
                 return Some(Err(cur));
             }
 
             // already successful
             if t_mmt >= t_own {
-                exec_info.cas_info.own.store(tid, pft_mmt);
+                exec_info.cas_info.own[tid].store(p_mmt, t_mmt);
                 let _ = self.inner.compare_exchange(
                     new.with_aux_bit(p_own as _).with_tid(tid),
                     new.with_aux_bit(0).with_tid(0),
@@ -314,7 +320,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return Some(Ok(()));
         }
 
-        let t_help = exec_info.cas_info.help.load(!p_own, tid);
+        let t_help = exec_info.cas_info.help[tid].load(!p_own);
         if t_own >= t_help {
             return None;
         }
@@ -388,7 +394,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             let winner_parity = old.aux_bit() != 0;
 
             // check if winner thread's help timestamp is stale
-            let t_help = exec_info.cas_info.help.load(winner_parity, winner_tid);
+            let t_help = exec_info.cas_info.help[winner_tid].load(winner_parity);
             if t_cur <= t_help {
                 // Someone may already help it. I should retry to load.
                 old = self.inner.load(Ordering::SeqCst, guard);
@@ -399,10 +405,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, false);
 
             // CAS winner thread's pcheckpoint
-            if exec_info
-                .cas_info
-                .help
-                .compare_exchange(winner_parity, winner_tid, t_help, t_cur)
+            if exec_info.cas_info.help[winner_tid]
+                .compare_exchange(winner_parity, t_help, t_cur)
                 .is_err()
             {
                 // Someone may already help it. I should retry to load.
@@ -436,20 +440,50 @@ unsafe impl<N: Collectable + Send + Sync> Send for DetectableCASAtomic<N> {}
 unsafe impl<N: Collectable> Sync for DetectableCASAtomic<N> {}
 
 #[derive(Debug)]
+pub(crate) struct CasHelpArr([CasHelp; NR_MAX_THREADS + 1]);
+
+impl Default for CasHelpArr {
+    fn default() -> Self {
+        Self(array_init::array_init(|_| CasHelp::default()))
+    }
+}
+
+impl Deref for CasHelpArr {
+    type Target = [CasHelp; NR_MAX_THREADS + 1];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct CasInfo {
     /// Per-thread CAS self-successful time
-    pub(crate) own: CASOwnArr,
+    pub(crate) own: [CasOwn; NR_MAX_THREADS + 1],
 
     /// Per-thread Last time receiving CAS helping
-    pub(crate) help: &'static CASHelpArr,
+    pub(crate) help: &'static CasHelpArr,
 }
 
 impl CasInfo {
-    pub(crate) fn new(help: &'static CASHelpArr) -> Self {
+    pub(crate) fn new(help: &'static CasHelpArr) -> Self {
         Self {
-            own: CASOwnArr::default(),
+            own: array_init::array_init(|_| CasOwn::default()),
             help,
         }
+    }
+
+    pub(crate) fn max_ts(&self) -> Timestamp {
+        let m = self
+            .own
+            .iter()
+            .map(|own| own.max().1)
+            .fold(Timestamp::from(0), std::cmp::max);
+
+        self.help
+            .iter()
+            .map(|help| help.max())
+            .fold(m, std::cmp::max)
     }
 }
 
@@ -470,16 +504,16 @@ impl Default for Cas {
 impl Collectable for Cas {
     fn filter(mmt: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
         // Among CAS clients, those with max checkpoint are recorded
-        let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
+        let (p_mmt, f_mmt, t_mmt) = mmt.checkpoint.decode();
         if f_mmt {
+            // TODO: store own?
             return;
         }
 
-        let own = pool.exec_info.cas_info.own.load(tid);
-        let (_, _, t_own) = own.decode();
+        let own = pool.exec_info.cas_info.own[tid].load(p_mmt);
 
-        if t_mmt > t_own {
-            pool.exec_info.cas_info.own.store(tid, mmt.checkpoint);
+        if t_mmt > own {
+            pool.exec_info.cas_info.own[tid].store(p_mmt, t_mmt);
         }
     }
 }
@@ -495,7 +529,7 @@ impl Cas {
 
         compiler_fence(Ordering::Release);
 
-        exec_info.cas_info.own.store(tid, ts_succ);
+        exec_info.cas_info.own[tid].store(parity, t);
         exec_info.local_max_time.store(tid, t);
     }
 
@@ -505,6 +539,7 @@ impl Cas {
         let ts_fail = CasTimestamp::new(false, true, t);
         self.checkpoint = ts_fail;
         persist_obj(&self.checkpoint, true);
+        // TODO: store own?
         exec_info.local_max_time.store(tid, t);
     }
 

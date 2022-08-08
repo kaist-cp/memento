@@ -34,8 +34,8 @@ impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
         let (_, latest) = chk.stale_latest_idx();
 
         // Record the one with max timestamp among checkpoints
-        if chk.saved[latest].1 > pool.exec_info.chk_info {
-            pool.exec_info.chk_info = chk.saved[latest].1;
+        if chk.saved[latest].1 > pool.exec_info.chk_max_time {
+            pool.exec_info.chk_max_time = chk.saved[latest].1;
         }
 
         if chk.saved[latest].1 > Timestamp::from(0) {

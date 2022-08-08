@@ -5,8 +5,11 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use super::{CASHelpArr, CasInfo};
-use crate::{pmem::{rdtscp, lfence}, test_utils::ordo::get_ordo_boundary};
+use super::{CasHelpArr, CasInfo};
+use crate::{
+    pmem::{lfence, rdtscp},
+    test_utils::ordo::get_ordo_boundary,
+};
 
 pub(crate) const NR_MAX_THREADS: usize = 511;
 
@@ -115,11 +118,11 @@ pub(crate) struct ExecInfo {
     /// Maximum checkpoint time in last execution (not changed after main execution)
     pub(crate) global_max_time: Timestamp,
 
+    /// Checkpoint information (not changed after main execution)
+    pub(crate) chk_max_time: Timestamp,
+
     /// CAS information
     pub(crate) cas_info: CasInfo,
-
-    /// Checkpoint information (not changed after main execution)
-    pub(crate) chk_info: Timestamp,
 
     /// Program initial time (not changed after main execution)
     pub(crate) init_time: Timestamp,
@@ -128,12 +131,12 @@ pub(crate) struct ExecInfo {
     pub(crate) tsc_offset: Timestamp,
 }
 
-impl From<&'static CASHelpArr> for ExecInfo {
-    fn from(help: &'static CASHelpArr) -> Self {
+impl From<&'static CasHelpArr> for ExecInfo {
+    fn from(help: &'static CasHelpArr) -> Self {
         Self {
             local_max_time: LocalMaxTime::default(),
             global_max_time: Timestamp::from(0),
-            chk_info: Timestamp::from(0),
+            chk_max_time: Timestamp::from(0),
             cas_info: CasInfo::new(help),
             init_time: Timestamp::from(rdtscp()),
             tsc_offset: get_ordo_boundary(),
@@ -142,12 +145,9 @@ impl From<&'static CASHelpArr> for ExecInfo {
 }
 
 impl ExecInfo {
+    #[inline]
     pub(crate) fn set_info(&mut self) {
-        let max = self.cas_info.own.max_ts();
-        let max = std::cmp::max(max, self.cas_info.help.max_ts());
-        let max = std::cmp::max(max, self.chk_info);
-
-        self.global_max_time = max;
+        self.global_max_time = std::cmp::max(self.cas_info.max_ts(), self.chk_max_time);
     }
 
     #[inline]
