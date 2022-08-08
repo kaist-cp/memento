@@ -168,7 +168,7 @@ impl PoolHandle {
                             break;
                         }
 
-                        println!("PANIC: Root memento No.{} re-executed.", tid);
+                        println!("[pool::execute] Thread {tid} re-executed.");
                     }
                 });
                 let _ = h.join();
@@ -223,6 +223,7 @@ impl PoolHandle {
     #[inline]
     pub fn free<T>(&self, pptr: PPtr<T>) {
         let addr_abs = self.start() + pptr.into_offset();
+        assert!(self.valid(addr_abs));
         self.pool().free(addr_abs as *mut u8);
     }
 

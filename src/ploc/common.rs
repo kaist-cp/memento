@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{CASHelpArr, CasInfo};
-use crate::{pmem::rdtscp, test_utils::ordo::get_ordo_boundary};
+use crate::{pmem::{rdtscp, lfence}, test_utils::ordo::get_ordo_boundary};
 
 pub(crate) const NR_MAX_THREADS: usize = 511;
 
@@ -152,6 +152,8 @@ impl ExecInfo {
 
     #[inline]
     pub(crate) fn exec_time(&self) -> Timestamp {
-        Timestamp::from(rdtscp()) - self.init_time + self.global_max_time
+        let ret = Timestamp::from(rdtscp()) - self.init_time + self.global_max_time;
+        lfence();
+        ret
     }
 }

@@ -8,7 +8,7 @@ use crossbeam_utils::CachePadded;
 use crate::{
     impl_left_bits,
     pepoch::{PAtomic, PShared},
-    pmem::{lfence, ll::persist_obj, sfence, Collectable, GarbageCollection, PoolHandle},
+    pmem::{ll::persist_obj, sfence, Collectable, GarbageCollection, PoolHandle},
     PDefault,
 };
 
@@ -216,6 +216,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             );
 
             if let Err(e) = res {
+                if new.is_null() {
+                    panic!();
+                }
+
                 let cur = self.load_help(e.current, &pool.exec_info, guard);
                 if cur == old {
                     // retry for the property of strong CAS
@@ -330,7 +334,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         self.load_help(cur, &pool.exec_info, guard)
     }
 
-    // const PATIENCE: u64 = 40000; // TODO: uncomment
+    const PATIENCE: u64 = 40000;
 
     #[inline]
     fn load_help<'g>(
@@ -345,18 +349,17 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 return old;
             }
 
-            let t_cur = 'chk: loop {
+            let (wait1, t_cur, wait2) = 'chk: loop {
                 // get checkpoint timestamp
-                let start = {
-                    let fst = exec_info.exec_time();
+                let (wait1, t_cur) = {
+                    let wait1 = exec_info.exec_time();
                     loop {
-                        let snd = exec_info.exec_time();
-                        if fst + exec_info.tsc_offset < snd {
-                            break snd;
+                        let now = exec_info.exec_time();
+                        if wait1 + exec_info.tsc_offset < now {
+                            break (wait1, now);
                         }
                     }
                 };
-                lfence();
 
                 // start spin loop
                 loop {
@@ -374,10 +377,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     }
 
                     // if patience is over, I have to help it.
-                    let now = exec_info.exec_time();
-                    if now > start + exec_info.tsc_offset {
-                        // TODO: use PATIENCE
-                        break 'chk start;
+                    let wait2 = exec_info.exec_time();
+                    if wait2 > t_cur + exec_info.tsc_offset {
+                        break 'chk (wait1, t_cur, wait2);
                     }
                 }
             };
@@ -417,6 +419,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 guard,
             ) {
                 Ok(ret) => {
+                    // println!(
+                    //     "wait1: {wait1:?} / t_cur: {t_cur:?} / wait2: {wait2:?} / ptr: {old:?}"
+                    // );
                     return ret;
                 }
                 Err(e) => {
@@ -483,7 +488,6 @@ impl Cas {
     #[inline]
     fn checkpoint_succ(&mut self, parity: bool, tid: usize, exec_info: &ExecInfo) {
         let t = exec_info.exec_time();
-        lfence();
         let ts_succ = CasTimestamp::new(parity, false, t);
 
         self.checkpoint = ts_succ;
@@ -498,7 +502,6 @@ impl Cas {
     #[inline]
     fn checkpoint_fail(&mut self, tid: usize, exec_info: &ExecInfo) {
         let t = exec_info.exec_time();
-        lfence();
         let ts_fail = CasTimestamp::new(false, true, t);
         self.checkpoint = ts_fail;
         persist_obj(&self.checkpoint, true);
@@ -517,7 +520,7 @@ impl Cas {
 #[cfg(test)]
 mod test {
     use crate::{
-        pepoch::POwned,
+        pepoch::{atomic::Pointer, POwned},
         pmem::{persist_obj, ralloc::Collectable, RootObj},
         test_utils::tests::*,
     };
@@ -547,6 +550,7 @@ mod test {
         }
     }
 
+    #[derive(Debug)]
     pub(crate) struct Swap<T: Collectable> {
         old: Checkpoint<PAtomic<Node<T>>>,
         cas: Cas,
@@ -595,17 +599,22 @@ mod test {
 
     impl<T: Collectable> Location<T> {
         #[inline]
-        pub(crate) fn cas_wo_failure(
+        pub(crate) fn cas_wo_failure<'g>(
             &self,
-            old: PShared<'_, Node<T>>,
+            mut old: PShared<'g, Node<T>>,
             new: PShared<'_, Node<T>>,
             cas: &mut Cas,
             tid: usize,
-            guard: &Guard,
+            guard: &'g Guard,
             pool: &PoolHandle,
             rec: &mut bool,
         ) {
-            while self.loc.cas(old, new, cas, tid, guard, pool, rec).is_err() {}
+            while let Err(e) = self.loc.cas(old, new, cas, tid, guard, pool, rec) {
+                // TODO: rollback
+                if e.with_high_tag(0) == old.with_high_tag(0) {
+                    old = e;
+                }
+            }
         }
 
         pub(crate) fn swap<'g>(
@@ -646,14 +655,19 @@ mod test {
                 )
                 .load(Ordering::Relaxed, guard);
 
-            self.loc
+            if self
+                .loc
                 .cas(old, new, &mut swap.cas, tid, guard, pool, rec)
-                .map(|_| old)
-                .map_err(|_| ())
+                .is_ok()
+            {
+                return Ok(old);
+            }
+
+            panic!();
         }
     }
 
-    const NR_THREAD: usize = 4;
+    const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;
 
     struct Updates {
@@ -715,15 +729,21 @@ mod test {
                 );
 
                 let old = loc.swap(
-                    PShared::null(),
+                    PShared::null().with_high_tag(seq),
                     &mut mmt.upds[seq].1,
                     tid,
                     guard,
                     pool,
                     &mut rec,
                 );
-                let val = unsafe { std::ptr::read(&old.deref(pool).data) };
 
+                // if node != old {
+                //     println!("{:?}", mmt.nodes[seq]);
+                //     println!("{:?}", mmt.upds[seq]);
+                //     panic!();
+                // }
+
+                let val = unsafe { std::ptr::read(&old.deref(pool).data) };
                 testee.report(seq, val);
             }
         }
