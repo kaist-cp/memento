@@ -500,13 +500,16 @@ pub mod tests {
                     .map(|i| results[i].load(Ordering::SeqCst))
                     .enumerate()
                 {
+                    // `to_tid` must have returned value at `to_seq`
                     assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
+
+                    // `from_tid`'s `from_seq` must be issued exactly once
                     let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
                     assert!(
-                        !checked_map[to_tid][to_seq],
+                        !checked_map[from_tid][from_seq],
                         "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
                     );
-                    checked_map[to_tid][to_seq] = true;
+                    checked_map[from_tid][from_seq] = true;
                 }
             }
         }
