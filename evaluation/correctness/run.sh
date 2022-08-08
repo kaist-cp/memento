@@ -1,4 +1,5 @@
 #!/bin/bash
+# TODO: Merge with run_dram.sh
 
 SCRIPT_DIR=`dirname $(realpath "$0")`
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# TODO: Merge with build_dram.sh
 
 PMEM_PATH="/mnt/pmem0"
 

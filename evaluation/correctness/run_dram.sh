@@ -10,6 +10,8 @@ BUG_LIMIT=30     # Limitation of the number of saving pool file when a bug occur
 TIMEOUT=10
 
 # Initialize
+trap "exit;" SIGINT SIGTERM
+
 bug_cnt=0
 OUT_PATH="$SCRIPT_DIR/out_${COMMIT}/${target}"
 mkdir -p $PMEM_PATH/test
