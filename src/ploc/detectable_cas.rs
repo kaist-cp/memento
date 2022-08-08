@@ -129,11 +129,6 @@ impl CasHelp {
     }
 
     #[inline]
-    fn store(&self, parity: bool, t: Timestamp) {
-        self.inner[parity as usize].store(t.into(), Ordering::SeqCst);
-    }
-
-    #[inline]
     pub(crate) fn compare_exchange(
         &self,
         parity: bool,
@@ -223,7 +218,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             if let Err(e) = res {
                 if new.is_null() {
-                    panic!();
+                    panic!(); // TODO: erase
                 }
 
                 let cur = self.load_help(e.current, &pool.exec_info, guard);
@@ -355,14 +350,14 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 return old;
             }
 
-            let (wait1, t_cur, wait2) = 'chk: loop {
+            let t_cur = 'chk: loop {
                 // get checkpoint timestamp
-                let (wait1, t_cur) = {
+                let t_cur = {
                     let wait1 = exec_info.exec_time();
                     loop {
                         let now = exec_info.exec_time();
                         if wait1 + exec_info.tsc_offset < now {
-                            break (wait1, now);
+                            break now;
                         }
                     }
                 };
@@ -385,7 +380,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     // if patience is over, I have to help it.
                     let wait2 = exec_info.exec_time();
                     if wait2 > t_cur + exec_info.tsc_offset {
-                        break 'chk (wait1, t_cur, wait2);
+                        // TODO: use PATIENCE
+                        break 'chk t_cur;
                     }
                 }
             };
@@ -423,9 +419,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 guard,
             ) {
                 Ok(ret) => {
-                    // println!(
-                    //     "wait1: {wait1:?} / t_cur: {t_cur:?} / wait2: {wait2:?} / ptr: {old:?}"
-                    // );
                     return ret;
                 }
                 Err(e) => {
@@ -771,12 +764,6 @@ mod test {
                     pool,
                     &mut rec,
                 );
-
-                // if node != old {
-                //     println!("{:?}", mmt.nodes[seq]);
-                //     println!("{:?}", mmt.upds[seq]);
-                //     panic!();
-                // }
 
                 let val = unsafe { std::ptr::read(&old.deref(pool).data) };
                 testee.report(seq, val);
