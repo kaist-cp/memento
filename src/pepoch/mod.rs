@@ -86,6 +86,7 @@ pub trait PDestroyable {
 
 impl PDestroyable for Guard {
     unsafe fn defer_pdestroy<T>(&self, ptr: PShared<'_, T>) {
-        self.defer_unchecked(move || ptr.into_owned(), Some(ptr.as_ptr().into_offset()));
+        // TODO: This makes crashed thread blocked...
+        // self.defer_unchecked(move || ptr.into_owned(), Some(ptr.as_ptr().into_offset()));
     }
 }
