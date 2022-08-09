@@ -50,7 +50,7 @@ pub fn decompose_aux_bit(data: usize) -> (usize, usize) {
 }
 
 /// Timestamp struct
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Timestamp(u64);
 
 impl From<u64> for Timestamp {

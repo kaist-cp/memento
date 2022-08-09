@@ -1508,6 +1508,7 @@ impl<T> PShared<'_, T> {
     /// assert_eq!(p.as_ptr(), ptr);
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
+    // TODO: change this into offset()
     pub fn as_ptr(&self) -> PPtr<T> {
         let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
         PPtr::from(offset)

@@ -69,40 +69,18 @@ impl CasTimestamp {
 }
 
 /// Thread-local CAS-Own timestamp storage
-#[derive(Debug)]
-pub(crate) struct CasOwn {
-    inner: CachePadded<[AtomicU64; 2]>,
-}
-
-impl Default for CasOwn {
-    fn default() -> Self {
-        Self {
-            inner: CachePadded::new([AtomicU64::new(0), AtomicU64::new(0)]),
-        }
-    }
-}
+#[derive(Debug, Default)]
+pub(crate) struct CasOwn(CachePadded<AtomicU64>);
 
 impl CasOwn {
     #[inline]
-    fn load(&self, parity: bool) -> Timestamp {
-        Timestamp::from(self.inner[parity as usize].load(Ordering::Relaxed))
+    fn load(&self) -> CasTimestamp {
+        CasTimestamp(self.0.load(Ordering::Relaxed))
     }
 
     #[inline]
-    fn store(&self, parity: bool, t: Timestamp) {
-        self.inner[parity as usize].store(t.into(), Ordering::Relaxed);
-    }
-
-    #[inline]
-    fn max(&self) -> (bool, Timestamp) {
-        let f = Timestamp::from(self.inner[0].load(Ordering::Relaxed));
-        let t = Timestamp::from(self.inner[1].load(Ordering::Relaxed));
-
-        if f > t {
-            (false, f)
-        } else {
-            (true, t)
-        }
+    fn store(&self, t: CasTimestamp) {
+        self.0.store(t.into(), Ordering::Relaxed);
     }
 }
 
@@ -204,7 +182,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             *rec = false;
         }
 
-        let (p_own, t_own) = pool.exec_info.cas_info.own[tid].max();
+        let (p_own, _, _) = pool.exec_info.cas_info.own[tid].load().decode();
         let tmp_new = new.with_aux_bit((!p_own) as _).with_tid(tid);
 
         loop {
@@ -262,11 +240,10 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         exec_info: &ExecInfo,
         guard: &'g Guard,
     ) -> Option<Result<(), PShared<'g, N>>> {
-        let pft_mmt = mmt.checkpoint;
-        let (p_mmt, f_mmt, t_mmt) = pft_mmt.decode();
+        let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
         let t_local = exec_info.local_max_time.load(tid);
 
-        let (p_own, t_own) = exec_info.cas_info.own[tid].max();
+        let (p_own, _, t_own) = exec_info.cas_info.own[tid].load().decode();
 
         if t_mmt > t_local {
             if f_mmt {
@@ -274,13 +251,12 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 exec_info.local_max_time.store(tid, t_mmt);
                 let cur = self.inner.load(Ordering::SeqCst, guard);
                 let cur = self.load_help(cur, exec_info, guard);
-                // TODO: store own?
                 return Some(Err(cur));
             }
 
             // already successful
             if t_mmt >= t_own {
-                exec_info.cas_info.own[tid].store(p_mmt, t_mmt);
+                exec_info.cas_info.own[tid].store(mmt.checkpoint);
                 let _ = self.inner.compare_exchange(
                     new.with_aux_bit(p_own as _).with_tid(tid),
                     new.with_aux_bit(0).with_tid(0),
@@ -470,7 +446,7 @@ impl CasInfo {
         let m = self
             .own
             .iter()
-            .map(|own| own.max().1)
+            .map(|own| own.load().decode().2)
             .fold(Timestamp::from(0), std::cmp::max);
 
         self.help
@@ -497,16 +473,15 @@ impl Default for Cas {
 impl Collectable for Cas {
     fn filter(mmt: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
         // Among CAS clients, those with max checkpoint are recorded
-        let (p_mmt, f_mmt, t_mmt) = mmt.checkpoint.decode();
+        let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
         if f_mmt {
-            // TODO: store own?
             return;
         }
 
-        let own = pool.exec_info.cas_info.own[tid].load(p_mmt);
+        let (_, _, t_own) = pool.exec_info.cas_info.own[tid].load().decode();
 
-        if t_mmt > own {
-            pool.exec_info.cas_info.own[tid].store(p_mmt, t_mmt);
+        if t_mmt > t_own {
+            pool.exec_info.cas_info.own[tid].store(mmt.checkpoint);
         }
     }
 }
@@ -522,7 +497,7 @@ impl Cas {
 
         compiler_fence(Ordering::Release);
 
-        exec_info.cas_info.own[tid].store(parity, t);
+        exec_info.cas_info.own[tid].store(ts_succ);
         exec_info.local_max_time.store(tid, t);
     }
 
@@ -532,7 +507,6 @@ impl Cas {
         let ts_fail = CasTimestamp::new(false, true, t);
         self.checkpoint = ts_fail;
         persist_obj(&self.checkpoint, true);
-        // TODO: store own?
         exec_info.local_max_time.store(tid, t);
     }
 
