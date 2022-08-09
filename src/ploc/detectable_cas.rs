@@ -107,6 +107,11 @@ impl CasHelp {
     }
 
     #[inline]
+    fn store(&self, parity: bool, t: Timestamp) {
+        self.inner[parity as usize].store(t.into(), Ordering::SeqCst);
+    }
+
+    #[inline]
     pub(crate) fn compare_exchange(
         &self,
         parity: bool,
@@ -498,6 +503,7 @@ impl Cas {
         compiler_fence(Ordering::Release);
 
         exec_info.cas_info.own[tid].store(ts_succ);
+        exec_info.cas_info.help[tid].store(!parity, t); // preventing other threads from helping the previous CAS.
         exec_info.local_max_time.store(tid, t);
     }
 
