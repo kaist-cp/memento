@@ -200,10 +200,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             );
 
             if let Err(e) = res {
-                if new.is_null() {
-                    panic!(); // TODO: erase
-                }
-
                 let cur = self.load_help(e.current, &pool.exec_info, guard);
                 if cur == old {
                     // retry for the property of strong CAS
