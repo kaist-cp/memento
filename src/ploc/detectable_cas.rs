@@ -291,7 +291,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     Ordering::SeqCst,
                     guard,
                 )
-                .map_err(|_| sfence);
+                .map_err(|_| sfence());
 
             return Some(Ok(()));
         }
