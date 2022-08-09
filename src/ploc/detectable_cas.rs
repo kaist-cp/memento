@@ -617,12 +617,7 @@ mod test {
             pool: &PoolHandle,
             rec: &mut bool,
         ) {
-            while let Err(e) = self.loc.cas(old, new, cas, tid, guard, pool, rec) {
-                // TODO: rollback
-                if e.with_high_tag(0) == old.with_high_tag(0) {
-                    old = e;
-                }
-            }
+            while self.loc.cas(old, new, cas, tid, guard, pool, rec).is_err() {}
         }
 
         pub(crate) fn swap<'g>(
@@ -737,7 +732,7 @@ mod test {
                 );
 
                 let old = loc.swap(
-                    PShared::null().with_high_tag(seq),
+                    PShared::null(),
                     &mut mmt.upds[seq].1,
                     tid,
                     guard,
