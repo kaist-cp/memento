@@ -3,6 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::Guard;
+use crossbeam_utils::CachePadded;
 use etrace::*;
 
 use crate::{
@@ -13,6 +14,8 @@ use crate::{
         rdtsc, PoolHandle,
     },
 };
+
+use super::{ExecInfo, Timestamp};
 
 /// Node for `Insert`/`Delete`
 pub trait Node: Sized {
@@ -37,20 +40,42 @@ pub trait Traversable<N> {
     fn contains(&self, target: PShared<'_, N>, guard: &Guard, pool: &PoolHandle) -> bool;
 }
 
-/// Insert Error
-#[derive(Debug)]
-pub enum InsertError<'g, T> {
-    /// CAS fail (Strong fail)
-    CASFail(PShared<'g, T>),
-
-    /// Fail judged when recovered (Weak fail)
-    RecFail,
+#[derive(Debug, Default)]
+struct Failed {
+    t: CachePadded<Timestamp>,
 }
+
+impl Failed {
+    fn record(&mut self, exec_info: &ExecInfo) {
+        *self.t = exec_info.exec_time();
+        persist_obj(&*self.t, true);
+    }
+
+    fn check_failed(&self, tid: usize, exec_info: &ExecInfo) -> bool {
+        let t_mmt = *self.t;
+        let t_local = exec_info.local_max_time.load(tid);
+
+        if t_mmt <= t_local {
+            return false;
+        }
+
+        exec_info.local_max_time.store(tid, t_mmt);
+        true
+    }
+}
+
+/// Insert memento
+#[derive(Debug, Default)]
+pub struct Insert(Failed);
+
+/// Delete memento
+#[derive(Debug, Default)]
+pub struct Delete(Failed);
 
 /// Atomic pointer for use of `Insert' and `Delete`
 #[derive(Debug)]
 pub struct SMOAtomic<N: Node + Collectable> {
-    inner: PAtomic<N>,
+    inner: PAtomic<N>, // TODO: CachePadded
 }
 
 impl<N: Node + Collectable> Collectable for SMOAtomic<N> {
@@ -151,7 +176,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
 
                 let now = rdtsc();
                 if now > start + Self::PATIENCE {
-                    persist_obj(&self.inner, true);
+                    persist_obj(&self.inner, false);
                     match self.inner.compare_exchange(
                         old,
                         old.with_aux_bit(0),
@@ -159,7 +184,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                         Ordering::SeqCst,
                         guard,
                     ) {
-                        Ok(_) => return old.with_aux_bit(0),
+                        Ok(new) => return new,
                         Err(e) => {
                             old = e.current;
                             continue 'out;
@@ -175,11 +200,21 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         &self,
         new: PShared<'_, N>,
         obj: &O,
+        mmt: &mut Insert,
+        tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<(), InsertError<'g, N>> {
-        if REC {
-            return Self::insert_result(new, obj, guard, pool);
+        rec: &mut bool,
+    ) -> Result<(), PShared<'g, N>> {
+        if *rec {
+            if let Some(succ) = Self::insert_result(new, obj, mmt, tid, guard, pool) {
+                return if succ {
+                    Ok(())
+                } else {
+                    Err(self.load_lp(Ordering::SeqCst, guard)) // TODO: This makes this function not guarantee the returned value is not null.
+                };
+            }
+            *rec = false;
         }
 
         // Normal run
@@ -196,12 +231,13 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         {
             let cur = self.load_lp(Ordering::SeqCst, guard);
             if cur != PShared::null() {
-                return Err(InsertError::CASFail(cur));
+                mmt.0.record(&pool.exec_info);
+                return Err(cur);
             }
             // retry for the property of strong CAS
         }
 
-        persist_obj(&self.inner, true);
+        persist_obj(&self.inner, false);
         let _ = self.inner.compare_exchange(
             new.with_aux_bit(1),
             new,
@@ -224,15 +260,25 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     }
 
     /// Insert
-    pub fn insert<'g, O: Traversable<N>, const REC: bool>(
+    pub fn insert<'g, O: Traversable<N>>(
         &self,
         new: PShared<'_, N>,
         obj: &O,
+        mmt: &mut Insert,
+        tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<(), InsertError<'g, N>> {
-        if REC {
-            return Self::insert_result(new, obj, guard, pool);
+        rec: &mut bool,
+    ) -> Result<(), PShared<'g, N>> {
+        if *rec {
+            if let Some(succ) = Self::insert_result(new, obj, mmt, tid, guard, pool) {
+                return if succ {
+                    Ok(())
+                } else {
+                    Err(self.inner.load(Ordering::SeqCst, guard))
+                };
+            }
+            *rec = false;
         }
 
         // Normal run
@@ -243,7 +289,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             Ordering::SeqCst,
             guard,
         ) {
-            return Err(InsertError::CASFail(e.current));
+            mmt.0.record(&pool.exec_info);
+            return Err(e.current);
         }
 
         persist_obj(&self.inner, true);
@@ -251,20 +298,26 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     }
 
     #[inline]
-    fn insert_result<'g, O: Traversable<N>>(
+    fn insert_result<O: Traversable<N>>(
         new: PShared<'_, N>,
         obj: &O,
-        guard: &'g Guard,
+        mmt: &mut Insert,
+        tid: usize,
+        guard: &Guard,
         pool: &PoolHandle,
-    ) -> Result<(), InsertError<'g, N>> {
+    ) -> Option<bool> {
+        if mmt.0.check_failed(tid, &pool.exec_info) {
+            return Some(false);
+        }
+
         if unsafe { new.deref(pool) }.acked(guard)
             || obj.contains(new, guard, pool)
             || unsafe { new.deref(pool) }.acked(guard)
         {
-            return Ok(());
+            return Some(true);
         }
 
-        Err(InsertError::RecFail) // Fail type may change after crash. Insert is weak.
+        None
     }
 
     /// Delete

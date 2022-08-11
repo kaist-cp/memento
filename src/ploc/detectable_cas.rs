@@ -137,7 +137,7 @@ impl CasHelp {
 #[derive(Debug)]
 pub struct DetectableCASAtomic<N: Collectable> {
     /// Atomic pointer
-    pub inner: PAtomic<N>,
+    pub inner: PAtomic<N>, // TODO: CachePadded
 }
 
 impl<N: Collectable> Collectable for DetectableCASAtomic<N> {
@@ -460,7 +460,7 @@ impl CasInfo {
 /// Compare and Set memento
 #[derive(Debug)]
 pub struct Cas {
-    checkpoint: CasTimestamp,
+    checkpoint: CasTimestamp, // TODO: CachePadded
 }
 
 impl Default for Cas {
