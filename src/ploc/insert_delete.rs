@@ -64,13 +64,29 @@ impl Failed {
     }
 }
 
+impl Collectable for Failed {
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
+}
+
 /// Insert memento
 #[derive(Debug, Default)]
 pub struct Insert(Failed);
 
+impl Collectable for Insert {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut s.0, tid, gc, pool);
+    }
+}
+
 /// Delete memento
 #[derive(Debug, Default)]
 pub struct Delete(Failed);
+
+impl Collectable for Delete {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut s.0, tid, gc, pool);
+    }
+}
 
 /// Atomic pointer for use of `Insert' and `Delete`
 #[derive(Debug)]
@@ -197,7 +213,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     }
 
     /// Insert link-persist
-    pub fn insert_lp<'g, O: Traversable<N>, const REC: bool>(
+    pub fn insert_lp<'g, O: Traversable<N>>(
         &self,
         new: PShared<'_, N>,
         obj: &O,
@@ -324,7 +340,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     /// Delete
     ///
     /// Requirement: `old` is not null
-    pub fn delete<'g, const REC: bool>(
+    pub fn delete<'g>(
         &self,
         old: PShared<'g, N>,
         new: PShared<'_, N>,
