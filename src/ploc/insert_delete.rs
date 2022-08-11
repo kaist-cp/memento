@@ -123,6 +123,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             return Err(old);
         }
 
+        // TODO: Change inner only at the end
         let start = rdtsc();
         loop {
             let cur = self.inner.load(Ordering::SeqCst, guard);
@@ -327,18 +328,27 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         &self,
         old: PShared<'g, N>,
         new: PShared<'_, N>,
+        mmt: &mut Delete,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        if REC {
-            return self.delete_result(old, new, tid, guard, pool);
+        if *rec {
+            if let Some(succ) = self.delete_result(old, new, mmt, tid, guard, pool) {
+                return if succ {
+                    Ok(old)
+                } else {
+                    Err(ok_or!(self.load_help(old, guard, pool), e, e))
+                };
+            }
+            *rec = false;
         }
 
         // Record the tid on the node to be deleted.
         let target_ref = unsafe { old.deref(pool) };
         let owner = target_ref.replacement();
-        let _ = owner
+        if owner
             .compare_exchange(
                 PShared::null(),
                 new.with_tid(tid),
@@ -346,7 +356,12 @@ impl<N: Node + Collectable> SMOAtomic<N> {
                 Ordering::SeqCst,
                 guard,
             )
-            .map_err(|_| self.load_help(old, guard, pool).unwrap())?;
+            .is_err()
+        {
+            mmt.0.record(&pool.exec_info);
+            let cur = ok_or!(self.load_help(old, guard, pool), e, e);
+            return Err(cur);
+        }
 
         // Now I own the location. flush the owner.
         persist_obj(owner, false); // we're doing CAS soon.
@@ -370,17 +385,22 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         &self,
         old: PShared<'g, N>,
         new: PShared<'_, N>,
+        mmt: &mut Delete,
         tid: usize,
         guard: &'g Guard,
         pool: &PoolHandle,
-    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
+    ) -> Option<bool> {
+        if mmt.0.check_failed(tid, &pool.exec_info) {
+            return Some(false);
+        }
+
         let old_ref = unsafe { old.deref(pool) };
 
         // Failure if the owner is not me
         let owner = old_ref.replacement();
         let o = owner.load(Ordering::SeqCst, guard);
         if o.tid() != tid {
-            return Err(ok_or!(self.load_help(old, guard, pool), e, e));
+            return None;
         }
 
         persist_obj(owner, false);
@@ -390,7 +410,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst, guard);
         guard.defer_persist(&self.inner);
         unsafe { guard.defer_pdestroy(old) };
-        Ok(old)
+        Some(true)
     }
 }
 
