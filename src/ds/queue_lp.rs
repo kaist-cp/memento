@@ -4,6 +4,7 @@ use crate::ploc::insert_delete::{self, SMOAtomic};
 use crate::ploc::{not_deleted, Checkpoint, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
+use insert_delete::{Delete, Insert};
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
@@ -59,16 +60,32 @@ impl<T: Collectable> insert_delete::Node for Node<T> {
     }
 }
 
+/// Try enqueue memento
+#[derive(Debug, Default)]
+pub struct TryEnqueue {
+    ins: Insert,
+}
+
+unsafe impl Send for TryEnqueue {}
+
+impl Collectable for TryEnqueue {
+    fn filter(try_enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Insert::filter(&mut try_enq.ins, tid, gc, pool);
+    }
+}
+
 /// Enqueue memento
 #[derive(Debug)]
 pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
+    try_enq: TryEnqueue,
 }
 
 impl<T: Clone + Collectable> Default for Enqueue<T> {
     fn default() -> Self {
         Self {
             node: Default::default(),
+            try_enq: Default::default(),
         }
     }
 }
@@ -76,6 +93,7 @@ impl<T: Clone + Collectable> Default for Enqueue<T> {
 impl<T: Clone + Collectable> Collectable for Enqueue<T> {
     fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut enq.node, tid, gc, pool);
+        TryEnqueue::filter(&mut enq.try_enq, tid, gc, pool);
     }
 }
 
@@ -85,12 +103,14 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for Enqueue<T> {}
 #[derive(Debug)]
 pub struct TryDequeue<T: Clone + Collectable> {
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
+    del: Delete,
 }
 
 impl<T: Clone + Collectable> Default for TryDequeue<T> {
     fn default() -> Self {
         Self {
             head_next: Default::default(),
+            del: Default::default(),
         }
     }
 }
@@ -100,6 +120,7 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
     fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut try_deq.head_next, tid, gc, pool);
+        Delete::filter(&mut try_deq.del, tid, gc, pool);
     }
 }
 
@@ -198,11 +219,14 @@ impl<T: Clone + Collectable> Traversable<Node<T>> for Queue<T> {
 
 impl<T: Clone + Collectable> Queue<T> {
     /// Try enqueue
-    pub fn try_enqueue<const REC: bool>(
+    pub fn try_enqueue(
         &self,
         node: PShared<'_, Node<T>>,
+        try_enq: &mut TryEnqueue,
+        tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), TryFail> {
         let (tail, tail_ref) = loop {
             let tail = self.tail.load(Ordering::SeqCst, guard);
@@ -221,13 +245,13 @@ impl<T: Clone + Collectable> Queue<T> {
 
         if tail_ref
             .next
-            .insert_lp::<_, REC>(node, self, guard, pool)
+            .insert_lp(node, self, &mut try_enq.ins, tid, guard, pool, rec)
             .is_err()
         {
             return Err(TryFail);
         }
 
-        if !REC {
+        if !*rec {
             let _ =
                 self.tail
                     .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
@@ -237,17 +261,18 @@ impl<T: Clone + Collectable> Queue<T> {
     }
 
     /// Enqueue
-    pub fn enqueue<const REC: bool>(
+    pub fn enqueue(
         &self,
         value: T,
         enq: &mut Enqueue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) {
         let node = enq
             .node
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let node = POwned::new(Node::from(value), pool);
                     persist_obj(unsafe { node.deref(pool) }, true);
@@ -255,29 +280,26 @@ impl<T: Clone + Collectable> Queue<T> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
-        if self.try_enqueue::<REC>(node, guard, pool).is_ok() {
-            return;
-        }
-
-        loop {
-            if self.try_enqueue::<false>(node, guard, pool).is_ok() {
-                return;
-            }
-        }
+        while self
+            .try_enqueue(node, &mut enq.try_enq, tid, guard, pool, rec)
+            .is_err()
+        {}
     }
 
     /// Try dequeue
-    pub fn try_dequeue<const REC: bool>(
+    pub fn try_dequeue(
         &self,
         try_deq: &mut TryDequeue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<Option<T>, TryFail> {
-        let chk = try_deq.head_next.checkpoint::<REC, _>(
+        let chk = try_deq.head_next.checkpoint(
             || {
                 let (head, next) = loop {
                     let head = self.head.load_lp(Ordering::SeqCst, guard);
@@ -302,6 +324,7 @@ impl<T: Clone + Collectable> Queue<T> {
             },
             tid,
             pool,
+            rec,
         );
 
         let head = chk.0.load(Ordering::Relaxed, guard);
@@ -313,7 +336,7 @@ impl<T: Clone + Collectable> Queue<T> {
 
         if self
             .head
-            .delete::<REC>(head, next, tid, guard, pool)
+            .delete(head, next, &mut try_deq.del, tid, guard, pool, rec)
             .is_err()
         {
             return Err(TryFail);
@@ -326,38 +349,32 @@ impl<T: Clone + Collectable> Queue<T> {
     }
 
     /// Dequeue
-    pub fn dequeue<const REC: bool>(
+    pub fn dequeue(
         &self,
         deq: &mut Dequeue<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Option<T> {
-        if let Ok(ret) = self.try_dequeue::<REC>(&mut deq.try_deq, tid, guard, pool) {
-            return ret;
-        }
-
         loop {
-            if let Ok(ret) = self.try_dequeue::<false>(&mut deq.try_deq, tid, guard, pool) {
+            if let Ok(ret) = self.try_dequeue(&mut deq.try_deq, tid, guard, pool, rec) {
                 return ret;
             }
         }
     }
 
     /// Dequeue Some
-    pub fn dequeue_some<const REC: bool>(
+    pub fn dequeue_some(
         &self,
         deq_some: &mut DequeueSome<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> T {
-        if let Some(v) = self.dequeue::<REC>(&mut deq_some.deq, tid, guard, pool) {
-            return v;
-        }
-
         loop {
-            if let Some(v) = self.dequeue::<false>(&mut deq_some.deq, tid, guard, pool) {
+            if let Some(v) = self.dequeue(&mut deq_some.deq, tid, guard, pool, rec) {
                 return v;
             }
         }
@@ -371,8 +388,8 @@ mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
-    const NR_THREAD: usize = 4;
-    const NR_COUNT: usize = 100_000;
+    const NR_THREAD: usize = 2;
+    const NR_COUNT: usize = 10_000;
 
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
@@ -399,19 +416,21 @@ mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<Queue<TestValue>> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let mut rec = true; // TODO: generalize
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             for seq in 0..NR_COUNT {
-                let _ = self.obj.enqueue::<true>(
+                let _ = self.obj.enqueue(
                     TestValue::new(tid, seq),
                     &mut enq_deq.enqs[seq],
                     tid,
                     guard,
                     pool,
+                    &mut rec,
                 );
                 let res = self
                     .obj
-                    .dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
+                    .dequeue(&mut enq_deq.deqs[seq], tid, guard, pool, &mut rec);
 
                 assert!(res.is_some(), "tid:{tid}, seq:{seq}");
                 testee.report(seq, res.unwrap());

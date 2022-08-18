@@ -232,17 +232,18 @@ unsafe impl<T: Clone + Collectable> Sync for ElimStack<T> {}
 
 impl<T: Clone + Collectable> ElimStack<T> {
     /// Try push
-    fn try_push<const REC: bool>(
+    fn try_push(
         &self,
         node: PShared<'_, Node<Request<T>>>,
         try_push: &mut TryPush<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), TryFail> {
         if self
             .inner
-            .try_push::<REC>(node, &mut try_push.try_push, tid, guard, pool)
+            .try_push(node, &mut try_push.try_push, tid, guard, pool, rec)
             .is_ok()
         {
             return Ok(());
@@ -251,30 +252,32 @@ impl<T: Clone + Collectable> ElimStack<T> {
         let value = unsafe { node.deref(pool) }.data.clone();
 
         self.slots[try_push.elim_idx]
-            .try_exchange::<REC>(
+            .try_exchange(
                 value,
                 |req| matches!(req, Request::Pop),
                 &mut try_push.try_xchg,
                 tid,
                 guard,
                 pool,
+                rec,
             )
             .map(|_| ())
             .map_err(|_| TryFail)
     }
 
     /// Push
-    pub fn push<const REC: bool>(
+    pub fn push(
         &self,
         value: T,
         push: &mut Push<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) {
         let node = push
             .node
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let node = POwned::new(Node::from(Request::Push(value)), pool);
                     persist_obj(unsafe { node.deref(pool) }, true);
@@ -282,37 +285,28 @@ impl<T: Clone + Collectable> ElimStack<T> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
-        if self
-            .try_push::<REC>(node, &mut push.try_push, tid, guard, pool)
-            .is_ok()
-        {
-            return;
-        }
-
-        loop {
-            if self
-                .try_push::<false>(node, &mut push.try_push, tid, guard, pool)
-                .is_ok()
-            {
-                return;
-            }
-        }
+        while self
+            .try_push(node, &mut push.try_push, tid, guard, pool, rec)
+            .is_err()
+        {}
     }
 
     /// Try pop
-    fn try_pop<const REC: bool>(
+    fn try_pop(
         &self,
         try_pop: &mut TryPop<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<Option<T>, TryFail> {
         if let Ok(popped) = self
             .inner
-            .try_pop::<REC>(&mut try_pop.try_pop, tid, guard, pool)
+            .try_pop(&mut try_pop.try_pop, tid, guard, pool, rec)
         {
             let ret = popped.map(|req| {
                 if let Request::Push(v) = req {
@@ -325,13 +319,14 @@ impl<T: Clone + Collectable> ElimStack<T> {
         }
 
         let req = self.slots[try_pop.elim_idx]
-            .try_exchange::<REC>(
+            .try_exchange(
                 Request::Pop,
                 |req| matches!(req, Request::Push(_)),
                 &mut try_pop.try_xchg,
                 tid,
                 guard,
                 pool,
+                rec,
             )
             .map_err(|_| TryFail)?;
 
@@ -343,19 +338,16 @@ impl<T: Clone + Collectable> ElimStack<T> {
     }
 
     /// Pop
-    pub fn pop<const REC: bool>(
+    pub fn pop(
         &self,
         pop: &mut Pop<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Option<T> {
-        if let Ok(ret) = self.try_pop::<REC>(&mut pop.try_pop, tid, guard, pool) {
-            return ret;
-        }
-
         loop {
-            if let Ok(ret) = self.try_pop::<false>(&mut pop.try_pop, tid, guard, pool) {
+            if let Ok(ret) = self.try_pop(&mut pop.try_pop, tid, guard, pool, rec) {
                 return ret;
             }
         }
@@ -366,25 +358,27 @@ impl<T: Clone + Collectable> Stack<T> for ElimStack<T> {
     type Push = Push<T>;
     type Pop = Pop<T>;
 
-    fn push<const REC: bool>(
+    fn push(
         &self,
         value: T,
         push: &mut Self::Push,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) {
-        self.push::<REC>(value, push, tid, guard, pool)
+        self.push(value, push, tid, guard, pool, rec)
     }
 
-    fn pop<const REC: bool>(
+    fn pop(
         &self,
         pop: &mut Self::Pop,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Option<T> {
-        self.pop::<REC>(pop, tid, guard, pool)
+        self.pop(pop, tid, guard, pool, rec)
     }
 }
 
