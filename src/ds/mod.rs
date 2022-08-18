@@ -2,7 +2,7 @@
 
 // pub mod clevel;
 // pub mod comb;
-// pub mod elim_stack;
+pub mod elim_stack;
 pub mod exchanger;
 pub mod list;
 pub mod queue;
