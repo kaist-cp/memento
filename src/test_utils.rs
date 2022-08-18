@@ -512,6 +512,8 @@ pub mod tests {
                     checked_map[from_tid][from_seq] = true;
                 }
             }
+
+            println!("[Tester] Test passed.");
         }
     }
 }
