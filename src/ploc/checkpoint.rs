@@ -134,12 +134,21 @@ mod test {
     use crate::{
         pmem::{ralloc::Collectable, rdtscp, RootObj},
         test_utils::tests::*,
+        Memento,
     };
 
     const NR_COUNT: usize = 100_000;
 
     struct Checkpoints {
         chks: [Checkpoint<usize>; NR_COUNT],
+    }
+
+    impl Memento for Checkpoints {
+        fn clear(&mut self) {
+            for i in 0..NR_COUNT {
+                self.chks[i].clear();
+            }
+        }
     }
 
     impl Default for Checkpoints {

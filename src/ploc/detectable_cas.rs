@@ -531,6 +531,7 @@ mod test {
         ploc::Handle,
         pmem::{persist_obj, ralloc::Collectable, RootObj},
         test_utils::tests::*,
+        Memento,
     };
 
     use std::sync::atomic::Ordering;
@@ -661,6 +662,15 @@ mod test {
     struct Updates {
         nodes: [Checkpoint<PAtomic<Node<TestValue>>>; NR_COUNT],
         upds: [(Cas, Swap<TestValue>); NR_COUNT],
+    }
+
+    impl Memento for Updates {
+        fn clear(&mut self) {
+            for i in 0..NR_COUNT {
+                self.nodes[i].clear();
+                self.upds[i].0.clear();
+                self.upds[i].1.clear();
+        }
     }
 
     impl Default for Updates {
