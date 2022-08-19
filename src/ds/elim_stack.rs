@@ -7,7 +7,7 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     pepoch::{PAtomic, POwned, PShared},
-    ploc::Checkpoint,
+    ploc::{Checkpoint, Handle},
     pmem::{
         ll::persist_obj,
         ralloc::{Collectable, GarbageCollection},
@@ -237,45 +237,32 @@ impl<T: Clone + Collectable> ElimStack<T> {
         &self,
         node: PShared<'_, Node<Request<T>>>,
         try_push: &mut TryPush<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &Handle,
     ) -> Result<(), TryFail> {
         if self
             .inner
-            .try_push(node, &mut try_push.try_push, tid, guard, pool, rec)
+            .try_push(node, &mut try_push.try_push, handle)
             .is_ok()
         {
             return Ok(());
         }
 
-        let value = unsafe { node.deref(pool) }.data.clone();
+        let value = unsafe { node.deref(handle.pool) }.data.clone();
 
         self.slots[try_push.elim_idx]
             .try_exchange(
                 value,
                 |req| matches!(req, Request::Pop),
                 &mut try_push.try_xchg,
-                tid,
-                guard,
-                pool,
-                rec,
+                handle,
             )
             .map(|_| ())
             .map_err(|_| TryFail)
     }
 
     /// Push
-    pub fn push(
-        &self,
-        value: T,
-        push: &mut Push<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) {
+    pub fn push(&self, value: T, push: &mut Push<T>, handle: &Handle) {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let node = push
             .node
             .checkpoint(
@@ -284,31 +271,16 @@ impl<T: Clone + Collectable> ElimStack<T> {
                     persist_obj(unsafe { node.deref(pool) }, true);
                     PAtomic::from(node)
                 },
-                tid,
-                pool,
-                rec,
+                handle,
             )
             .load(Ordering::Relaxed, guard);
 
-        while self
-            .try_push(node, &mut push.try_push, tid, guard, pool, rec)
-            .is_err()
-        {}
+        while self.try_push(node, &mut push.try_push, handle).is_err() {}
     }
 
     /// Try pop
-    fn try_pop(
-        &self,
-        try_pop: &mut TryPop<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Result<Option<T>, TryFail> {
-        if let Ok(popped) = self
-            .inner
-            .try_pop(&mut try_pop.try_pop, tid, guard, pool, rec)
-        {
+    fn try_pop(&self, try_pop: &mut TryPop<T>, handle: &Handle) -> Result<Option<T>, TryFail> {
+        if let Ok(popped) = self.inner.try_pop(&mut try_pop.try_pop, handle) {
             let ret = popped.map(|req| {
                 if let Request::Push(v) = req {
                     v
@@ -324,10 +296,7 @@ impl<T: Clone + Collectable> ElimStack<T> {
                 Request::Pop,
                 |req| matches!(req, Request::Push(_)),
                 &mut try_pop.try_xchg,
-                tid,
-                guard,
-                pool,
-                rec,
+                handle,
             )
             .map_err(|_| TryFail)?;
 
@@ -339,16 +308,9 @@ impl<T: Clone + Collectable> ElimStack<T> {
     }
 
     /// Pop
-    pub fn pop(
-        &self,
-        pop: &mut Pop<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Option<T> {
+    pub fn pop(&self, pop: &mut Pop<T>, handle: &Handle) -> Option<T> {
         loop {
-            if let Ok(ret) = self.try_pop(&mut pop.try_pop, tid, guard, pool, rec) {
+            if let Ok(ret) = self.try_pop(&mut pop.try_pop, handle) {
                 return ret;
             }
         }
@@ -359,27 +321,12 @@ impl<T: Clone + Collectable> Stack<T> for ElimStack<T> {
     type Push = Push<T>;
     type Pop = Pop<T>;
 
-    fn push(
-        &self,
-        value: T,
-        push: &mut Self::Push,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) {
-        self.push(value, push, tid, guard, pool, rec)
+    fn push(&self, value: T, push: &mut Self::Push, handle: &Handle) {
+        self.push(value, push, handle)
     }
 
-    fn pop(
-        &self,
-        pop: &mut Self::Pop,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Option<T> {
-        self.pop(pop, tid, guard, pool, rec)
+    fn pop(&self, pop: &mut Self::Pop, handle: &Handle) -> Option<T> {
+        self.pop(pop, handle)
     }
 }
 

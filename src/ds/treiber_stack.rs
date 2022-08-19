@@ -6,7 +6,7 @@ use etrace::some_or;
 
 use super::stack::*;
 use crate::pepoch::{Guard, PAtomic, PDestroyable, POwned, PShared};
-use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic};
+use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic, Handle};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
@@ -208,11 +208,9 @@ impl<T: Clone + Collectable> TreiberStack<T> {
         &self,
         node: PShared<'_, Node<T>>,
         try_push: &mut TryPush<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &Handle,
     ) -> Result<(), TryFail> {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let top = try_push
             .top
             .checkpoint(
@@ -224,27 +222,18 @@ impl<T: Clone + Collectable> TreiberStack<T> {
                     persist_obj(&node_ref.next, true);
                     PAtomic::from(top)
                 },
-                tid,
-                pool,
-                rec,
+                handle,
             )
             .load(Ordering::Relaxed, guard);
 
         self.top
-            .cas(top, node, &mut try_push.insert, tid, guard, pool, rec)
+            .cas(top, node, &mut try_push.insert, handle)
             .map_err(|_| TryFail)
     }
 
     /// Push
-    pub fn push(
-        &self,
-        value: T,
-        push: &mut Push<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) {
+    pub fn push(&self, value: T, push: &mut Push<T>, handle: &Handle) {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let node = push
             .node
             .checkpoint(
@@ -253,27 +242,16 @@ impl<T: Clone + Collectable> TreiberStack<T> {
                     persist_obj(unsafe { node.deref(pool) }, true);
                     PAtomic::from(node)
                 },
-                tid,
-                pool,
-                rec,
+                handle,
             )
             .load(Ordering::Relaxed, guard);
 
-        while self
-            .try_push(node, &mut push.try_push, tid, guard, pool, rec)
-            .is_err()
-        {}
+        while self.try_push(node, &mut push.try_push, handle).is_err() {}
     }
 
     /// Try pop
-    pub fn try_pop(
-        &self,
-        try_pop: &mut TryPop<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Result<Option<T>, TryFail> {
+    pub fn try_pop(&self, try_pop: &mut TryPop<T>, handle: &Handle) -> Result<Option<T>, TryFail> {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let top = try_pop
             .top
             .checkpoint(
@@ -281,9 +259,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
                     let top = self.top.load(Ordering::SeqCst, guard, pool);
                     PAtomic::from(top)
                 },
-                tid,
-                pool,
-                rec,
+                handle,
             )
             .load(Ordering::Relaxed, guard);
 
@@ -291,7 +267,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
         let next = top_ref.next.load(Ordering::SeqCst, guard); // next is stable because top is stable here (invariant of stack)
 
         self.top
-            .cas(top, next, &mut try_pop.delete, tid, guard, pool, rec)
+            .cas(top, next, &mut try_pop.delete, handle)
             .map(|_| unsafe {
                 guard.defer_pdestroy(top);
                 Some(top_ref.data.clone())
@@ -300,16 +276,9 @@ impl<T: Clone + Collectable> TreiberStack<T> {
     }
 
     /// Pop
-    pub fn pop(
-        &self,
-        pop: &mut Pop<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Option<T> {
+    pub fn pop(&self, pop: &mut Pop<T>, handle: &Handle) -> Option<T> {
         loop {
-            if let Ok(ret) = self.try_pop(&mut pop.try_pop, tid, guard, pool, rec) {
+            if let Ok(ret) = self.try_pop(&mut pop.try_pop, handle) {
                 return ret;
             }
         }
@@ -323,28 +292,13 @@ impl<T: Clone + Collectable> Stack<T> for TreiberStack<T> {
     type Pop = Pop<T>;
 
     #[inline]
-    fn push(
-        &self,
-        value: T,
-        push: &mut Self::Push,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) {
-        self.push(value, push, tid, guard, pool, rec)
+    fn push(&self, value: T, push: &mut Self::Push, handle: &Handle) {
+        self.push(value, push, handle)
     }
 
     #[inline]
-    fn pop(
-        &self,
-        pop: &mut Self::Pop,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Option<T> {
-        self.pop(pop, tid, guard, pool, rec)
+    fn pop(&self, pop: &mut Self::Pop, handle: &Handle) -> Option<T> {
+        self.pop(pop, handle)
     }
 }
 

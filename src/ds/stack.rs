@@ -1,5 +1,6 @@
 //! Persistent Stack
 
+use crate::ploc::Handle;
 use crate::pmem::ralloc::Collectable;
 use crate::*;
 
@@ -19,25 +20,10 @@ where
     type Pop: Default + Collectable;
 
     /// Push
-    fn push(
-        &self,
-        value: T,
-        mmt: &mut Self::Push,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    );
+    fn push(&self, value: T, mmt: &mut Self::Push, handle: &Handle);
 
     /// Pop
-    fn pop(
-        &self,
-        mmt: &mut Self::Pop,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Option<T>;
+    fn pop(&self, mmt: &mut Self::Pop, handle: &Handle) -> Option<T>;
 }
 
 #[cfg(test)]
@@ -45,6 +31,7 @@ pub(crate) mod tests {
     use crossbeam_epoch::Guard;
 
     use super::*;
+    use crate::ploc::Handle;
     use crate::pmem::ralloc::GarbageCollection;
     use crate::pmem::*;
     use crate::test_utils::tests::*;
@@ -98,29 +85,16 @@ pub(crate) mod tests {
         /// - Job: Push 1 time with thread's id, then pop 1 time
         /// - All threads repeat the job
         /// - Finally, it is checked whether the results of all pops so far have the correct cumulative count of each tid value.
-        fn run(
-            &self,
-            push_pop: &mut PushPop<S, NR_THREAD, COUNT>,
-            tid: usize,
-            guard: &Guard,
-            pool: &PoolHandle,
-        ) {
-            let mut rec = true; // TODO: generalize
+        fn run(&self, push_pop: &mut PushPop<S, NR_THREAD, COUNT>, handle: &Handle) {
+            let tid = handle.tid;
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             // push; pop;
             for seq in 0..COUNT {
-                let _ = self.obj.push(
-                    TestValue::new(tid, seq),
-                    &mut push_pop.pushes[seq],
-                    tid,
-                    guard,
-                    pool,
-                    &mut rec,
-                );
-                let res = self
+                let _ = self
                     .obj
-                    .pop(&mut push_pop.pops[seq], tid, guard, pool, &mut rec);
+                    .push(TestValue::new(tid, seq), &mut push_pop.pushes[seq], handle);
+                let res = self.obj.pop(&mut push_pop.pops[seq], handle);
 
                 assert!(res.is_some(), "{tid} {seq}");
                 testee.report(seq, res.unwrap());
