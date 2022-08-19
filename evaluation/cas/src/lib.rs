@@ -7,7 +7,7 @@ use std::{
 use crossbeam_epoch::Guard;
 use memento::{
     pepoch::{PAtomic, POwned},
-    pmem::{Collectable, GarbageCollection, PoolHandle},
+    pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj},
     PDefault,
 };
 use rand::Rng;
@@ -17,10 +17,28 @@ pub mod mcas;
 pub mod nrlcas;
 pub mod pcas;
 
-pub static TOTAL_NOPS_FAILED: AtomicUsize = AtomicUsize::new(0);
+/// file size
+pub const FILE_SIZE: usize = 128 * 1024 * 1024 * 1024;
+
+/// max threads
+pub const MAX_THREADS: usize = 64;
+
+/// test duration
+pub static mut DURATION: f64 = 0.0;
+
+/// period of repin
+pub static mut RELAXED: usize = 0;
+
 pub static mut CONTENTION_WIDTH: usize = 1;
+
 pub static mut NR_THREADS: usize = 1;
 
+pub static TOTAL_NOPS: AtomicUsize = AtomicUsize::new(0);
+pub static TOTAL_NOPS_FAILED: AtomicUsize = AtomicUsize::new(0);
+
+pub fn get_total_nops() -> usize {
+    TOTAL_NOPS.load(Ordering::SeqCst)
+}
 #[derive(Debug, Default)]
 pub struct Node(usize); // `usize` for low tag
 
@@ -92,6 +110,22 @@ pub trait TestNOps {
 
         (ops, failed)
     }
+}
+
+pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
+where
+    O: RootObj<M> + Send + Sync + 'static,
+    M: Collectable + Default + Send + Sync,
+{
+    let _ = Pool::remove(filepath);
+
+    let pool_handle = Pool::create::<O, M>(filepath, FILE_SIZE, nr_thread).unwrap();
+
+    // Each thread executes op for `duration` seconds and accumulates execution count in `TOTAL_NOPS`
+    pool_handle.execute::<O, M>();
+
+    // Load `TOTAL_NOPS`
+    get_total_nops()
 }
 
 pub trait TestableCas {
