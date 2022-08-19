@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::{ExecInfo, Timestamp};
+use super::{ExecInfo, Handle, Timestamp};
 
 /// Node for `Insert`/`Delete`
 pub trait Node: Sized {
@@ -46,20 +46,20 @@ struct Failed {
 }
 
 impl Failed {
-    fn record(&mut self, exec_info: &ExecInfo) {
-        *self.t = exec_info.exec_time();
+    fn record(&mut self, handle: &Handle) {
+        *self.t = handle.pool.exec_info.exec_time();
         persist_obj(&*self.t, true);
     }
 
-    fn check_failed(&self, tid: usize, exec_info: &ExecInfo) -> bool {
+    fn check_failed(&self, handle: &Handle) -> bool {
         let t_mmt = *self.t;
-        let t_local = exec_info.local_max_time.load(tid);
+        let t_local = handle.local_max_time.load();
 
         if t_mmt <= t_local {
             return false;
         }
 
-        exec_info.local_max_time.store(tid, t_mmt);
+        handle.local_max_time.store(t_mmt);
         true
     }
 }
@@ -122,9 +122,9 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     pub fn load_help<'g>(
         &self,
         old: PShared<'g, N>,
-        guard: &'g Guard,
-        pool: &PoolHandle,
+        handle: &'g Handle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let old_ref = some_or!(unsafe { old.as_ref(pool) }, return Ok(old));
 
         let repl = old_ref.replacement();
@@ -218,20 +218,18 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         new: PShared<'_, N>,
         obj: &O,
         mmt: &mut Insert,
-        tid: usize,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &'g Handle,
     ) -> Result<(), PShared<'g, N>> {
-        if *rec {
-            if let Some(succ) = Self::insert_result(new, obj, mmt, tid, guard, pool) {
+        let (guard, pool) = (&handle.guard, handle.pool);
+        if handle.rec.load(Ordering::Relaxed) {
+            if let Some(succ) = Self::insert_result(new, obj, mmt, handle) {
                 return if succ {
                     Ok(())
                 } else {
-                    Err(self.load_lp(Ordering::SeqCst, guard)) // TODO: This makes this function not guarantee the returned value is not null.
+                    Err(self.load_lp(Ordering::SeqCst, &handle.guard)) // TODO: This makes this function not guarantee the returned value is not null.
                 };
             }
-            *rec = false;
+            handle.rec.store(false, Ordering::Relaxed);
         }
 
         // Normal run
@@ -248,7 +246,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         {
             let cur = self.load_lp(Ordering::SeqCst, guard);
             if cur != PShared::null() {
-                mmt.0.record(&pool.exec_info);
+                mmt.0.record(handle);
                 return Err(cur);
             }
             // retry for the property of strong CAS
@@ -282,20 +280,17 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         new: PShared<'_, N>,
         obj: &O,
         mmt: &mut Insert,
-        tid: usize,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &'g Handle,
     ) -> Result<(), PShared<'g, N>> {
-        if *rec {
-            if let Some(succ) = Self::insert_result(new, obj, mmt, tid, guard, pool) {
+        if handle.rec.load(Ordering::Relaxed) {
+            if let Some(succ) = Self::insert_result(new, obj, mmt, handle) {
                 return if succ {
                     Ok(())
                 } else {
-                    Err(self.inner.load(Ordering::SeqCst, guard))
+                    Err(self.inner.load(Ordering::SeqCst, &handle.guard))
                 };
             }
-            *rec = false;
+            handle.rec.store(false, Ordering::Relaxed);
         }
 
         // Normal run
@@ -304,9 +299,9 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             new,
             Ordering::SeqCst,
             Ordering::SeqCst,
-            guard,
+            &handle.guard,
         ) {
-            mmt.0.record(&pool.exec_info);
+            mmt.0.record(handle);
             return Err(e.current);
         }
 
@@ -319,14 +314,13 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         new: PShared<'_, N>,
         obj: &O,
         mmt: &mut Insert,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
+        handle: &Handle,
     ) -> Option<bool> {
-        if mmt.0.check_failed(tid, &pool.exec_info) {
+        if mmt.0.check_failed(handle) {
             return Some(false);
         }
 
+        let (guard, pool) = (&handle.guard, handle.pool);
         if unsafe { new.deref(pool) }.acked(guard)
             || obj.contains(new, guard, pool)
             || unsafe { new.deref(pool) }.acked(guard)
@@ -341,25 +335,23 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     ///
     /// Requirement: `old` is not null
     pub fn delete<'g>(
-        &self,
+        &'g self,
         old: PShared<'g, N>,
         new: PShared<'_, N>,
         mmt: &mut Delete,
-        tid: usize,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &'g Handle,
     ) -> Result<PShared<'g, N>, PShared<'g, N>> {
-        if *rec {
-            if let Some(succ) = self.delete_result(old, new, mmt, tid, guard, pool) {
+        if handle.rec.load(Ordering::Relaxed) {
+            if let Some(succ) = self.delete_result(old, new, mmt, handle) {
                 return if succ {
                     Ok(old)
                 } else {
-                    Err(ok_or!(self.load_help(old, guard, pool), e, e))
+                    Err(ok_or!(self.load_help(old, handle), e, e))
                 };
             }
-            *rec = false;
+            handle.rec.store(false, Ordering::Relaxed);
         }
+        let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
 
         // Record the tid on the node to be deleted.
         let target_ref = unsafe { old.deref(pool) };
@@ -374,8 +366,8 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             )
             .is_err()
         {
-            mmt.0.record(&pool.exec_info);
-            let cur = ok_or!(self.load_help(old, guard, pool), e, e);
+            mmt.0.record(handle);
+            let cur = ok_or!(self.load_help(old, handle), e, e);
             return Err(cur);
         }
 
@@ -397,16 +389,15 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     }
 
     #[inline]
-    fn delete_result<'g>(
+    fn delete_result(
         &self,
-        old: PShared<'g, N>,
+        old: PShared<'_, N>,
         new: PShared<'_, N>,
         mmt: &mut Delete,
-        tid: usize,
-        guard: &'g Guard,
-        pool: &PoolHandle,
+        handle: &Handle,
     ) -> Option<bool> {
-        if mmt.0.check_failed(tid, &pool.exec_info) {
+        let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
+        if mmt.0.check_failed(handle) {
             return Some(false);
         }
 
