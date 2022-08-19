@@ -10,4 +10,3 @@ We evaluate the detectable recoverability of data structures based on memento by
 where `ds`: queue_general, queue_lp, queue, queue_comb, elim_stack, list, clevel
 
 This creates test log under `./out`.
-

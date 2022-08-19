@@ -252,7 +252,6 @@ pub mod tests {
 
     /// child thread handler: thread exit
     pub fn texit(_signum: usize) {
-        println!("Killed...");
         // NOTE: https://man7.org/linux/man-pages/man7/signal-safety.7.html
         let _ = std::rt::panic_count::increase();
         unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
@@ -318,17 +317,19 @@ pub mod tests {
         fn drop(&mut self) {
             if !std::thread::panicking() {
                 self.info.finish();
+                println!("[Testee {}] Finished.", self.info.tid);
+            } else {
+                println!("[Testee {}] Killed.", self.info.tid);
             }
         }
     }
 
     #[derive(Debug)]
     struct TestInfo {
+        tid: usize,
         state: AtomicI32,
         checked: AtomicBool,
         results: [AtomicUsize; Self::MAX_COUNT],
-
-        #[cfg(feature = "tcrash")]
         crash_seq: usize,
     }
 
@@ -341,15 +342,14 @@ pub mod tests {
         const STATE_KILLED: i32 = -1;
         const STATE_FINISHED: i32 = i32::MAX;
 
-        fn new(nr_count: usize) -> Self {
+        fn new(tid: usize, nr_count: usize) -> Self {
             assert!(nr_count <= Self::MAX_COUNT);
 
             Self {
+                tid,
                 state: AtomicI32::new(Self::STATE_INIT),
                 checked: AtomicBool::new(false),
                 results: array_init::array_init(|_| AtomicUsize::new(Self::RESULT_INIT)),
-
-                #[cfg(feature = "tcrash")]
                 crash_seq: rdtscp() as usize % nr_count,
             }
         }
@@ -362,7 +362,6 @@ pub mod tests {
                 "prev: {prev}, val: {uval}"
             );
 
-            #[cfg(feature = "tcrash")]
             if self.crash_seq == seq {
                 self.enable_killed();
             }
@@ -370,7 +369,6 @@ pub mod tests {
 
         /// Enable being selected by `kill()`
         // TODO: How to kill resizer in clevel?
-        #[cfg(feature = "tcrash")]
         #[inline]
         fn enable_killed(&self) {
             let unix_tid = unsafe { libc::gettid() };
@@ -385,12 +383,12 @@ pub mod tests {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                if e == Self::STATE_KILLED {
-                    let backoff = Backoff::default();
-                    loop {
-                        // Wait until main thread kills tid
-                        backoff.snooze();
-                    }
+                assert_eq!(e, Self::STATE_KILLED);
+
+                let backoff = Backoff::default();
+                loop {
+                    // Wait until main thread kills tid
+                    backoff.snooze();
                 }
             }
         }
@@ -410,7 +408,7 @@ pub mod tests {
             assert!(nr_thread <= Self::MAX_THREAD);
 
             Self {
-                infos: array_init::array_init(|_| TestInfo::new(nr_count)),
+                infos: array_init::array_init(|tid| TestInfo::new(tid + 1, nr_count)),
                 nr_thread,
                 nr_count,
             }
@@ -431,7 +429,10 @@ pub mod tests {
             info.checked.store(checked, Ordering::SeqCst);
 
             #[cfg(feature = "tcrash")]
-            println!("{tid}'s test crash seq: {}", info.crash_seq);
+            println!(
+                "[Testee {tid}] Crash may occur after seq {}.",
+                info.crash_seq
+            );
 
             Testee { info }
         }
@@ -490,30 +491,29 @@ pub mod tests {
         fn check(&self) {
             let mut checked_map = vec![vec![false; self.nr_count]; self.nr_thread + 1];
 
-            for (to_tid, results) in self.infos.iter().enumerate().filter_map(|(tid, info)| {
+            for (to_tid, results) in self.infos.iter().filter_map(|info| {
                 info.checked
                     .load(Ordering::SeqCst)
-                    .then_some((tid, &info.results))
+                    .then_some((info.tid, &info.results))
             }) {
                 for (to_seq, result) in (0..self.nr_count)
                     .map(|i| results[i].load(Ordering::SeqCst))
                     .enumerate()
                 {
-                    assert_ne!(
-                        result,
-                        TestInfo::RESULT_INIT,
-                        "tid:{}, seq:{to_seq}",
-                        to_tid + 1
-                    );
+                    // `to_tid` must have returned value at `to_seq`
+                    assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
+
+                    // `from_tid`'s `from_seq` must be issued exactly once
                     let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
                     assert!(
-                        !checked_map[to_tid][to_seq],
-                        "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{}, seq:{to_seq}",
-                        to_tid + 1
+                        !checked_map[from_tid][from_seq],
+                        "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
                     );
-                    checked_map[to_tid][to_seq] = true;
+                    checked_map[from_tid][from_seq] = true;
                 }
             }
+
+            println!("[Tester] Test passed.");
         }
     }
 }

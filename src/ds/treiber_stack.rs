@@ -204,17 +204,18 @@ impl<T: Clone + Collectable> PDefault for TreiberStack<T> {
 
 impl<T: Clone + Collectable> TreiberStack<T> {
     /// Try push
-    pub fn try_push<const REC: bool>(
+    pub fn try_push(
         &self,
         node: PShared<'_, Node<T>>,
         try_push: &mut TryPush<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), TryFail> {
         let top = try_push
             .top
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let top = self.top.load(Ordering::SeqCst, guard, pool);
                     let node_ref = unsafe { node.deref(pool) };
@@ -225,26 +226,28 @@ impl<T: Clone + Collectable> TreiberStack<T> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
         self.top
-            .cas::<REC>(top, node, &mut try_push.insert, tid, guard, pool)
+            .cas(top, node, &mut try_push.insert, tid, guard, pool, rec)
             .map_err(|_| TryFail)
     }
 
     /// Push
-    pub fn push<const REC: bool>(
+    pub fn push(
         &self,
         value: T,
         push: &mut Push<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) {
         let node = push
             .node
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let node = POwned::new(Node::from(value), pool);
                     persist_obj(unsafe { node.deref(pool) }, true);
@@ -252,43 +255,35 @@ impl<T: Clone + Collectable> TreiberStack<T> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
-        if self
-            .try_push::<REC>(node, &mut push.try_push, tid, guard, pool)
-            .is_ok()
-        {
-            return;
-        }
-
-        loop {
-            if self
-                .try_push::<false>(node, &mut push.try_push, tid, guard, pool)
-                .is_ok()
-            {
-                return;
-            }
-        }
+        while self
+            .try_push(node, &mut push.try_push, tid, guard, pool, rec)
+            .is_err()
+        {}
     }
 
     /// Try pop
-    pub fn try_pop<const REC: bool>(
+    pub fn try_pop(
         &self,
         try_pop: &mut TryPop<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<Option<T>, TryFail> {
         let top = try_pop
             .top
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let top = self.top.load(Ordering::SeqCst, guard, pool);
                     PAtomic::from(top)
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
@@ -296,7 +291,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
         let next = top_ref.next.load(Ordering::SeqCst, guard); // next is stable because top is stable here (invariant of stack)
 
         self.top
-            .cas::<REC>(top, next, &mut try_pop.delete, tid, guard, pool)
+            .cas(top, next, &mut try_pop.delete, tid, guard, pool, rec)
             .map(|_| unsafe {
                 guard.defer_pdestroy(top);
                 Some(top_ref.data.clone())
@@ -305,19 +300,16 @@ impl<T: Clone + Collectable> TreiberStack<T> {
     }
 
     /// Pop
-    pub fn pop<const REC: bool>(
+    pub fn pop(
         &self,
         pop: &mut Pop<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Option<T> {
-        if let Ok(ret) = self.try_pop::<REC>(&mut pop.try_pop, tid, guard, pool) {
-            return ret;
-        }
-
         loop {
-            if let Ok(ret) = self.try_pop::<false>(&mut pop.try_pop, tid, guard, pool) {
+            if let Ok(ret) = self.try_pop(&mut pop.try_pop, tid, guard, pool, rec) {
                 return ret;
             }
         }
@@ -331,26 +323,28 @@ impl<T: Clone + Collectable> Stack<T> for TreiberStack<T> {
     type Pop = Pop<T>;
 
     #[inline]
-    fn push<const REC: bool>(
+    fn push(
         &self,
         value: T,
         push: &mut Self::Push,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) {
-        self.push::<REC>(value, push, tid, guard, pool)
+        self.push(value, push, tid, guard, pool, rec)
     }
 
     #[inline]
-    fn pop<const REC: bool>(
+    fn pop(
         &self,
         pop: &mut Self::Pop,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Option<T> {
-        self.pop::<REC>(pop, tid, guard, pool)
+        self.pop(pop, tid, guard, pool, rec)
     }
 }
 
@@ -359,8 +353,8 @@ mod tests {
     use super::*;
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
-    const NR_THREAD: usize = 4;
-    const NR_COUNT: usize = 100_000;
+    const NR_THREAD: usize = 2;
+    const NR_COUNT: usize = 10_000;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 

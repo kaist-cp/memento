@@ -19,22 +19,24 @@ where
     type Pop: Default + Collectable;
 
     /// Push
-    fn push<const REC: bool>(
+    fn push(
         &self,
         value: T,
         mmt: &mut Self::Push,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     );
 
     /// Pop
-    fn pop<const REC: bool>(
+    fn pop(
         &self,
         mmt: &mut Self::Pop,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Option<T>;
 }
 
@@ -103,20 +105,22 @@ pub(crate) mod tests {
             guard: &Guard,
             pool: &PoolHandle,
         ) {
+            let mut rec = true; // TODO: generalize
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             // push; pop;
             for seq in 0..COUNT {
-                let _ = self.obj.push::<true>(
+                let _ = self.obj.push(
                     TestValue::new(tid, seq),
                     &mut push_pop.pushes[seq],
                     tid,
                     guard,
                     pool,
+                    &mut rec,
                 );
                 let res = self
                     .obj
-                    .pop::<true>(&mut push_pop.pops[seq], tid, guard, pool);
+                    .pop(&mut push_pop.pops[seq], tid, guard, pool, &mut rec);
 
                 assert!(res.is_some(), "{tid} {seq}");
                 testee.report(seq, res.unwrap());

@@ -8,7 +8,7 @@ use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
     ploc::{
         insert_delete::{Node as SMONode, SMOAtomic},
-        not_deleted, Checkpoint, Traversable,
+        not_deleted, Checkpoint, Delete, Insert, Traversable,
     },
     pmem::{
         ll::persist_obj,
@@ -66,19 +66,15 @@ impl<T: Collectable> SMONode for Node<T> {
     }
 }
 
-impl<T: Collectable> Drop for Node<T> {
-    fn drop(&mut self) {
-        let data = unsafe { *(&self.data as *const _ as *const usize) };
-        println!("Node dropped: {{ data: {data}, repl: {:?} }}", self.repl);
-    }
-}
-
 /// Try exchange memento
 #[derive(Debug)]
 pub struct TryExchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     init_slot: Checkpoint<PAtomic<Node<T>>>,
+    empty_ins: Insert,
+    upd_del: Delete,
     wait_slot: Checkpoint<PAtomic<Node<T>>>,
+    empty_del: Delete,
 }
 
 impl<T: Clone + Collectable> Default for TryExchange<T> {
@@ -86,15 +82,22 @@ impl<T: Clone + Collectable> Default for TryExchange<T> {
         Self {
             node: Default::default(),
             init_slot: Default::default(),
+            empty_ins: Default::default(),
+            upd_del: Default::default(),
             wait_slot: Default::default(),
+            empty_del: Default::default(),
         }
     }
 }
 
 impl<T: Clone + Collectable> Collectable for TryExchange<T> {
     fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut s.init_slot, tid, gc, pool);
-        Checkpoint::filter(&mut s.wait_slot, tid, gc, pool);
+        Collectable::filter(&mut s.node, tid, gc, pool);
+        Collectable::filter(&mut s.init_slot, tid, gc, pool);
+        Collectable::filter(&mut s.empty_ins, tid, gc, pool);
+        Collectable::filter(&mut s.upd_del, tid, gc, pool);
+        Collectable::filter(&mut s.wait_slot, tid, gc, pool);
+        Collectable::filter(&mut s.empty_del, tid, gc, pool);
     }
 }
 
@@ -180,7 +183,7 @@ impl<T: Clone + Collectable> Collectable for Exchanger<T> {
 
 impl<T: Clone + Collectable> Exchanger<T> {
     /// Try Exchange
-    pub fn try_exchange<const REC: bool>(
+    pub fn try_exchange(
         &self,
         value: T,
         cond: ExchangeCond<T>,
@@ -188,10 +191,11 @@ impl<T: Clone + Collectable> Exchanger<T> {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<T, TryFail> {
         let node = try_xchg
             .node
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let node = POwned::new(Node::from(value), pool);
                     persist_obj(unsafe { node.deref(pool) }, true);
@@ -199,19 +203,21 @@ impl<T: Clone + Collectable> Exchanger<T> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
         // Loads previously read slots or reads new ones
         let init_slot = try_xchg
             .init_slot
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let init_slot = self.slot.load(true, Ordering::SeqCst, guard);
                     PAtomic::from(init_slot)
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
@@ -220,7 +226,9 @@ impl<T: Clone + Collectable> Exchanger<T> {
         if init_slot.is_null() {
             let mine = node.with_high_tag(WAITING); // It's empty, so I declare WAITING
 
-            let inserted = self.slot.insert::<_, REC>(mine, self, guard, pool);
+            let inserted =
+                self.slot
+                    .insert(mine, self, &mut try_xchg.empty_ins, tid, guard, pool, rec);
 
             // If insert failed, return error.
             if inserted.is_err() {
@@ -228,7 +236,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
                 return Err(TryFail::Busy);
             }
 
-            return self.wait::<REC>(mine, try_xchg, tid, guard, pool);
+            return self.wait(mine, try_xchg, tid, guard, pool, rec);
         }
 
         // If the slot is not null, check the tag and install the opposite one and update
@@ -251,7 +259,15 @@ impl<T: Clone + Collectable> Exchanger<T> {
         // (2) a node that has already been exchanged is in the slot
         let updated = self
             .slot
-            .delete::<REC>(init_slot, mine, tid, guard, pool)
+            .delete(
+                init_slot,
+                mine,
+                &mut try_xchg.upd_del,
+                tid,
+                guard,
+                pool,
+                rec,
+            )
             .map_err(|_| {
                 // If it fails, it returns fail due to contention.
                 unsafe { guard.defer_pdestroy(node) };
@@ -260,7 +276,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
 
         // Wait if I declared I'm waiting
         if my_tag == WAITING {
-            return self.wait::<REC>(mine, try_xchg, tid, guard, pool);
+            return self.wait(mine, try_xchg, tid, guard, pool, rec);
         }
 
         // Case where I succeeded right away without waiting.
@@ -270,7 +286,7 @@ impl<T: Clone + Collectable> Exchanger<T> {
     }
 
     /// Exchange
-    pub fn exchange<const REC: bool>(
+    pub fn exchange(
         &self,
         value: T,
         cond: ExchangeCond<T>,
@@ -278,46 +294,44 @@ impl<T: Clone + Collectable> Exchanger<T> {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> T {
-        if let Ok(ret) =
-            self.try_exchange::<REC>(value.clone(), cond, &mut xchg.try_xchg, tid, guard, pool)
-        {
-            return ret;
-        }
-
         loop {
-            if let Ok(ret) = self.try_exchange::<false>(
+            if let Ok(ret) = self.try_exchange(
                 value.clone(),
                 cond,
                 &mut xchg.try_xchg,
                 tid,
                 guard,
                 pool,
+                rec,
             ) {
                 return ret;
             }
         }
     }
 
-    fn wait<const REC: bool>(
+    fn wait(
         &self,
         mine: PShared<'_, Node<T>>,
         try_xchg: &mut TryExchange<T>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<T, TryFail> {
         std::thread::sleep(Duration::from_nanos(100));
 
         let wait_slot = try_xchg
             .wait_slot
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
                     PAtomic::from(wait_slot)
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
 
@@ -330,7 +344,15 @@ impl<T: Clone + Collectable> Exchanger<T> {
         // If delete fails, matching has been completed.
         if self
             .slot
-            .delete::<REC>(mine, PShared::null(), tid, guard, pool)
+            .delete(
+                mine,
+                PShared::null(),
+                &mut try_xchg.empty_del,
+                tid,
+                guard,
+                pool,
+                rec,
+            )
             .is_ok()
         {
             Err(TryFail::Timeout)
@@ -380,15 +402,22 @@ mod tests {
 
     impl RootObj<ExchangeOnce> for TestRootObj<Exchanger<usize>> {
         fn run(&self, xchg_once: &mut ExchangeOnce, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let mut rec = true; // TODO: generalize
             let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
 
             assert!(tid == 1 || tid == 2);
 
             for _ in 0..100 {
                 // `move` for `tid`
-                let ret =
-                    self.obj
-                        .exchange::<true>(tid, |_| true, &mut xchg_once.xchg, tid, guard, pool);
+                let ret = self.obj.exchange(
+                    tid,
+                    |_| true,
+                    &mut xchg_once.xchg,
+                    tid,
+                    guard,
+                    pool,
+                    &mut rec,
+                );
                 assert_eq!(ret, tid ^ 3);
             }
         }
@@ -439,6 +468,7 @@ mod tests {
         /// Before rotation : [1]  [2]  [3]
         /// After rotation  : [2]  [3]  [1]
         fn run(&self, rotl: &mut RotateLeft, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let mut rec = true; // TODO: generalize
             let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
 
             // Alias
@@ -451,49 +481,53 @@ mod tests {
             match tid {
                 // T1: [1] -> [2]    [3]
                 1 => {
-                    *item = lxchg.exchange::<true>(
+                    *item = lxchg.exchange(
                         *item,
                         |_| true,
                         &mut rotl.exchange0,
                         tid,
                         guard,
                         pool,
+                        &mut rec,
                     );
                     assert_eq!(*item, 2);
                 }
                 // T2: Composition in the middle
                 2 => {
                     // Step1: [1] <- [2]    [3]
-                    *item = lxchg.exchange::<true>(
+                    *item = lxchg.exchange(
                         *item,
                         |_| true,
                         &mut rotl.exchange0,
                         tid,
                         guard,
                         pool,
+                        &mut rec,
                     );
                     assert_eq!(*item, 1);
 
                     // Step2: [2]    [1] -> [3]
-                    *item = rxchg.exchange::<true>(
+                    *item = rxchg.exchange(
                         *item,
                         |_| true,
                         &mut rotl.exchange2,
                         tid,
                         guard,
                         pool,
+                        &mut rec,
                     );
                     assert_eq!(*item, 3);
                 }
                 // T3: [1]    [2] <- [3]
                 3 => {
-                    *item = rxchg.exchange::<true>(
+                    *item = rxchg.exchange(
                         *item,
                         |_| true,
                         &mut rotl.exchange2,
                         tid,
                         guard,
                         pool,
+                        &mut rec,
                     );
                     assert_eq!(*item, 1);
                 }

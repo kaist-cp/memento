@@ -34,8 +34,8 @@ impl<T: Default + Clone + Collectable> Collectable for Checkpoint<T> {
         let (_, latest) = chk.stale_latest_idx();
 
         // Record the one with max timestamp among checkpoints
-        if chk.saved[latest].1 > pool.exec_info.chk_info {
-            pool.exec_info.chk_info = chk.saved[latest].1;
+        if chk.saved[latest].1 > pool.exec_info.chk_max_time {
+            pool.exec_info.chk_max_time = chk.saved[latest].1;
         }
 
         if chk.saved[latest].1 > Timestamp::from(0) {
@@ -59,16 +59,18 @@ where
     T: Default + Clone + Collectable,
 {
     /// Checkpoint
-    pub fn checkpoint<const REC: bool, F: FnOnce() -> T>(
+    pub fn checkpoint<F: FnOnce() -> T>(
         &mut self,
         val_func: F,
         tid: usize,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> T {
-        if REC {
+        if *rec {
             if let Some(v) = self.peek(tid, pool) {
                 return v;
             }
+            *rec = false;
         }
 
         let new = val_func();
@@ -165,16 +167,18 @@ mod test {
 
     impl RootObj<Checkpoints> for TestRootObj<DummyRootObj> {
         fn run(&self, chks: &mut Checkpoints, tid: usize, _: &Guard, pool: &PoolHandle) {
+            let mut rec = true; // TODO: generalize
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             // let mut items: [usize; NR_COUNT] = array_init::array_init(|i| i);
             let mut items = (0..NR_COUNT).collect_vec();
 
             for seq in 0..NR_COUNT {
-                let i = chks.chks[seq].checkpoint::<true, _>(
+                let i = chks.chks[seq].checkpoint(
                     || rdtscp() as usize % items.len(),
                     tid,
                     pool,
+                    &mut rec,
                 );
                 // let val = items[i];
                 let val = items.remove(i);

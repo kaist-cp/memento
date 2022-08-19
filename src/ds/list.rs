@@ -315,7 +315,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         (found, prev, prev_next, curr)
     }
 
-    fn help<'g, const REC: bool>(
+    fn help<'g>(
         &self,
         prev: &'g DetectableCASAtomic<Node<K, V>>,
         prev_next: PShared<'g, Node<K, V>>,
@@ -324,6 +324,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), ()> {
         // If prev and curr WERE adjacent, no need to clean up
         if prev_next == curr {
@@ -331,7 +332,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         }
 
         // cleanup marked nodes between prev and curr
-        prev.cas::<REC>(prev_next, curr, &mut help.cas, tid, guard, pool)
+        prev.cas(prev_next, curr, &mut help.cas, tid, guard, pool, rec)
             .map_err(|_| ())?;
 
         // defer_destroy from cursor.prev.load() to cursor.curr (exclusive)
@@ -347,13 +348,14 @@ impl<K: Ord, V: Collectable> List<K, V> {
         Ok(())
     }
 
-    fn try_find<'g, const REC: bool>(
+    fn try_find<'g>(
         &self,
         key: &K,
         try_find: &mut TryFind<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
+        rec: &mut bool,
     ) -> Result<
         (
             bool,
@@ -362,7 +364,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         ),
         (),
     > {
-        let chk = try_find.found.checkpoint::<REC, _>(
+        let chk = try_find.found.checkpoint(
             || {
                 let (found, prev, prev_next, curr) = self.find_inner(key, guard, pool);
                 (
@@ -374,6 +376,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
             },
             tid,
             pool,
+            rec,
         );
         let (found, prev, prev_next, curr) = (
             chk.0,
@@ -382,43 +385,50 @@ impl<K: Ord, V: Collectable> List<K, V> {
             chk.3.load(Ordering::Relaxed, guard),
         );
 
-        self.help::<REC>(prev, prev_next, curr, &mut try_find.help, tid, guard, pool)
-            .map(|_| (found, prev, curr))
+        self.help(
+            prev,
+            prev_next,
+            curr,
+            &mut try_find.help,
+            tid,
+            guard,
+            pool,
+            rec,
+        )
+        .map(|_| (found, prev, curr))
     }
 
-    fn find<'g, const REC: bool>(
+    fn find<'g>(
         &self,
         key: &K,
         find: &mut Find<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
+        rec: &mut bool,
     ) -> (
         bool,
         &'g DetectableCASAtomic<Node<K, V>>,
         PShared<'g, Node<K, V>>,
     ) {
-        if let Ok(res) = self.try_find::<REC>(key, &mut find.try_find, tid, guard, pool) {
-            return res;
-        }
-
         loop {
-            if let Ok(res) = self.try_find::<false>(key, &mut find.try_find, tid, guard, pool) {
+            if let Ok(res) = self.try_find(key, &mut find.try_find, tid, guard, pool, rec) {
                 return res;
             }
         }
     }
 
     /// Lookup
-    pub fn lookup<'g, const REC: bool>(
+    pub fn lookup<'g>(
         &self,
         key: &'g K,
         look: &mut Lookup<K, V>,
         tid: usize,
         guard: &'g Guard,
         pool: &'g PoolHandle,
+        rec: &mut bool,
     ) -> Option<&'g V> {
-        let (found, _, curr) = self.find::<REC>(key, &mut look.find, tid, guard, pool);
+        let (found, _, curr) = self.find(key, &mut look.find, tid, guard, pool, rec);
         if found {
             unsafe { curr.as_ref(pool).map(|n| &n.value) }
         } else {
@@ -426,7 +436,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         }
     }
 
-    fn try_insert<const REC: bool>(
+    fn try_insert(
         &self,
         node: PShared<'_, Node<K, V>>,
         key: &K,
@@ -434,8 +444,9 @@ impl<K: Ord, V: Collectable> List<K, V> {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), ListErr> {
-        let chk = try_ins.found.checkpoint::<REC, _>(
+        let chk = try_ins.found.checkpoint(
             || {
                 let (found, prev, prev_next, curr) = self.find_inner(key, guard, pool);
                 if !found {
@@ -454,6 +465,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
             },
             tid,
             pool,
+            rec,
         );
         let (found, prev, prev_next, curr) = (
             chk.0,
@@ -462,21 +474,30 @@ impl<K: Ord, V: Collectable> List<K, V> {
             chk.3.load(Ordering::Relaxed, guard),
         );
 
-        self.help::<REC>(prev, prev_next, curr, &mut try_ins.help, tid, guard, pool)
-            .map_err(|_| ListErr::Retry)?;
+        self.help(
+            prev,
+            prev_next,
+            curr,
+            &mut try_ins.help,
+            tid,
+            guard,
+            pool,
+            rec,
+        )
+        .map_err(|_| ListErr::Retry)?;
 
         if found {
             unsafe { guard.defer_pdestroy(node) };
             return Err(ListErr::Fail);
         }
 
-        prev.cas::<REC>(curr, node, &mut try_ins.insert, tid, guard, pool)
+        prev.cas(curr, node, &mut try_ins.insert, tid, guard, pool, rec)
             .map(|_| ())
             .map_err(|_| ListErr::Retry)
     }
 
     /// Insert
-    pub fn insert<const REC: bool>(
+    pub fn insert(
         &self,
         key: K,
         value: V,
@@ -484,10 +505,11 @@ impl<K: Ord, V: Collectable> List<K, V> {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), KeyExists> {
         let node = ins
             .node
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let node = POwned::new(Node::from((key, value)), pool);
                     persist_obj(unsafe { node.deref(pool) }, true);
@@ -495,18 +517,13 @@ impl<K: Ord, V: Collectable> List<K, V> {
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
         let node_ref = unsafe { node.deref(pool) };
 
-        match self.try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool) {
-            Ok(()) => return Ok(()),
-            Err(ListErr::Fail) => return Err(KeyExists),
-            Err(ListErr::Retry) => (),
-        };
-
         loop {
-            match self.try_insert::<REC>(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool) {
+            match self.try_insert(node, &node_ref.key, &mut ins.try_ins, tid, guard, pool, rec) {
                 Ok(()) => return Ok(()),
                 Err(ListErr::Fail) => return Err(KeyExists),
                 Err(ListErr::Retry) => (),
@@ -514,15 +531,16 @@ impl<K: Ord, V: Collectable> List<K, V> {
         }
     }
 
-    fn try_delete<const REC: bool>(
+    fn try_delete(
         &self,
         key: &K,
         try_del: &mut TryDelete<K, V>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), ListErr> {
-        let (found, prev, curr) = self.find::<REC>(key, &mut try_del.find, tid, guard, pool);
+        let (found, prev, curr) = self.find(key, &mut try_del.find, tid, guard, pool, rec);
         if !found {
             return Err(ListErr::Fail);
         }
@@ -532,47 +550,50 @@ impl<K: Ord, V: Collectable> List<K, V> {
         // FAO-like..
         let mut next = try_del
             .next
-            .checkpoint::<REC, _>(
+            .checkpoint(
                 || {
                     let next = curr_ref.next.load(Ordering::SeqCst, guard, pool);
                     PAtomic::from(next)
                 },
                 tid,
                 pool,
+                rec,
             )
             .load(Ordering::Relaxed, guard);
         if next.tag() == 1 {
             return Err(ListErr::Retry);
         }
-        let mut res = curr_ref.next.cas::<REC>(
+        let mut res = curr_ref.next.cas(
             next,
             next.with_tag(1),
             &mut try_del.logical,
             tid,
             guard,
             pool,
+            rec,
         );
 
         while let Err(e) = res {
             next = try_del
                 .next
-                .checkpoint::<false, _>(|| PAtomic::from(e), tid, pool)
+                .checkpoint(|| PAtomic::from(e), tid, pool, rec)
                 .load(Ordering::Relaxed, guard);
             if next.tag() == 1 {
                 return Err(ListErr::Retry);
             }
-            res = curr_ref.next.cas::<false>(
+            res = curr_ref.next.cas(
                 next,
                 next.with_tag(1),
                 &mut try_del.logical,
                 tid,
                 guard,
                 pool,
+                rec,
             )
         }
 
         if prev
-            .cas::<REC>(curr, next, &mut try_del.physical, tid, guard, pool)
+            .cas(curr, next, &mut try_del.physical, tid, guard, pool, rec)
             .is_ok()
         {
             unsafe { guard.defer_pdestroy(curr) };
@@ -582,22 +603,17 @@ impl<K: Ord, V: Collectable> List<K, V> {
     }
 
     /// Delete
-    pub fn delete<const REC: bool>(
+    pub fn delete(
         &self,
         key: &K,
         del: &mut Delete<K, V>,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> Result<(), NotFound> {
-        match self.try_delete::<REC>(key, &mut del.try_del, tid, guard, pool) {
-            Ok(()) => return Ok(()),
-            Err(ListErr::Fail) => return Err(NotFound),
-            Err(ListErr::Retry) => (),
-        };
-
         loop {
-            match self.try_delete::<false>(key, &mut del.try_del, tid, guard, pool) {
+            match self.try_delete(key, &mut del.try_del, tid, guard, pool, rec) {
                 Ok(()) => return Ok(()),
                 Err(ListErr::Fail) => return Err(NotFound),
                 Err(ListErr::Retry) => (),
@@ -611,8 +627,8 @@ mod test {
     use super::*;
     use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
 
-    const NR_THREAD: usize = 4;
-    const NR_COUNT: usize = 100_000;
+    const NR_THREAD: usize = 2;
+    const NR_COUNT: usize = 10_000;
 
     struct InsDelLook {
         inserts: [Insert<TestValue, TestValue>; NR_COUNT],
@@ -646,6 +662,7 @@ mod test {
     impl RootObj<InsDelLook> for TestRootObj<List<TestValue, TestValue>> {
         // TODO: Change test
         fn run(&self, mmt: &mut InsDelLook, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let mut rec = true; // TODO: generalize
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             for seq in 0..NR_COUNT {
@@ -654,11 +671,11 @@ mod test {
                 // insert and lookup
                 assert!(self
                     .obj
-                    .insert::<true>(key, key, &mut mmt.inserts[seq], tid, guard, pool)
+                    .insert(key, key, &mut mmt.inserts[seq], tid, guard, pool, &mut rec)
                     .is_ok());
                 let res =
                     self.obj
-                        .lookup::<true>(&key, &mut mmt.ins_lookups[seq], tid, guard, pool);
+                        .lookup(&key, &mut mmt.ins_lookups[seq], tid, guard, pool, &mut rec);
 
                 assert!(res.is_some(), "tid:{tid}, seq:{seq}");
                 testee.report(seq, *res.unwrap());
@@ -666,11 +683,11 @@ mod test {
                 // delete and lookup
                 assert!(self
                     .obj
-                    .delete::<true>(&key, &mut mmt.deletes[seq], tid, guard, pool)
+                    .delete(&key, &mut mmt.deletes[seq], tid, guard, pool, &mut rec)
                     .is_ok());
                 let res =
                     self.obj
-                        .lookup::<true>(&key, &mut mmt.del_lookups[seq], tid, guard, pool);
+                        .lookup(&key, &mut mmt.del_lookups[seq], tid, guard, pool, &mut rec);
 
                 assert!(res.is_none(), "tid:{tid}, seq:{seq}");
             }

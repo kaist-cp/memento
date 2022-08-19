@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, mem};
 
-use crate::ploc::{CASHelpArr, ExecInfo, Timestamp, NR_MAX_THREADS};
+use crate::ploc::{CasHelpArr, ExecInfo, Timestamp, NR_MAX_THREADS};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
@@ -168,7 +168,7 @@ impl PoolHandle {
                             break;
                         }
 
-                        println!("PANIC: Root memento No.{} re-executed.", tid);
+                        println!("[pool::execute] Thread {tid} re-executed.");
                     }
                 });
                 let _ = h.join();
@@ -223,6 +223,7 @@ impl PoolHandle {
     #[inline]
     pub fn free<T>(&self, pptr: PPtr<T>) {
         let addr_abs = self.start() + pptr.into_offset();
+        assert!(self.valid(addr_abs));
         self.pool().free(addr_abs as *mut u8);
     }
 
@@ -295,8 +296,8 @@ impl Pool {
 
         unsafe {
             // set general cas checkpoint
-            let cas_help_arr = RP_malloc(mem::size_of::<CASHelpArr>() as u64) as *mut CASHelpArr;
-            cas_help_arr.write(CASHelpArr::default());
+            let cas_help_arr = RP_malloc(mem::size_of::<CasHelpArr>() as u64) as *mut CasHelpArr;
+            cas_help_arr.write(CasHelpArr::default());
             persist_obj(cas_help_arr.as_mut().unwrap(), true);
             let _prev = RP_set_root(cas_help_arr as *mut c_void, RootIdx::CASHelpArr as u64);
             let chk_ref = cas_help_arr.as_ref().unwrap();
@@ -370,7 +371,7 @@ impl Pool {
         assert_eq!(is_reopen, 1);
 
         // get the starting address of the mapped address and set the global pool
-        let chk_ref = (RP_get_root_c(RootIdx::CASHelpArr as u64) as *const CASHelpArr)
+        let chk_ref = (RP_get_root_c(RootIdx::CASHelpArr as u64) as *const CasHelpArr)
             .as_ref()
             .unwrap();
 

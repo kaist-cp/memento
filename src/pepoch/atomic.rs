@@ -123,7 +123,7 @@ impl_left_bits!(tid_bits, POS_TID_BITS, NR_TID_BITS, usize);
 
 // high bits: 0b0000000000111111111000000000000000000000000000000000000000000000 in 64-bit
 const POS_HIGH_BITS: u32 = POS_TID_BITS + NR_TID_BITS;
-const NR_HIGH_BITS: u32 = 9;
+const NR_HIGH_BITS: u32 = 14; // TODO: 9
 impl_left_bits!(high_bits, POS_HIGH_BITS, NR_HIGH_BITS, usize);
 
 /// Cut as the length of high tag
@@ -266,8 +266,6 @@ impl<T> Pointable for T {
     }
 
     unsafe fn drop(offset: usize, pool: &PoolHandle) {
-        // println!("drop {}", offset);
-        // std::process::exit(1);
         pool.free(PPtr::<T>::from(offset));
     }
 }
@@ -1510,6 +1508,7 @@ impl<T> PShared<'_, T> {
     /// assert_eq!(p.as_ptr(), ptr);
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
+    // TODO: change this into offset()
     pub fn as_ptr(&self) -> PPtr<T> {
         let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
         PPtr::from(offset)
