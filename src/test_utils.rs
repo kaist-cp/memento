@@ -94,6 +94,7 @@ pub mod tests {
     use std::sync::atomic::{fence, AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
+    use crate::ploc::Handle;
     use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::PDefault;
@@ -139,7 +140,7 @@ pub mod tests {
     }
 
     impl RootObj<DummyRootMemento> for DummyRootObj {
-        fn run(&self, _: &mut DummyRootMemento, _: usize, _: &Guard, _: &PoolHandle) {
+        fn run(&self, _: &mut DummyRootMemento, _: &Handle) {
             // no-op
         }
     }

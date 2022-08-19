@@ -1,6 +1,7 @@
 //! Detectable Combining Operation
 #![allow(missing_docs)]
 use crate::pepoch::PAtomic;
+use crate::ploc::Handle;
 use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle};
 use array_init::array_init;
 use crossbeam_epoch::Guard;
@@ -33,13 +34,7 @@ impl Collectable for Node {
 /// Trait for Memento
 pub trait Combinable {
     // checkpoint activate of request
-    fn chk_activate(
-        &mut self,
-        activate: usize,
-        tid: usize,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> usize;
+    fn chk_activate(&mut self, activate: usize, handle: &Handle) -> usize;
 
     fn peek_retval(&mut self) -> usize;
 
@@ -168,23 +163,19 @@ impl Combining {
         (s, st_thread, sfunc): (
             &CombStruct,
             &CombThreadState,
-            &dyn Fn(&PAtomic<c_void>, usize, usize, &Guard, &PoolHandle) -> usize,
+            &dyn Fn(&PAtomic<c_void>, usize, &Handle) -> usize,
         ),
         mmt: &mut M,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &Handle,
     ) -> usize {
-        let activate = mmt.chk_activate(
-            s.request[tid].activate.load(Ordering::Relaxed) + 1,
-            tid,
-            pool,
-            rec,
-        );
+        let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
+
+        // Checkpoint activate
+        let activate =
+            mmt.chk_activate(s.request[tid].activate.load(Ordering::Relaxed) + 1, handle);
 
         // Check if my request was already performed.
-        if *rec {
+        if handle.rec.load(Ordering::Relaxed) {
             let latest_state = unsafe { s.pstate.load(Ordering::SeqCst, guard).deref(pool) };
             let deactivate = latest_state.deactivate[tid].load(Ordering::SeqCst);
             if activate < deactivate {
@@ -201,7 +192,7 @@ impl Combining {
             if activate < s.request[tid].activate.load(Ordering::Relaxed) {
                 return mmt.peek_retval();
             }
-            *rec = false;
+            handle.rec.store(false, Ordering::Relaxed);
         }
 
         // Register request
@@ -211,9 +202,9 @@ impl Combining {
         // Do
         loop {
             match s.lock.try_lock(tid) {
-                Ok(_) => return Self::do_combine((s, st_thread, sfunc), mmt, tid, guard, pool),
+                Ok(_) => return Self::do_combine((s, st_thread, sfunc), mmt, handle),
                 Err(_) => {
-                    if let Ok(retval) = Self::do_non_combine(s, mmt, tid) {
+                    if let Ok(retval) = Self::do_non_combine(s, mmt, handle.tid) {
                         return retval;
                     }
                 }
@@ -233,13 +224,13 @@ impl Combining {
         (s, st_thread, sfunc): (
             &CombStruct,
             &CombThreadState,
-            &dyn Fn(&PAtomic<c_void>, usize, usize, &Guard, &PoolHandle) -> usize,
+            &dyn Fn(&PAtomic<c_void>, usize, &Handle) -> usize,
         ),
         mmt: &mut M,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
+        handle: &Handle,
     ) -> usize {
+        let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
+
         // ready
         let ind = st_thread.index.load(Ordering::Relaxed);
         let mut new_state = st_thread.state[ind].load(Ordering::Relaxed, guard);
@@ -256,9 +247,7 @@ impl Combining {
                     new_state_ref.return_value[t] = sfunc(
                         &new_state_ref.data,
                         s.request[t].arg.load(Ordering::Relaxed),
-                        tid,
-                        guard,
-                        pool,
+                        handle,
                     );
                     new_state_ref.deactivate[t].store(t_activate, Ordering::Release);
 

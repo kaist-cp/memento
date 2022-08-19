@@ -13,7 +13,7 @@ use crate::{
     PDefault,
 };
 
-use super::{ExecInfo, Timestamp, NR_MAX_THREADS};
+use super::{ExecInfo, Handle, Timestamp, NR_MAX_THREADS};
 
 #[derive(Debug, Clone, Copy)]
 struct CasTimestamp(u64);
@@ -171,20 +171,18 @@ impl<N: Collectable> From<PShared<'_, N>> for DetectableCASAtomic<N> {
 impl<N: Collectable> DetectableCASAtomic<N> {
     /// Compare And Set
     pub fn cas<'g>(
-        &self,
+        &'g self,
         old: PShared<'_, N>,
         new: PShared<'_, N>,
         mmt: &mut Cas,
-        tid: usize,
-        guard: &'g Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Result<(), PShared<'g, N>> {
-        if *rec {
-            if let Some(ret) = self.cas_result(new, mmt, tid, &pool.exec_info, guard) {
+        handle: &'g Handle,
+    ) -> Result<(), PShared<'_, N>> {
+        let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
+        if handle.rec.load(Ordering::Relaxed) {
+            if let Some(ret) = self.cas_result(new, mmt, handle) {
                 return ret;
             }
-            *rec = false;
+            handle.rec.store(false, Ordering::Relaxed);
         }
 
         let (p_own, _, _) = pool.exec_info.cas_info.own[tid].load().decode();
@@ -206,7 +204,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     continue;
                 }
 
-                mmt.checkpoint_fail(tid, &pool.exec_info);
+                mmt.checkpoint_fail(handle);
                 return Err(cur);
             }
 
@@ -214,7 +212,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, true);
 
             // Checkpoint success
-            mmt.checkpoint_succ(!p_own, tid, &pool.exec_info);
+            mmt.checkpoint_succ(!p_own, handle);
 
             // By inserting a pointer with tid removed, it prevents further helping.
             let _ = self
@@ -234,30 +232,35 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
     #[inline]
     fn cas_result<'g>(
-        &self,
+        &'g self,
         new: PShared<'_, N>,
         mmt: &mut Cas,
-        tid: usize,
-        exec_info: &ExecInfo,
-        guard: &'g Guard,
-    ) -> Option<Result<(), PShared<'g, N>>> {
+        handle: &'g Handle,
+    ) -> Option<Result<(), PShared<'_, N>>> {
+        let (tid, guard, local_max_time, exec_info) = (
+            handle.tid,
+            &handle.guard,
+            &handle.local_max_time,
+            &handle.pool.exec_info,
+        );
+
         let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
-        let t_local = exec_info.local_max_time.load(tid);
+        let t_local = handle.local_max_time.load();
 
         let (p_own, _, t_own) = exec_info.cas_info.own[tid].load().decode();
 
         if t_mmt > t_local {
             if f_mmt {
                 // failed
-                exec_info.local_max_time.store(tid, t_mmt);
+                handle.local_max_time.store(t_mmt);
                 let cur = self.inner.load(Ordering::SeqCst, guard);
-                let cur = self.load_help(cur, exec_info, guard);
+                let cur = self.load_help(cur, &exec_info, guard);
                 return Some(Err(cur));
             }
 
             // already successful
             if t_mmt >= t_own {
-                exec_info.cas_info.own[tid].store(mmt.checkpoint);
+                handle.pool.exec_info.cas_info.own[tid].store(mmt.checkpoint);
                 let _ = self.inner.compare_exchange(
                     new.with_aux_bit(p_own as _).with_tid(tid),
                     new.with_aux_bit(0).with_tid(0),
@@ -267,7 +270,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 );
             }
 
-            exec_info.local_max_time.store(tid, t_mmt);
+            handle.local_max_time.store(t_mmt);
             return Some(Ok(()));
         }
 
@@ -276,7 +279,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         // Check if the CAS I did before crash remains as it is
         if cur.with_aux_bit(0) == new.with_aux_bit(0).with_tid(tid) {
             persist_obj(&self.inner, true);
-            mmt.checkpoint_succ(!p_own, tid, exec_info);
+            mmt.checkpoint_succ(!p_own, handle);
 
             let _ = self
                 .inner
@@ -299,7 +302,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         // Success because the checkpoint written by the helper is higher than the last CAS
         // Since the value of location has already been changed, I just need to finalize my checkpoint.
-        mmt.checkpoint_succ(!p_own, tid, exec_info);
+        mmt.checkpoint_succ(!p_own, handle);
         sfence();
 
         Some(Ok(()))
@@ -489,8 +492,8 @@ impl Collectable for Cas {
 
 impl Cas {
     #[inline]
-    fn checkpoint_succ(&mut self, parity: bool, tid: usize, exec_info: &ExecInfo) {
-        let t = exec_info.exec_time();
+    fn checkpoint_succ(&mut self, parity: bool, handle: &Handle) {
+        let t = handle.pool.exec_info.exec_time();
         let ts_succ = CasTimestamp::new(parity, false, t);
 
         self.checkpoint = ts_succ;
@@ -498,18 +501,18 @@ impl Cas {
 
         compiler_fence(Ordering::Release);
 
-        exec_info.cas_info.own[tid].store(ts_succ);
-        exec_info.cas_info.help[tid].store(!parity, t); // preventing other threads from helping the previous CAS.
-        exec_info.local_max_time.store(tid, t);
+        handle.pool.exec_info.cas_info.own[handle.tid].store(ts_succ);
+        handle.pool.exec_info.cas_info.help[handle.tid].store(!parity, t); // preventing other threads from helping the previous CAS.
+        handle.local_max_time.store(t);
     }
 
     #[inline]
-    fn checkpoint_fail(&mut self, tid: usize, exec_info: &ExecInfo) {
-        let t = exec_info.exec_time();
+    fn checkpoint_fail(&mut self, handle: &Handle) {
+        let t = handle.pool.exec_info.exec_time();
         let ts_fail = CasTimestamp::new(false, true, t);
         self.checkpoint = ts_fail;
         persist_obj(&self.checkpoint, true);
-        exec_info.local_max_time.store(tid, t);
+        handle.local_max_time.store(t);
     }
 
     /// Clear
@@ -525,6 +528,7 @@ impl Cas {
 mod test {
     use crate::{
         pepoch::{atomic::Pointer, POwned},
+        ploc::Handle,
         pmem::{persist_obj, ralloc::Collectable, RootObj},
         test_utils::tests::*,
     };
@@ -603,30 +607,24 @@ mod test {
 
     impl<T: Collectable> Location<T> {
         #[inline]
-        pub(crate) fn cas_wo_failure<'g>(
+        pub(crate) fn cas_wo_failure(
             &self,
-            mut old: PShared<'g, Node<T>>,
+            mut old: PShared<'_, Node<T>>,
             new: PShared<'_, Node<T>>,
             cas: &mut Cas,
-            tid: usize,
-            guard: &'g Guard,
-            pool: &PoolHandle,
-            rec: &mut bool,
+            handle: &Handle,
         ) {
-            while self.loc.cas(old, new, cas, tid, guard, pool, rec).is_err() {}
+            while self.loc.cas(old, new, cas, handle).is_err() {}
         }
 
         pub(crate) fn swap<'g>(
             &self,
-            new: PShared<'_, Node<T>>,
+            new: PShared<'g, Node<T>>,
             swap: &mut Swap<T>,
-            tid: usize,
-            guard: &'g Guard,
-            pool: &PoolHandle,
-            rec: &mut bool,
+            handle: &'g Handle,
         ) -> PShared<'g, Node<T>> {
             loop {
-                if let Ok(old) = self.try_swap(new, swap, tid, guard, pool, rec) {
+                if let Ok(old) = self.try_swap(new, swap, handle) {
                     return old;
                 }
             }
@@ -634,31 +632,22 @@ mod test {
 
         fn try_swap<'g>(
             &self,
-            new: PShared<'_, Node<T>>,
+            new: PShared<'g, Node<T>>,
             swap: &mut Swap<T>,
-            tid: usize,
-            guard: &'g Guard,
-            pool: &PoolHandle,
-            rec: &mut bool,
+            handle: &'g Handle,
         ) -> Result<PShared<'g, Node<T>>, ()> {
             let old = swap
                 .old
                 .checkpoint(
                     || {
-                        let old = self.loc.load(Ordering::SeqCst, guard, pool);
+                        let old = self.loc.load(Ordering::SeqCst, &handle.guard, handle.pool);
                         PAtomic::from(old)
                     },
-                    tid,
-                    pool,
-                    rec,
+                    handle,
                 )
-                .load(Ordering::Relaxed, guard);
+                .load(Ordering::Relaxed, &handle.guard);
 
-            if self
-                .loc
-                .cas(old, new, &mut swap.cas, tid, guard, pool, rec)
-                .is_ok()
-            {
+            if self.loc.cas(old, new, &mut swap.cas, handle).is_ok() {
                 return Ok(old);
             }
 
@@ -693,9 +682,8 @@ mod test {
     }
 
     impl RootObj<Updates> for TestRootObj<Location<TestValue>> {
-        fn run(&self, mmt: &mut Updates, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let mut rec = true; // TODO: generalize
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+        fn run(&self, mmt: &mut Updates, handle: &Handle) {
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(handle.tid, true) };
             let loc = &self.obj;
 
             for seq in 0..NR_COUNT {
@@ -704,39 +692,22 @@ mod test {
                         || {
                             let node = POwned::new(
                                 Node {
-                                    data: TestValue::new(tid, seq),
+                                    data: TestValue::new(handle.tid, seq),
                                 },
-                                pool,
+                                handle.pool,
                             );
-                            persist_obj(unsafe { node.deref(pool) }, true);
+                            persist_obj(unsafe { node.deref(handle.pool) }, true);
                             PAtomic::from(node)
                         },
-                        tid,
-                        pool,
-                        &mut rec,
+                        &handle,
                     )
-                    .load(Ordering::Relaxed, guard);
+                    .load(Ordering::Relaxed, &handle.guard);
 
-                loc.cas_wo_failure(
-                    PShared::null(),
-                    node,
-                    &mut mmt.upds[seq].0,
-                    tid,
-                    guard,
-                    pool,
-                    &mut rec,
-                );
+                loc.cas_wo_failure(PShared::null(), node, &mut mmt.upds[seq].0, &handle);
 
-                let old = loc.swap(
-                    PShared::null(),
-                    &mut mmt.upds[seq].1,
-                    tid,
-                    guard,
-                    pool,
-                    &mut rec,
-                );
+                let old = loc.swap(PShared::null(), &mut mmt.upds[seq].1, &handle);
 
-                let val = unsafe { std::ptr::read(&old.deref(pool).data) };
+                let val = unsafe { std::ptr::read(&old.deref(handle.pool).data) };
                 testee.report(seq, val);
             }
         }

@@ -2,12 +2,14 @@
 
 use std::{
     ops::{Add, Sub},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
+
+use crossbeam_epoch::Guard;
 
 use super::{CasHelpArr, CasInfo};
 use crate::{
-    pmem::{lfence, rdtscp},
+    pmem::{lfence, rdtscp, PoolHandle},
     test_utils::ordo::get_ordo_boundary,
 };
 
@@ -85,36 +87,34 @@ impl Sub for Timestamp {
     }
 }
 
+/// Maximum checkpoint time checked per thread
 #[derive(Debug)]
 pub(crate) struct LocalMaxTime {
-    inner: [AtomicU64; NR_MAX_THREADS + 1],
+    inner: AtomicU64,
 }
 
 impl Default for LocalMaxTime {
     fn default() -> Self {
         Self {
-            inner: array_init::array_init(|_| AtomicU64::new(0)),
+            inner: AtomicU64::new(0),
         }
     }
 }
 
 impl LocalMaxTime {
     #[inline]
-    pub(crate) fn load(&self, tid: usize) -> Timestamp {
-        Timestamp::from(self.inner[tid].load(Ordering::Relaxed))
+    pub(crate) fn load(&self) -> Timestamp {
+        Timestamp::from(self.inner.load(Ordering::Relaxed))
     }
 
     #[inline]
-    pub(crate) fn store(&self, tid: usize, t: Timestamp) {
-        self.inner[tid].store(t.into(), Ordering::Relaxed);
+    pub(crate) fn store(&self, t: Timestamp) {
+        self.inner.store(t.into(), Ordering::Relaxed);
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct ExecInfo {
-    /// Maximum checkpoint time checked per thread
-    pub(crate) local_max_time: LocalMaxTime,
-
     /// Maximum checkpoint time in last execution (not changed after main execution)
     pub(crate) global_max_time: Timestamp,
 
@@ -134,7 +134,6 @@ pub(crate) struct ExecInfo {
 impl From<&'static CasHelpArr> for ExecInfo {
     fn from(help: &'static CasHelpArr) -> Self {
         Self {
-            local_max_time: LocalMaxTime::default(),
             global_max_time: Timestamp::from(0),
             chk_max_time: Timestamp::from(0),
             cas_info: CasInfo::new(help),
@@ -155,5 +154,36 @@ impl ExecInfo {
         let ret = Timestamp::from(rdtscp()) - self.init_time + self.global_max_time;
         lfence();
         ret
+    }
+}
+
+/// Handle for each thread
+#[derive(Debug)]
+pub struct Handle {
+    /// Logical tid
+    pub tid: usize,
+
+    /// Maximum checkpoint time checked per thread
+    pub(crate) local_max_time: LocalMaxTime,
+
+    /// Recovery flag
+    pub(crate) rec: AtomicBool,
+
+    /// Guard
+    pub guard: Guard,
+
+    /// Pool
+    pub pool: &'static PoolHandle,
+}
+
+impl Handle {
+    pub(crate) fn new(tid: usize, guard: Guard, pool: &'static PoolHandle) -> Self {
+        Self {
+            tid,
+            local_max_time: LocalMaxTime::default(),
+            rec: AtomicBool::new(true),
+            guard,
+            pool,
+        }
     }
 }

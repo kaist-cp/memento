@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, mem};
 
-use crate::ploc::{CasHelpArr, ExecInfo, Timestamp, NR_MAX_THREADS};
+use crate::ploc::{CasHelpArr, ExecInfo, Handle, NR_MAX_THREADS};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
@@ -99,14 +99,11 @@ impl PoolHandle {
             let th = thread::spawn(move || {
                 let h = thread::spawn(move || {
                     loop {
-                        self.exec_info.local_max_time.store(tid, Timestamp::from(0));
-
-                        struct Args<O: 'static> {
+                        struct Args<'a, O: 'static> {
                             m_addr: usize,
-                            tid: usize,
                             nr_memento: usize,
-                            pool_handle: &'static PoolHandle,
                             root_obj: &'static O,
+                            handle: &'a Handle,
                         }
 
                         extern "C" fn thread_start<O, M>(arg: *mut c_void) -> *mut c_void
@@ -115,36 +112,31 @@ impl PoolHandle {
                             M: Collectable + Default + Send + Sync,
                         {
                             // Decompose arguments
-                            let args = unsafe { (arg as *mut Args<O>).as_mut() }.unwrap();
-                            let (m_addr, tid, nr_memento, pool_handle, root_obj) = (
-                                args.m_addr,
-                                args.tid,
-                                args.nr_memento,
-                                args.pool_handle,
-                                args.root_obj,
-                            );
+                            let args = unsafe { (arg as *mut Args<'_, O>).as_mut() }.unwrap();
+                            let (m_addr, nr_memento, root_obj, handle) =
+                                (args.m_addr, args.nr_memento, args.root_obj, args.handle);
+
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
-                            // Old Guard
-                            let guard = unsafe { epoch::old_guard(tid) };
-
                             // Barrier
-                            pool_handle.barrier_wait(tid, nr_memento);
+                            handle.pool.barrier_wait(handle.tid, nr_memento);
 
                             // Run memento
-                            root_obj.run(root_mmt, tid, &guard, pool_handle);
+                            root_obj.run(root_mmt, handle);
 
                             ptr::null_mut()
                         }
 
                         let mut native: libc::pthread_t = unsafe { mem::zeroed() };
                         let attr: libc::pthread_attr_t = unsafe { mem::zeroed() };
+
+                        // Handle
+                        let handle = Handle::new(tid, unsafe { epoch::old_guard(tid) }, self);
                         let mut args = Args {
                             m_addr,
-                            tid,
                             nr_memento,
-                            pool_handle: self,
                             root_obj,
+                            handle: &handle,
                         };
 
                         // Run memento
@@ -445,19 +437,18 @@ impl Pool {
 /// Root object of pool
 pub trait RootObj<M: Collectable + Default>: PDefault + Collectable {
     /// Root object's default run function with a root memento
-    fn run(&self, mmt: &mut M, tid: usize, guard: &Guard, pool: &PoolHandle);
+    fn run(&self, mmt: &mut M, handle: &Handle);
 }
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_epoch::Guard;
     use log::{self as _, debug};
 
     use crate::pmem::pool::*;
     use crate::test_utils::tests::*;
 
     impl RootObj<CheckInv> for DummyRootObj {
-        fn run(&self, mmt: &mut CheckInv, _: usize, _: &Guard, _: &PoolHandle) {
+        fn run(&self, mmt: &mut CheckInv, _: &Handle) {
             if mmt.flag {
                 debug!("check inv");
                 assert_eq!(mmt.value, 42);

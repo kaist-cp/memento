@@ -1,7 +1,7 @@
 //! Persistent opt queue
 
 use crate::ploc::insert_delete::{self, SMOAtomic};
-use crate::ploc::{not_deleted, Checkpoint, Traversable};
+use crate::ploc::{not_deleted, Checkpoint, Handle, Traversable};
 use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use insert_delete::{Delete, Insert};
@@ -223,11 +223,9 @@ impl<T: Clone + Collectable> Queue<T> {
         &self,
         node: PShared<'_, Node<T>>,
         try_enq: &mut TryEnqueue,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &Handle,
     ) -> Result<(), TryFail> {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let (tail, tail_ref) = loop {
             let tail = self.tail.load(Ordering::SeqCst, guard);
             let tail_ref = unsafe { tail.deref(pool) };
@@ -245,13 +243,13 @@ impl<T: Clone + Collectable> Queue<T> {
 
         if tail_ref
             .next
-            .insert_lp(node, self, &mut try_enq.ins, tid, guard, pool, rec)
+            .insert_lp(node, self, &mut try_enq.ins, handle)
             .is_err()
         {
             return Err(TryFail);
         }
 
-        if !*rec {
+        if !handle.rec.load(Ordering::Relaxed) {
             let _ =
                 self.tail
                     .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
@@ -261,44 +259,29 @@ impl<T: Clone + Collectable> Queue<T> {
     }
 
     /// Enqueue
-    pub fn enqueue(
-        &self,
-        value: T,
-        enq: &mut Enqueue<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) {
+    pub fn enqueue(&self, value: T, enq: &mut Enqueue<T>, handle: &Handle) {
         let node = enq
             .node
             .checkpoint(
                 || {
-                    let node = POwned::new(Node::from(value), pool);
-                    persist_obj(unsafe { node.deref(pool) }, true);
+                    let node = POwned::new(Node::from(value), handle.pool);
+                    persist_obj(unsafe { node.deref(handle.pool) }, true);
                     PAtomic::from(node)
                 },
-                tid,
-                pool,
-                rec,
+                handle,
             )
-            .load(Ordering::Relaxed, guard);
+            .load(Ordering::Relaxed, &handle.guard);
 
-        while self
-            .try_enqueue(node, &mut enq.try_enq, tid, guard, pool, rec)
-            .is_err()
-        {}
+        while self.try_enqueue(node, &mut enq.try_enq, handle).is_err() {}
     }
 
     /// Try dequeue
     pub fn try_dequeue(
         &self,
         try_deq: &mut TryDequeue<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
+        handle: &Handle,
     ) -> Result<Option<T>, TryFail> {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let chk = try_deq.head_next.checkpoint(
             || {
                 let (head, next) = loop {
@@ -322,9 +305,7 @@ impl<T: Clone + Collectable> Queue<T> {
                 };
                 (PAtomic::from(head), PAtomic::from(next))
             },
-            tid,
-            pool,
-            rec,
+            handle,
         );
 
         let head = chk.0.load(Ordering::Relaxed, guard);
@@ -336,7 +317,7 @@ impl<T: Clone + Collectable> Queue<T> {
 
         if self
             .head
-            .delete(head, next, &mut try_deq.del, tid, guard, pool, rec)
+            .delete(head, next, &mut try_deq.del, handle)
             .is_err()
         {
             return Err(TryFail);
@@ -349,32 +330,18 @@ impl<T: Clone + Collectable> Queue<T> {
     }
 
     /// Dequeue
-    pub fn dequeue(
-        &self,
-        deq: &mut Dequeue<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> Option<T> {
+    pub fn dequeue(&self, deq: &mut Dequeue<T>, handle: &Handle) -> Option<T> {
         loop {
-            if let Ok(ret) = self.try_dequeue(&mut deq.try_deq, tid, guard, pool, rec) {
+            if let Ok(ret) = self.try_dequeue(&mut deq.try_deq, handle) {
                 return ret;
             }
         }
     }
 
     /// Dequeue Some
-    pub fn dequeue_some(
-        &self,
-        deq_some: &mut DequeueSome<T>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> T {
+    pub fn dequeue_some(&self, deq_some: &mut DequeueSome<T>, handle: &Handle) -> T {
         loop {
-            if let Some(v) = self.dequeue(&mut deq_some.deq, tid, guard, pool, rec) {
+            if let Some(v) = self.dequeue(&mut deq_some.deq, handle) {
                 return v;
             }
         }
@@ -415,24 +382,18 @@ mod test {
     }
 
     impl RootObj<EnqDeq> for TestRootObj<Queue<TestValue>> {
-        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let mut rec = true; // TODO: generalize
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+        fn run(&self, enq_deq: &mut EnqDeq, handle: &Handle) {
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(handle.tid, true) };
 
             for seq in 0..NR_COUNT {
                 let _ = self.obj.enqueue(
-                    TestValue::new(tid, seq),
+                    TestValue::new(handle.tid, seq),
                     &mut enq_deq.enqs[seq],
-                    tid,
-                    guard,
-                    pool,
-                    &mut rec,
+                    handle,
                 );
-                let res = self
-                    .obj
-                    .dequeue(&mut enq_deq.deqs[seq], tid, guard, pool, &mut rec);
+                let res = self.obj.dequeue(&mut enq_deq.deqs[seq], handle);
 
-                assert!(res.is_some(), "tid:{tid}, seq:{seq}");
+                assert!(res.is_some(), "tid:{}, seq:{seq}", handle.tid);
                 testee.report(seq, res.unwrap());
             }
         }

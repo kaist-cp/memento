@@ -1,8 +1,10 @@
 //! Checkpoint
 
+use std::sync::atomic::Ordering;
+
 use crossbeam_utils::CachePadded;
 
-use super::Timestamp;
+use super::{Handle, Timestamp};
 use crate::pmem::{
     ll::persist_obj,
     ralloc::{Collectable, GarbageCollection},
@@ -59,25 +61,19 @@ where
     T: Default + Clone + Collectable,
 {
     /// Checkpoint
-    pub fn checkpoint<F: FnOnce() -> T>(
-        &mut self,
-        val_func: F,
-        tid: usize,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> T {
-        if *rec {
-            if let Some(v) = self.peek(tid, pool) {
+    pub fn checkpoint<F: FnOnce() -> T>(&mut self, val_func: F, handle: &Handle) -> T {
+        if handle.rec.load(Ordering::Relaxed) {
+            if let Some(v) = self.peek(handle) {
                 return v;
             }
-            *rec = false;
+            handle.rec.store(false, Ordering::Relaxed);
         }
 
         let new = val_func();
         let (stale, _) = self.stale_latest_idx();
 
         // Normal run
-        let t = pool.exec_info.exec_time();
+        let t = handle.pool.exec_info.exec_time();
         if std::mem::size_of::<(T, Timestamp)>() <= 1 << CACHE_LINE_SHIFT {
             self.saved[stale] = CachePadded::new((new.clone(), t));
             persist_obj(&*self.saved[stale], true);
@@ -88,13 +84,13 @@ where
             persist_obj(&self.saved[stale].1, true);
         }
 
-        pool.exec_info.local_max_time.store(tid, t);
+        handle.local_max_time.store(t);
         new
     }
 
     #[inline]
-    fn is_valid(&self, idx: usize, tid: usize, pool: &PoolHandle) -> bool {
-        self.saved[idx].1 > pool.exec_info.local_max_time.load(tid)
+    fn is_valid(&self, idx: usize, handle: &Handle) -> bool {
+        self.saved[idx].1 > handle.local_max_time.load()
     }
 
     #[inline]
@@ -107,13 +103,11 @@ where
     }
 
     /// Peek
-    pub fn peek(&self, tid: usize, pool: &PoolHandle) -> Option<T> {
+    pub fn peek(&self, handle: &Handle) -> Option<T> {
         let (_, latest) = self.stale_latest_idx();
 
-        if self.is_valid(latest, tid, pool) {
-            pool.exec_info
-                .local_max_time
-                .store(tid, self.saved[latest].1);
+        if self.is_valid(latest, handle) {
+            handle.local_max_time.store(self.saved[latest].1);
             Some((self.saved[latest].0).clone())
         } else {
             None
@@ -134,7 +128,6 @@ where
 
 #[cfg(test)]
 mod test {
-    use crossbeam_epoch::Guard;
     use itertools::Itertools;
 
     use super::*;
@@ -166,23 +159,17 @@ mod test {
     }
 
     impl RootObj<Checkpoints> for TestRootObj<DummyRootObj> {
-        fn run(&self, chks: &mut Checkpoints, tid: usize, _: &Guard, pool: &PoolHandle) {
-            let mut rec = true; // TODO: generalize
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+        fn run(&self, chks: &mut Checkpoints, handle: &Handle) {
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(handle.tid, true) };
 
             // let mut items: [usize; NR_COUNT] = array_init::array_init(|i| i);
             let mut items = (0..NR_COUNT).collect_vec();
 
             for seq in 0..NR_COUNT {
-                let i = chks.chks[seq].checkpoint(
-                    || rdtscp() as usize % items.len(),
-                    tid,
-                    pool,
-                    &mut rec,
-                );
+                let i = chks.chks[seq].checkpoint(|| rdtscp() as usize % items.len(), &handle);
                 // let val = items[i];
                 let val = items.remove(i);
-                testee.report(seq, TestValue::new(tid, val))
+                testee.report(seq, TestValue::new(handle.tid, val))
             }
         }
     }
