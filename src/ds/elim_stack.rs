@@ -50,19 +50,19 @@ pub struct TryPush<T: Clone + Collectable> {
     /// try push memento for inner stack
     try_push: treiber_stack::TryPush<Request<T>>,
 
-    /// elimination exchange index
-    elim_idx: usize,
-
     /// elimination exchanger's exchange op
     try_xchg: TryExchange<Request<T>>,
+
+    /// elimination exchange index
+    elim_idx: usize,
 }
 
 impl<T: Clone + Collectable> Default for TryPush<T> {
     fn default() -> Self {
         Self {
             try_push: Default::default(),
-            elim_idx: get_random_elim_index(),
             try_xchg: Default::default(),
+            elim_idx: get_random_elim_index(),
         }
     }
 }
@@ -123,22 +123,23 @@ pub struct TryPop<T: Clone + Collectable> {
     /// try pop memento for inner stack
     try_pop: treiber_stack::TryPop<Request<T>>,
 
-    /// elimination exchange index
-    elim_idx: usize,
-
     /// exchanger node
     pop_node: Checkpoint<PAtomic<Node<Request<T>>>>,
+
     /// try exchange memento
     try_xchg: TryExchange<Request<T>>,
+
+    /// elimination exchange index
+    elim_idx: usize,
 }
 
 impl<T: Clone + Collectable> Default for TryPop<T> {
     fn default() -> Self {
         Self {
             try_pop: Default::default(),
-            elim_idx: get_random_elim_index(),
             pop_node: Default::default(),
             try_xchg: Default::default(),
+            elim_idx: get_random_elim_index(),
         }
     }
 }
