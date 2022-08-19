@@ -24,13 +24,14 @@ pub struct Enqueue {
 }
 
 impl Combinable for Enqueue {
-    fn chk_activate<const REC: bool>(
+    fn chk_activate(
         &mut self,
         activate: usize,
         tid: usize,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> usize {
-        self.activate.checkpoint::<REC, _>(|| activate, tid, pool)
+        self.activate.checkpoint(|| activate, tid, pool, rec)
     }
 
     fn peek_retval(&mut self) -> usize {
@@ -56,13 +57,14 @@ pub struct Dequeue {
 }
 
 impl Combinable for Dequeue {
-    fn chk_activate<const REC: bool>(
+    fn chk_activate(
         &mut self,
         activate: usize,
         tid: usize,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> usize {
-        self.activate.checkpoint::<REC, _>(|| activate, tid, pool)
+        self.activate.checkpoint(|| activate, tid, pool, rec)
     }
 
     fn peek_retval(&mut self) -> usize {
@@ -205,15 +207,16 @@ impl PDefault for CombiningQueue {
 
 /// enq
 impl CombiningQueue {
-    pub fn comb_enqueue<const REC: bool>(
+    pub fn comb_enqueue(
         &self,
         arg: usize,
         enq: &mut Enqueue,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> usize {
-        Combining::apply_op::<REC, _>(
+        Combining::apply_op(
             arg,
             (
                 &self.enqueue_struct.inner,
@@ -224,6 +227,7 @@ impl CombiningQueue {
             tid,
             guard,
             pool,
+            rec,
         )
     }
 
@@ -280,14 +284,15 @@ impl CombiningQueue {
 impl CombiningQueue {
     const EMPTY: usize = usize::MAX;
 
-    pub fn comb_dequeue<const REC: bool>(
+    pub fn comb_dequeue(
         &self,
         deq: &mut Dequeue,
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> usize {
-        Combining::apply_op::<REC, _>(
+        Combining::apply_op(
             0, // unit-like
             (
                 &self.dequeue_struct.inner,
@@ -298,6 +303,7 @@ impl CombiningQueue {
             tid,
             guard,
             pool,
+            rec,
         )
     }
 
@@ -365,19 +371,21 @@ mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<CombiningQueue> {
         fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
+            let mut rec = true;
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
 
             for seq in 0..NR_COUNT {
-                let _ = self.obj.comb_enqueue::<true>(
+                let _ = self.obj.comb_enqueue(
                     TestValue::new(tid, seq).into_usize(),
                     &mut enq_deq.enqs[seq],
                     tid,
                     guard,
                     pool,
+                    &mut rec,
                 );
                 let res = self
                     .obj
-                    .comb_dequeue::<true>(&mut enq_deq.deqs[seq], tid, guard, pool);
+                    .comb_dequeue(&mut enq_deq.deqs[seq], tid, guard, pool, &mut rec);
 
                 testee.report(seq, TestValue::from_usize(res));
             }

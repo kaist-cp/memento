@@ -33,11 +33,12 @@ impl Collectable for Node {
 /// Trait for Memento
 pub trait Combinable {
     // checkpoint activate of request
-    fn chk_activate<const REC: bool>(
+    fn chk_activate(
         &mut self,
         activate: usize,
         tid: usize,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> usize;
 
     fn peek_retval(&mut self) -> usize;
@@ -162,7 +163,7 @@ pub struct Combining {}
 
 impl Combining {
     // sfunc: (state data (head or tail), arg, tid, guard, pool) -> return value
-    pub fn apply_op<const REC: bool, M: Combinable>(
+    pub fn apply_op<M: Combinable>(
         arg: usize,
         (s, st_thread, sfunc): (
             &CombStruct,
@@ -173,28 +174,34 @@ impl Combining {
         tid: usize,
         guard: &Guard,
         pool: &PoolHandle,
+        rec: &mut bool,
     ) -> usize {
-        let activate = mmt.chk_activate::<REC>(
+        let activate = mmt.chk_activate(
             s.request[tid].activate.load(Ordering::Relaxed) + 1,
             tid,
             pool,
+            rec,
         );
 
         // Check if my request was already performed.
-        if REC {
-            let latest_state = unsafe { s.pstate.load(Ordering::Acquire, guard).deref(pool) };
-            let deactivate = latest_state.deactivate[tid].load(Ordering::Relaxed);
+        if *rec {
+            let latest_state = unsafe { s.pstate.load(Ordering::SeqCst, guard).deref(pool) };
+            let deactivate = latest_state.deactivate[tid].load(Ordering::SeqCst);
             if activate < deactivate {
                 return mmt.peek_retval();
             }
 
-            // NOTE: In this case, latest thread-local activate(`request[tid].actviate`) value can be either mmt.activate or mmt.activate + 1
-            // - Case 1: act 5, deact 5 (mmt-local act 5, thread-local act 5) -> In this case, it is safe to overwrite the thread-local act in request[tid]. And if this thread was a combiner, he has to finalize the combine.
-            // - Case 2: act 5, deact 5 (mmt-local act 5, thread-local act 6) -> In this case, it should not overwrite the thread-local act in request[tid]
-            // - Case 3: act 6, deact 5 (mmt-local act 6, thread-local act 6) -> In this case, it is safe to overwrite the thread-local act in request[tid]
+            // if i was a combiner, i have to finalize the combine.
+            if activate == deactivate && !s.lock.is_owner(tid) {
+                let retval = latest_state.return_value[tid];
+                mmt.backup_retval(retval);
+                return retval;
+            }
+
             if activate < s.request[tid].activate.load(Ordering::Relaxed) {
                 return mmt.peek_retval();
             }
+            *rec = false;
         }
 
         // Register request
@@ -203,12 +210,10 @@ impl Combining {
 
         // Do
         loop {
-            match s.lock.try_lock::<REC>(tid) {
-                Ok(_) => {
-                    return Self::do_combine::<REC, _>((s, st_thread, sfunc), mmt, tid, guard, pool)
-                }
+            match s.lock.try_lock(tid) {
+                Ok(_) => return Self::do_combine((s, st_thread, sfunc), mmt, tid, guard, pool),
                 Err(_) => {
-                    if let Ok(retval) = Self::do_non_combine::<REC, _>(s, mmt, tid) {
+                    if let Ok(retval) = Self::do_non_combine(s, mmt, tid) {
                         return retval;
                     }
                 }
@@ -224,7 +229,7 @@ impl Combining {
     ///     3.1. central state = pt.state[pt.index] (commit point)
     ///     3.2. pt.index = 1 - pt.index
     ///     3.3. release lock
-    fn do_combine<const REC: bool, M: Combinable>(
+    fn do_combine<M: Combinable>(
         (s, st_thread, sfunc): (
             &CombStruct,
             &CombThreadState,
@@ -294,7 +299,7 @@ impl Combining {
     }
 
     /// non-combiner (1) wait until combiner unlocks the lock and (2) check if my request was performed (3) return
-    fn do_non_combine<const REC: bool, M: Combinable>(
+    fn do_non_combine<M: Combinable>(
         // &self,
         s: &CombStruct,
         mmt: &mut M,
@@ -330,8 +335,6 @@ pub mod combining_lock {
     //! Thread-recoverable lock for combining
     use core::sync::atomic::Ordering;
     use std::sync::atomic::AtomicUsize;
-
-    use crossbeam_utils::Backoff;
 
     use crate::impl_left_bits;
 
@@ -370,11 +373,11 @@ pub mod combining_lock {
         ///
         /// return Ok: (seq, guard)
         /// return Err: (seq, tid)
-        pub fn try_lock<const REC: bool>(&self, tid: usize) -> Result<(), (usize, usize)> {
+        pub fn try_lock(&self, tid: usize) -> Result<(), (usize, usize)> {
             let current = self.inner.load(Ordering::Relaxed);
             let (_ptr, _tid) = decompose_aux_bit(current);
 
-            if REC && tid == _tid {
+            if self.is_owner(tid) {
                 return Ok(());
             }
 
@@ -393,22 +396,18 @@ pub mod combining_lock {
                 .map_err(|_| (_ptr, _tid))
         }
 
-        /// lock
-        pub fn lock<const REC: bool>(&self, tid: usize) {
-            let backoff = Backoff::new();
-            loop {
-                if let Ok(ret) = self.try_lock::<REC>(tid) {
-                    return ret;
-                }
-                backoff.snooze();
-            }
-        }
-
         /// peek
         ///
         /// return (ptr, tid)
         pub fn peek(&self) -> (usize, usize) {
             decompose_aux_bit(self.inner.load(Ordering::Acquire))
+        }
+
+        pub fn is_owner(&self, tid: usize) -> bool {
+            let current = self.inner.load(Ordering::Relaxed);
+            let (_, _tid) = decompose_aux_bit(current);
+
+            tid == _tid
         }
 
         /// unlock
