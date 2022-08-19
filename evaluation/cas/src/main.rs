@@ -6,13 +6,13 @@ use std::{
 
 use cas_eval::{
     cas::{TestCas, TestCasMmt},
+    get_nops,
     mcas::{TestMCas, TestMCasMmt},
     nrlcas::{TestNRLCas, TestNRLCasMmt},
     pcas::{TestPCas, TestPCasMmt, TestPMwCas, TestPMwCasMmt},
-    CONTENTION_WIDTH, NR_THREADS, TOTAL_NOPS_FAILED,
+    CONTENTION_WIDTH, DURATION, NR_THREADS, TOTAL_NOPS_FAILED,
 };
 use csv::Writer;
-use evaluation::common::{get_nops, DURATION};
 use structopt::StructOpt;
 
 pub enum TestTarget {

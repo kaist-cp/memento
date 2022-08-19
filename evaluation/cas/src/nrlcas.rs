@@ -1,7 +1,6 @@
 use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::{unprotected, Guard};
-use evaluation::common::{DURATION, TOTAL_NOPS};
 use memento::{
     pepoch::{atomic::Pointer, PAtomic, PShared},
     pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj},
@@ -9,8 +8,8 @@ use memento::{
 };
 
 use crate::{
-    cas_random_loc, pick_range, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH,
-    NR_THREADS, TOTAL_NOPS_FAILED,
+    cas_random_loc, pick_range, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, DURATION,
+    NR_THREADS, TOTAL_NOPS, TOTAL_NOPS_FAILED,
 };
 
 pub struct NRLLoc {

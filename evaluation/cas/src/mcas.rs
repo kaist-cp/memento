@@ -2,7 +2,6 @@ use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::{unprotected, Guard};
 use crossbeam_utils::CachePadded;
-use evaluation::common::{DURATION, TOTAL_NOPS};
 use memento::{
     pepoch::{atomic::Pointer, PShared},
     ploc::{Cas, DetectableCASAtomic},
@@ -11,7 +10,8 @@ use memento::{
 };
 
 use crate::{
-    cas_random_loc, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, TOTAL_NOPS_FAILED,
+    cas_random_loc, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, DURATION, TOTAL_NOPS,
+    TOTAL_NOPS_FAILED,
 };
 
 pub struct TestMCas {
@@ -82,5 +82,6 @@ fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, tid: usize, pool: &PoolH
 
     let old = loc.load(Ordering::SeqCst, guard, pool);
     let new = unsafe { PShared::from_usize(tid) }; // TODO: various new value
-    loc.cas::<false>(old, new, mmt, tid, guard, pool).is_ok()
+    let mut rec = false;
+    loc.cas(old, new, mmt, tid, guard, pool, &mut rec).is_ok()
 }

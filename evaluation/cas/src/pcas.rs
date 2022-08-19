@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossbeam_epoch::{unprotected, Guard};
-use evaluation::common::{DURATION, TOTAL_NOPS};
 use memento::{
     pepoch::{
         atomic::{CompareExchangeError, Pointer},
@@ -12,7 +11,8 @@ use memento::{
 };
 
 use crate::{
-    cas_random_loc, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, TOTAL_NOPS_FAILED,
+    cas_random_loc, Node, PFixedVec, TestNOps, TestableCas, CONTENTION_WIDTH, DURATION, TOTAL_NOPS,
+    TOTAL_NOPS_FAILED,
 };
 
 pub struct TestPCas {
