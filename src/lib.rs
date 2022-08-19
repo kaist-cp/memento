@@ -134,3 +134,8 @@ impl PDefault for usize {
         Default::default()
     }
 }
+/// Trait for Memento
+pub trait Memento: Default + Collectable {
+    /// clear
+    fn clear(&mut self);
+}

@@ -435,7 +435,7 @@ impl Pool {
 }
 
 /// Root object of pool
-pub trait RootObj<M: Collectable + Default>: PDefault + Collectable {
+pub trait RootObj<M: Memento>: PDefault + Collectable {
     /// Root object's default run function with a root memento
     fn run(&self, mmt: &mut M, handle: &Handle);
 }
@@ -464,6 +464,12 @@ mod tests {
     struct CheckInv {
         value: usize,
         flag: bool,
+    }
+
+    impl Memento for CheckInv {
+        fn clear(&mut self) {
+            // no-op
+        }
     }
 
     impl Collectable for CheckInv {
