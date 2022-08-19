@@ -3,7 +3,7 @@
 use crate::ds::comb::combining_lock::CombiningLock;
 use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned};
-use crate::ploc::Checkpoint;
+use crate::ploc::{Checkpoint, Handle};
 use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
 use crate::PDefault;
 use array_init::array_init;
@@ -24,14 +24,8 @@ pub struct Enqueue {
 }
 
 impl Combinable for Enqueue {
-    fn chk_activate(
-        &mut self,
-        activate: usize,
-        tid: usize,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> usize {
-        self.activate.checkpoint(|| activate, tid, pool, rec)
+    fn chk_activate(&mut self, activate: usize, handle: &Handle) -> usize {
+        self.activate.checkpoint(|| activate, handle)
     }
 
     fn peek_retval(&mut self) -> usize {
@@ -57,14 +51,8 @@ pub struct Dequeue {
 }
 
 impl Combinable for Dequeue {
-    fn chk_activate(
-        &mut self,
-        activate: usize,
-        tid: usize,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> usize {
-        self.activate.checkpoint(|| activate, tid, pool, rec)
+    fn chk_activate(&mut self, activate: usize, handle: &Handle) -> usize {
+        self.activate.checkpoint(|| activate, handle)
     }
 
     fn peek_retval(&mut self) -> usize {
@@ -207,37 +195,21 @@ impl PDefault for CombiningQueue {
 
 /// enq
 impl CombiningQueue {
-    pub fn comb_enqueue(
-        &self,
-        arg: usize,
-        enq: &mut Enqueue,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> usize {
+    pub fn comb_enqueue(&self, arg: usize, enq: &mut Enqueue, handle: &Handle) -> usize {
         Combining::apply_op(
             arg,
             (
                 &self.enqueue_struct.inner,
-                &self.enqueue_thread_state[tid],
+                &self.enqueue_thread_state[handle.tid],
                 &Self::enqueue_raw,
             ),
             enq,
-            tid,
-            guard,
-            pool,
-            rec,
+            handle,
         )
     }
 
-    fn enqueue_raw(
-        tail: &PAtomic<c_void>,
-        arg: usize,
-        _: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> usize {
+    fn enqueue_raw(tail: &PAtomic<c_void>, arg: usize, handle: &Handle) -> usize {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let tail = unsafe { (tail as *const _ as *const PAtomic<Node>).as_ref().unwrap() };
 
         // Enqueue new node
@@ -284,36 +256,21 @@ impl CombiningQueue {
 impl CombiningQueue {
     const EMPTY: usize = usize::MAX;
 
-    pub fn comb_dequeue(
-        &self,
-        deq: &mut Dequeue,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-        rec: &mut bool,
-    ) -> usize {
+    pub fn comb_dequeue(&self, deq: &mut Dequeue, handle: &Handle) -> usize {
         Combining::apply_op(
             0, // unit-like
             (
                 &self.dequeue_struct.inner,
-                &self.dequeue_thread_state[tid],
+                &self.dequeue_thread_state[handle.tid],
                 &Self::dequeue_raw,
             ),
             deq,
-            tid,
-            guard,
-            pool,
-            rec,
+            handle,
         )
     }
 
-    fn dequeue_raw(
-        head: &PAtomic<c_void>,
-        _: usize,
-        _: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> usize {
+    fn dequeue_raw(head: &PAtomic<c_void>, _: usize, handle: &Handle) -> usize {
+        let (guard, pool) = (&handle.guard, handle.pool);
         let head = unsafe { (head as *const _ as *mut PAtomic<Node>).as_ref().unwrap() };
         let head_shared = head.load(Ordering::SeqCst, guard);
 
@@ -336,10 +293,8 @@ impl CombiningQueue {
 }
 #[cfg(test)]
 mod test {
-    use crate::pmem::*;
     use crate::test_utils::tests::*;
-
-    use crossbeam_epoch::Guard;
+    use crate::{ploc::Handle, pmem::*};
 
     use super::{CombiningQueue, Dequeue, Enqueue};
 
@@ -370,22 +325,16 @@ mod test {
     }
 
     impl RootObj<EnqDeq> for TestRootObj<CombiningQueue> {
-        fn run(&self, enq_deq: &mut EnqDeq, tid: usize, guard: &Guard, pool: &PoolHandle) {
-            let mut rec = true;
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+        fn run(&self, enq_deq: &mut EnqDeq, handle: &Handle) {
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(handle.tid, true) };
 
             for seq in 0..NR_COUNT {
                 let _ = self.obj.comb_enqueue(
-                    TestValue::new(tid, seq).into_usize(),
+                    TestValue::new(handle.tid, seq).into_usize(),
                     &mut enq_deq.enqs[seq],
-                    tid,
-                    guard,
-                    pool,
-                    &mut rec,
+                    handle,
                 );
-                let res = self
-                    .obj
-                    .comb_dequeue(&mut enq_deq.deqs[seq], tid, guard, pool, &mut rec);
+                let res = self.obj.comb_dequeue(&mut enq_deq.deqs[seq], handle);
 
                 testee.report(seq, TestValue::from_usize(res));
             }
