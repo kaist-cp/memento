@@ -5,7 +5,7 @@ use crate::pepoch::atomic::Pointer;
 use crate::pepoch::{unprotected, PAtomic, PDestroyable, POwned};
 use crate::ploc::{Checkpoint, Handle};
 use crate::pmem::{persist_obj, sfence, Collectable, GarbageCollection, PPtr, PoolHandle};
-use crate::PDefault;
+use crate::{Memento, PDefault};
 use array_init::array_init;
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
@@ -18,7 +18,7 @@ use super::comb::{
 };
 
 /// memento for enqueue
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Memento)]
 pub struct Enqueue {
     activate: Checkpoint<usize>,
 }
@@ -44,7 +44,7 @@ impl Collectable for Enqueue {
 }
 
 /// memento for dequeue
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Memento)]
 pub struct Dequeue {
     activate: Checkpoint<usize>,
     return_val: CachePadded<usize>,
@@ -294,16 +294,26 @@ impl CombiningQueue {
 #[cfg(test)]
 mod test {
     use crate::test_utils::tests::*;
+    use crate::Memento;
     use crate::{ploc::Handle, pmem::*};
 
     use super::{CombiningQueue, Dequeue, Enqueue};
 
-    const NR_THREAD: usize = 4;
-    const NR_COUNT: usize = 100_000;
+    const NR_THREAD: usize = 2;
+    const NR_COUNT: usize = 10_000;
 
     struct EnqDeq {
         enqs: [Enqueue; NR_COUNT],
         deqs: [Dequeue; NR_COUNT],
+    }
+
+    impl Memento for EnqDeq {
+        fn clear(&mut self) {
+            for i in 0..NR_COUNT {
+                self.enqs[i].clear();
+                self.deqs[i].clear();
+            }
+        }
     }
 
     impl Default for EnqDeq {

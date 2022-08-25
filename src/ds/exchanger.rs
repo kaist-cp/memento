@@ -15,7 +15,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    PDefault,
+    Memento, PDefault,
 };
 
 // WAITING Tag
@@ -67,7 +67,7 @@ impl<T: Collectable> SMONode for Node<T> {
 }
 
 /// Try exchange memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct TryExchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     init_slot: Checkpoint<PAtomic<Node<T>>>,
@@ -101,20 +101,10 @@ impl<T: Clone + Collectable> Collectable for TryExchange<T> {
     }
 }
 
-impl<T: Clone + Collectable> TryExchange<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.node.clear();
-        self.init_slot.clear();
-        self.wait_slot.clear();
-    }
-}
-
 type ExchangeCond<T> = fn(&T) -> bool;
 
 /// Exchanger's exchange operation.
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Exchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_xchg: TryExchange<T>,
@@ -135,15 +125,6 @@ impl<T: Clone + Collectable> Collectable for Exchange<T> {
     fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut xchg.node, tid, gc, pool);
         TryExchange::filter(&mut xchg.try_xchg, tid, gc, pool);
-    }
-}
-
-impl<T: Clone + Collectable> Exchange<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.node.clear();
-        self.try_xchg.clear();
     }
 }
 
@@ -343,12 +324,13 @@ mod tests {
             RootObj,
         },
         test_utils::tests::{run_test, TestRootObj, TESTER},
+        Memento,
     };
 
     use super::*;
 
     /// Test whether two threads exchange well with one exchanger (one time)
-    #[derive(Default)]
+    #[derive(Default, Memento)]
     struct ExchangeOnce {
         xchg: Exchange<usize>,
     }
@@ -395,7 +377,7 @@ mod tests {
     ///  |        |                 |                |                 |        |
     ///     (exchange0)        (exchange0)     (exchange2)        (exchange2)
     /// [item]    <-----lxchg----->       [item]       <-----rxchg----->     [item]
-    #[derive(Default)]
+    #[derive(Default, Memento)]
     struct RotateLeft {
         item: usize,
         exchange0: Exchange<usize>,

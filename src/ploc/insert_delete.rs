@@ -13,9 +13,10 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         rdtsc, PoolHandle,
     },
+    Memento,
 };
 
-use super::{ExecInfo, Handle, Timestamp};
+use super::{Handle, Timestamp};
 
 /// Node for `Insert`/`Delete`
 pub trait Node: Sized {
@@ -45,6 +46,13 @@ struct Failed {
     t: CachePadded<Timestamp>,
 }
 
+impl Memento for Failed {
+    fn clear(&mut self) {
+        self.t = CachePadded::new(Timestamp::from(0));
+        persist_obj(&*self.t, false);
+    }
+}
+
 impl Failed {
     fn record(&mut self, handle: &Handle) {
         *self.t = handle.pool.exec_info.exec_time();
@@ -69,7 +77,7 @@ impl Collectable for Failed {
 }
 
 /// Insert memento
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Memento)]
 pub struct Insert(Failed);
 
 impl Collectable for Insert {
@@ -79,7 +87,7 @@ impl Collectable for Insert {
 }
 
 /// Delete memento
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Memento)]
 pub struct Delete(Failed);
 
 impl Collectable for Delete {

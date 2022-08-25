@@ -77,7 +77,7 @@ impl PoolHandle {
     pub fn execute<O, M>(&'static self)
     where
         O: RootObj<M> + Send + Sync + 'static,
-        M: Collectable + Default + Send + Sync,
+        M: Memento + Send + Sync,
     {
         // get root obj
         let root_obj = unsafe {
@@ -109,7 +109,7 @@ impl PoolHandle {
                         extern "C" fn thread_start<O, M>(arg: *mut c_void) -> *mut c_void
                         where
                             O: RootObj<M> + Send + Sync + 'static,
-                            M: Collectable + Default + Send + Sync,
+                            M: Memento + Send + Sync,
                         {
                             // Decompose arguments
                             let args = unsafe { (arg as *mut Args<'_, O>).as_mut() }.unwrap();
@@ -262,15 +262,11 @@ impl Pool {
     ///
     /// * Fail if file already exists in `filepath`
     /// * Fail if `size` is not more than `1GB` and less than `1TB` (forced by Ralloc)
-    pub fn create<O, M>(
+    pub fn create<O: RootObj<M>, M: Memento>(
         filepath: &str,
         size: usize,
         nr_memento: usize, // number of root memento(s)
-    ) -> Result<&'static PoolHandle, Error>
-    where
-        O: RootObj<M>,
-        M: Collectable + Default,
-    {
+    ) -> Result<&'static PoolHandle, Error> {
         if Path::new(&(filepath.to_owned() + "_basemd")).exists() {
             return Err(Error::new(
                 std::io::ErrorKind::AlreadyExists,
@@ -346,11 +342,10 @@ impl Pool {
     ///
     /// * Fail if file does not exist in `filepath`
     /// * Fail if not called with the same size as the size specified during `Pool::create` (forced by Ralloc)
-    pub unsafe fn open<O, M>(filepath: &str, size: usize) -> Result<&'static PoolHandle, Error>
-    where
-        O: RootObj<M>,
-        M: Collectable + Default,
-    {
+    pub unsafe fn open<O: RootObj<M>, M: Memento>(
+        filepath: &str,
+        size: usize,
+    ) -> Result<&'static PoolHandle, Error> {
         if !Path::new(&(filepath.to_owned() + "_basemd")).exists() {
             return Err(Error::new(std::io::ErrorKind::NotFound, "File not found."));
         }
@@ -435,7 +430,7 @@ impl Pool {
 }
 
 /// Root object of pool
-pub trait RootObj<M: Collectable + Default>: PDefault + Collectable {
+pub trait RootObj<M: Memento>: PDefault + Collectable {
     /// Root object's default run function with a root memento
     fn run(&self, mmt: &mut M, handle: &Handle);
 }
@@ -464,6 +459,12 @@ mod tests {
     struct CheckInv {
         value: usize,
         flag: bool,
+    }
+
+    impl Memento for CheckInv {
+        fn clear(&mut self) {
+            // no-op
+        }
     }
 
     impl Collectable for CheckInv {

@@ -19,6 +19,7 @@ stat_print_flushes = []
 stress = []
 
 [dependencies]
+mmt_derive = { path = "./mmt_derive" }
 crossbeam-epoch = { path = "./crossbeam-persistency/crossbeam-epoch" }
 crossbeam-utils = { path = "./crossbeam-persistency/crossbeam-utils" }
 etrace = "1.1.1"

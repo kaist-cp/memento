@@ -45,13 +45,13 @@ impl<T: Collectable> Drop for Node<T> {
 }
 
 /// Try push memento
-#[derive(Debug)]
-pub struct TryPush<T: Collectable> {
+#[derive(Debug, Memento)]
+pub struct TryPush<T: Collectable + Clone> {
     top: Checkpoint<PAtomic<Node<T>>>,
     insert: Cas,
 }
 
-unsafe impl<T: Collectable> Send for TryPush<T> {}
+unsafe impl<T: Collectable + Clone> Send for TryPush<T> {}
 
 impl<T: Clone + Collectable> Default for TryPush<T> {
     fn default() -> Self {
@@ -62,24 +62,15 @@ impl<T: Clone + Collectable> Default for TryPush<T> {
     }
 }
 
-impl<T: Collectable> Collectable for TryPush<T> {
+impl<T: Collectable + Clone> Collectable for TryPush<T> {
     fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         Checkpoint::filter(&mut try_push.top, tid, gc, pool);
         Cas::filter(&mut try_push.insert, tid, gc, pool);
     }
 }
 
-impl<T: Collectable> TryPush<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.top.clear();
-        self.insert.clear();
-    }
-}
-
 /// Push memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_push: TryPush<T>,
@@ -103,17 +94,8 @@ impl<T: Clone + Collectable> Collectable for Push<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Push<T> {}
 
-impl<T: Clone + Collectable> Push<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.node.clear();
-        self.try_push.clear();
-    }
-}
-
 /// Try pop memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct TryPop<T: Clone + Collectable> {
     delete: Cas,
     top: Checkpoint<PAtomic<Node<T>>>,
@@ -137,17 +119,8 @@ impl<T: Clone + Collectable> Collectable for TryPop<T> {
     }
 }
 
-impl<T: Clone + Collectable> TryPop<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.delete.clear();
-        self.top.clear();
-    }
-}
-
 /// Pop memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Pop<T: Clone + Collectable> {
     try_pop: TryPop<T>,
 }
@@ -167,14 +140,6 @@ impl<T: Clone + Collectable> Collectable for Pop<T> {
 }
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Pop<T> {}
-
-impl<T: Clone + Collectable> Pop<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.try_pop.clear();
-    }
-}
 
 /// Persistent Treiber stack
 #[derive(Debug)]

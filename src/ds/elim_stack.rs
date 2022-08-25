@@ -13,7 +13,7 @@ use crate::{
         ralloc::{Collectable, GarbageCollection},
         PoolHandle,
     },
-    PDefault,
+    Memento, PDefault,
 };
 
 use super::{
@@ -45,7 +45,7 @@ impl<T: Collectable> Collectable for Request<T> {
 }
 
 /// Try push memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct TryPush<T: Clone + Collectable> {
     /// try push memento for inner stack
     try_push: treiber_stack::TryPush<Request<T>>,
@@ -74,17 +74,8 @@ impl<T: Clone + Collectable> Collectable for TryPush<T> {
     }
 }
 
-impl<T: Clone + Collectable> TryPush<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.try_push.clear();
-        self.try_xchg.clear();
-    }
-}
-
 /// Push memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<Request<T>>>>,
     try_push: TryPush<T>,
@@ -108,17 +99,8 @@ impl<T: Clone + Collectable> Collectable for Push<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Push<T> {}
 
-impl<T: Clone + Collectable> Push<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.node.clear();
-        self.try_push.clear();
-    }
-}
-
 /// Try pop memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct TryPop<T: Clone + Collectable> {
     /// try pop memento for inner stack
     try_pop: treiber_stack::TryPop<Request<T>>,
@@ -152,18 +134,8 @@ impl<T: Clone + Collectable> Collectable for TryPop<T> {
     }
 }
 
-impl<T: Clone + Collectable> TryPop<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.try_pop.clear();
-        self.pop_node.clear();
-        self.try_xchg.clear();
-    }
-}
-
 /// Pop memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Pop<T: Clone + Collectable> {
     try_pop: TryPop<T>,
 }
@@ -183,14 +155,6 @@ impl<T: Clone + Collectable> Collectable for Pop<T> {
 }
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Pop<T> {}
-
-impl<T: Clone + Collectable> Pop<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.try_pop.clear();
-    }
-}
 
 /// Persistent Elimination backoff stack
 #[derive(Debug)]

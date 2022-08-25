@@ -62,7 +62,7 @@ impl<K, V: Collectable> Collectable for Harris<K, V> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Memento)]
 struct Help {
     cas: Cas,
 }
@@ -73,7 +73,7 @@ impl Collectable for Help {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 struct TryFind<K, V: Collectable> {
     found: Checkpoint<(
         bool,
@@ -100,7 +100,7 @@ impl<K, V: Collectable> Collectable for TryFind<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 struct Find<K, V: Collectable> {
     try_find: TryFind<K, V>,
 }
@@ -120,7 +120,7 @@ impl<K, V: Collectable> Collectable for Find<K, V> {
 }
 
 /// Lookup memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Lookup<K, V: Collectable> {
     find: Find<K, V>,
 }
@@ -139,7 +139,7 @@ impl<K, V: Collectable> Collectable for Lookup<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 struct TryInsert<K, V: Collectable> {
     found: Checkpoint<(
         bool,
@@ -170,7 +170,7 @@ impl<K, V: Collectable> Collectable for TryInsert<K, V> {
 }
 
 /// Insert memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Insert<K, V: Collectable> {
     node: Checkpoint<PAtomic<Node<K, V>>>,
     find: Find<K, V>,
@@ -195,7 +195,7 @@ impl<K, V: Collectable> Collectable for Insert<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 struct TryDelete<K, V: Collectable> {
     find: Find<K, V>,
     next: Checkpoint<PAtomic<Node<K, V>>>,
@@ -224,7 +224,7 @@ impl<K, V: Collectable> Collectable for TryDelete<K, V> {
 }
 
 /// Delete memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Delete<K, V: Collectable> {
     try_del: TryDelete<K, V>,
 }
@@ -574,6 +574,17 @@ mod test {
         ins_lookups: [Lookup<TestValue, TestValue>; NR_COUNT],
         deletes: [Delete<TestValue, TestValue>; NR_COUNT],
         del_lookups: [Lookup<TestValue, TestValue>; NR_COUNT],
+    }
+
+    impl Memento for InsDelLook {
+        fn clear(&mut self) {
+            for i in 0..NR_COUNT {
+                self.inserts[i].clear();
+                self.ins_lookups[i].clear();
+                self.deletes[i].clear();
+                self.del_lookups[i].clear();
+            }
+        }
     }
 
     impl Default for InsDelLook {

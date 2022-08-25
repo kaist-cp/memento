@@ -1,5 +1,6 @@
 //! Linking Ralloc (https://github.com/urcs-sync/ralloc)
 
+use crossbeam_utils::CachePadded;
 use etrace::some_or;
 
 use super::{global_pool, PoolHandle};
@@ -223,5 +224,11 @@ impl<T: Collectable> Collectable for Option<T> {
 impl<T: Collectable> Collectable for MaybeUninit<T> {
     fn filter(mu: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         T::filter(unsafe { mu.assume_init_mut() }, tid, gc, pool);
+    }
+}
+
+impl<T: Collectable> Collectable for CachePadded<T> {
+    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        T::filter(&mut *s, tid, gc, pool);
     }
 }
