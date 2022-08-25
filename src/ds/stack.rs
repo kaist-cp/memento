@@ -14,10 +14,10 @@ where
     T: Clone,
 {
     /// Push memento
-    type Push: Default + Collectable;
+    type Push: Memento;
 
     /// Pop memento
-    type Pop: Default + Collectable;
+    type Pop: Memento;
 
     /// Push
     fn push(&self, value: T, mmt: &mut Self::Push, handle: &Handle);
@@ -28,7 +28,6 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crossbeam_epoch::Guard;
 
     use super::*;
     use crate::ploc::Handle;
@@ -42,6 +41,20 @@ pub(crate) mod tests {
     {
         pushes: [S::Push; COUNT],
         pops: [S::Pop; COUNT],
+    }
+
+    impl<S, const NR_THREAD: usize, const COUNT: usize> Memento for PushPop<S, NR_THREAD, COUNT>
+    where
+        S: Stack<TestValue>,
+    {
+        fn clear(&mut self) {
+            for push in self.pushes.as_mut() {
+                push.clear();
+            }
+            for pop in self.pops.as_mut() {
+                pop.clear();
+            }
+        }
     }
 
     impl<S, const NR_THREAD: usize, const COUNT: usize> Default for PushPop<S, NR_THREAD, COUNT>
