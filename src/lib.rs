@@ -55,7 +55,7 @@ pub mod pepoch;
 pub mod test_utils;
 
 use crate::pmem::{pool::PoolHandle, ralloc::Collectable};
-use crossbeam_epoch::Guard;
+use crossbeam_utils::CachePadded;
 use std::{mem::ManuallyDrop, ptr};
 
 /// A wrapper to freeze Ownership
@@ -141,4 +141,16 @@ pub use mmt_derive::*;
 pub trait Memento: Default + Collectable {
     /// clear
     fn clear(&mut self);
+}
+
+impl Memento for usize {
+    fn clear(&mut self) {
+        *self = 0
+    }
+}
+
+impl<T: Memento> Memento for CachePadded<T> {
+    fn clear(&mut self) {
+        (&mut **self).clear();
+    }
 }

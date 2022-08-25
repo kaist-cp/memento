@@ -97,7 +97,7 @@ pub mod tests {
     use crate::ploc::Handle;
     use crate::pmem::pool::*;
     use crate::pmem::ralloc::{Collectable, GarbageCollection};
-    use crate::PDefault;
+    use crate::{Memento, PDefault};
 
     use {
         crate::pmem::*,
@@ -145,7 +145,7 @@ pub mod tests {
         }
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Debug, Default, Memento)]
     pub struct DummyRootMemento;
 
     impl Collectable for DummyRootMemento {
@@ -202,7 +202,7 @@ pub mod tests {
         nr_count: usize,
     ) where
         O: RootObj<M> + Send + Sync + 'static,
-        M: Collectable + Default + Send + Sync,
+        M: Memento + Send + Sync,
     {
         // Assertion err causes abort.
         std::panic::set_hook(Box::new(|info| {
@@ -236,7 +236,7 @@ pub mod tests {
     pub fn run_test_inner<O, M>(pool_name: &str, pool_len: usize, nr_memento: usize)
     where
         O: RootObj<M> + Send + Sync + 'static,
-        M: Collectable + Default + Send + Sync,
+        M: Memento + Send + Sync,
     {
         let filepath = get_test_abs_path(pool_name);
 
