@@ -10,7 +10,7 @@ use crate::{
     impl_left_bits,
     pepoch::{PAtomic, PShared},
     pmem::{ll::persist_obj, sfence, Collectable, GarbageCollection, PoolHandle},
-    PDefault,
+    Memento, PDefault,
 };
 
 use super::{ExecInfo, Handle, Timestamp, NR_MAX_THREADS};
@@ -466,6 +466,14 @@ pub struct Cas {
     checkpoint: CasTimestamp, // TODO: CachePadded
 }
 
+impl Memento for Cas {
+    #[inline]
+    fn clear(&mut self) {
+        self.checkpoint = CasTimestamp::new(false, false, Timestamp::from(0));
+        persist_obj(&self.checkpoint, false);
+    }
+}
+
 impl Default for Cas {
     fn default() -> Self {
         Self {
@@ -514,13 +522,6 @@ impl Cas {
         persist_obj(&self.checkpoint, true);
         handle.local_max_time.store(t);
     }
-
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.checkpoint = CasTimestamp::new(false, false, Timestamp::from(0));
-        persist_obj(&self.checkpoint, false);
-    }
 }
 
 #[allow(unused)]
@@ -559,7 +560,8 @@ mod test {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Memento)]
+    // TODO: derive(Collectable): impl filter that calls each subfield's filter
     pub(crate) struct Swap<T: Collectable> {
         old: Checkpoint<PAtomic<Node<T>>>,
         cas: Cas,
@@ -670,6 +672,7 @@ mod test {
                 self.nodes[i].clear();
                 self.upds[i].0.clear();
                 self.upds[i].1.clear();
+            }
         }
     }
 

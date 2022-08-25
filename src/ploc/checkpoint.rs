@@ -5,10 +5,13 @@ use std::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 
 use super::{Handle, Timestamp};
-use crate::pmem::{
-    ll::persist_obj,
-    ralloc::{Collectable, GarbageCollection},
-    PoolHandle, CACHE_LINE_SHIFT,
+use crate::{
+    pmem::{
+        ll::persist_obj,
+        ralloc::{Collectable, GarbageCollection},
+        PoolHandle, CACHE_LINE_SHIFT,
+    },
+    Memento,
 };
 
 /// Checkpoint memento
@@ -19,6 +22,19 @@ pub struct Checkpoint<T: Default + Clone + Collectable> {
 
 unsafe impl<T: Default + Clone + Collectable + Send + Sync> Send for Checkpoint<T> {}
 unsafe impl<T: Default + Clone + Collectable + Send + Sync> Sync for Checkpoint<T> {}
+
+impl<T: Default + Clone + Collectable> Memento for Checkpoint<T> {
+    /// Clear
+    #[inline]
+    fn clear(&mut self) {
+        self.saved = [
+            CachePadded::new((T::default(), Timestamp::from(0))),
+            CachePadded::new((T::default(), Timestamp::from(0))),
+        ];
+        persist_obj(&*self.saved[0], false);
+        persist_obj(&*self.saved[1], false);
+    }
+}
 
 impl<T: Default + Clone + Collectable> Default for Checkpoint<T> {
     fn default() -> Self {
@@ -112,17 +128,6 @@ where
         } else {
             None
         }
-    }
-
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.saved = [
-            CachePadded::new((T::default(), Timestamp::from(0))),
-            CachePadded::new((T::default(), Timestamp::from(0))),
-        ];
-        persist_obj(&*self.saved[0], false);
-        persist_obj(&*self.saved[1], false);
     }
 }
 

@@ -3,6 +3,7 @@
 use crate::pepoch::PAtomic;
 use crate::ploc::Handle;
 use crate::pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle};
+use crate::Memento;
 use array_init::array_init;
 use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
@@ -32,7 +33,7 @@ impl Collectable for Node {
 }
 
 /// Trait for Memento
-pub trait Combinable {
+pub trait Combinable: Memento {
     // checkpoint activate of request
     fn chk_activate(&mut self, activate: usize, handle: &Handle) -> usize;
 
