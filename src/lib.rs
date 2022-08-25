@@ -134,6 +134,9 @@ impl PDefault for usize {
         Default::default()
     }
 }
+
+pub use mmt_derive::*;
+
 /// Trait for Memento
 pub trait Memento: Default + Collectable {
     /// clear
