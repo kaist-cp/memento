@@ -49,7 +49,7 @@ impl<T: Collectable> Collectable for Node<T> {
 }
 
 /// Try enqueue memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct TryEnqueue<T: Clone + Collectable> {
     tail: Checkpoint<PAtomic<Node<T>>>,
     insert: Cas,
@@ -73,27 +73,11 @@ impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
     }
 }
 
-impl<T: Clone + Collectable> TryEnqueue<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.tail.clear();
-        self.insert.clear();
-    }
-}
-
 /// Enqueue memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_enq: TryEnqueue<T>,
-}
-
-impl<T: Clone + Collectable> Memento for Enqueue<T> {
-    fn clear(&mut self) {
-        self.node.clear();
-        self.try_enq.clear();
-    }
 }
 
 impl<T: Clone + Collectable> Default for Enqueue<T> {
@@ -115,17 +99,10 @@ impl<T: Clone + Collectable> Collectable for Enqueue<T> {
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Enqueue<T> {}
 
 /// Try dequeue memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct TryDequeue<T: Clone + Collectable> {
     delete: Cas,
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
-}
-
-impl<T: Clone + Collectable> Memento for TryDequeue<T> {
-    fn clear(&mut self) {
-        self.delete.clear();
-        self.head_next.clear();
-    }
 }
 
 impl<T: Clone + Collectable> Default for TryDequeue<T> {
@@ -147,7 +124,7 @@ impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
 }
 
 /// Dequeue memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Dequeue<T: Clone + Collectable> {
     try_deq: TryDequeue<T>,
 }
@@ -163,14 +140,6 @@ impl<T: Clone + Collectable> Default for Dequeue<T> {
 impl<T: Clone + Collectable> Collectable for Dequeue<T> {
     fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         TryDequeue::filter(&mut deq.try_deq, tid, gc, pool);
-    }
-}
-
-impl<T: Clone + Collectable> Dequeue<T> {
-    /// Clear
-    #[inline]
-    pub fn clear(&mut self) {
-        self.try_deq.clear();
     }
 }
 
@@ -354,9 +323,19 @@ mod test {
     const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;
 
+    // #[derive(Memento)] // TODO(derive array)
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
         deqs: [Dequeue<TestValue>; NR_COUNT],
+    }
+
+    impl Memento for EnqDeq {
+        fn clear(&mut self) {
+            for i in 0..NR_COUNT {
+                self.enqs[i].clear();
+                self.deqs[i].clear();
+            }
+        }
     }
 
     impl Default for EnqDeq {

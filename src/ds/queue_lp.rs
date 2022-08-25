@@ -61,7 +61,7 @@ impl<T: Collectable> insert_delete::Node for Node<T> {
 }
 
 /// Try enqueue memento
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Memento)]
 pub struct TryEnqueue {
     ins: Insert,
 }
@@ -75,7 +75,7 @@ impl Collectable for TryEnqueue {
 }
 
 /// Enqueue memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_enq: TryEnqueue,
@@ -100,7 +100,7 @@ impl<T: Clone + Collectable> Collectable for Enqueue<T> {
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Enqueue<T> {}
 
 /// Try dequeue memento
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct TryDequeue<T: Clone + Collectable> {
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
     del: Delete,
@@ -125,7 +125,7 @@ impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
 }
 
 /// Dequeue client
-#[derive(Debug)]
+#[derive(Debug, Memento)]
 pub struct Dequeue<T: Clone + Collectable> {
     try_deq: TryDequeue<T>,
 }
@@ -361,6 +361,15 @@ mod test {
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
         deqs: [Dequeue<TestValue>; NR_COUNT],
+    }
+
+    impl Memento for EnqDeq {
+        fn clear(&mut self) {
+            for i in 0..NR_COUNT {
+                self.enqs[i].clear();
+                self.deqs[i].clear();
+            }
+        }
     }
 
     impl Default for EnqDeq {
