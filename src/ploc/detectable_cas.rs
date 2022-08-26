@@ -232,12 +232,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         mmt: &mut Cas,
         handle: &'g Handle,
     ) -> Option<Result<(), PShared<'_, N>>> {
-        let (tid, guard, local_max_time, exec_info) = (
-            handle.tid,
-            &handle.guard,
-            &handle.local_max_time,
-            &handle.pool.exec_info,
-        );
+        let (tid, guard, exec_info) = (handle.tid, &handle.guard, &handle.pool.exec_info);
 
         let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
         let t_local = handle.local_max_time.load();

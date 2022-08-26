@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use etrace::some_or;
 
 use super::stack::*;
-use crate::pepoch::{Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic, Handle};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};

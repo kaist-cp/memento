@@ -211,7 +211,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         mmt: &mut Insert,
         handle: &'g Handle,
     ) -> Result<(), PShared<'g, N>> {
-        let (guard, pool) = (&handle.guard, handle.pool);
+        let guard = &handle.guard;
         if handle.rec.load(Ordering::Relaxed) {
             if let Some(succ) = Self::insert_result(new, obj, mmt, handle) {
                 return if succ {

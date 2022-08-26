@@ -360,7 +360,7 @@ mod tests {
         /// Before rotation : [1]  [2]  [3]
         /// After rotation  : [2]  [3]  [1]
         fn run(&self, rotl: &mut RotateLeft, handle: &Handle) {
-            let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
+            let tid = handle.tid;
             let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
 
             // Alias
