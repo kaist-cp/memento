@@ -10,6 +10,7 @@ use array_init::array_init;
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
 use libc::c_void;
+use mmt_derive::Collectable;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tinyvec::{tiny_vec, TinyVec};
 
@@ -18,7 +19,7 @@ use super::comb::{
 };
 
 /// memento for enqueue
-#[derive(Debug, Default, Memento)]
+#[derive(Debug, Default, Memento, Collectable)]
 pub struct Enqueue {
     activate: Checkpoint<usize>,
 }
@@ -37,14 +38,8 @@ impl Combinable for Enqueue {
     }
 }
 
-impl Collectable for Enqueue {
-    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut enq.activate, tid, gc, pool);
-    }
-}
-
 /// memento for dequeue
-#[derive(Debug, Default, Memento)]
+#[derive(Debug, Default, Memento, Collectable)]
 pub struct Dequeue {
     activate: Checkpoint<usize>,
     return_val: CachePadded<usize>,
@@ -65,12 +60,6 @@ impl Combinable for Dequeue {
     }
 }
 
-impl Collectable for Dequeue {
-    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut deq.activate, tid, gc, pool);
-    }
-}
-
 // Shared volatile variables
 static mut NEW_NODES: Option<TinyVec<[usize; 1024]>> = None;
 
@@ -81,28 +70,17 @@ lazy_static::lazy_static! {
     static ref D_LOCK: CachePadded<CombiningLock> = CachePadded::new(Default::default());
 }
 
+#[derive(Collectable)]
 struct EnqueueCombStruct {
     tail: CachePadded<PAtomic<Node>>,
     inner: CachePadded<CombStruct>,
 }
 
-impl Collectable for EnqueueCombStruct {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Collectable::filter(&mut *s.tail, tid, gc, pool);
-        Collectable::filter(&mut *s.inner, tid, gc, pool);
-    }
-}
+#[derive(Collectable)]
 
 struct DequeueCombStruct {
     head: CachePadded<PAtomic<Node>>,
     inner: CachePadded<CombStruct>,
-}
-
-impl Collectable for DequeueCombStruct {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Collectable::filter(&mut *s.head, tid, gc, pool);
-        Collectable::filter(&mut *s.inner, tid, gc, pool);
-    }
 }
 
 /// Detectable Combining Queue
