@@ -1,26 +1,26 @@
 use core::sync::atomic::Ordering;
-use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::ds::queue::*;
+use memento::ploc::Handle;
 use memento::pmem::pool::*;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
-use memento::PDefault;
+use memento::{Collectable, Memento, PDefault};
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
 use crate::common::{TestNOps, DURATION, PROB, QUEUE_INIT_SIZE, TOTAL_NOPS};
 
 impl<T: 'static + Clone + Collectable> TestQueue for Queue<T> {
-    type EnqInput = (T, &'static mut Enqueue<T>, usize); // value, memento
-    type DeqInput = (&'static mut Dequeue<T>, usize); // memento, tid
+    type EnqInput = (T, &'static mut Enqueue<T>); // value, memento
+    type DeqInput = &'static mut Dequeue<T>; // memento
 
-    fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
-        let (value, enq_memento, tid) = input;
-        self.enqueue::<false>(value, enq_memento, tid, guard, pool);
+    fn enqueue(&self, input: Self::EnqInput, handle: &Handle) {
+        let (value, enq_memento) = input;
+        self.enqueue(value, enq_memento, handle);
     }
 
-    fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
-        let (deq_memento, tid) = input;
-        let _ = self.dequeue::<false>(deq_memento, tid, guard, pool);
+    fn dequeue(&self, input: Self::DeqInput, handle: &Handle) {
+        let deq_memento = input;
+        let _ = self.dequeue(deq_memento, handle);
     }
 }
 
@@ -37,13 +37,12 @@ impl Collectable for TestMementoQueue {
 }
 
 impl PDefault for TestMementoQueue {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let queue = Queue::pdefault(pool);
-        let guard = epoch::pin();
+    fn pdefault(handle: &Handle) -> Self {
+        let queue = Queue::pdefault(handle);
 
         let mut push_init = Enqueue::default();
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            queue.enqueue::<false>(i, &mut push_init, 1, &guard, pool);
+            queue.enqueue(i, &mut push_init, handle);
         }
         Self { queue }
     }
@@ -51,7 +50,7 @@ impl PDefault for TestMementoQueue {
 
 impl TestNOps for TestMementoQueue {}
 
-#[derive(Debug)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TestMementoQueueEnqDeq<const PAIR: bool> {
     enq: CachePadded<Enqueue<usize>>,
     deq: CachePadded<Dequeue<usize>>,
@@ -66,43 +65,31 @@ impl<const PAIR: bool> Default for TestMementoQueueEnqDeq<PAIR> {
     }
 }
 
-impl<const PAIR: bool> Collectable for TestMementoQueueEnqDeq<PAIR> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl<const PAIR: bool> RootObj<TestMementoQueueEnqDeq<PAIR>> for TestMementoQueue {
-    fn run(
-        &self,
-        mmt: &mut TestMementoQueueEnqDeq<PAIR>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+    fn run(&self, mmt: &mut TestMementoQueueEnqDeq<PAIR>, handle: &Handle) {
         let q = &self.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
 
         let ops = self.test_nops(
-            &|tid, guard| {
+            &|tid, _| {
                 // unwrap CachePadded
                 let enq =
                     unsafe { (&*mmt.enq as *const _ as *mut Enqueue<usize>).as_mut() }.unwrap();
                 let deq =
                     unsafe { (&*mmt.deq as *const _ as *mut Dequeue<usize>).as_mut() }.unwrap();
-                let enq_input = (tid, enq, tid); // enq `tid`
-                let deq_input = (deq, tid);
+                let enq_input = (tid, enq); // enq `tid`
+                let deq_input = deq;
 
                 if PAIR {
-                    enq_deq_pair(q, enq_input, deq_input, guard, pool);
+                    enq_deq_pair(q, enq_input, deq_input, handle);
                 } else {
-                    enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+                    enq_deq_prob(q, enq_input, deq_input, prob, handle);
                 }
             },
-            tid,
+            handle.tid,
             duration,
-            guard,
+            &handle.guard,
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);

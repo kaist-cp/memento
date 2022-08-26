@@ -187,3 +187,6 @@ impl Handle {
         }
     }
 }
+
+unsafe impl Send for Handle {}
+unsafe impl Sync for Handle {}
