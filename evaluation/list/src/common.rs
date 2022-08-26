@@ -1,7 +1,8 @@
 //! Abstraction for evaluation
 
 use crossbeam_epoch::Guard;
-use memento::pmem::{Collectable, Pool, RootObj};
+use memento::pmem::{Pool, RootObj};
+use memento::Memento;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -76,7 +77,7 @@ pub enum TestTarget {
 pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: RootObj<M> + Send + Sync + 'static,
-    M: Collectable + Default + Send + Sync,
+    M: Memento + Send + Sync,
 {
     let _ = Pool::remove(filepath);
 
