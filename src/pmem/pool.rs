@@ -455,7 +455,7 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    #[derive(Default, Collectable)]
     struct CheckInv {
         value: usize,
         flag: bool,
@@ -463,12 +463,6 @@ mod tests {
 
     impl Memento for CheckInv {
         fn clear(&mut self) {
-            // no-op
-        }
-    }
-
-    impl Collectable for CheckInv {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
             // no-op
         }
     }

@@ -87,8 +87,8 @@ pub(crate) mod ordo {
 
 #[doc(hidden)]
 pub mod tests {
-    use crossbeam_epoch::Guard;
     use crossbeam_utils::Backoff;
+    use mmt_derive::Collectable;
     use std::backtrace::Backtrace;
     use std::io::Error;
     use std::sync::atomic::{fence, AtomicUsize, Ordering};
@@ -124,14 +124,8 @@ pub mod tests {
         path.to_str().unwrap().to_string()
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Collectable)]
     pub struct DummyRootObj;
-
-    impl Collectable for DummyRootObj {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-            // no-op
-        }
-    }
 
     impl PDefault for DummyRootObj {
         fn pdefault(_: &PoolHandle) -> Self {
@@ -145,14 +139,8 @@ pub mod tests {
         }
     }
 
-    #[derive(Debug, Default, Memento)]
+    #[derive(Debug, Default, Memento, Collectable)]
     pub struct DummyRootMemento;
-
-    impl Collectable for DummyRootMemento {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-            // no-op
-        }
-    }
 
     /// get dummy pool handle for test
     pub fn get_dummy_handle(filesize: usize) -> Result<&'static PoolHandle, Error> {
@@ -173,6 +161,7 @@ pub mod tests {
         }
     }
 
+    #[derive(Collectable)]
     pub(crate) struct TestRootObj<O: PDefault + Collectable> {
         pub(crate) obj: O,
     }
@@ -182,12 +171,6 @@ pub mod tests {
             Self {
                 obj: O::pdefault(pool),
             }
-        }
-    }
-
-    impl<O: PDefault + Collectable> Collectable for TestRootObj<O> {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            O::filter(&mut s.obj, tid, gc, pool)
         }
     }
 
@@ -258,7 +241,7 @@ pub mod tests {
         unsafe { libc::pthread_exit(&0 as *const _ as *mut _) };
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Collectable)]
     pub struct TestValue {
         data: usize,
     }
@@ -296,10 +279,6 @@ pub mod tests {
         pub fn from_usize(data: usize) -> Self {
             Self { data }
         }
-    }
-
-    impl Collectable for TestValue {
-        fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
     }
 
     #[derive(Debug)]
