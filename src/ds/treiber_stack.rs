@@ -12,7 +12,7 @@ use crate::pmem::{ll::*, pool::*};
 use crate::*;
 
 /// Treiber stack node
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct Node<T: Collectable> {
     /// Data
     pub(crate) data: T,
@@ -30,13 +30,6 @@ impl<T: Collectable> From<T> for Node<T> {
     }
 }
 
-impl<T: Collectable> Collectable for Node<T> {
-    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        PAtomic::filter(&mut node.next, tid, gc, pool);
-        T::filter(&mut node.data, tid, gc, pool);
-    }
-}
-
 impl<T: Collectable> Drop for Node<T> {
     fn drop(&mut self) {
         let data = unsafe { *(&self.data as *const _ as *const usize) };
@@ -45,7 +38,7 @@ impl<T: Collectable> Drop for Node<T> {
 }
 
 /// Try push memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryPush<T: Collectable + Clone> {
     top: Checkpoint<PAtomic<Node<T>>>,
     insert: Cas,
@@ -62,15 +55,8 @@ impl<T: Clone + Collectable> Default for TryPush<T> {
     }
 }
 
-impl<T: Collectable + Clone> Collectable for TryPush<T> {
-    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut try_push.top, tid, gc, pool);
-        Cas::filter(&mut try_push.insert, tid, gc, pool);
-    }
-}
-
 /// Push memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_push: TryPush<T>,
@@ -85,17 +71,10 @@ impl<T: Clone + Collectable> Default for Push<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for Push<T> {
-    fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut push.node, tid, gc, pool);
-        TryPush::filter(&mut push.try_push, tid, gc, pool);
-    }
-}
-
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Push<T> {}
 
 /// Try pop memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryPop<T: Clone + Collectable> {
     delete: Cas,
     top: Checkpoint<PAtomic<Node<T>>>,
@@ -112,15 +91,8 @@ impl<T: Clone + Collectable> Default for TryPop<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryPop<T> {}
 
-impl<T: Clone + Collectable> Collectable for TryPop<T> {
-    fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Cas::filter(&mut try_pop.delete, tid, gc, pool);
-        Checkpoint::filter(&mut try_pop.top, tid, gc, pool);
-    }
-}
-
 /// Pop memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Pop<T: Clone + Collectable> {
     try_pop: TryPop<T>,
 }
@@ -133,16 +105,10 @@ impl<T: Clone + Collectable> Default for Pop<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for Pop<T> {
-    fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        TryPop::filter(&mut pop.try_pop, tid, gc, pool);
-    }
-}
-
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Pop<T> {}
 
 /// Persistent Treiber stack
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct TreiberStack<T: Clone + Collectable> {
     top: DetectableCASAtomic<Node<T>>,
 }
@@ -152,12 +118,6 @@ impl<T: Clone + Collectable> Default for TreiberStack<T> {
         Self {
             top: DetectableCASAtomic::default(),
         }
-    }
-}
-
-impl<T: Clone + Collectable> Collectable for TreiberStack<T> {
-    fn filter(stack: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        DetectableCASAtomic::filter(&mut stack.top, tid, gc, pool);
     }
 }
 
