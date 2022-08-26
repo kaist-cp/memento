@@ -38,7 +38,7 @@ impl<K, V: Collectable> Collectable for Node<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 struct Harris<K, V: Collectable> {
     result: Checkpoint<(
         bool,
@@ -56,24 +56,12 @@ impl<K, V: Collectable> Default for Harris<K, V> {
     }
 }
 
-impl<K, V: Collectable> Collectable for Harris<K, V> {
-    fn filter(harris: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut harris.result, tid, gc, pool);
-    }
-}
-
-#[derive(Debug, Default, Memento)]
+#[derive(Debug, Default, Memento, Collectable)]
 struct Help {
     cas: Cas,
 }
 
-impl Collectable for Help {
-    fn filter(help: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Cas::filter(&mut help.cas, tid, gc, pool);
-    }
-}
-
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 struct TryFind<K, V: Collectable> {
     found: Checkpoint<(
         bool,
@@ -93,14 +81,7 @@ impl<K, V: Collectable> Default for TryFind<K, V> {
     }
 }
 
-impl<K, V: Collectable> Collectable for TryFind<K, V> {
-    fn filter(try_find: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut try_find.found, tid, gc, pool);
-        Help::filter(&mut try_find.help, tid, gc, pool);
-    }
-}
-
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 struct Find<K, V: Collectable> {
     try_find: TryFind<K, V>,
 }
@@ -113,14 +94,8 @@ impl<K, V: Collectable> Default for Find<K, V> {
     }
 }
 
-impl<K, V: Collectable> Collectable for Find<K, V> {
-    fn filter(find: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        TryFind::filter(&mut find.try_find, tid, gc, pool);
-    }
-}
-
 /// Lookup memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Lookup<K, V: Collectable> {
     find: Find<K, V>,
 }
@@ -133,13 +108,7 @@ impl<K, V: Collectable> Default for Lookup<K, V> {
     }
 }
 
-impl<K, V: Collectable> Collectable for Lookup<K, V> {
-    fn filter(lookup: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Find::filter(&mut lookup.find, tid, gc, pool);
-    }
-}
-
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 struct TryInsert<K, V: Collectable> {
     found: Checkpoint<(
         bool,
@@ -161,16 +130,8 @@ impl<K, V: Collectable> Default for TryInsert<K, V> {
     }
 }
 
-impl<K, V: Collectable> Collectable for TryInsert<K, V> {
-    fn filter(try_ins: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut try_ins.found, tid, gc, pool);
-        Help::filter(&mut try_ins.help, tid, gc, pool);
-        Cas::filter(&mut try_ins.insert, tid, gc, pool);
-    }
-}
-
 /// Insert memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Insert<K, V: Collectable> {
     node: Checkpoint<PAtomic<Node<K, V>>>,
     find: Find<K, V>,
@@ -187,15 +148,7 @@ impl<K, V: Collectable> Default for Insert<K, V> {
     }
 }
 
-impl<K, V: Collectable> Collectable for Insert<K, V> {
-    fn filter(ins: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut ins.node, tid, gc, pool);
-        Find::filter(&mut ins.find, tid, gc, pool);
-        TryInsert::filter(&mut ins.try_ins, tid, gc, pool);
-    }
-}
-
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 struct TryDelete<K, V: Collectable> {
     find: Find<K, V>,
     next: Checkpoint<PAtomic<Node<K, V>>>,
@@ -214,17 +167,8 @@ impl<K, V: Collectable> Default for TryDelete<K, V> {
     }
 }
 
-impl<K, V: Collectable> Collectable for TryDelete<K, V> {
-    fn filter(try_del: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Find::filter(&mut try_del.find, tid, gc, pool);
-        Checkpoint::filter(&mut try_del.next, tid, gc, pool);
-        Cas::filter(&mut try_del.logical, tid, gc, pool);
-        Cas::filter(&mut try_del.physical, tid, gc, pool);
-    }
-}
-
 /// Delete memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Delete<K, V: Collectable> {
     try_del: TryDelete<K, V>,
 }
@@ -234,12 +178,6 @@ impl<K, V: Collectable> Default for Delete<K, V> {
         Self {
             try_del: Default::default(),
         }
-    }
-}
-
-impl<K, V: Collectable> Collectable for Delete<K, V> {
-    fn filter(del: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        TryDelete::filter(&mut del.try_del, tid, gc, pool);
     }
 }
 
@@ -257,7 +195,7 @@ pub struct KeyExists;
 pub struct NotFound;
 
 /// List
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct List<K, V: Collectable> {
     head: CachePadded<DetectableCASAtomic<Node<K, V>>>,
 }
@@ -267,12 +205,6 @@ impl<K, V: Collectable> PDefault for List<K, V> {
         Self {
             head: Default::default(),
         }
-    }
-}
-
-impl<K, V: Collectable> Collectable for List<K, V> {
-    fn filter(queue: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        DetectableCASAtomic::filter(&mut queue.head, tid, gc, pool);
     }
 }
 
