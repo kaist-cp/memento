@@ -16,7 +16,7 @@ use crate::*;
 pub struct TryFail;
 
 /// Queue node
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 #[repr(align(128))]
 pub struct Node<T: Collectable> {
     data: MaybeUninit<T>,
@@ -41,15 +41,8 @@ impl<T: Collectable> Default for Node<T> {
     }
 }
 
-impl<T: Collectable> Collectable for Node<T> {
-    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        MaybeUninit::filter(&mut node.data, tid, gc, pool);
-        DetectableCASAtomic::filter(&mut node.next, tid, gc, pool);
-    }
-}
-
 /// Try enqueue memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryEnqueue<T: Clone + Collectable> {
     tail: Checkpoint<PAtomic<Node<T>>>,
     insert: Cas,
@@ -66,15 +59,8 @@ impl<T: Clone + Collectable> Default for TryEnqueue<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryEnqueue<T> {}
 
-impl<T: Clone + Collectable> Collectable for TryEnqueue<T> {
-    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut try_push.tail, tid, gc, pool);
-        Cas::filter(&mut try_push.insert, tid, gc, pool);
-    }
-}
-
 /// Enqueue memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_enq: TryEnqueue<T>,
@@ -89,17 +75,10 @@ impl<T: Clone + Collectable> Default for Enqueue<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for Enqueue<T> {
-    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut enq.node, tid, gc, pool);
-        TryEnqueue::filter(&mut enq.try_enq, tid, gc, pool);
-    }
-}
-
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Enqueue<T> {}
 
 /// Try dequeue memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryDequeue<T: Clone + Collectable> {
     delete: Cas,
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
@@ -116,15 +95,8 @@ impl<T: Clone + Collectable> Default for TryDequeue<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 
-impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
-    fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Cas::filter(&mut try_deq.delete, tid, gc, pool);
-        Checkpoint::filter(&mut try_deq.head_next, tid, gc, pool);
-    }
-}
-
 /// Dequeue memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Dequeue<T: Clone + Collectable> {
     try_deq: TryDequeue<T>,
 }
@@ -134,12 +106,6 @@ impl<T: Clone + Collectable> Default for Dequeue<T> {
         Self {
             try_deq: Default::default(),
         }
-    }
-}
-
-impl<T: Clone + Collectable> Collectable for Dequeue<T> {
-    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        TryDequeue::filter(&mut deq.try_deq, tid, gc, pool);
     }
 }
 
@@ -323,7 +289,6 @@ mod test {
     const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;
 
-    // #[derive(Memento)] // TODO(derive array)
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
         deqs: [Dequeue<TestValue>; NR_COUNT],

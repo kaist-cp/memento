@@ -17,7 +17,7 @@ use crate::*;
 pub struct TryFail;
 
 /// Queue node
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 #[repr(align(128))]
 pub struct Node<T: Collectable> {
     data: MaybeUninit<T>,
@@ -45,14 +45,6 @@ impl<T: Collectable> Default for Node<T> {
     }
 }
 
-impl<T: Collectable> Collectable for Node<T> {
-    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        MaybeUninit::filter(&mut node.data, tid, gc, pool);
-        SMOAtomic::filter(&mut node.next, tid, gc, pool);
-        PAtomic::filter(&mut node.repl, tid, gc, pool)
-    }
-}
-
 impl<T: Collectable> insert_delete::Node for Node<T> {
     #[inline]
     fn replacement(&self) -> &PAtomic<Self> {
@@ -61,21 +53,15 @@ impl<T: Collectable> insert_delete::Node for Node<T> {
 }
 
 /// Try enqueue memento
-#[derive(Debug, Default, Memento)]
+#[derive(Debug, Default, Memento, Collectable)]
 pub struct TryEnqueue {
     ins: Insert,
 }
 
 unsafe impl Send for TryEnqueue {}
 
-impl Collectable for TryEnqueue {
-    fn filter(try_enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Insert::filter(&mut try_enq.ins, tid, gc, pool);
-    }
-}
-
 /// Enqueue memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Enqueue<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_enq: TryEnqueue,
@@ -90,17 +76,10 @@ impl<T: Clone + Collectable> Default for Enqueue<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for Enqueue<T> {
-    fn filter(enq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut enq.node, tid, gc, pool);
-        TryEnqueue::filter(&mut enq.try_enq, tid, gc, pool);
-    }
-}
-
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Enqueue<T> {}
 
 /// Try dequeue memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryDequeue<T: Clone + Collectable> {
     head_next: Checkpoint<(PAtomic<Node<T>>, PAtomic<Node<T>>)>,
     del: Delete,
@@ -117,15 +96,8 @@ impl<T: Clone + Collectable> Default for TryDequeue<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for TryDequeue<T> {}
 
-impl<T: Clone + Collectable> Collectable for TryDequeue<T> {
-    fn filter(try_deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut try_deq.head_next, tid, gc, pool);
-        Delete::filter(&mut try_deq.del, tid, gc, pool);
-    }
-}
-
 /// Dequeue memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Dequeue<T: Clone + Collectable> {
     try_deq: TryDequeue<T>,
 }
@@ -138,16 +110,10 @@ impl<T: Clone + Collectable> Default for Dequeue<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for Dequeue<T> {
-    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        TryDequeue::filter(&mut deq.try_deq, tid, gc, pool);
-    }
-}
-
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Dequeue<T> {}
 
 /// Must dequeue a value from Queue
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct DequeueSome<T: Clone + Collectable> {
     deq: Dequeue<T>,
 }
@@ -157,12 +123,6 @@ impl<T: Clone + Collectable> Default for DequeueSome<T> {
         Self {
             deq: Default::default(),
         }
-    }
-}
-
-impl<T: Clone + Collectable> Collectable for DequeueSome<T> {
-    fn filter(deq: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Dequeue::filter(&mut deq.deq, tid, gc, pool);
     }
 }
 

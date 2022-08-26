@@ -8,6 +8,7 @@ use array_init::array_init;
 use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
 use libc::c_void;
+use mmt_derive::Collectable;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use self::combining_lock::CombiningLock;
@@ -19,17 +20,11 @@ const COMBINING_ROUNDS: usize = 20;
 pub static mut NR_THREADS: usize = MAX_THREADS;
 
 /// Node
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 #[repr(align(128))]
 pub struct Node {
     pub data: usize,
     pub next: PAtomic<Node>,
-}
-
-impl Collectable for Node {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        PAtomic::filter(&mut s.next, tid, gc, pool);
-    }
 }
 
 /// Trait for Memento
@@ -43,14 +38,10 @@ pub trait Combinable: Memento {
 }
 
 /// request obj
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Collectable)]
 pub struct CombRequest {
     arg: AtomicUsize,
     activate: AtomicUsize,
-}
-
-impl Collectable for CombRequest {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 /// state obj

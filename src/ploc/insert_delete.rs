@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
 use etrace::*;
+use mmt_derive::Collectable;
 
 use crate::{
     pepoch::{PAtomic, PDestroyable, PShared},
@@ -77,35 +78,17 @@ impl Collectable for Failed {
 }
 
 /// Insert memento
-#[derive(Debug, Default, Memento)]
+#[derive(Debug, Default, Memento, Collectable)]
 pub struct Insert(Failed);
 
-impl Collectable for Insert {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Collectable::filter(&mut s.0, tid, gc, pool);
-    }
-}
-
 /// Delete memento
-#[derive(Debug, Default, Memento)]
+#[derive(Debug, Default, Memento, Collectable)]
 pub struct Delete(Failed);
 
-impl Collectable for Delete {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Collectable::filter(&mut s.0, tid, gc, pool);
-    }
-}
-
 /// Atomic pointer for use of `Insert' and `Delete`
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct SMOAtomic<N: Node + Collectable> {
     inner: PAtomic<N>, // TODO: CachePadded
-}
-
-impl<N: Node + Collectable> Collectable for SMOAtomic<N> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        PAtomic::filter(&mut s.inner, tid, gc, pool);
-    }
 }
 
 impl<N: Node + Collectable> Default for SMOAtomic<N> {

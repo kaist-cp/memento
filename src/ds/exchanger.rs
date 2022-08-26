@@ -3,6 +3,7 @@
 use std::{sync::atomic::Ordering, time::Duration};
 
 use crossbeam_epoch::Guard;
+use mmt_derive::Collectable;
 
 use crate::{
     pepoch::{PAtomic, PDestroyable, POwned, PShared},
@@ -37,7 +38,7 @@ pub enum TryFail {
 }
 
 /// Exchanger node
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct Node<T: Collectable> {
     data: T,
     repl: PAtomic<Self>,
@@ -52,13 +53,6 @@ impl<T: Collectable> From<T> for Node<T> {
     }
 }
 
-impl<T: Collectable> Collectable for Node<T> {
-    fn filter(node: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        T::filter(&mut node.data, tid, gc, pool);
-        PAtomic::filter(&mut node.repl, tid, gc, pool);
-    }
-}
-
 impl<T: Collectable> SMONode for Node<T> {
     #[inline]
     fn replacement(&self) -> &PAtomic<Self> {
@@ -67,7 +61,7 @@ impl<T: Collectable> SMONode for Node<T> {
 }
 
 /// Try exchange memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryExchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     init_slot: Checkpoint<PAtomic<Node<T>>>,
@@ -90,21 +84,10 @@ impl<T: Clone + Collectable> Default for TryExchange<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for TryExchange<T> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Collectable::filter(&mut s.node, tid, gc, pool);
-        Collectable::filter(&mut s.init_slot, tid, gc, pool);
-        Collectable::filter(&mut s.empty_ins, tid, gc, pool);
-        Collectable::filter(&mut s.upd_del, tid, gc, pool);
-        Collectable::filter(&mut s.wait_slot, tid, gc, pool);
-        Collectable::filter(&mut s.empty_del, tid, gc, pool);
-    }
-}
-
 type ExchangeCond<T> = fn(&T) -> bool;
 
 /// Exchanger's exchange operation.
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Exchange<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<T>>>,
     try_xchg: TryExchange<T>,
@@ -121,16 +104,9 @@ impl<T: Clone + Collectable> Default for Exchange<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Exchange<T> {}
 
-impl<T: Clone + Collectable> Collectable for Exchange<T> {
-    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut xchg.node, tid, gc, pool);
-        TryExchange::filter(&mut xchg.try_xchg, tid, gc, pool);
-    }
-}
-
 /// Exchanger
 /// Values are exchanged between threads through internal slots.
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct Exchanger<T: Clone + Collectable> {
     slot: SMOAtomic<Node<T>>,
 }
@@ -153,12 +129,6 @@ impl<T: Clone + Collectable> Traversable<Node<T>> for Exchanger<T> {
     fn contains(&self, target: PShared<'_, Node<T>>, guard: &Guard, _: &PoolHandle) -> bool {
         let slot = self.slot.load(true, Ordering::SeqCst, guard);
         slot == target
-    }
-}
-
-impl<T: Clone + Collectable> Collectable for Exchanger<T> {
-    fn filter(xchg: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        SMOAtomic::filter(&mut xchg.slot, tid, gc, pool);
     }
 }
 
@@ -330,20 +300,9 @@ mod tests {
     use super::*;
 
     /// Test whether two threads exchange well with one exchanger (one time)
-    #[derive(Default, Memento)]
+    #[derive(Default, Memento, Collectable)]
     struct ExchangeOnce {
         xchg: Exchange<usize>,
-    }
-
-    impl Collectable for ExchangeOnce {
-        fn filter(
-            xchg_once: &mut Self,
-            tid: usize,
-            gc: &mut GarbageCollection,
-            pool: &mut PoolHandle,
-        ) {
-            Exchange::filter(&mut xchg_once.xchg, tid, gc, pool);
-        }
     }
 
     impl RootObj<ExchangeOnce> for TestRootObj<Exchanger<usize>> {
@@ -377,18 +336,11 @@ mod tests {
     ///  |        |                 |                |                 |        |
     ///     (exchange0)        (exchange0)     (exchange2)        (exchange2)
     /// [item]    <-----lxchg----->       [item]       <-----rxchg----->     [item]
-    #[derive(Default, Memento)]
+    #[derive(Default, Memento, Collectable)]
     struct RotateLeft {
         item: usize,
         exchange0: Exchange<usize>,
         exchange2: Exchange<usize>,
-    }
-
-    impl Collectable for RotateLeft {
-        fn filter(rleft: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            Exchange::filter(&mut rleft.exchange0, tid, gc, pool);
-            Exchange::filter(&mut rleft.exchange2, tid, gc, pool);
-        }
     }
 
     impl Collectable for [Exchanger<usize>; 2] {

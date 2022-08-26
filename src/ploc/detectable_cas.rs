@@ -4,6 +4,7 @@ use std::sync::atomic::{compiler_fence, AtomicU64, Ordering};
 
 use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
+use mmt_derive::Collectable;
 use std::ops::Deref;
 
 use crate::{
@@ -134,16 +135,10 @@ impl CasHelp {
 }
 
 /// Detectable CAS Atomic pointer
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct DetectableCASAtomic<N: Collectable> {
     /// Atomic pointer
     pub inner: PAtomic<N>, // TODO: CachePadded
-}
-
-impl<N: Collectable> Collectable for DetectableCASAtomic<N> {
-    fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        PAtomic::filter(&mut s.inner, tid, gc, pool);
-    }
 }
 
 impl<N: Collectable> Default for DetectableCASAtomic<N> {
@@ -539,6 +534,7 @@ mod test {
 
     use crossbeam_epoch::Guard;
     use etrace::some_or;
+    use mmt_derive::Collectable;
 
     use crate::{
         pepoch::{PAtomic, PShared},
@@ -549,29 +545,15 @@ mod test {
 
     use super::{Cas, DetectableCASAtomic};
 
-    #[derive(Debug)]
+    #[derive(Debug, Collectable)]
     pub(crate) struct Node<T: Collectable> {
         pub(crate) data: T,
     }
 
-    impl<T: Collectable> Collectable for Node<T> {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            Collectable::filter(&mut s.data, tid, gc, pool);
-        }
-    }
-
-    #[derive(Debug, Memento)]
-    // TODO: derive(Collectable): impl filter that calls each subfield's filter
+    #[derive(Debug, Memento, Collectable)]
     pub(crate) struct Swap<T: Collectable> {
         old: Checkpoint<PAtomic<Node<T>>>,
         cas: Cas,
-    }
-
-    impl<T: Collectable> Collectable for Swap<T> {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            Collectable::filter(&mut s.old, tid, gc, pool);
-            Collectable::filter(&mut s.cas, tid, gc, pool);
-        }
     }
 
     impl<T: Collectable> Default for Swap<T> {
@@ -583,15 +565,9 @@ mod test {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Collectable)]
     pub(crate) struct Location<T: Collectable> {
         loc: DetectableCASAtomic<Node<T>>,
-    }
-
-    impl<T: Collectable> Collectable for Location<T> {
-        fn filter(s: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-            Collectable::filter(&mut s.loc, tid, gc, pool);
-        }
     }
 
     impl<T: Collectable> Default for Location<T> {

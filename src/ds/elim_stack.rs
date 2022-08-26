@@ -2,7 +2,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crossbeam_epoch::Guard;
+use mmt_derive::Collectable;
 use rand::{thread_rng, Rng};
 
 use crate::{
@@ -45,7 +45,7 @@ impl<T: Collectable> Collectable for Request<T> {
 }
 
 /// Try push memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryPush<T: Clone + Collectable> {
     /// try push memento for inner stack
     try_push: treiber_stack::TryPush<Request<T>>,
@@ -67,15 +67,8 @@ impl<T: Clone + Collectable> Default for TryPush<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for TryPush<T> {
-    fn filter(try_push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        treiber_stack::TryPush::filter(&mut try_push.try_push, tid, gc, pool);
-        TryExchange::filter(&mut try_push.try_xchg, tid, gc, pool);
-    }
-}
-
 /// Push memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Push<T: Clone + Collectable> {
     node: Checkpoint<PAtomic<Node<Request<T>>>>,
     try_push: TryPush<T>,
@@ -90,17 +83,10 @@ impl<T: Clone + Collectable> Default for Push<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for Push<T> {
-    fn filter(push: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        Checkpoint::filter(&mut push.node, tid, gc, pool);
-        TryPush::filter(&mut push.try_push, tid, gc, pool);
-    }
-}
-
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Push<T> {}
 
 /// Try pop memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TryPop<T: Clone + Collectable> {
     /// try pop memento for inner stack
     try_pop: treiber_stack::TryPop<Request<T>>,
@@ -126,16 +112,8 @@ impl<T: Clone + Collectable> Default for TryPop<T> {
     }
 }
 
-impl<T: Clone + Collectable> Collectable for TryPop<T> {
-    fn filter(try_pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        treiber_stack::TryPop::filter(&mut try_pop.try_pop, tid, gc, pool);
-        Checkpoint::filter(&mut try_pop.pop_node, tid, gc, pool);
-        TryExchange::filter(&mut try_pop.try_xchg, tid, gc, pool);
-    }
-}
-
 /// Pop memento
-#[derive(Debug, Memento)]
+#[derive(Debug, Memento, Collectable)]
 pub struct Pop<T: Clone + Collectable> {
     try_pop: TryPop<T>,
 }
@@ -145,12 +123,6 @@ impl<T: Clone + Collectable> Default for Pop<T> {
         Self {
             try_pop: Default::default(),
         }
-    }
-}
-
-impl<T: Clone + Collectable> Collectable for Pop<T> {
-    fn filter(pop: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
-        TryPop::filter(&mut pop.try_pop, tid, gc, pool);
     }
 }
 
