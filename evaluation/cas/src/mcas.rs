@@ -1,12 +1,12 @@
 use std::sync::atomic::Ordering;
 
-use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_epoch::unprotected;
 use crossbeam_utils::CachePadded;
 use memento::{
     pepoch::{atomic::Pointer, PShared},
-    ploc::{Cas, DetectableCASAtomic},
+    ploc::{Cas, DetectableCASAtomic, Handle},
     pmem::{Collectable, GarbageCollection, PoolHandle, RootObj},
-    PDefault,
+    Collectable, Memento, PDefault,
 };
 
 use crate::{
@@ -23,9 +23,9 @@ impl Collectable for TestMCas {
 }
 
 impl PDefault for TestMCas {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
         Self {
-            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, handle),
         }
     }
 }
@@ -34,41 +34,29 @@ impl TestNOps for TestMCas {}
 
 impl TestableCas for TestMCas {
     type Location = DetectableCASAtomic<Node>;
-    type Input = (&'static mut Cas, usize); // mmt, tid
+    type Input = &'static mut Cas; // mmt
 
-    fn cas(
-        &self,
-        (mmt, tid): Self::Input,
-        loc: &Self::Location,
-        _: &Guard,
-        pool: &PoolHandle,
-    ) -> bool {
-        mcas(loc, mmt, tid, pool)
+    fn cas(&self, mmt: Self::Input, loc: &Self::Location, handle: &Handle) -> bool {
+        mcas(loc, mmt, handle)
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Memento, Collectable)]
 pub struct TestMCasMmt {
     pub cas: CachePadded<Cas>,
 }
 
-impl Collectable for TestMCasMmt {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl RootObj<TestMCasMmt> for TestMCas {
-    fn run(&self, mmt: &mut TestMCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, mmt: &mut TestMCasMmt, handle: &Handle) {
         let duration = unsafe { DURATION };
-        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
+        let locs_ref = unsafe { self.locs.as_ref(unprotected(), handle.pool) };
 
         let (ops, failed) = self.test_nops(
-            &|tid| {
+            &|_| {
                 let mmt = unsafe { (&*mmt.cas as *const _ as *mut Cas).as_mut() }.unwrap();
-                cas_random_loc(self, (mmt, tid), locs_ref, unsafe { unprotected() }, pool)
+                cas_random_loc(self, mmt, locs_ref, handle)
             },
-            tid,
+            handle.tid,
             duration,
         );
 
@@ -77,11 +65,8 @@ impl RootObj<TestMCasMmt> for TestMCas {
     }
 }
 
-fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, tid: usize, pool: &PoolHandle) -> bool {
-    let guard = unsafe { unprotected() };
-
-    let old = loc.load(Ordering::SeqCst, guard, pool);
-    let new = unsafe { PShared::from_usize(tid) }; // TODO: various new value
-    let mut rec = false;
-    loc.cas(old, new, mmt, tid, guard, pool, &mut rec).is_ok()
+fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, handle: &Handle) -> bool {
+    let old = loc.load(Ordering::SeqCst, &handle.guard, handle.pool);
+    let new = unsafe { PShared::from_usize(handle.tid) }; // TODO: various new value
+    loc.cas(old, new, mmt, handle).is_ok()
 }

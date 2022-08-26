@@ -7,8 +7,9 @@ use std::{
 use crossbeam_epoch::Guard;
 use memento::{
     pepoch::{PAtomic, POwned},
+    ploc::Handle,
     pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj},
-    PDefault,
+    Memento, PDefault,
 };
 use rand::Rng;
 
@@ -61,11 +62,11 @@ impl<T> Collectable for PFixedVec<T> {
 }
 
 impl<T: PDefault> PFixedVec<T> {
-    fn new(size: usize, pool: &PoolHandle) -> Self {
-        let mut locs = POwned::<[MaybeUninit<T>]>::init(size, pool);
-        let locs_ref = unsafe { locs.deref_mut(pool) };
+    fn new(size: usize, handle: &Handle) -> Self {
+        let mut locs = POwned::<[MaybeUninit<T>]>::init(size, handle.pool);
+        let locs_ref = unsafe { locs.deref_mut(handle.pool) };
         for i in 0..size {
-            locs_ref[i].write(T::pdefault(pool));
+            locs_ref[i].write(T::pdefault(handle));
         }
         assert_eq!(size, locs_ref.len());
 
@@ -115,7 +116,7 @@ pub trait TestNOps {
 pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: RootObj<M> + Send + Sync + 'static,
-    M: Collectable + Default + Send + Sync,
+    M: Memento + Send + Sync,
 {
     let _ = Pool::remove(filepath);
 
@@ -132,22 +133,15 @@ pub trait TestableCas {
     type Input;
     type Location;
 
-    fn cas(
-        &self,
-        input: Self::Input,
-        loc: &Self::Location,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) -> bool;
+    fn cas(&self, input: Self::Input, loc: &Self::Location, handle: &Handle) -> bool;
 }
 
 pub fn cas_random_loc<C: TestableCas>(
     cas: &C,
     input: C::Input,
     locs: &[MaybeUninit<C::Location>],
-    guard: &Guard,
-    pool: &PoolHandle,
+    handle: &Handle,
 ) -> bool {
     let ix = pick_range(0, unsafe { CONTENTION_WIDTH });
-    cas.cas(input, unsafe { locs[ix].assume_init_ref() }, guard, pool)
+    cas.cas(input, unsafe { locs[ix].assume_init_ref() }, handle)
 }
