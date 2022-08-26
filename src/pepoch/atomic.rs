@@ -20,6 +20,7 @@ use core::sync::atomic::Ordering;
 
 use super::Guard;
 use crate::impl_left_bits;
+use crate::ploc::Handle;
 use crate::ploc::{aux_bits, compose_aux_bit, NR_AUX_BITS, POS_AUX_BITS};
 use crate::pmem::{global_pool, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection};
 use crate::PDefault;
@@ -1105,7 +1106,7 @@ impl<T: Collectable> Collectable for PAtomic<T> {
 }
 
 impl<T: Collectable> PDefault for PAtomic<T> {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(_: &Handle) -> Self {
         Default::default()
     }
 }

@@ -201,7 +201,7 @@ pub struct List<K, V: Collectable> {
 }
 
 impl<K, V: Collectable> PDefault for List<K, V> {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(_: &Handle) -> Self {
         Self {
             head: Default::default(),
         }

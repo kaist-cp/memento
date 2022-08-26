@@ -119,10 +119,9 @@ pub struct QueueGeneral<T: Clone + Collectable> {
 }
 
 impl<T: Clone + Collectable> PDefault for QueueGeneral<T> {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let guard = unsafe { epoch::unprotected() };
-        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
-        persist_obj(unsafe { sentinel.deref(pool) }, true);
+    fn pdefault(handle: &Handle) -> Self {
+        let sentinel = POwned::new(Node::default(), handle.pool).into_shared(&handle.guard);
+        persist_obj(unsafe { sentinel.deref(handle.pool) }, true);
 
         Self {
             head: CachePadded::new(DetectableCASAtomic::from(sentinel)),

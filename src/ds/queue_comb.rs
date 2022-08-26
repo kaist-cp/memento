@@ -125,7 +125,8 @@ impl Collectable for CombiningQueue {
 }
 
 impl PDefault for CombiningQueue {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
+        let pool = handle.pool;
         let dummy = pool.alloc::<Node>();
         let dummy_ref = unsafe { dummy.deref_mut(pool) };
         dummy_ref.data = 0;

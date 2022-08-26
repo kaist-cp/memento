@@ -301,7 +301,9 @@ impl Pool {
 
             // set root obj
             let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
-            o_ptr.write(O::pdefault(pool));
+            let tmp_handle = Handle::new(1, epoch::pin(), pool);
+            tmp_handle.rec.store(false, Ordering::SeqCst);
+            o_ptr.write(O::pdefault(&tmp_handle));
             persist_obj(o_ptr.as_mut().unwrap(), true);
             let _prev = RP_set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
 

@@ -128,7 +128,7 @@ pub mod tests {
     pub struct DummyRootObj;
 
     impl PDefault for DummyRootObj {
-        fn pdefault(_: &PoolHandle) -> Self {
+        fn pdefault(_: &Handle) -> Self {
             Self {}
         }
     }
@@ -167,9 +167,9 @@ pub mod tests {
     }
 
     impl<O: PDefault + Collectable> PDefault for TestRootObj<O> {
-        fn pdefault(pool: &PoolHandle) -> Self {
+        fn pdefault(handle: &Handle) -> Self {
             Self {
-                obj: O::pdefault(pool),
+                obj: O::pdefault(handle),
             }
         }
     }

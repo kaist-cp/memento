@@ -120,7 +120,7 @@ impl<T: Clone + Collectable> Default for Exchanger<T> {
 }
 
 impl<T: Clone + Collectable> PDefault for Exchanger<T> {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(_: &Handle) -> Self {
         Default::default()
     }
 }
@@ -351,8 +351,8 @@ mod tests {
     }
 
     impl PDefault for [Exchanger<usize>; 2] {
-        fn pdefault(pool: &PoolHandle) -> Self {
-            [Exchanger::pdefault(pool), Exchanger::pdefault(pool)]
+        fn pdefault(handle: &Handle) -> Self {
+            [Exchanger::pdefault(handle), Exchanger::pdefault(handle)]
         }
     }
 

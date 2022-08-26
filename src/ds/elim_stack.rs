@@ -159,7 +159,7 @@ impl<T: Clone + Collectable> Collectable for ElimStack<T> {
 }
 
 impl<T: Clone + Collectable> PDefault for ElimStack<T> {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(_: &Handle) -> Self {
         Self::default()
     }
 }

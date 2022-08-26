@@ -150,7 +150,7 @@ impl<N: Collectable> Default for DetectableCASAtomic<N> {
 }
 
 impl<N: Collectable> PDefault for DetectableCASAtomic<N> {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(_: &Handle) -> Self {
         Default::default()
     }
 }
@@ -574,7 +574,7 @@ mod test {
     }
 
     impl<T: Collectable> PDefault for Location<T> {
-        fn pdefault(_: &PoolHandle) -> Self {
+        fn pdefault(_: &Handle) -> Self {
             Self::default()
         }
     }
