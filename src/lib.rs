@@ -55,8 +55,9 @@ pub mod pepoch;
 // Utility
 pub mod test_utils;
 
-use crate::pmem::{pool::PoolHandle, ralloc::Collectable};
+use crate::pmem::ralloc::Collectable;
 use crossbeam_utils::CachePadded;
+use ploc::Handle;
 use std::{mem::ManuallyDrop, ptr};
 
 /// A wrapper to freeze Ownership
@@ -127,11 +128,11 @@ impl<T> Frozen<T> {
 /// Default trait for Persistent object
 pub trait PDefault: Collectable {
     /// Persistent default using pool to allocate persistent object
-    fn pdefault(pool: &PoolHandle) -> Self;
+    fn pdefault(handle: &Handle) -> Self;
 }
 
 impl PDefault for usize {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(_: &Handle) -> Self {
         Default::default()
     }
 }
@@ -147,6 +148,18 @@ pub trait Memento: Default + Collectable {
 impl Memento for usize {
     fn clear(&mut self) {
         *self = 0
+    }
+}
+
+impl Memento for u32 {
+    fn clear(&mut self) {
+        *self = 0
+    }
+}
+
+impl<T: Memento> Memento for Option<T> {
+    fn clear(&mut self) {
+        *self = None
     }
 }
 

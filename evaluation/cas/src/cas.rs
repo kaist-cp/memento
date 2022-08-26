@@ -1,10 +1,11 @@
 use std::sync::atomic::Ordering;
 
-use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_epoch::unprotected;
 use memento::{
     pepoch::{atomic::Pointer, PAtomic, PShared},
+    ploc::Handle,
     pmem::{Collectable, GarbageCollection, PoolHandle, RootObj},
-    PDefault,
+    Collectable, Memento, PDefault,
 };
 
 use crate::{
@@ -23,9 +24,9 @@ impl Collectable for TestCas {
 }
 
 impl PDefault for TestCas {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
         Self {
-            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, handle),
         }
     }
 }
@@ -36,28 +37,22 @@ impl TestableCas for TestCas {
     type Location = PAtomic<Node>;
     type Input = usize; // mmt, tid
 
-    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, _: &PoolHandle) -> bool {
+    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Handle) -> bool {
         cas(loc, tid)
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Memento, Collectable)]
 pub struct TestCasMmt {}
 
-impl Collectable for TestCasMmt {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl RootObj<TestCasMmt> for TestCas {
-    fn run(&self, _: &mut TestCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut TestCasMmt, handle: &Handle) {
         let duration = unsafe { DURATION };
-        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
+        let locs_ref = self.locs.as_ref(&handle.guard, handle.pool);
 
         let (ops, failed) = self.test_nops(
-            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
-            tid,
+            &|tid| cas_random_loc(self, tid, locs_ref, handle),
+            handle.tid,
             duration,
         );
 

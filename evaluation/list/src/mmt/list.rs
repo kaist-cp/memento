@@ -1,10 +1,10 @@
 use core::sync::atomic::Ordering;
-use crossbeam_epoch::{self as epoch, Guard};
 use crossbeam_utils::CachePadded;
 use memento::ds::list::*;
+use memento::ploc::Handle;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
-use memento::pmem::{global_pool, pool::*, rdtscp};
-use memento::PDefault;
+use memento::pmem::{pool::*, rdtscp};
+use memento::{Collectable, Memento, PDefault};
 
 use crate::common::{
     fast_random_range, fast_random_set_seed, TestNOps, DELETE_RATIO, DURATION, INIT_SIZE,
@@ -24,16 +24,14 @@ impl Collectable for TestMementoList {
 }
 
 impl PDefault for TestMementoList {
-    fn pdefault(_: &PoolHandle) -> Self {
-        let pool = global_pool().unwrap();
-        let list = List::pdefault(pool);
-        let guard = epoch::pin();
+    fn pdefault(handle: &Handle) -> Self {
+        let list = List::pdefault(handle);
 
         fast_random_set_seed((rdtscp() + 120) as u32);
         let mut ins_init = Insert::default();
         for _ in 0..unsafe { INIT_SIZE } {
             let v = fast_random_range(1, unsafe { KEY_RANGE });
-            let _ = list.insert::<false>(v, v, &mut ins_init, 0, &guard, pool);
+            let _ = list.insert(v, v, &mut ins_init, handle);
         }
         Self { list }
     }
@@ -41,7 +39,7 @@ impl PDefault for TestMementoList {
 
 impl TestNOps for TestMementoList {}
 
-#[derive(Debug)]
+#[derive(Debug, Memento, Collectable)]
 pub struct TestMementoInsDelRd {
     ins: CachePadded<Insert<usize, usize>>,
     del: CachePadded<Delete<usize, usize>>,
@@ -58,20 +56,14 @@ impl Default for TestMementoInsDelRd {
     }
 }
 
-impl Collectable for TestMementoInsDelRd {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl RootObj<TestMementoInsDelRd> for TestMementoList {
-    fn run(&self, mmt: &mut TestMementoInsDelRd, tid: usize, guard: &Guard, _: &PoolHandle) {
-        let pool = global_pool().unwrap();
+    fn run(&self, mmt: &mut TestMementoInsDelRd, handle: &Handle) {
+        let (tid, guard) = (handle.tid, &handle.guard);
         let list = &self.list;
 
-        fast_random_set_seed((rdtscp() + tid as u64) as u32);
+        fast_random_set_seed((rdtscp() + handle.tid as u64) as u32);
         let ops = self.test_nops(
-            &|tid, guard| {
+            &|_, _| {
                 // unwrap CachePadded
                 let ins = unsafe { (&*mmt.ins as *const _ as *mut Insert<usize, usize>).as_mut() }
                     .unwrap();
@@ -83,11 +75,11 @@ impl RootObj<TestMementoInsDelRd> for TestMementoList {
                 let op = fast_random_range(1, 100);
                 let key = fast_random_range(1, unsafe { KEY_RANGE });
                 if op <= unsafe { INSERT_RATIO } {
-                    let _ = list.insert::<false>(key, key, ins, tid, guard, pool);
+                    let _ = list.insert(key, key, ins, handle);
                 } else if op <= unsafe { INSERT_RATIO } + unsafe { DELETE_RATIO } {
-                    let _ = list.delete::<false>(&key, del, tid, guard, pool);
+                    let _ = list.delete(&key, del, handle);
                 } else {
-                    let _ = list.lookup::<false>(&key, rd, tid, guard, pool);
+                    let _ = list.lookup(&key, rd, handle);
                 }
             },
             tid,

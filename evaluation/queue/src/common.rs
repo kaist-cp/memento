@@ -1,7 +1,8 @@
 //! Abstraction for evaluation
 
 use crossbeam_epoch::Guard;
-use memento::pmem::{Collectable, Pool, RootObj};
+use memento::pmem::{Pool, RootObj};
+use memento::Memento;
 use rand::Rng;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -88,7 +89,7 @@ pub fn pick(prob: u32) -> bool {
 pub fn get_nops<O, M>(filepath: &str, nr_thread: usize) -> usize
 where
     O: RootObj<M> + Send + Sync + 'static,
-    M: Collectable + Default + Send + Sync,
+    M: Memento + Send + Sync,
 {
     let _ = Pool::remove(filepath);
 
@@ -141,8 +142,7 @@ pub struct Opt {
 pub mod queue {
     use corundum::default::*;
     use corundum::open_flags::{O_128GB, O_CF};
-    use crossbeam_epoch::Guard;
-    use memento::pmem::PoolHandle;
+    use memento::ploc::Handle;
 
     use crate::pbcomb::{PBComb_NR_THREAD, TestPBCombQueue, TestPBCombQueueEnqDeq};
     use crate::{
@@ -159,8 +159,8 @@ pub mod queue {
         type EnqInput;
         type DeqInput;
 
-        fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle);
-        fn dequeue(&self, input: Self::DeqInput, guard: &Guard, pool: &PoolHandle);
+        fn enqueue(&self, input: Self::EnqInput, handle: &Handle);
+        fn dequeue(&self, input: Self::DeqInput, handle: &Handle);
     }
 
     pub fn enq_deq_prob<Q: TestQueue>(
@@ -168,25 +168,18 @@ pub mod queue {
         enq: Q::EnqInput,
         deq: Q::DeqInput,
         prob: u32,
-        guard: &Guard,
-        pool: &PoolHandle,
+        handle: &Handle,
     ) {
         if pick(prob) {
-            q.enqueue(enq, guard, pool);
+            q.enqueue(enq, handle);
         } else {
-            q.dequeue(deq, guard, pool);
+            q.dequeue(deq, handle);
         }
     }
 
-    pub fn enq_deq_pair<Q: TestQueue>(
-        q: &Q,
-        enq: Q::EnqInput,
-        deq: Q::DeqInput,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
-        q.enqueue(enq, guard, pool);
-        q.dequeue(deq, guard, pool);
+    pub fn enq_deq_pair<Q: TestQueue>(q: &Q, enq: Q::EnqInput, deq: Q::DeqInput, handle: &Handle) {
+        q.enqueue(enq, handle);
+        q.dequeue(deq, handle);
     }
 
     pub fn bench_queue(opt: &Opt, target: TestTarget) -> usize {

@@ -122,7 +122,7 @@ impl<T: Clone + Collectable> Default for TreiberStack<T> {
 }
 
 impl<T: Clone + Collectable> PDefault for TreiberStack<T> {
-    fn pdefault(_: &PoolHandle) -> Self {
+    fn pdefault(_: &Handle) -> Self {
         Self::default()
     }
 }

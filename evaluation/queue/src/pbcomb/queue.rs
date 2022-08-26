@@ -2,14 +2,15 @@
 #![allow(non_snake_case)]
 use array_init::array_init;
 use core::sync::atomic::Ordering;
-use crossbeam_epoch::{unprotected, Guard};
+use crossbeam_epoch::Guard;
 use crossbeam_utils::{Backoff, CachePadded};
 use memento::pepoch::atomic::Pointer;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
+use memento::ploc::Handle;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{mfence, persist_obj, pool::*, sfence, PPtr};
-use memento::PDefault;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use memento::{Memento, PDefault};
+use std::sync::atomic::AtomicUsize;
 use tinyvec::tiny_vec;
 
 use crate::common::queue::{enq_deq_pair, enq_deq_prob, TestQueue};
@@ -174,7 +175,8 @@ impl Collectable for PBCombQueue {
 }
 
 impl PDefault for PBCombQueue {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
+        let pool = handle.pool;
         let dummy = pool.alloc::<Node>();
         let dummy_ref = unsafe { dummy.deref_mut(pool) };
         dummy_ref.data = 0;
@@ -627,25 +629,39 @@ impl PBCombQueue {
 }
 
 impl TestQueue for PBCombQueue {
-    type EnqInput = (usize, usize, &'static mut u32); // value, tid, sequence number
-    type DeqInput = (usize, &'static mut u32, bool, &'static mut Option<usize>); // tid, sequence number, flag for full detectable, return value for full detectable
+    type EnqInput = (usize, &'static mut u32); // value, sequence number
+    type DeqInput = (&'static mut u32, bool, &'static mut Option<usize>); // sequence number, flag for full detectable, return value for full detectable
 
-    fn enqueue(&self, (value, tid, seq): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
+    fn enqueue(&self, (value, seq): Self::EnqInput, handle: &Handle) {
         // Get &mut queue
         let queue = unsafe { (self as *const PBCombQueue as *mut PBCombQueue).as_mut() }.unwrap();
 
         // enq
-        let _ = queue.PBQueue(Func::ENQUEUE, value, *seq, tid, guard, pool);
+        let _ = queue.PBQueue(
+            Func::ENQUEUE,
+            value,
+            *seq,
+            handle.tid,
+            &handle.guard,
+            handle.pool,
+        );
         *seq += 1;
         persist_obj(seq, true);
     }
 
-    fn dequeue(&self, (tid, seq, fd, retval): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
+    fn dequeue(&self, (seq, fd, retval): Self::DeqInput, handle: &Handle) {
         // Get &mut queue
         let queue = unsafe { (self as *const PBCombQueue as *mut PBCombQueue).as_mut() }.unwrap();
 
         // deq
-        let ret = queue.PBQueue(Func::DEQUEUE, 0, *seq, tid, guard, pool);
+        let ret = queue.PBQueue(
+            Func::DEQUEUE,
+            0,
+            *seq,
+            handle.tid,
+            &handle.guard,
+            handle.pool,
+        );
         *seq += 1;
         persist_obj(seq, true);
 
@@ -669,11 +685,11 @@ impl Collectable for TestPBCombQueue {
 }
 
 impl PDefault for TestPBCombQueue {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let mut queue = PBCombQueue::pdefault(pool);
+    fn pdefault(handle: &Handle) -> Self {
+        let mut queue = PBCombQueue::pdefault(handle);
 
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            let _ = queue.PBQueue(Func::ENQUEUE, i, 0, 1, unsafe { unprotected() }, pool);
+            let _ = queue.PBQueue(Func::ENQUEUE, i, 0, handle.tid, &handle.guard, handle.pool);
         }
         Self { queue }
     }
@@ -681,7 +697,7 @@ impl PDefault for TestPBCombQueue {
 
 impl TestNOps for TestPBCombQueue {}
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Memento)]
 pub struct TestPBCombQueueEnqDeq<const PAIR: bool, const FD: bool> {
     enq_seq: CachePadded<u32>,
     deq_seq: CachePadded<u32>,
@@ -697,37 +713,31 @@ impl<const PAIR: bool, const FD: bool> Collectable for TestPBCombQueueEnqDeq<PAI
 impl<const PAIR: bool, const FD: bool> RootObj<TestPBCombQueueEnqDeq<PAIR, FD>>
     for TestPBCombQueue
 {
-    fn run(
-        &self,
-        mmt: &mut TestPBCombQueueEnqDeq<PAIR, FD>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+    fn run(&self, mmt: &mut TestPBCombQueueEnqDeq<PAIR, FD>, handle: &Handle) {
         let q = &self.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
 
         let ops = self.test_nops(
-            &|tid, guard| {
+            &|tid, _| {
                 let enq_seq = unsafe { (&*mmt.enq_seq as *const _ as *mut u32).as_mut() }.unwrap();
                 let deq_seq = unsafe { (&*mmt.deq_seq as *const _ as *mut u32).as_mut() }.unwrap();
                 let deq_retval =
                     unsafe { (&*mmt.deq_retval as *const _ as *mut Option<usize>).as_mut() }
                         .unwrap();
 
-                let enq_input = (tid, tid, enq_seq);
-                let deq_input = (tid, deq_seq, FD, deq_retval);
+                let enq_input = (tid, enq_seq);
+                let deq_input = (deq_seq, FD, deq_retval);
 
                 if PAIR {
-                    enq_deq_pair(q, enq_input, deq_input, guard, pool);
+                    enq_deq_pair(q, enq_input, deq_input, handle);
                 } else {
-                    enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+                    enq_deq_prob(q, enq_input, deq_input, prob, handle);
                 }
             },
-            tid,
+            handle.tid,
             duration,
-            guard,
+            &handle.guard,
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);

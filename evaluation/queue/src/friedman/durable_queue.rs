@@ -4,6 +4,7 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
+use memento::ploc::Handle;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{ll::*, pool::*};
 use memento::*;
@@ -51,10 +52,9 @@ impl<T: Clone> Collectable for DurableQueue<T> {
 }
 
 impl<T: Clone> PDefault for DurableQueue<T> {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let guard = unsafe { epoch::unprotected() };
-        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
-        persist_obj(unsafe { sentinel.deref(pool) }, true);
+    fn pdefault(handle: &Handle) -> Self {
+        let sentinel = POwned::new(Node::default(), handle.pool).into_shared(&handle.guard);
+        persist_obj(unsafe { sentinel.deref(handle.pool) }, true);
 
         Self {
             head: CachePadded::new(PAtomic::from(sentinel)),
@@ -193,33 +193,27 @@ impl<T: Clone> TestQueue for DurableQueue<T> {
     type EnqInput = T; // value
     type DeqInput = usize; // tid
 
-    fn enqueue(&self, input: Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
-        self.enqueue(input, guard, pool);
+    fn enqueue(&self, input: Self::EnqInput, handle: &Handle) {
+        self.enqueue(input, &handle.guard, handle.pool);
     }
 
-    fn dequeue(&self, tid: Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
-        self.dequeue(tid, guard, pool);
+    fn dequeue(&self, tid: Self::DeqInput, handle: &Handle) {
+        self.dequeue(tid, &handle.guard, handle.pool);
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct TestDurableQueue {
     queue: DurableQueue<usize>,
 }
 
-impl Collectable for TestDurableQueue {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl PDefault for TestDurableQueue {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let queue = DurableQueue::pdefault(pool);
+    fn pdefault(handle: &Handle) -> Self {
+        let queue = DurableQueue::pdefault(handle);
         let guard = epoch::pin();
 
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            queue.enqueue(i, &guard, pool);
+            queue.enqueue(i, &guard, handle.pool);
         }
         Self { queue }
     }
@@ -227,41 +221,29 @@ impl PDefault for TestDurableQueue {
 
 impl TestNOps for TestDurableQueue {}
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Memento, Collectable)]
 pub struct TestDurableQueueEnqDeq<const PAIR: bool> {}
 
-impl<const PAIR: bool> Collectable for TestDurableQueueEnqDeq<PAIR> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl<const PAIR: bool> RootObj<TestDurableQueueEnqDeq<PAIR>> for TestDurableQueue {
-    fn run(
-        &self,
-        _: &mut TestDurableQueueEnqDeq<PAIR>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+    fn run(&self, _: &mut TestDurableQueueEnqDeq<PAIR>, handle: &Handle) {
         let q = &self.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
 
         let ops = self.test_nops(
-            &|tid, guard| {
+            &|tid, _| {
                 let enq_input = tid;
                 let deq_input = tid;
 
                 if PAIR {
-                    enq_deq_pair(q, enq_input, deq_input, guard, pool);
+                    enq_deq_pair(q, enq_input, deq_input, handle);
                 } else {
-                    enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+                    enq_deq_prob(q, enq_input, deq_input, prob, handle);
                 }
             },
-            tid,
+            handle.tid,
             duration,
-            guard,
+            &handle.guard,
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);

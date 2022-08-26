@@ -3,8 +3,9 @@ use std::sync::atomic::Ordering;
 use crossbeam_epoch::{unprotected, Guard};
 use memento::{
     pepoch::{atomic::Pointer, PAtomic, PShared},
+    ploc::Handle,
     pmem::{persist_obj, Collectable, GarbageCollection, PoolHandle, RootObj},
-    PDefault,
+    Collectable, Memento, PDefault,
 };
 
 use crate::{
@@ -22,20 +23,20 @@ impl Collectable for NRLLoc {
 }
 
 impl PDefault for NRLLoc {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
         Self {
             c: PAtomic::from(
                 unsafe { PShared::from_usize(0) }
                     .with_tid(pick_range(1, unsafe { NR_THREADS } + 1)),
             ),
-            r: PFixedVec::new(unsafe { NR_THREADS } + 1, pool),
+            r: PFixedVec::new(unsafe { NR_THREADS } + 1, handle),
         }
     }
 }
 
 impl PDefault for PFixedVec<usize> {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        PFixedVec::new(unsafe { NR_THREADS } + 1, pool)
+    fn pdefault(handle: &Handle) -> Self {
+        PFixedVec::new(unsafe { NR_THREADS } + 1, handle)
     }
 }
 
@@ -48,9 +49,9 @@ impl Collectable for TestNRLCas {
 }
 
 impl PDefault for TestNRLCas {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
         Self {
-            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, handle),
         }
     }
 }
@@ -58,15 +59,15 @@ impl PDefault for TestNRLCas {
 impl TestNOps for TestNRLCas {}
 
 impl TestableCas for TestNRLCas {
-    type Input = usize; // tid
+    type Input = ();
     type Location = NRLLoc;
 
-    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, pool: &PoolHandle) -> bool {
-        nrl_cas(loc, tid, pool)
+    fn cas(&self, _: Self::Input, loc: &Self::Location, handle: &Handle) -> bool {
+        nrl_cas(loc, handle.tid, handle.pool)
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Memento, Collectable)]
 pub struct TestNRLCasMmt {
     // TODO: Add per-thread sequence number to distinguish each value.
     //
@@ -79,20 +80,14 @@ pub struct TestNRLCasMmt {
     // and does not require special treatment."
 }
 
-impl Collectable for TestNRLCasMmt {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl RootObj<TestNRLCasMmt> for TestNRLCas {
-    fn run(&self, _: &mut TestNRLCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut TestNRLCasMmt, handle: &Handle) {
         let duration = unsafe { DURATION };
-        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
+        let locs_ref = self.locs.as_ref(&handle.guard, handle.pool);
 
         let (ops, failed) = self.test_nops(
-            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
-            tid,
+            &|_| cas_random_loc(self, (), locs_ref, handle),
+            handle.tid,
             duration,
         );
 

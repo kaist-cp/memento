@@ -4,6 +4,7 @@ use crossbeam_epoch::{self as epoch};
 use crossbeam_utils::CachePadded;
 use epoch::Guard;
 use memento::pepoch::{PAtomic, PDestroyable, POwned, PShared};
+use memento::ploc::Handle;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{ll::*, pool::*};
 use memento::*;
@@ -77,10 +78,9 @@ impl<T: Clone> Collectable for LogQueue<T> {
 }
 
 impl<T: Clone> PDefault for LogQueue<T> {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let guard = unsafe { epoch::unprotected() };
-        let sentinel = POwned::new(Node::default(), pool).into_shared(guard);
-        persist_obj(unsafe { sentinel.deref(pool) }, true);
+    fn pdefault(handle: &Handle) -> Self {
+        let sentinel = POwned::new(Node::default(), handle.pool).into_shared(&handle.guard);
+        persist_obj(unsafe { sentinel.deref(handle.pool) }, true);
 
         Self {
             head: CachePadded::new(PAtomic::from(sentinel)),
@@ -251,14 +251,14 @@ impl<T: Clone> TestQueue for LogQueue<T> {
     type EnqInput = (T, usize, &'static mut usize); // value, tid, op_num
     type DeqInput = (usize, &'static mut usize); // tid, op_num
 
-    fn enqueue(&self, (input, tid, op_num): Self::EnqInput, guard: &Guard, pool: &PoolHandle) {
-        self.enqueue(input, tid, op_num, guard, pool);
+    fn enqueue(&self, (input, tid, op_num): Self::EnqInput, handle: &Handle) {
+        self.enqueue(input, tid, op_num, &handle.guard, handle.pool);
         *op_num += 1;
         persist_obj(op_num, true);
     }
 
-    fn dequeue(&self, (tid, op_num): Self::DeqInput, guard: &Guard, pool: &PoolHandle) {
-        self.dequeue(tid, op_num, guard, pool);
+    fn dequeue(&self, (tid, op_num): Self::DeqInput, handle: &Handle) {
+        self.dequeue(tid, op_num, &handle.guard, handle.pool);
         *op_num += 1;
         persist_obj(op_num, true);
     }
@@ -276,12 +276,11 @@ impl Collectable for TestLogQueue {
 }
 
 impl PDefault for TestLogQueue {
-    fn pdefault(pool: &PoolHandle) -> Self {
-        let queue = LogQueue::pdefault(pool);
-        let guard = epoch::pin();
+    fn pdefault(handle: &Handle) -> Self {
+        let queue = LogQueue::pdefault(handle);
 
         for i in 0..unsafe { QUEUE_INIT_SIZE } {
-            queue.enqueue(i, 0, &mut 0, &guard, pool);
+            queue.enqueue(i, handle.tid, &mut 0, &handle.guard, handle.pool);
         }
         Self { queue }
     }
@@ -289,7 +288,7 @@ impl PDefault for TestLogQueue {
 
 impl TestNOps for TestLogQueue {}
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Memento)]
 pub struct TestLogQueueEnqDeq<const PAIR: bool> {
     /// unique operation number
     op_num: CachePadded<usize>,
@@ -302,19 +301,13 @@ impl<const PAIR: bool> Collectable for TestLogQueueEnqDeq<PAIR> {
 }
 
 impl<const PAIR: bool> RootObj<TestLogQueueEnqDeq<PAIR>> for TestLogQueue {
-    fn run(
-        &self,
-        mmt: &mut TestLogQueueEnqDeq<PAIR>,
-        tid: usize,
-        guard: &Guard,
-        pool: &PoolHandle,
-    ) {
+    fn run(&self, mmt: &mut TestLogQueueEnqDeq<PAIR>, handle: &Handle) {
         let q = &self.queue;
         let duration = unsafe { DURATION };
         let prob = unsafe { PROB };
 
         let ops = self.test_nops(
-            &|tid, guard| {
+            &|tid, _| {
                 let op_num = unsafe { (&*mmt.op_num as *const _ as *mut usize).as_mut() }.unwrap();
                 let op_num_same =
                     unsafe { (&*mmt.op_num as *const _ as *mut usize).as_mut() }.unwrap();
@@ -322,14 +315,14 @@ impl<const PAIR: bool> RootObj<TestLogQueueEnqDeq<PAIR>> for TestLogQueue {
                 let deq_input = (tid, op_num_same);
 
                 if PAIR {
-                    enq_deq_pair(q, enq_input, deq_input, guard, pool);
+                    enq_deq_pair(q, enq_input, deq_input, handle);
                 } else {
-                    enq_deq_prob(q, enq_input, deq_input, prob, guard, pool);
+                    enq_deq_prob(q, enq_input, deq_input, prob, handle);
                 }
             },
-            tid,
+            handle.tid,
             duration,
-            guard,
+            &handle.guard,
         );
 
         let _ = TOTAL_NOPS.fetch_add(ops, Ordering::SeqCst);

@@ -6,8 +6,9 @@ use memento::{
         atomic::{CompareExchangeError, Pointer},
         PAtomic, POwned, PShared,
     },
+    ploc::Handle,
     pmem::{persist_obj, AsPPtr, Collectable, GarbageCollection, PPtr, PoolHandle, RootObj},
-    PDefault,
+    Collectable, Memento, PDefault,
 };
 
 use crate::{
@@ -26,9 +27,9 @@ impl Collectable for TestPCas {
 }
 
 impl PDefault for TestPCas {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
         Self {
-            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, handle),
         }
     }
 }
@@ -36,32 +37,26 @@ impl PDefault for TestPCas {
 impl TestNOps for TestPCas {}
 
 impl TestableCas for TestPCas {
-    type Input = usize; // tid
+    type Input = ();
     type Location = PAtomic<Node>;
 
-    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, _: &PoolHandle) -> bool {
-        pcas(loc, tid)
+    fn cas(&self, _: Self::Input, loc: &Self::Location, handle: &Handle) -> bool {
+        pcas(loc, handle.tid)
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Memento, Collectable)]
 pub struct TestPCasMmt {}
 
-impl Collectable for TestPCasMmt {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl RootObj<TestPCasMmt> for TestPCas {
-    fn run(&self, _: &mut TestPCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut TestPCasMmt, handle: &Handle) {
         let duration = unsafe { DURATION };
 
-        let locs_ref = unsafe { self.locs.as_ref(unprotected(), pool) };
+        let locs_ref = self.locs.as_ref(&handle.guard, handle.pool);
 
         let (ops, failed) = self.test_nops(
-            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
-            tid,
+            &|_| cas_random_loc(self, (), locs_ref, handle),
+            handle.tid,
             duration,
         );
 
@@ -168,9 +163,9 @@ impl Collectable for TestPMwCas {
 }
 
 impl PDefault for TestPMwCas {
-    fn pdefault(pool: &PoolHandle) -> Self {
+    fn pdefault(handle: &Handle) -> Self {
         Self {
-            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, pool),
+            locs: PFixedVec::new(unsafe { CONTENTION_WIDTH }, handle),
         }
     }
 }
@@ -179,30 +174,24 @@ impl TestNOps for TestPMwCas {}
 
 impl TestableCas for TestPMwCas {
     type Location = PAtomic<Node>;
-    type Input = usize; // tid
+    type Input = ();
 
-    fn cas(&self, tid: Self::Input, loc: &Self::Location, _: &Guard, pool: &PoolHandle) -> bool {
-        pmwcas(loc, tid, pool)
+    fn cas(&self, _: Self::Input, loc: &Self::Location, handle: &Handle) -> bool {
+        pmwcas(loc, handle.tid, handle.pool)
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Memento, Collectable)]
 pub struct TestPMwCasMmt {}
 
-impl Collectable for TestPMwCasMmt {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
-    }
-}
-
 impl RootObj<TestPMwCasMmt> for TestPMwCas {
-    fn run(&self, _: &mut TestPMwCasMmt, tid: usize, _: &Guard, pool: &PoolHandle) {
+    fn run(&self, _: &mut TestPMwCasMmt, handle: &Handle) {
         let duration = unsafe { DURATION };
-        let locs_ref = self.locs.as_ref(unsafe { unprotected() }, pool);
+        let locs_ref = self.locs.as_ref(&handle.guard, handle.pool);
 
         let (ops, failed) = self.test_nops(
-            &|tid| cas_random_loc(self, tid, locs_ref, unsafe { unprotected() }, pool),
-            tid,
+            &|_| cas_random_loc(self, (), locs_ref, handle),
+            handle.tid,
             duration,
         );
 
