@@ -174,6 +174,10 @@ impl PoolHandle {
     }
 
     fn barrier_wait(&self, tid: usize, nr_memento: usize) {
+        // Initialize Ralloc's thread local structures
+        #[cfg(feature = "tcrash")]
+        let _a = self.alloc::<usize>();
+
         BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
             while !BARRIER_WAIT[other].load(Ordering::SeqCst) {
