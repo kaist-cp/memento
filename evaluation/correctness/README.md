@@ -14,6 +14,6 @@ This creates test log under `./out`.
 Also, you can run the same test on the DRAM environment:
 
 ```bash
-./build.sh no_persist
-./run.sh $ds no_persist
+./build.sh --no-persist
+./run.sh $ds
 ```

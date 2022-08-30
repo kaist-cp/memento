@@ -1,10 +1,10 @@
 #!/bin/bash
 target=$1
-feature=$2
+cfg=$(cat config)
 SCRIPT_DIR=`dirname $(realpath "$0")`
 
 # Test Config
-if [ "$feature" == "no_persist" ]; then
+if [ "$cfg" == "no-persist" ]; then
     PMEM_PATH="$SCRIPT_DIR/../../" # memento crate path
 else
     PMEM_PATH="/mnt/pmem0"
@@ -43,10 +43,10 @@ function run() {
     dmsg "run $target"
 
     rm -rf $PMEM_PATH/test/$target/*
-    if [ "$feature" == "no_persist" ]; then
+    if [ "$cfg" == "no-persist" ]; then
         RUST_BACKTRACE=1 RUST_MIN_STACK=10737418200 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
     else
-        RUST_BACKTRACE=1 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+        RUST_BACKTRACE=1 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
     fi
 
 }
