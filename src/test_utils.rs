@@ -394,19 +394,23 @@ pub mod tests {
             }
         }
 
+        pub fn uncheck_thread(&self, handle: &Handle) {
+            let inner_tid = handle.tid - 1;
+            let info = &self.infos[inner_tid];
+
+            info.state.store(TestInfo::STATE_FINISHED, Ordering::SeqCst);
+            info.checked.store(false, Ordering::SeqCst);
+        }
+
         // TODO: add killed
+        // TODO: get handle, not tid
+        // TODO: remove checked
         pub fn testee(&self, tid: usize, checked: bool) -> Testee<'_> {
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
 
-            let state = if checked {
-                TestInfo::STATE_INIT
-            } else {
-                TestInfo::STATE_FINISHED
-            };
-
-            info.state.store(state, Ordering::SeqCst);
-            info.checked.store(checked, Ordering::SeqCst);
+            info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
+            info.checked.store(true, Ordering::SeqCst);
 
             #[cfg(feature = "tcrash")]
             println!(
