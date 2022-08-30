@@ -20,4 +20,4 @@ if [ "$cfg" == "no-persist" ]; then
 else
     RUSTFLAGS="-Z sanitizer=address" cargo build --tests --release --features=tcrash --target x86_64-unknown-linux-gnu
 fi
-# rm -f $SCRIPT_DIR/../../target/release/deps/memento-*.d
+rm -f $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-*.d
