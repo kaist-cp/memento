@@ -35,10 +35,12 @@ cfg_if! {
         const LEVEL_DIFF: usize = 2;
         const MIN_SIZE: usize = 1;
 
+        #[inline]
         const fn level_size_next(size: usize) -> usize {
             size + LEVEL_DIFF
         }
 
+        #[inline]
         const fn level_size_prev(size: usize) -> usize {
             size - LEVEL_DIFF
         }
@@ -50,10 +52,12 @@ cfg_if! {
         const LEVEL_RATIO: usize = 2; // fixed
         const MIN_SIZE: usize = 786432; // Change this size
 
+        #[inline]
         const fn level_size_next(size: usize) -> usize {
             size * LEVEL_RATIO
         }
 
+        #[inline]
         const fn level_size_prev(size: usize) -> usize {
             size / LEVEL_RATIO
         }
@@ -94,12 +98,18 @@ impl<K, V: Collectable> Default for Insert<K, V> {
 /// Move if resized client
 #[derive(Debug, Memento, Collectable)]
 pub struct MoveIfResized<K, V: Collectable> {
+    arg_chk: Checkpoint<(
+        PAtomic<Context<K, V>>,
+        PPtr<DetectableCASAtomic<Slot<K, V>>>,
+        usize, // FindResult's size
+    )>,
     move_if_resized_inner: MoveIfResizedInner<K, V>,
 }
 
 impl<K, V: Collectable> Default for MoveIfResized<K, V> {
     fn default() -> Self {
         Self {
+            arg_chk: Default::default(),
             move_if_resized_inner: Default::default(),
         }
     }
@@ -128,27 +138,15 @@ impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
 /// Insert inner client
 #[derive(Debug, Memento, Collectable)]
 pub struct InsertInner<K, V: Collectable> {
-    insert_inner_inner: InsertInnerInner<K, V>,
+    ctx_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    try_slot_insert: TrySlotInsert<K, V>,
+    add_lv: AddLevel<K, V>,
 }
 
 impl<K, V: Collectable> Default for InsertInner<K, V> {
     fn default() -> Self {
         Self {
-            insert_inner_inner: Default::default(),
-        }
-    }
-}
-
-/// Insert inner inner client
-#[derive(Debug, Memento, Collectable)]
-pub struct InsertInnerInner<K, V: Collectable> {
-    try_slot_insert: TrySlotInsert<K, V>,
-    add_lv: AddLevel<K, V>,
-}
-
-impl<K, V: Collectable> Default for InsertInnerInner<K, V> {
-    fn default() -> Self {
-        Self {
+            ctx_chk: Default::default(),
             try_slot_insert: Default::default(),
             add_lv: Default::default(),
         }
@@ -160,6 +158,7 @@ impl<K, V: Collectable> Default for InsertInnerInner<K, V> {
 pub struct TrySlotInsert<K, V: Collectable> {
     slot_chk: Checkpoint<Option<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>>,
     slot_cas: Cas,
+    fail: Checkpoint<()>,
 }
 
 impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
@@ -167,6 +166,7 @@ impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
         Self {
             slot_chk: Default::default(),
             slot_cas: Default::default(),
+            fail: Default::default(),
         }
     }
 }
@@ -174,21 +174,19 @@ impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
 /// Add level client
 #[derive(Debug, Memento, Collectable)]
 pub struct AddLevel<K, V: Collectable> {
-    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
     next_level: NextLevel<K, V>,
     context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     context_cas: Cas,
-    len_chk: Checkpoint<usize>,
+    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
 }
 
 impl<K, V: Collectable> Default for AddLevel<K, V> {
     fn default() -> Self {
         Self {
-            context_chk: Default::default(),
             next_level: Default::default(),
             context_new_chk: Default::default(),
             context_cas: Default::default(),
-            len_chk: Default::default(),
+            context_chk: Default::default(),
         }
     }
 }
@@ -764,35 +762,37 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
     fn next_level<'g>(
         &self,
-        first_level: &'g Node<Bucket<K, V>>,
-        next_level_size: usize,
+        fst_lv: &'g Node<Bucket<K, V>>,
+        next_lv_size: usize,
         mmt: &mut NextLevel<K, V>,
         handle: &'g Handle,
     ) -> PShared<'g, Node<Bucket<K, V>>> {
         let (guard, pool) = (&handle.guard, handle.pool);
-        let next_level = mmt
+
+        let next_lv = mmt
             .next_level_chk
             .checkpoint(
                 || {
-                    let next_level = first_level.next.load(Ordering::Acquire, guard, pool);
-                    PAtomic::from(next_level)
+                    let next_lv = fst_lv.next.load(Ordering::Acquire, guard, pool);
+                    PAtomic::from(next_lv)
                 },
                 handle,
             )
             .load(Ordering::Relaxed, guard);
-        if !next_level.is_null() {
-            return next_level;
+        if !next_lv.is_null() {
+            return next_lv;
         }
 
         // TODO: need lock?
         let my_node = mmt
             .my_node_chk
-            .checkpoint(|| PAtomic::from(new_node(next_level_size, pool)), handle)
+            .checkpoint(|| PAtomic::from(new_node(next_lv_size, pool)), handle)
             .load(Ordering::Relaxed, guard);
-        let res = first_level
+
+        if let Err(e) = fst_lv
             .next
-            .cas(PShared::null(), my_node, &mut mmt.next_cas, handle);
-        if let Err(e) = res {
+            .cas(PShared::null(), my_node, &mut mmt.next_cas, handle)
+        {
             unsafe { guard.defer_pdestroy(my_node) };
             return e;
         }
@@ -802,99 +802,69 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
     fn add_level<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>, // no need to be stable
+        mut ctx: PShared<'g, Context<K, V>>,
         mmt: &mut AddLevel<K, V>,
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
         let (guard, pool) = (&handle.guard, handle.pool);
 
-        let context = mmt
-            .context_chk
-            .checkpoint(|| PAtomic::from(context), handle)
-            .load(Ordering::Relaxed, guard);
-        let context_ref = unsafe { context.deref(pool) };
-        let first_level = context_ref.first_level.load(Ordering::Acquire, guard);
-        let first_level_ref = unsafe { first_level.deref(pool) };
-        let first_level_data = unsafe {
-            first_level_ref
-                .data
-                .load(Ordering::Relaxed, guard)
-                .deref(pool)
-        };
-        let next_level_size = level_size_next(first_level_data.len());
+        let ctx_ref = unsafe { ctx.deref(pool) };
+        let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
+        let fst_lv_ref = unsafe { fst_lv.deref(pool) };
+        let fst_lv_data = unsafe { fst_lv_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+        let next_lv_size = level_size_next(fst_lv_data.len());
 
         // insert a new level to the next of the first level.
-        let next_level = self.next_level(
-            first_level_ref,
-            next_level_size,
-            &mut mmt.next_level,
-            handle,
-        );
+        let next_lv = self.next_level(fst_lv_ref, next_lv_size, &mut mmt.next_level, handle);
 
         // update context.
-        let context_ref = unsafe { context.deref(pool) };
-
-        let context_new = mmt
+        let ctx_new = mmt
             .context_new_chk
             .checkpoint(
                 || {
-                    let n = alloc_persist(
-                        Context {
-                            first_level: PAtomic::from(next_level),
-                            last_level: context_ref.last_level.clone(),
-                            resize_size: AtomicUsize::new(level_size_prev(level_size_prev(
-                                next_level_size,
-                            ))),
-                        },
-                        pool,
-                    );
-                    PAtomic::from(n)
+                    let c = Context {
+                        first_level: PAtomic::from(next_lv),
+                        last_level: ctx_ref.last_level.clone(),
+                        resize_size: AtomicUsize::new(level_size_prev(level_size_prev(
+                            next_lv_size,
+                        ))),
+                    };
+                    let new = alloc_persist(c, pool);
+                    PAtomic::from(new)
                 },
                 handle,
             )
             .load(Ordering::Relaxed, guard);
-        let context_new_ref = unsafe { context_new.deref(pool) };
+        let ctx_new_ref = unsafe { ctx_new.deref(pool) };
 
-        let mut res = self
-            .context
-            .cas(context, context_new, &mut mmt.context_cas, handle);
+        while let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.context_cas, handle) {
+            ctx = cur;
 
-        while let Err(ctx) = res {
             let ctx_ref = unsafe { ctx.deref(pool) };
+            let len = unsafe {
+                ctx_ref
+                    .first_level
+                    .load(Ordering::Acquire, guard)
+                    .deref(pool)
+                    .data
+                    .load(Ordering::Relaxed, guard)
+                    .deref(pool)
+            }
+            .len();
 
-            let len = mmt.len_chk.checkpoint(
-                || {
-                    unsafe {
-                        ctx_ref
-                            .first_level
-                            .load(Ordering::Acquire, guard)
-                            .deref(pool)
-                            .data
-                            .load(Ordering::Relaxed, guard)
-                            .deref(pool)
-                    }
-                    .len()
-                },
-                handle,
-            );
-            if len >= next_level_size {
+            // TODO: CAS Err return value must be stable
+            if len >= next_lv_size {
+                unsafe { guard.defer_pdestroy(ctx_new) };
                 return (ctx, false);
             }
 
             // TODO: check if same & flush otherwise
-            context_new_ref.last_level.store(
-                ctx_ref.last_level.load(Ordering::Acquire, guard),
-                Ordering::Relaxed,
-            ); // Exploit invariant
-
-            // TODO: Remove rec false call
-            res = self
-                .context
-                .cas(ctx, context_new, &mut mmt.context_cas, handle);
+            let last_lv = ctx_ref.last_level.load(Ordering::Acquire, guard);
+            ctx_new_ref.last_level.store(last_lv, Ordering::Relaxed); // Exploit invariant
         }
 
         fence(Ordering::SeqCst);
-        (context_new, true)
+        (ctx_new, true)
     }
 
     fn resize_move_slot_insert(
@@ -1006,7 +976,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        let _ = mmt.slot_slot_first_chk.checkpoint(|| None, handle);
+        let () = mmt.fail.checkpoint(|| (), handle);
         Err(())
     }
 
@@ -1430,6 +1400,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let (guard, pool) = (&handle.guard, handle.pool);
 
         if handle.rec.load(Ordering::Relaxed) {
+            if mmt.fail.peek(handle).is_some() {
+                return Err(());
+            }
+
             if let Some(v) = mmt.slot_chk.peek(handle) {
                 let (size, slot) = some_or!(v, return Err(()));
                 let slot = unsafe { slot.deref(pool) };
@@ -1485,117 +1459,85 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        let _ = mmt.slot_chk.checkpoint(|| None, handle);
-
+        let () = mmt.fail.checkpoint(|| (), handle);
         Err(())
-    }
-
-    fn insert_inner_inner<'g>(
-        &'g self,
-        context: PShared<'g, Context<K, V>>, // no need to be stable
-        slot: PShared<'g, Slot<K, V>>,       // must be stable
-        key_hashes: [u32; 2],
-        resize_send: &mpsc::Sender<()>,
-        mmt: &mut InsertInnerInner<K, V>,
-        handle: &'g Handle,
-    ) -> Result<(PShared<'g, Context<K, V>>, FindResult<'g, K, V>), PShared<'g, Context<K, V>>>
-    {
-        if let Ok(result) =
-            self.try_slot_insert(context, slot, key_hashes, &mut mmt.try_slot_insert, handle)
-        {
-            return Ok((context, result));
-        }
-
-        // No remaining slots. Resize.
-        let (context_new, added) = self.add_level(context, &mut mmt.add_lv, handle);
-        if added {
-            let _ = resize_send.send(());
-        }
-        Err(context_new)
     }
 
     fn insert_inner<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>, // no need to be stable
-        slot: PShared<'g, Slot<K, V>>,       // must be stable
+        mut ctx: PShared<'g, Context<K, V>>,
+        slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        resize_send: &mpsc::Sender<()>,
+        snd: &mpsc::Sender<()>,
         mmt: &mut InsertInner<K, V>,
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        let mut res = self.insert_inner_inner(
-            context,
-            slot,
-            key_hashes,
-            resize_send,
-            &mut mmt.insert_inner_inner,
-            handle,
-        );
+        loop {
+            let ctx_chk = mmt
+                .ctx_chk
+                .checkpoint(|| PAtomic::from(ctx), handle)
+                .load(Ordering::Relaxed, &handle.guard);
 
-        // TODO: remove retry call
-        while let Err(context_new) = res {
-            res = self.insert_inner_inner(
-                context_new,
-                slot,
-                key_hashes,
-                resize_send,
-                &mut mmt.insert_inner_inner,
-                handle,
-            );
+            if let Ok(res) =
+                self.try_slot_insert(ctx_chk, slot, key_hashes, &mut mmt.try_slot_insert, handle)
+            {
+                return (ctx_chk, res);
+            }
+
+            // No remaining slots. Resize.
+            let (ctx_new, added) = self.add_level(ctx_chk, &mut mmt.add_lv, handle);
+            if added {
+                let _ = snd.send(());
+            }
+
+            ctx = ctx_new;
         }
-
-        res.unwrap()
     }
 
     fn move_if_resized_inner<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>, // must be stable
-        insert_result: FindResult<'g, K, V>, // no need to be stable
+        ctx: PShared<'g, Context<K, V>>,
+        ins_res: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
-        resize_send: &mpsc::Sender<()>,
+        snd: &mpsc::Sender<()>,
         mmt: &mut MoveIfResizedInner<K, V>,
         handle: &'g Handle,
     ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
         let (guard, pool) = (&handle.guard, handle.pool);
 
-        let prev_slot = unsafe {
-            mmt.prev_slot_chk
-                .checkpoint(|| insert_result.slot.as_pptr(pool), handle)
-                .deref(pool)
-        };
-
         // If the inserted slot is being resized, try again.
         fence(Ordering::SeqCst);
 
         // If the context remains the same, it's done.
-        let context_new = mmt
+        let ctx_new = mmt
             .context_new_chk
             .checkpoint(
                 || {
-                    let context_new = self.context.load(Ordering::Acquire, guard, pool);
-                    PAtomic::from(context_new)
+                    let ctx_new = self.context.load(Ordering::Acquire, guard, pool);
+                    PAtomic::from(ctx_new)
                 },
                 handle,
             )
             .load(Ordering::Relaxed, guard);
-        if context == context_new {
+
+        if ctx == ctx_new {
             return Ok(());
         }
 
         // If the inserted array is not being resized, it's done.
-        let context_new_ref = unsafe { context_new.deref(pool) };
-        if context_new_ref.resize_size.load(Ordering::Relaxed) < insert_result.size {
+        let ctx_new_ref = unsafe { ctx_new.deref(pool) };
+        if ctx_new_ref.resize_size.load(Ordering::Relaxed) < ins_res.size {
             return Ok(());
         }
 
         // Move the slot if the slot is not already (being) moved.
         //
         // the resize thread may already have passed the slot. I need to move it.
-        if insert_result
+        if ins_res
             .slot
             .cas(
-                insert_result.slot_ptr,
-                insert_result.slot_ptr.with_tag(1),
+                ins_res.slot_ptr,
+                ins_res.slot_ptr.with_tag(1),
                 &mut mmt.slot_cas,
                 handle,
             )
@@ -1604,49 +1546,64 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             return Ok(());
         }
 
-        let (context_insert, insert_result_insert) = self.insert_inner(
-            context_new,
-            insert_result.slot_ptr,
+        let (ctx2, ins_res2) = self.insert_inner(
+            ctx_new,
+            ins_res.slot_ptr,
             key_hashes,
-            resize_send,
+            snd,
             &mut mmt.insert_inner,
             handle,
         );
-        prev_slot
+        ins_res
+            .slot
             .inner
             .store(PShared::null().with_tag(1), Ordering::Release); // exploit invariant
 
         // stable error
-        Err((context_insert, insert_result_insert))
+        Err((ctx2, ins_res2))
     }
 
     fn move_if_resized<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>, // must be stable
-        insert_result: FindResult<'g, K, V>, // ?
+        mut ctx: PShared<'g, Context<K, V>>,
+        mut ins_res: FindResult<'g, K, V>,
+        slot_ptr: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        resize_send: &mpsc::Sender<()>,
+        snd: &mpsc::Sender<()>,
         mmt: &mut MoveIfResized<K, V>,
-        handle: &Handle,
+        handle: &'g Handle,
     ) {
-        let mut res = self.move_if_resized_inner(
-            context,
-            insert_result,
-            key_hashes,
-            resize_send,
-            &mut mmt.move_if_resized_inner,
-            handle,
-        );
-        // TODO: remove retry call
-        while let Err((context, insert_result)) = res {
-            res = self.move_if_resized_inner(
-                context, // stable by move_if_resized_inner
-                insert_result,
-                key_hashes,
-                resize_send,
-                &mut mmt.move_if_resized_inner,
+        loop {
+            let chk = mmt.arg_chk.checkpoint(
+                || {
+                    (
+                        PAtomic::from(ctx),
+                        unsafe { ins_res.slot.as_pptr(handle.pool) },
+                        ins_res.size,
+                    )
+                },
                 handle,
             );
+
+            let info = FindResult {
+                size: chk.2,
+                slot: unsafe { chk.1.deref(handle.pool) },
+                slot_ptr,
+            };
+
+            if let Err((c, r)) = self.move_if_resized_inner(
+                ctx, // stable by move_if_resized_inner
+                info,
+                key_hashes,
+                snd,
+                &mut mmt.move_if_resized_inner,
+                handle,
+            ) {
+                ctx = c;
+                ins_res = r;
+            } else {
+                return;
+            }
         }
     }
 
@@ -1654,7 +1611,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         &self,
         key: K,
         value: V,
-        resize_send: &mpsc::Sender<()>,
+        snd: &mpsc::Sender<()>,
         mmt: &mut Insert<K, V>,
         handle: &Handle,
     ) -> Result<(), InsertError>
@@ -1667,8 +1624,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         let chk = mmt.found_slot.checkpoint(
             || {
-                let (context, find_result) = self.find(&key, key_tag, key_hashes, handle);
-                let found = find_result.is_some();
+                let (ctx, find_res) = self.find(&key, key_tag, key_hashes, handle);
+                let found = find_res.is_some();
                 let slot = if found {
                     PAtomic::null()
                 } else {
@@ -1676,35 +1633,33 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                         alloc_persist(Slot { key, value }, pool).with_high_tag(key_tag as usize),
                     )
                 };
-                (found, slot, PAtomic::from(context))
+                (found, slot, PAtomic::from(ctx))
             },
             handle,
         );
-        let (found, slot, context) = (
+        let (found, slot, ctx) = (
             chk.0,
             chk.1.load(Ordering::Relaxed, guard),
             chk.2.load(Ordering::Relaxed, guard),
         );
+
         if found {
             return Err(InsertError::Occupied);
         }
 
-        let (context_new, insert_result) = self.insert_inner(
-            context,
+        let (ctx_new, ins_res) =
+            self.insert_inner(ctx, slot, key_hashes, snd, &mut mmt.insert_inner, handle);
+
+        self.move_if_resized(
+            ctx_new, // stable by insert_inner
+            ins_res, // stable by insert_inner
             slot,
             key_hashes,
-            resize_send,
-            &mut mmt.insert_inner,
-            handle,
-        );
-        self.move_if_resized(
-            context_new,   // stable by insert_inner
-            insert_result, // stable by insert_inner
-            key_hashes,
-            resize_send,
+            snd,
             &mut mmt.move_if_resized,
             handle,
         );
+
         Ok(())
     }
 
