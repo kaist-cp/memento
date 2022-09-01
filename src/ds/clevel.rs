@@ -1266,22 +1266,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             // handle.guard.repin_after(|| {}); // TODO: uncomment
         }
 
-        #[cfg(feature = "tcrash")]
-        let mut cnt = 0;
-        #[cfg(feature = "tcrash")]
-        let rand = rdtscp() as usize % 5;
-
         while mmt.recv_chk.checkpoint(|| recv.recv().is_ok(), handle) {
-            #[cfg(feature = "tcrash")]
-            {
-                use crate::test_utils::tests::*;
-                if cnt == rand {
-                    RESIZE_LOOP_UNIX_TID.store(unsafe { libc::gettid() }, Ordering::SeqCst);
-                    enable_killed(tid);
-                }
-                cnt += 1;
-            }
-
             // println!("[resize_loop] do resize!");
             self.resize(&mut mmt.resize, handle);
             // handle.guard.repin_after(|| {}); // TODO: uncomment
