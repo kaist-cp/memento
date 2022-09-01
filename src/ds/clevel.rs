@@ -1897,8 +1897,8 @@ mod test {
 
     use super::*;
 
-    const NR_THREAD: usize = 1 /* Resizer */ + 4 /* Testee */;
-    const NR_COUNT: usize = 20_000;
+    const NR_THREAD: usize = 1 /* Resizer */ + 2 /* Testee */;
+    const NR_COUNT: usize = 10_000;
 
     static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
