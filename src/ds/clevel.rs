@@ -1297,16 +1297,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
         let (guard, pool) = (&handle.guard, handle.pool);
 
-        let mut context = self.context.load(Ordering::Acquire, guard, pool);
+        let mut ctx = self.context.load(Ordering::Acquire, guard, pool);
         loop {
-            let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find_fast(key, key_tag, key_hashes, guard, pool);
-            let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard, pool);
+            let ctx_ref = unsafe { ctx.deref(pool) };
+            let res = ctx_ref.find_fast(key, key_tag, key_hashes, guard, pool);
+            let res = ok_or!(res, {
+                ctx = self.context.load(Ordering::Acquire, guard, pool);
                 continue;
             });
-            let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard, pool);
+            let res = some_or!(res, {
+                let ctx_new = self.context.load(Ordering::Acquire, guard, pool);
 
                 // However, a rare case for missing is: after a search operation starts, other
                 // threads add a new level through expansion and rehashing threads move the item
@@ -1318,13 +1318,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 // our algorithm
                 // - resize doesn't remove 1-tag items.
                 // - find, move_if_resized removes 1-tag items.
-                if context != context_new {
-                    context = context_new;
+                if ctx != ctx_new {
+                    ctx = ctx_new;
                     continue;
                 }
-                return (context, None);
+                return (ctx, None);
             });
-            return (context, Some(find_result));
+            return (ctx, Some(res));
         }
     }
 
@@ -1337,25 +1337,25 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
         let (guard, pool) = (&handle.guard, handle.pool);
 
-        let mut context = self.context.load(Ordering::Acquire, guard, pool);
+        let mut ctx = self.context.load(Ordering::Acquire, guard, pool);
         loop {
-            let context_ref = unsafe { context.deref(pool) };
-            let find_result = context_ref.find(key, key_tag, key_hashes, guard, pool);
-            let find_result = ok_or!(find_result, {
-                context = self.context.load(Ordering::Acquire, guard, pool);
+            let ctx_ref = unsafe { ctx.deref(pool) };
+            let res = ctx_ref.find(key, key_tag, key_hashes, guard, pool);
+            let res = ok_or!(res, {
+                ctx = self.context.load(Ordering::Acquire, guard, pool);
                 continue;
             });
-            let find_result = some_or!(find_result, {
-                let context_new = self.context.load(Ordering::Acquire, guard, pool);
+            let res = some_or!(res, {
+                let ctx_new = self.context.load(Ordering::Acquire, guard, pool);
 
                 // the same possible corner case as `find_fast`
-                if context != context_new {
-                    context = context_new;
+                if ctx != ctx_new {
+                    ctx = ctx_new;
                     continue;
                 }
-                return (context, None);
+                return (ctx, None);
             });
-            return (context, Some(find_result));
+            return (ctx, Some(res));
         }
     }
 
@@ -1391,8 +1391,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
     fn try_slot_insert<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>, // no need to be stable
-        slot_new: PShared<'g, Slot<K, V>>,   // must be stable
+        context: PShared<'g, Context<K, V>>,
+        slot_new: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         mmt: &mut TrySlotInsert<K, V>,
         handle: &'g Handle,
