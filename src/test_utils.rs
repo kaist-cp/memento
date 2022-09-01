@@ -91,7 +91,7 @@ pub mod tests {
     use mmt_derive::Collectable;
     use std::backtrace::Backtrace;
     use std::io::Error;
-    use std::sync::atomic::{fence, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
     use crate::ploc::Handle;
@@ -175,6 +175,7 @@ pub mod tests {
     }
 
     pub static mut TESTER: Option<Tester> = None;
+    pub static mut TESTER_FLAG: AtomicBool = AtomicBool::new(false);
 
     /// run test op
     #[allow(box_pointers)]
@@ -198,9 +199,11 @@ pub mod tests {
         let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
 
         // Initialize tester
-        unsafe { TESTER = Some(Tester::new(nr_memento, nr_count)) };
-        let tester = unsafe { TESTER.as_ref().unwrap() };
-        fence(Ordering::SeqCst);
+        let tester = unsafe {
+            TESTER = Some(Tester::new(nr_memento, nr_count));
+            TESTER_FLAG.store(true, Ordering::Release);
+            TESTER.as_ref().unwrap()
+        };
 
         // Start test
         let handle = std::thread::spawn(move || {

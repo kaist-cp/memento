@@ -1900,7 +1900,7 @@ mod test {
     const NR_THREAD: usize = 1 /* Resizer */ + 2 /* Testee */;
     const NR_COUNT: usize = 10_000;
 
-    static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
+    static mut SEND: Option<[Option<mpsc::Sender<()>>; NR_THREAD + 1]> = None;
     static mut RECV: Option<mpsc::Receiver<()>> = None;
 
     struct InsDelLook {
@@ -1950,6 +1950,7 @@ mod test {
     impl RootObj<InsDelLook> for TestRootObj<Clevel<TestValue, TestValue>> {
         fn run(&self, mmt: &mut InsDelLook, handle: &Handle) {
             let tid = handle.tid;
+
             match tid {
                 // T1: Resize loop
                 1 => {
@@ -2010,11 +2011,9 @@ mod test {
         drop(send);
 
         let _ = std::thread::spawn(|| {
-            let tester = loop {
-                fence(Ordering::SeqCst);
-                if let Some(t) = unsafe { TESTER.as_ref() } {
-                    break t;
-                }
+            let tester = unsafe {
+                while !TESTER_FLAG.load(Ordering::Acquire) {}
+                TESTER.as_ref().unwrap()
             };
 
             while !tester.is_finished() {}
