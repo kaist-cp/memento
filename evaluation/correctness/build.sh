@@ -15,9 +15,13 @@ fi
 # Build
 cfg=$(cat config)
 cargo clean
+# export RUSTFLAGS="-Z sanitizer=address"
+# export ASAN_OPTIONS="detect_leaks=0"
+
 if [ "$cfg" == "no-persist" ]; then
-    RUSTFLAGS="-Z sanitizer=address" cargo build --tests --release --features=no_persist --features=tcrash --target x86_64-unknown-linux-gnu
+    cargo build --tests --release --features=no_persist --features=tcrash --target x86_64-unknown-linux-gnu
 else
-    RUSTFLAGS="-Z sanitizer=address" cargo build --tests --release --features=tcrash --target x86_64-unknown-linux-gnu
+    cargo build --tests --release --features=tcrash --target x86_64-unknown-linux-gnu
 fi
+
 rm -f $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-*.d
