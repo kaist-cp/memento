@@ -264,26 +264,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return Some(Ok(()));
         }
 
-        let cur = self.inner.load(Ordering::SeqCst, guard);
-
-        // Check if the CAS I did before crash remains as it is
-        if cur.with_aux_bit(0) == new.with_aux_bit(0).with_tid(tid) {
-            persist_obj(&self.inner, true);
-            mmt.checkpoint_succ(!p_own, handle);
-
-            let _ = self
-                .inner
-                .compare_exchange(
-                    cur,
-                    new.with_aux_bit(0).with_tid(0),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                )
-                .map_err(|_| sfence());
-
-            return Some(Ok(()));
-        }
+        // Finalize the CAS
+        let _ = self.load(Ordering::SeqCst, guard, handle.pool);
 
         let t_help = exec_info.cas_info.help[tid].load(!p_own);
         if t_own >= t_help {
