@@ -117,8 +117,13 @@ impl CompareAndSetOrdering for (Ordering, Ordering) {
     }
 }
 
-// tid bits: 0b0111111111000000000000000000000000000000000000000000000000000000 in 64-bit
-const POS_TID_BITS: u32 = POS_AUX_BITS + NR_AUX_BITS;
+// auxiliary bit: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
+// Used for:
+// - Detectable CAS: Indicating CAS parity (Odd/Even)
+// - Insert: Indicating if the pointer is persisted
+pub(crate) const POS_AUX_BITS: u32 = 0;
+pub(crate) const NR_AUX_BITS: u32 = 1;
+impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
 const NR_TID_BITS: u32 = 9;
 impl_left_bits!(tid_bits, POS_TID_BITS, NR_TID_BITS, usize);
 
@@ -163,6 +168,12 @@ fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
     (high_bits() & (htag.rotate_right(POS_HIGH_BITS + NR_HIGH_BITS))) | (!high_bits() & data)
 }
 
+
+/// Compose aux bit (1-bit, MSB)
+#[inline]
+fn compose_aux_bit<T: ?Sized + Pointable>(aux_bit: usize, data: usize) -> usize {
+    (aux_bits() & (aux_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
+}
 /// Decomposes a tagged pointer `data` into the pointer and the tag.
 /// (tid, high_tag, ptr, low_tag)
 #[inline]
@@ -1316,7 +1327,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// Set aux bit
     pub fn with_aux_bit(self, aux_bit: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_aux_bit(aux_bit, data)) }
+        unsafe { Self::from_usize(compose_aux_bit::<T>(aux_bit, data)) }
     }
 
     /// Set tid
@@ -1805,7 +1816,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
 
     /// Set aux bit
     pub fn with_aux_bit(&self, aux_bit: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_aux_bit(aux_bit, self.data)) }
+        unsafe { Self::from_usize(compose_aux_bit::<T>(aux_bit, self.data)) }
     }
 
     /// Set tid
