@@ -298,7 +298,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
     ) -> PShared<'g, N> {
         loop {
             // return if old is clean
-            if old.tid() == 0 {
+            // NOTE: 사실 tid=0이면 descriptor 또한 0 보장
+            if old.desc_bit() == 0 && old.tid() == 0 {
                 return old;
             }
 
@@ -319,7 +320,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     let cur = self.inner.load(Ordering::SeqCst, guard);
 
                     // return if cur is clean. (previous chk timestamp is useless.)
-                    if cur.tid() == 0 {
+                    if cur.desc_bit() == 0 && cur.tid() == 0 {
                         return cur;
                     }
 
@@ -338,9 +339,16 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 }
             };
 
-            let winner_tid = old.tid();
-            let winner_parity = old.aux_bit() != 0;
+            // Register a help descriptor
+            let _ = self.register_help(old, guard);
+            assert_eq!(old.desc_bit(), 1);
+            let helper_tid = old.tid();
+            let winner_tid = 0; // TODO: help_descs[helper_tid].tid
+            let winner_parity = true; // TODO: help_descs[helper_tid].parity
 
+            // let winner_parity = old.aux_bit() != 0;
+
+            // Finalize the descriptor on location
             // check if winner thread's help timestamp is stale
             let t_help = exec_info.cas_info.help[winner_tid].load(winner_parity);
             if t_cur <= t_help {
@@ -365,7 +373,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             // help pointer to be clean.
             match self.inner.compare_exchange(
                 old,
-                old.with_aux_bit(0).with_tid(0),
+                old.with_aux_bit(0).with_desc_bit(0).with_tid(0),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
                 guard,
@@ -378,6 +386,16 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 }
             }
         }
+    }
+
+    #[inline]
+    fn register_help<'g>(&self, mut old: PShared<'g, N>, guard: &'g Guard) -> bool {
+        todo!("Set my desc.");
+        // help_descs[my_tid].seq += 1;
+        // help_descs[my_tid].ptr = ...;
+
+        todo!("Try register my descriptor to location (CAS)")
+        // CAS inner from old to ptr pointing to my descriptor
     }
 }
 
