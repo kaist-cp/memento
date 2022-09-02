@@ -1,6 +1,6 @@
 //! Persistent Exchanger
 
-use std::{sync::atomic::Ordering, time::Duration};
+use std::sync::atomic::Ordering;
 
 use crossbeam_epoch::Guard;
 use mmt_derive::Collectable;
@@ -244,13 +244,21 @@ impl<T: Clone + Collectable> Exchanger<T> {
         handle: &Handle,
     ) -> Result<T, TryFail> {
         let (guard, pool) = (&handle.guard, handle.pool);
-        std::thread::sleep(Duration::from_nanos(100));
 
         let wait_slot = try_xchg
             .wait_slot
             .checkpoint(
                 || {
-                    let wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
+                    const PATIENCE: usize = 50;
+
+                    let mut wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
+                    for _ in 0..PATIENCE {
+                        wait_slot = self.slot.load(true, Ordering::SeqCst, guard);
+                        if wait_slot != mine {
+                            break;
+                        }
+                    }
+
                     PAtomic::from(wait_slot)
                 },
                 handle,
