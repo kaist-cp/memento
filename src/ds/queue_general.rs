@@ -135,10 +135,11 @@ impl<T: Clone + Collectable> Collectable for QueueGeneral<T> {
         DetectableCASAtomic::filter(&mut queue.head, tid, gc, pool);
 
         // Align head and tail
-        let head = queue
-            .head
-            .load(Ordering::SeqCst, unsafe { epoch::unprotected() }, pool);
-        queue.tail.store(head, Ordering::SeqCst);
+        // let head = queue
+        //     .head
+        //     .load(Ordering::SeqCst, unsafe { epoch::unprotected() }, pool);
+        // queue.tail.store(head, Ordering::SeqCst);
+        todo!()
     }
 }
 
@@ -158,7 +159,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                     let tail = loop {
                         let tail = self.tail.load(Ordering::SeqCst, guard);
                         let tail_ref = unsafe { tail.deref(pool) };
-                        let next = tail_ref.next.load(Ordering::SeqCst, guard, pool);
+                        let next = tail_ref.next.load(Ordering::SeqCst, handle);
 
                         if next.is_null() {
                             break tail;
@@ -225,9 +226,9 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         let chk = try_deq.head_next.checkpoint(
             || {
                 let (head, next) = loop {
-                    let head = self.head.load(Ordering::SeqCst, guard, pool);
+                    let head = self.head.load(Ordering::SeqCst, handle);
                     let head_ref = unsafe { head.deref(pool) };
-                    let next = head_ref.next.load(Ordering::SeqCst, guard, pool);
+                    let next = head_ref.next.load(Ordering::SeqCst, handle);
                     let tail = self.tail.load(Ordering::SeqCst, guard);
 
                     if head.as_ptr() != tail.as_ptr() || next.is_null() {

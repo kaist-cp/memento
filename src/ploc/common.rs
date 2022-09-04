@@ -7,7 +7,7 @@ use std::{
 
 use crossbeam_epoch::Guard;
 
-use super::{CasHelpArr, CasInfo};
+use super::{CasHelpArr, CasHelpDescArr, CasInfo};
 use crate::{
     pmem::{lfence, rdtscp, PoolHandle},
     test_utils::ordo::get_ordo_boundary,
@@ -106,12 +106,12 @@ pub(crate) struct ExecInfo {
     pub(crate) tsc_offset: Timestamp,
 }
 
-impl From<&'static CasHelpArr> for ExecInfo {
-    fn from(help: &'static CasHelpArr) -> Self {
+impl From<(&'static CasHelpArr, &'static CasHelpDescArr)> for ExecInfo {
+    fn from(help_arrs: (&'static CasHelpArr, &'static CasHelpDescArr)) -> Self {
         Self {
             global_max_time: Timestamp::from(0),
             chk_max_time: Timestamp::from(0),
-            cas_info: CasInfo::new(help),
+            cas_info: CasInfo::new(help_arrs.0, help_arrs.1),
             init_time: Timestamp::from(rdtscp()),
             tsc_offset: get_ordo_boundary(),
         }
