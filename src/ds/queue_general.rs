@@ -8,7 +8,7 @@ use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
-use crate::pmem::{ll::*, pool::*};
+use crate::pmem::{global_pool, ll::*, pool::*};
 use crate::*;
 
 /// Failure of queue operations
@@ -135,11 +135,9 @@ impl<T: Clone + Collectable> Collectable for QueueGeneral<T> {
         DetectableCASAtomic::filter(&mut queue.head, tid, gc, pool);
 
         // Align head and tail
-        // let head = queue
-        //     .head
-        //     .load(Ordering::SeqCst, unsafe { epoch::unprotected() }, pool);
-        // queue.tail.store(head, Ordering::SeqCst);
-        todo!()
+        let tmp_handle = Handle::new(tid, epoch::pin(), global_pool().unwrap());
+        let head = queue.head.load(Ordering::SeqCst, &tmp_handle);
+        queue.tail.store(head, Ordering::SeqCst);
     }
 }
 
