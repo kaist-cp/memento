@@ -174,18 +174,20 @@ impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
 #[derive(Debug, Memento, Collectable)]
 pub struct AddLevel<K, V: Collectable> {
     next_level: NextLevel<K, V>,
-    context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
-    context_cas: Cas,
-    context_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    ctx_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    ctx_cas: Cas,
+    ctx_chk: Checkpoint<PAtomic<Context<K, V>>>,
+    len_size_chk: Checkpoint<bool>,
 }
 
 impl<K, V: Collectable> Default for AddLevel<K, V> {
     fn default() -> Self {
         Self {
             next_level: Default::default(),
-            context_new_chk: Default::default(),
-            context_cas: Default::default(),
-            context_chk: Default::default(),
+            ctx_new_chk: Default::default(),
+            ctx_cas: Default::default(),
+            ctx_chk: Default::default(),
+            len_size_chk: Default::default(),
         }
     }
 }
@@ -818,7 +820,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         // update context.
         let ctx_new = mmt
-            .context_new_chk
+            .ctx_new_chk
             .checkpoint(
                 || {
                     let c = Context {
@@ -836,7 +838,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             .load(Ordering::Relaxed, guard);
         let ctx_new_ref = unsafe { ctx_new.deref(pool) };
 
-        while let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.context_cas, handle) {
+        while let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.ctx_cas, handle) {
             ctx = cur;
 
             let ctx_ref = unsafe { ctx.deref(pool) };
@@ -851,15 +853,25 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
             .len();
 
-            // TODO: CAS Err return value must be stable
-            if len >= next_lv_size {
+            let out = mmt.len_size_chk.checkpoint(
+                || {
+                    let out = len >= next_lv_size;
+                    if out {
+                        unsafe { guard.defer_pdestroy(ctx_new) };
+                    } else {
+                        let last_lv = ctx_ref.last_level.load(Ordering::Acquire, guard);
+                        ctx_new_ref.last_level.store(last_lv, Ordering::Relaxed);
+                        persist_obj(&ctx_new_ref.last_level, false); // cas soon
+                    }
+                    out
+                },
+                handle,
+            );
+
+            if out {
                 unsafe { guard.defer_pdestroy(ctx_new) };
                 return (ctx, false);
             }
-
-            // TODO: check if same & flush otherwise
-            let last_lv = ctx_ref.last_level.load(Ordering::Acquire, guard);
-            ctx_new_ref.last_level.store(last_lv, Ordering::Relaxed); // Exploit invariant
         }
 
         fence(Ordering::SeqCst);
