@@ -1256,18 +1256,18 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
     pub fn resize_loop(
         &self,
-        recv: &mpsc::Receiver<()>,
+        recv: &crossbeam_channel::Receiver<()>,
         mmt: &mut ResizeLoop<K, V>,
         handle: &Handle,
     ) {
         if mmt.recv_chk.checkpoint(|| recv.recv().is_ok(), handle) {
-            // println!("[resize_loop] do resize!");
+            println!("[resize_loop] do resize!");
             self.resize(&mut mmt.resize, handle);
             // handle.guard.repin_after(|| {}); // TODO: uncomment
         }
 
         while mmt.recv_chk.checkpoint(|| recv.recv().is_ok(), handle) {
-            // println!("[resize_loop] do resize!");
+            println!("[resize_loop] do resize!");
             self.resize(&mut mmt.resize, handle);
             // handle.guard.repin_after(|| {}); // TODO: uncomment
         }
@@ -1453,7 +1453,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         mut ctx: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        snd: &mpsc::Sender<()>,
+        snd: &crossbeam_channel::Sender<()>,
         mmt: &mut InsertInner<K, V>,
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
@@ -1484,7 +1484,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         ctx: PShared<'g, Context<K, V>>,
         ins_res: FindResult<'g, K, V>,
         key_hashes: [u32; 2],
-        snd: &mpsc::Sender<()>,
+        snd: &crossbeam_channel::Sender<()>,
         mmt: &mut MoveIfResizedInner<K, V>,
         handle: &'g Handle,
     ) -> Result<(), (PShared<'g, Context<K, V>>, FindResult<'g, K, V>)> {
@@ -1554,7 +1554,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         mut ins_res: FindResult<'g, K, V>,
         slot_ptr: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
-        snd: &mpsc::Sender<()>,
+        snd: &crossbeam_channel::Sender<()>,
         mmt: &mut MoveIfResized<K, V>,
         handle: &'g Handle,
     ) {
@@ -1596,7 +1596,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         &self,
         key: K,
         value: V,
-        snd: &mpsc::Sender<()>,
+        snd: &crossbeam_channel::Sender<()>,
         mmt: &mut Insert<K, V>,
         handle: &Handle,
     ) -> Result<(), InsertError>
@@ -1721,8 +1721,8 @@ mod simple_test {
 
     const SMOKE_CNT: usize = 100_000;
 
-    static mut SEND: Option<[Option<mpsc::Sender<()>>; 64]> = None;
-    static mut RECV: Option<mpsc::Receiver<()>> = None;
+    static mut SEND: Option<[Option<crossbeam_channel::Sender<()>>; 64]> = None;
+    static mut RECV: Option<crossbeam_channel::Receiver<()>> = None;
 
     struct Smoke {
         resize: ResizeLoop<usize, usize>,
@@ -1764,7 +1764,7 @@ mod simple_test {
         fn run(&self, mmt: &mut Smoke, handle: &Handle) {
             let tid = handle.tid;
 
-            unsafe { TESTER.as_ref().unwrap().uncheck_thread(handle) };
+            let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
             let kv = &self.obj;
 
             match tid {
@@ -1794,7 +1794,7 @@ mod simple_test {
         const FILE_NAME: &str = "clevel_smoke";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        let (send, recv) = mpsc::channel();
+        let (send, recv) = crossbeam_channel::unbounded();
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             SEND.as_mut().unwrap()[2] = Some(send);
@@ -1841,7 +1841,7 @@ mod simple_test {
     impl RootObj<InsSch> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut InsSch, handle: &Handle) {
             let tid = handle.tid;
-            unsafe { TESTER.as_ref().unwrap().uncheck_thread(handle) };
+            let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
 
             let kv = &self.obj;
             match tid {
@@ -1871,7 +1871,7 @@ mod simple_test {
         const FILE_NAME: &str = "clevel_insert_search";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        let (send, recv) = mpsc::channel();
+        let (send, recv) = crossbeam_channel::unbounded();
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             RECV = Some(recv);
@@ -1897,11 +1897,11 @@ mod test {
 
     use super::*;
 
-    const NR_THREAD: usize = 1 /* Resizer */ + 2 /* Testee */;
+    const NR_THREAD: usize = 1 /* Resizer */ + 5 /* Testee */;
     const NR_COUNT: usize = 10_000;
 
-    static mut SEND: Option<[Option<mpsc::Sender<()>>; NR_THREAD + 1]> = None;
-    static mut RECV: Option<mpsc::Receiver<()>> = None;
+    static mut SEND: Option<[Option<crossbeam_channel::Sender<()>>; NR_THREAD + 1]> = None;
+    static mut RECV: Option<crossbeam_channel::Receiver<()>> = None;
 
     struct InsDelLook {
         resize_loop: ResizeLoop<TestValue, TestValue>,
@@ -1954,7 +1954,7 @@ mod test {
             match tid {
                 // T1: Resize loop
                 1 => {
-                    unsafe { TESTER.as_ref().unwrap().uncheck_thread(handle) };
+                    let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
 
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     self.obj.resize_loop(&recv, &mut mmt.resize_loop, handle);
@@ -1999,7 +1999,7 @@ mod test {
         const FILE_NAME: &str = "clevel";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        let (send, recv) = mpsc::channel();
+        let (send, recv) = crossbeam_channel::unbounded();
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             RECV = Some(recv);

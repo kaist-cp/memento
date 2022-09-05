@@ -2,7 +2,7 @@
 
 pub mod atomic;
 
-pub use atomic::{PAtomic, POwned, PShared};
+pub use self::atomic::{PAtomic, POwned, PShared};
 pub use crossbeam_epoch::{pin, unprotected, Guard};
 
 /// A trait to allow the crossbeam's Guard to handle PAtomic pointers as well
