@@ -178,7 +178,7 @@ fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
 /// Compose aux bit (1-bit, MSB)
 #[inline]
 fn compose_desc_bit<T: ?Sized + Pointable>(desc_bit: usize, data: usize) -> usize {
-    (desc_bits() & (desc_bit.rotate_right(POS_DESC_BITS + NR_DESC_BITS))) | (!aux_bits() & data)
+    (desc_bits() & (desc_bit.rotate_right(POS_DESC_BITS + NR_DESC_BITS))) | (!desc_bits() & data)
 }
 
 /// Compose aux bit (1-bit, MSB)

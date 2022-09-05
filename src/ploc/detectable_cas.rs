@@ -429,8 +429,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         };
 
         // Check if the sequence value on the ptr and descriptor are the same.
-        let seq = old.as_ptr().into_offset(); // sequence on ptr
-        if seq != cas_info.help_desc[old.tid()].seq.load(Ordering::SeqCst) {
+        if old
+            .with_aux_bit(0)
+            .with_desc_bit(0)
+            .with_tid(0)
+            .into_usize() // sequence of descriptor ptr
+            != cas_info.help_desc[old.tid()].seq.load(Ordering::SeqCst)
+        {
             return Err(self.inner.load(Ordering::SeqCst, &handle.guard));
         }
 
