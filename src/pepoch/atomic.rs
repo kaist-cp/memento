@@ -21,7 +21,6 @@ use core::sync::atomic::Ordering;
 use super::Guard;
 use crate::impl_left_bits;
 use crate::ploc::Handle;
-use crate::ploc::{aux_bits, compose_aux_bit, NR_AUX_BITS, POS_AUX_BITS};
 use crate::pmem::{global_pool, pool::PoolHandle, ptr::PPtr, Collectable, GarbageCollection};
 use crate::PDefault;
 use crossbeam_epoch::unprotected;
@@ -117,12 +116,25 @@ impl CompareAndSetOrdering for (Ordering, Ordering) {
     }
 }
 
-// tid bits: 0b0111111111000000000000000000000000000000000000000000000000000000 in 64-bit
-const POS_TID_BITS: u32 = POS_AUX_BITS + NR_AUX_BITS;
+// auxiliary bit: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
+// Used for:
+// - Detectable CAS: Indicating CAS parity (Odd/Even)
+// - Insert: Indicating if the pointer is persisted
+pub(crate) const POS_AUX_BITS: u32 = 0;
+pub(crate) const NR_AUX_BITS: u32 = 1;
+impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
+
+// descriptor bit: 0b0100000000000000000000000000000000000000000000000000000000000000 in 64-bit
+pub(crate) const POS_DESC_BITS: u32 = POS_AUX_BITS + NR_AUX_BITS;
+pub(crate) const NR_DESC_BITS: u32 = 1;
+impl_left_bits!(desc_bits, POS_DESC_BITS, NR_DESC_BITS, usize);
+
+// tid bits: 0b0011111111100000000000000000000000000000000000000000000000000000 in 64-bit
+const POS_TID_BITS: u32 = POS_DESC_BITS + NR_DESC_BITS;
 const NR_TID_BITS: u32 = 9;
 impl_left_bits!(tid_bits, POS_TID_BITS, NR_TID_BITS, usize);
 
-// high bits: 0b0000000000111111111000000000000000000000000000000000000000000000 in 64-bit
+// high bits: 0b0000000000011111111100000000000000000000000000000000000000000000 in 64-bit
 const POS_HIGH_BITS: u32 = POS_TID_BITS + NR_TID_BITS;
 const NR_HIGH_BITS: u32 = 14; // TODO: 9
 impl_left_bits!(high_bits, POS_HIGH_BITS, NR_HIGH_BITS, usize);
@@ -163,15 +175,28 @@ fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
     (high_bits() & (htag.rotate_right(POS_HIGH_BITS + NR_HIGH_BITS))) | (!high_bits() & data)
 }
 
-/// Decomposes a tagged pointer `data` into the pointer and the tag.
-/// (tid, high_tag, ptr, low_tag)
+/// Compose aux bit (1-bit, MSB)
 #[inline]
-fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, usize, usize) {
+fn compose_desc_bit<T: ?Sized + Pointable>(desc_bit: usize, data: usize) -> usize {
+    (desc_bits() & (desc_bit.rotate_right(POS_DESC_BITS + NR_DESC_BITS))) | (!desc_bits() & data)
+}
+
+/// Compose aux bit (1-bit, MSB)
+#[inline]
+fn compose_aux_bit<T: ?Sized + Pointable>(aux_bit: usize, data: usize) -> usize {
+    (aux_bits() & (aux_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
+}
+
+/// Decomposes a tagged pointer `data` into the pointer and the tag.
+/// (aux, desc, tid, high_tag, ptr, low_tag)
+#[inline]
+fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize, usize, usize, usize, usize) {
     (
         (data & aux_bits()).rotate_left(POS_AUX_BITS + NR_AUX_BITS),
+        (data & desc_bits()).rotate_left(POS_DESC_BITS + NR_DESC_BITS),
         (data & tid_bits()).rotate_left(POS_TID_BITS + NR_TID_BITS),
         (data & high_bits()).rotate_left(POS_HIGH_BITS + NR_HIGH_BITS),
-        data & !aux_bits() & !tid_bits() & !high_bits() & !low_bits::<T>(),
+        data & !aux_bits() & !desc_bits() & !tid_bits() & !high_bits() & !low_bits::<T>(),
         data & low_bits::<T>(),
     )
 }
@@ -414,7 +439,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     ///
     #[cfg_attr(all(feature = "nightly", not(crossbeam_loom)), const_fn::const_fn)]
     pub fn null() -> PAtomic<T> {
-        let (_, _, _, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
         Self {
             data: AtomicUsize::new(offset),
             _marker: PhantomData,
@@ -1002,7 +1027,7 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
     /// Format
     pub fn fmt(&self, f: &mut fmt::Formatter<'_>, pool: &PoolHandle) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
-        let (_, _, _, offset, _) = decompose_tag::<T>(data);
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(data);
         fmt::Pointer::fmt(&(unsafe { T::deref(offset, pool) as *const _ }), f)
     }
 }
@@ -1010,10 +1035,11 @@ impl<T: ?Sized + Pointable> PAtomic<T> {
 impl<T: ?Sized + Pointable> fmt::Debug for PAtomic<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let data = self.data.load(Ordering::SeqCst);
-        let (aux_bit, tid, htag, offset, ltag) = decompose_tag::<T>(data);
+        let (aux_bit, desc_bit, tid, htag, offset, ltag) = decompose_tag::<T>(data);
 
         f.debug_struct("Atomic")
             .field("aux bit", &aux_bit)
+            .field("desc bit", &desc_bit)
             .field("tid", &tid)
             .field("high tag", &htag)
             .field("offset", &offset)
@@ -1268,25 +1294,31 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// assert_eq!(POwned::new(1234, &pool).tag(), 0);
     /// ```
     pub fn tag(&self) -> usize {
-        let (_, _, _, _, tag) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, _, tag) = decompose_tag::<T>(self.data);
         tag
     }
 
     /// get aux_bit
     pub fn aux_bit(&self) -> usize {
-        let (aux_bit, _, _, _, _) = decompose_tag::<T>(self.data);
+        let (aux_bit, _, _, _, _, _) = decompose_tag::<T>(self.data);
         aux_bit
+    }
+
+    /// get desc_bit
+    pub fn desc_bit(&self) -> usize {
+        let (_, desc_bit, _, _, _, _) = decompose_tag::<T>(self.data);
+        desc_bit
     }
 
     /// get tid
     pub fn tid(&self) -> usize {
-        let (_, tid, _, _, _) = decompose_tag::<T>(self.data);
+        let (_, _, tid, _, _, _) = decompose_tag::<T>(self.data);
         tid
     }
 
     /// get high_tag
     pub fn high_tag(&self) -> usize {
-        let (_, _, tag, _, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, tag, _, _) = decompose_tag::<T>(self.data);
         tag
     }
 
@@ -1316,7 +1348,12 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// Set aux bit
     pub fn with_aux_bit(self, aux_bit: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_aux_bit(aux_bit, data)) }
+        unsafe { Self::from_usize(compose_aux_bit::<T>(aux_bit, data)) }
+    }
+
+    /// Set descripot bit
+    pub fn with_desc_bit(&self, desc_bit: usize) -> POwned<T> {
+        unsafe { Self::from_usize(compose_desc_bit::<T>(desc_bit, self.data)) }
     }
 
     /// Set tid
@@ -1338,7 +1375,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     ///
     /// pool should be correct
     pub unsafe fn deref<'a>(&self, pool: &'a PoolHandle) -> &'a T {
-        let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
 
@@ -1349,7 +1386,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// pool should be correct
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn deref_mut<'a>(&mut self, pool: &'a PoolHandle) -> &'a mut T {
-        let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
 
@@ -1395,7 +1432,7 @@ impl<T: ?Sized + Pointable> POwned<T> {
 
 impl<T: ?Sized + Pointable> Drop for POwned<T> {
     fn drop(&mut self) {
-        let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(self.data);
         unsafe {
             T::drop(offset, global_pool().unwrap());
         }
@@ -1404,10 +1441,11 @@ impl<T: ?Sized + Pointable> Drop for POwned<T> {
 
 impl<T: ?Sized + Pointable> fmt::Debug for POwned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (aux_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
+        let (aux_bit, desc_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Owned")
             .field("aux bit", &aux_bit)
+            .field("desc bit", &desc_bit)
             .field("tid", &tid)
             .field("high tag", &high_tag)
             .field("offset", &offset)
@@ -1511,7 +1549,7 @@ impl<T> PShared<'_, T> {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     // TODO: change this into offset()
     pub fn as_ptr(&self) -> PPtr<T> {
-        let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(self.data);
         PPtr::from(offset)
     }
 }
@@ -1528,7 +1566,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// assert!(p.is_null());
     /// ```
     pub fn null() -> PShared<'g, T> {
-        let (_, _, _, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
         PShared {
             data: offset,
             _marker: PhantomData,
@@ -1556,8 +1594,8 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn is_null(&self) -> bool {
-        let (_, _, _, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
-        let (_, _, _, my_offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, _, _, my_offset, _) = decompose_tag::<T>(self.data);
         my_offset == null_offset
     }
 
@@ -1600,7 +1638,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[allow(clippy::should_implement_trait)]
     pub unsafe fn deref(&self, pool: &'g PoolHandle) -> &'g T {
-        let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref(offset, pool)
     }
 
@@ -1648,7 +1686,7 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     #[allow(clippy::should_implement_trait)]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn deref_mut(&mut self, pool: &'g PoolHandle) -> &'g mut T {
-        let (_, _, _, offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, offset, _) = decompose_tag::<T>(self.data);
         T::deref_mut(offset, pool)
     }
 
@@ -1690,8 +1728,8 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub unsafe fn as_ref(&self, pool: &'g PoolHandle) -> Option<&'g T> {
-        let (_, _, _, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
-        let (_, _, _, my_offset, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, null_offset, _) = decompose_tag::<T>(PPtr::<T>::null().into_offset());
+        let (_, _, _, _, my_offset, _) = decompose_tag::<T>(self.data);
         if my_offset == null_offset {
             None
         } else {
@@ -1753,25 +1791,31 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
     /// ```
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn tag(&self) -> usize {
-        let (_, _, _, _, tag) = decompose_tag::<T>(self.data);
+        let (_, _, _, _, _, tag) = decompose_tag::<T>(self.data);
         tag
     }
 
     /// Get aux bit
     pub fn aux_bit(&self) -> usize {
-        let (aux_bit, _, _, _, _) = decompose_tag::<T>(self.data);
+        let (aux_bit, _, _, _, _, _) = decompose_tag::<T>(self.data);
         aux_bit
+    }
+
+    /// Get descripot bit
+    pub fn desc_bit(&self) -> usize {
+        let (_, desc_bit, _, _, _, _) = decompose_tag::<T>(self.data);
+        desc_bit
     }
 
     /// Get tid
     pub fn tid(&self) -> usize {
-        let (_, tid, _, _, _) = decompose_tag::<T>(self.data);
+        let (_, _, tid, _, _, _) = decompose_tag::<T>(self.data);
         tid
     }
 
     /// Get high tag
     pub fn high_tag(&self) -> usize {
-        let (_, _, tag, _, _) = decompose_tag::<T>(self.data);
+        let (_, _, _, tag, _, _) = decompose_tag::<T>(self.data);
         tag
     }
 
@@ -1805,7 +1849,12 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
 
     /// Set aux bit
     pub fn with_aux_bit(&self, aux_bit: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_aux_bit(aux_bit, self.data)) }
+        unsafe { Self::from_usize(compose_aux_bit::<T>(aux_bit, self.data)) }
+    }
+
+    /// Set descripot bit
+    pub fn with_desc_bit(&self, desc_bit: usize) -> PShared<'g, T> {
+        unsafe { Self::from_usize(compose_desc_bit::<T>(desc_bit, self.data)) }
     }
 
     /// Set tid
@@ -1875,10 +1924,11 @@ impl<T: ?Sized + Pointable> Ord for PShared<'_, T> {
 
 impl<T: ?Sized + Pointable> fmt::Debug for PShared<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (aux_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
+        let (aux_bit, desc_bit, tid, high_tag, offset, tag) = decompose_tag::<T>(self.data);
 
         f.debug_struct("Shared")
             .field("aux bit", &aux_bit)
+            .field("desc bit", &desc_bit)
             .field("tid", &tid)
             .field("high tag", &high_tag)
             .field("offset", &offset)

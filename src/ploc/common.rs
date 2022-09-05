@@ -7,7 +7,7 @@ use std::{
 
 use crossbeam_epoch::Guard;
 
-use super::{CasHelpArr, CasInfo};
+use super::{CasHelpArr, CasHelpDescArr, CasInfo};
 use crate::{
     pmem::{lfence, rdtscp, PoolHandle},
     test_utils::ordo::get_ordo_boundary,
@@ -24,31 +24,6 @@ macro_rules! impl_left_bits {
             ((<$type>::MAX >> $pos) ^ (<$type>::MAX >> ($pos + $nr)))
         }
     };
-}
-
-// Auxiliary Bit
-// aux bit: 0b100000000000000000000000000000000000000000000000000000000000000000 in 64-bit
-// Used for:
-// - PAtomic: Aux bit
-// - Detectable CAS: Indicating CAS parity (Odd/Even)
-// - Insert: Indicating if the pointer is persisted
-pub(crate) const POS_AUX_BITS: u32 = 0;
-pub(crate) const NR_AUX_BITS: u32 = 1;
-impl_left_bits!(aux_bits, POS_AUX_BITS, NR_AUX_BITS, usize);
-
-/// Compose aux bit (1-bit, MSB)
-#[inline]
-pub fn compose_aux_bit(cas_bit: usize, data: usize) -> usize {
-    (aux_bits() & (cas_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
-}
-
-/// Decompose aux bit (1-bit, MSB)
-#[inline]
-pub fn decompose_aux_bit(data: usize) -> (usize, usize) {
-    (
-        (data & aux_bits()).rotate_left(POS_AUX_BITS + NR_AUX_BITS),
-        !aux_bits() & data,
-    )
 }
 
 /// Timestamp struct
@@ -131,12 +106,12 @@ pub(crate) struct ExecInfo {
     pub(crate) tsc_offset: Timestamp,
 }
 
-impl From<&'static CasHelpArr> for ExecInfo {
-    fn from(help: &'static CasHelpArr) -> Self {
+impl From<(&'static CasHelpArr, &'static CasHelpDescArr)> for ExecInfo {
+    fn from(help_arrs: (&'static CasHelpArr, &'static CasHelpDescArr)) -> Self {
         Self {
             global_max_time: Timestamp::from(0),
             chk_max_time: Timestamp::from(0),
-            cas_info: CasInfo::new(help),
+            cas_info: CasInfo::new(help_arrs.0, help_arrs.1),
             init_time: Timestamp::from(rdtscp()),
             tsc_offset: get_ordo_boundary(),
         }

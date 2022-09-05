@@ -140,7 +140,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
             .top
             .checkpoint(
                 || {
-                    let top = self.top.load(Ordering::SeqCst, guard, pool);
+                    let top = self.top.load(Ordering::SeqCst, handle);
                     let node_ref = unsafe { node.deref(pool) };
                     // TODO: check if same & otherwise store/flush
                     node_ref.next.store(top, Ordering::SeqCst);
@@ -181,7 +181,7 @@ impl<T: Clone + Collectable> TreiberStack<T> {
             .top
             .checkpoint(
                 || {
-                    let top = self.top.load(Ordering::SeqCst, guard, pool);
+                    let top = self.top.load(Ordering::SeqCst, handle);
                     PAtomic::from(top)
                 },
                 handle,

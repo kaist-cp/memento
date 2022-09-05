@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, mem};
 
-use crate::ploc::{CasHelpArr, ExecInfo, Handle, NR_MAX_THREADS};
+use crate::ploc::{CasHelpArr, CasHelpDescArr, ExecInfo, Handle, NR_MAX_THREADS};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
@@ -20,10 +20,11 @@ use std::thread;
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
-    RootObj,      // root obj
-    CASHelpArr,   // cas help array
-    NrMemento,    // number of root mementos
-    MementoStart, // start index of root memento(s)
+    RootObj,        // root obj
+    CASHelpArr,     // cas help array
+    CASHelpDescArr, // cas help descriptor array
+    NrMemento,      // number of root mementos
+    MementoStart,   // start index of root memento(s)
 }
 
 lazy_static::lazy_static! {
@@ -294,11 +295,22 @@ impl Pool {
             let _prev = RP_set_root(cas_help_arr as *mut c_void, RootIdx::CASHelpArr as u64);
             let chk_ref = cas_help_arr.as_ref().unwrap();
 
+            // set cas help descriptor
+            let cas_help_desc_arr =
+                RP_malloc(mem::size_of::<CasHelpDescArr>() as u64) as *mut CasHelpDescArr;
+            cas_help_desc_arr.write(CasHelpDescArr::default());
+            persist_obj(cas_help_desc_arr.as_mut().unwrap(), true);
+            let _prev = RP_set_root(
+                cas_help_desc_arr as *mut c_void,
+                RootIdx::CASHelpDescArr as u64,
+            );
+            let desc_ref = cas_help_desc_arr.as_ref().unwrap();
+
             // set global pool
             global::init(PoolHandle {
                 start: RP_mmapped_addr(),
                 len: size,
-                exec_info: ExecInfo::from(chk_ref),
+                exec_info: ExecInfo::from((chk_ref, desc_ref)),
             });
 
             let pool = global_pool().unwrap();
@@ -367,11 +379,14 @@ impl Pool {
         let chk_ref = (RP_get_root_c(RootIdx::CASHelpArr as u64) as *const CasHelpArr)
             .as_ref()
             .unwrap();
+        let desc_ref = (RP_get_root_c(RootIdx::CASHelpDescArr as u64) as *const CasHelpDescArr)
+            .as_ref()
+            .unwrap();
 
         global::init(PoolHandle {
             start: RP_mmapped_addr(),
             len: size,
-            exec_info: ExecInfo::from(chk_ref),
+            exec_info: ExecInfo::from((chk_ref, desc_ref)),
         });
 
         // run GC of Ralloc

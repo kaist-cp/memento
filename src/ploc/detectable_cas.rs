@@ -1,20 +1,22 @@
 //! General SMO
 
-use std::sync::atomic::{compiler_fence, AtomicU64, Ordering};
+use std::sync::atomic::{compiler_fence, AtomicU64, AtomicUsize, Ordering};
 
-use crossbeam_epoch::Guard;
 use crossbeam_utils::CachePadded;
 use mmt_derive::Collectable;
 use std::ops::Deref;
 
 use crate::{
     impl_left_bits,
-    pepoch::{PAtomic, PShared},
+    pepoch::{
+        atomic::{CompareExchangeError, Pointer},
+        PAtomic, PShared,
+    },
     pmem::{ll::persist_obj, sfence, Collectable, GarbageCollection, PoolHandle},
     Memento, PDefault,
 };
 
-use super::{ExecInfo, Handle, Timestamp, NR_MAX_THREADS};
+use super::{Handle, Timestamp, NR_MAX_THREADS};
 
 #[derive(Debug, Clone, Copy)]
 struct CasTimestamp(u64);
@@ -134,6 +136,13 @@ impl CasHelp {
     }
 }
 
+#[derive(Debug, Default, Collectable)]
+
+pub(crate) struct CasHelpDescriptor {
+    tmp_new: AtomicUsize,
+    seq: AtomicUsize, // sequence of help descriptor
+}
+
 /// Detectable CAS Atomic pointer
 #[derive(Debug, Collectable)]
 pub struct DetectableCASAtomic<N: Collectable> {
@@ -184,6 +193,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let tmp_new = new.with_aux_bit((!p_own) as _).with_tid(tid);
 
         loop {
+            // 1. First cas
             let res = self.inner.compare_exchange(
                 old,
                 tmp_new,
@@ -193,7 +203,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             );
 
             if let Err(e) = res {
-                let cur = self.load_help(e.current, &pool.exec_info, guard);
+                let cur = self.load_help(e.current, handle);
                 if cur == old {
                     // retry for the property of strong CAS
                     continue;
@@ -207,20 +217,25 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, true);
 
             // Checkpoint success
-            mmt.checkpoint_succ(!p_own, handle);
+            let t = mmt.checkpoint_succ(!p_own, handle);
 
+            // 2. Second cas
             // By inserting a pointer with tid removed, it prevents further helping.
-            let _ = self
-                .inner
-                .compare_exchange(
-                    tmp_new,
-                    new.with_aux_bit(0).with_tid(0),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                )
-                .map_err(|_| sfence()); // In case of CAS failure, sfence is required for synchronous flush.
-
+            if let Err(e) = self.inner.compare_exchange(
+                tmp_new,
+                new.with_aux_bit(0).with_tid(0),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            ) {
+                if e.current.desc_bit() == 1 {
+                    // Fianlize the help if there is help descriptor.
+                    let _ = self.finalize_help(e.current, t, handle);
+                } else {
+                    // In case of CAS failure, sfence is required for synchronous flush.
+                    sfence()
+                };
+            }
             return Ok(());
         }
     }
@@ -244,7 +259,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 // failed
                 handle.local_max_time.store(t_mmt);
                 let cur = self.inner.load(Ordering::SeqCst, guard);
-                let cur = self.load_help(cur, &exec_info, guard);
+                let cur = self.load_help(cur, handle);
                 return Some(Err(cur));
             }
 
@@ -264,26 +279,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             return Some(Ok(()));
         }
 
-        let cur = self.inner.load(Ordering::SeqCst, guard);
-
-        // Check if the CAS I did before crash remains as it is
-        if cur.with_aux_bit(0) == new.with_aux_bit(0).with_tid(tid) {
-            persist_obj(&self.inner, true);
-            mmt.checkpoint_succ(!p_own, handle);
-
-            let _ = self
-                .inner
-                .compare_exchange(
-                    cur,
-                    new.with_aux_bit(0).with_tid(0),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                    guard,
-                )
-                .map_err(|_| sfence());
-
-            return Some(Ok(()));
-        }
+        // Finalize the CAS
+        let _ = self.load(Ordering::SeqCst, handle);
 
         let t_help = exec_info.cas_info.help[tid].load(!p_own);
         if t_own >= t_help {
@@ -292,7 +289,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         // Success because the checkpoint written by the helper is higher than the last CAS
         // Since the value of location has already been changed, I just need to finalize my checkpoint.
-        mmt.checkpoint_succ(!p_own, handle);
+        let _ = mmt.checkpoint_succ(!p_own, handle);
         sfence();
 
         Some(Ok(()))
@@ -300,20 +297,16 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
     /// Load
     #[inline]
-    pub fn load<'g>(&self, ord: Ordering, guard: &'g Guard, pool: &PoolHandle) -> PShared<'g, N> {
-        let cur = self.inner.load(ord, guard);
-        self.load_help(cur, &pool.exec_info, guard)
+    pub fn load<'g>(&self, ord: Ordering, handle: &'g Handle) -> PShared<'g, N> {
+        let cur = self.inner.load(ord, &handle.guard);
+        self.load_help(cur, handle)
     }
 
     const PATIENCE: u64 = 40000;
 
     #[inline]
-    fn load_help<'g>(
-        &self,
-        mut old: PShared<'g, N>,
-        exec_info: &ExecInfo,
-        guard: &'g Guard,
-    ) -> PShared<'g, N> {
+    fn load_help<'g>(&self, mut old: PShared<'g, N>, handle: &'g Handle) -> PShared<'g, N> {
+        let (exec_info, guard) = (&handle.pool.exec_info, &handle.guard);
         loop {
             // return if old is clean
             if old.tid() == 0 {
@@ -355,47 +348,117 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     }
                 }
             };
-
-            let winner_tid = old.tid();
-            let winner_parity = old.aux_bit() != 0;
-
-            // check if winner thread's help timestamp is stale
-            let t_help = exec_info.cas_info.help[winner_tid].load(winner_parity);
-            if t_cur <= t_help {
-                // Someone may already help it. I should retry to load.
-                old = self.inner.load(Ordering::SeqCst, guard);
-                continue;
-            }
-
-            // persist the pointer before CASing winner thread's help timestamp
+            // Persist the pointer before registering help descriptor
             persist_obj(&self.inner, false);
 
-            // CAS winner thread's pcheckpoint
-            if exec_info.cas_info.help[winner_tid]
-                .compare_exchange(winner_parity, t_help, t_cur)
-                .is_err()
-            {
-                // Someone may already help it. I should retry to load.
-                old = self.inner.load(Ordering::SeqCst, guard);
-                continue;
+            // Register my help descriptor if there is no descriptor yet.
+            if old.desc_bit() == 0 {
+                match self.register_help(old, handle) {
+                    Ok(desc) => {
+                        old = desc;
+                    }
+                    Err(e) => {
+                        old = e.current;
+                        if old.desc_bit() == 0 {
+                            continue;
+                        }
+                    }
+                }
             }
 
-            // help pointer to be clean.
-            match self.inner.compare_exchange(
-                old,
-                old.with_aux_bit(0).with_tid(0),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                guard,
-            ) {
+            // Finalize the help descriptor.
+            match self.finalize_help(old, t_cur, handle) {
                 Ok(ret) => {
                     return ret;
                 }
                 Err(e) => {
-                    old = e.current;
+                    old = e;
                 }
             }
         }
+    }
+
+    #[inline]
+    fn register_help<'g>(
+        &self,
+        old: PShared<'g, N>,
+        handle: &'g Handle,
+    ) -> Result<PShared<'g, N>, CompareExchangeError<'g, N, PShared<'g, N>>> {
+        assert!(old.desc_bit() == 0);
+        let (my_tid, my_help_desc) = (
+            handle.tid,
+            &handle.pool.exec_info.cas_info.help_desc[handle.tid],
+        );
+
+        // 1. Set my descriptor
+        let my_new_seq = my_help_desc.seq.load(Ordering::SeqCst) + 1;
+        my_help_desc.seq.store(my_new_seq, Ordering::SeqCst);
+        // TODO: Add fence here after relaxing.
+        my_help_desc
+            .tmp_new
+            .store(old.into_usize(), Ordering::SeqCst);
+        persist_obj(my_help_desc, false);
+
+        // 2. Register my descriptor
+        // representation: [ aux_bit: 0, desc_bit: 1, tid: help leader, payload: sequence of help leader ]
+        self.inner.compare_exchange(
+            old,
+            unsafe { PShared::from_usize(my_new_seq) }
+                .with_aux_bit(0)
+                .with_desc_bit(1)
+                .with_tid(my_tid),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            &handle.guard,
+        )
+    }
+
+    /// Finalize the help descriptor at time `t_cur`.
+    #[inline]
+    fn finalize_help<'g>(
+        &self,
+        old: PShared<'g, N>,
+        t_cur: Timestamp,
+        handle: &'g Handle,
+    ) -> Result<PShared<'g, N>, PShared<'g, N>> {
+        assert!(old.desc_bit() == 1);
+        let (cas_info, guard) = (&handle.pool.exec_info.cas_info, &handle.guard);
+
+        let winner_tmp_new = unsafe {
+            PShared::<N>::from_usize(
+                cas_info.help_desc[old.tid()] // `old.tid` is leader of help.
+                    .tmp_new
+                    .load(Ordering::SeqCst),
+            )
+        };
+
+        // Check if the sequence value on the ptr and descriptor are the same.
+        let seq = old
+            .with_aux_bit(0)
+            .with_desc_bit(0)
+            .with_tid(0)
+            .into_usize();
+        if seq != cas_info.help_desc[old.tid()].seq.load(Ordering::SeqCst) {
+            // This help has already done.
+            return Err(self.inner.load(Ordering::SeqCst, &handle.guard));
+        }
+
+        let winner_tid = winner_tmp_new.tid();
+        let winner_parity = winner_tmp_new.aux_bit() != 0;
+        let winner_new = winner_tmp_new.with_aux_bit(0).with_desc_bit(0).with_tid(0);
+
+        // CAS winner thread's pcheckpoint
+        let t_help = cas_info.help[winner_tid].load(winner_parity);
+        if t_cur > t_help {
+            let _ = cas_info.help[winner_tid].compare_exchange(winner_parity, t_help, t_cur);
+        }
+
+        // help pointer to be clean.
+        let res =
+            self.inner
+                .compare_exchange(old, winner_new, Ordering::SeqCst, Ordering::SeqCst, guard);
+        persist_obj(&self.inner, true); // persist before return
+        return res.map_err(|e| e.current);
     }
 }
 
@@ -420,19 +483,40 @@ impl Deref for CasHelpArr {
 }
 
 #[derive(Debug)]
+pub(crate) struct CasHelpDescArr([CasHelpDescriptor; NR_MAX_THREADS + 1]);
+
+impl Default for CasHelpDescArr {
+    fn default() -> Self {
+        Self(array_init::array_init(|_| Default::default()))
+    }
+}
+
+impl Deref for CasHelpDescArr {
+    type Target = [CasHelpDescriptor; NR_MAX_THREADS + 1];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct CasInfo {
     /// Per-thread CAS self-successful time
     pub(crate) own: [CasOwn; NR_MAX_THREADS + 1],
 
     /// Per-thread Last time receiving CAS helping
     pub(crate) help: &'static CasHelpArr,
+
+    /// Per-thread help descriptor
+    pub(crate) help_desc: &'static CasHelpDescArr,
 }
 
 impl CasInfo {
-    pub(crate) fn new(help: &'static CasHelpArr) -> Self {
+    pub(crate) fn new(help: &'static CasHelpArr, help_desc: &'static CasHelpDescArr) -> Self {
         Self {
             own: array_init::array_init(|_| CasOwn::default()),
             help,
+            help_desc,
         }
     }
 
@@ -490,18 +574,16 @@ impl Collectable for Cas {
 
 impl Cas {
     #[inline]
-    fn checkpoint_succ(&mut self, parity: bool, handle: &Handle) {
+    fn checkpoint_succ(&mut self, parity: bool, handle: &Handle) -> Timestamp {
         let t = handle.pool.exec_info.exec_time();
         let ts_succ = CasTimestamp::new(parity, false, t);
 
         self.checkpoint = ts_succ;
         persist_obj(&self.checkpoint, false); // CAS soon
 
-        compiler_fence(Ordering::Release);
-
         handle.pool.exec_info.cas_info.own[handle.tid].store(ts_succ);
-        handle.pool.exec_info.cas_info.help[handle.tid].store(!parity, t); // preventing other threads from helping the previous CAS.
         handle.local_max_time.store(t);
+        t
     }
 
     #[inline]
@@ -614,7 +696,7 @@ mod test {
                 .old
                 .checkpoint(
                     || {
-                        let old = self.loc.load(Ordering::SeqCst, &handle.guard, handle.pool);
+                        let old = self.loc.load(Ordering::SeqCst, handle);
                         PAtomic::from(old)
                     },
                     handle,
@@ -629,7 +711,7 @@ mod test {
         }
     }
 
-    const NR_THREAD: usize = 2;
+    const NR_THREAD: usize = 3;
     const NR_COUNT: usize = 10_000;
 
     struct Updates {

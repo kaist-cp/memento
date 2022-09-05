@@ -212,8 +212,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
     fn find_inner<'g>(
         &'g self,
         key: &K,
-        guard: &'g Guard,
-        pool: &'g PoolHandle,
+        handle: &'g Handle,
     ) -> (
         bool,
         &'g DetectableCASAtomic<Node<K, V>>,
@@ -221,12 +220,12 @@ impl<K: Ord, V: Collectable> List<K, V> {
         PShared<'g, Node<K, V>>,
     ) {
         let mut prev = &*self.head;
-        let mut curr = self.head.load(Ordering::SeqCst, guard, pool);
+        let mut curr = self.head.load(Ordering::SeqCst, handle);
         let mut prev_next = curr;
 
         let found = loop {
-            let curr_node = some_or!(unsafe { curr.as_ref(pool) }, break false);
-            let next = curr_node.next.load(Ordering::Acquire, guard, pool);
+            let curr_node = some_or!(unsafe { curr.as_ref(handle.pool) }, break false);
+            let next = curr_node.next.load(Ordering::Acquire, handle);
 
             if next.tag() != 0 {
                 curr = next.with_tag(0);
@@ -268,11 +267,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         let mut node = prev_next;
         while node.with_tag(0) != curr {
             unsafe {
-                let next = node.deref(handle.pool).next.load(
-                    Ordering::Acquire,
-                    &handle.guard,
-                    handle.pool,
-                );
+                let next = node.deref(handle.pool).next.load(Ordering::Acquire, handle);
                 handle.guard.defer_pdestroy(node);
                 node = next;
             }
@@ -297,7 +292,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         let (guard, pool) = (&handle.guard, handle.pool);
         let chk = try_find.found.checkpoint(
             || {
-                let (found, prev, prev_next, curr) = self.find_inner(key, guard, pool);
+                let (found, prev, prev_next, curr) = self.find_inner(key, handle);
                 (
                     found,
                     unsafe { prev.as_pptr(pool) },
@@ -360,7 +355,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         let (guard, pool) = (&handle.guard, handle.pool);
         let chk = try_ins.found.checkpoint(
             || {
-                let (found, prev, prev_next, curr) = self.find_inner(key, guard, pool);
+                let (found, prev, prev_next, curr) = self.find_inner(key, handle);
                 if !found {
                     let node_ref = unsafe { node.deref(pool) };
                     // TODO: check if same & otherwise store/flush
@@ -446,9 +441,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
             .next
             .checkpoint(
                 || {
-                    let next = curr_ref
-                        .next
-                        .load(Ordering::SeqCst, &handle.guard, handle.pool);
+                    let next = curr_ref.next.load(Ordering::SeqCst, handle);
                     PAtomic::from(next)
                 },
                 handle,
