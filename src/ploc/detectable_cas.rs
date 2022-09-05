@@ -1,6 +1,6 @@
 //! General SMO
 
-use std::sync::atomic::{compiler_fence, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crossbeam_utils::CachePadded;
 use mmt_derive::Collectable;
@@ -107,11 +107,6 @@ impl CasHelp {
     #[inline]
     fn load(&self, parity: bool) -> Timestamp {
         Timestamp::from(self.inner[parity as usize].load(Ordering::SeqCst))
-    }
-
-    #[inline]
-    fn store(&self, parity: bool, t: Timestamp) {
-        self.inner[parity as usize].store(t.into(), Ordering::SeqCst);
     }
 
     #[inline]

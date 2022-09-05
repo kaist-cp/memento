@@ -5,11 +5,11 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
-use crossbeam_channel::{self as channel, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use std::sync::atomic::AtomicUsize;
 
 use cfg_if::cfg_if;
-use crossbeam_epoch::{self as epoch, Guard};
+use crossbeam_epoch as epoch;
 use etrace::*;
 use fasthash::Murmur3HasherExt;
 use itertools::*;
@@ -428,7 +428,7 @@ impl<T: Collectable> Collectable for Node<T> {
 struct NodeIter<'g, T: Collectable> {
     inner: PShared<'g, Node<T>>,
     last: PShared<'g, Node<T>>,
-    guard: &'g Guard,
+    handle: &'g Handle,
 }
 
 impl<'g, T: Debug + Collectable> Iterator for NodeIter<'g, T> {
@@ -440,12 +440,12 @@ impl<'g, T: Debug + Collectable> Iterator for NodeIter<'g, T> {
         self.inner = if self.inner == self.last {
             PShared::null()
         } else {
-            inner_ref.next.load(Ordering::Acquire, self.guard, pool)
+            inner_ref.next.load(Ordering::Acquire, self.handle)
         };
         Some(unsafe {
             inner_ref
                 .data
-                .load(Ordering::Relaxed, self.guard)
+                .load(Ordering::Relaxed, &self.handle.guard)
                 .deref(pool)
         })
     }
@@ -529,11 +529,11 @@ impl<K, V: Collectable> Default for FindResult<'_, K, V> {
 }
 
 impl<K: PartialEq + Hash, V: Collectable> Context<K, V> {
-    fn level_iter<'g>(&'g self, guard: &'g Guard) -> NodeIter<'g, Bucket<K, V>> {
+    fn level_iter<'g>(&'g self, handle: &'g Handle) -> NodeIter<'g, Bucket<K, V>> {
         NodeIter {
-            inner: self.last_level.load(Ordering::Acquire, guard),
-            last: self.first_level.load(Ordering::Acquire, guard),
-            guard,
+            inner: self.last_level.load(Ordering::Acquire, &handle.guard),
+            last: self.first_level.load(Ordering::Acquire, &handle.guard),
+            handle,
         }
     }
 }
@@ -547,13 +547,12 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
-        guard: &'g Guard,
-        pool: &PoolHandle,
+        handle: &'g Handle,
     ) -> Result<Option<FindResult<'g, K, V>>, ()> {
         let mut found_moved = false;
 
         // level_iter: from last (small) to first (large)
-        for array in self.level_iter(guard) {
+        for array in self.level_iter(handle) {
             let size = array.len();
             for key_hash in key_hashes
                 .into_iter()
@@ -562,14 +561,14 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard, pool);
+                    let slot_ptr = slot.load(Ordering::Acquire, handle);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
                         continue;
                     }
 
-                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(pool) }, continue);
+                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(handle.pool) }, continue);
                     if *key != slot_ref.key {
                         continue;
                     }
@@ -609,13 +608,12 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
         key: &K,
         key_tag: u16,
         key_hashes: [u32; 2],
-        guard: &'g Guard,
-        pool: &'g PoolHandle,
+        handle: &'g Handle,
     ) -> Result<Option<FindResult<'g, K, V>>, ()> {
         let mut found = tiny_vec!([_; TINY_VEC_CAPACITY]);
 
         // "bottom-to-top" or "last-to-first"
-        for array in self.level_iter(guard) {
+        for array in self.level_iter(handle) {
             let size = array.len();
             for key_hash in key_hashes
                 .into_iter()
@@ -624,14 +622,14 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                 .dedup()
             {
                 for slot in unsafe { array[key_hash].assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Acquire, guard, pool);
+                    let slot_ptr = slot.load(Ordering::Acquire, handle);
 
                     // check 2-byte tag
                     if slot_ptr.high_tag() != key_tag as usize {
                         continue;
                     }
 
-                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(pool) }, continue);
+                    let slot_ref = some_or!(unsafe { slot_ptr.as_ref(handle.pool) }, continue);
                     if *key != slot_ref.key {
                         continue;
                     }
@@ -684,10 +682,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
                 PShared::null(),
                 Ordering::AcqRel,
                 Ordering::Acquire,
-                guard,
+                &handle.guard,
             ) {
                 Ok(_) => unsafe {
-                    guard.defer_pdestroy(find_result.slot_ptr);
+                    handle.guard.defer_pdestroy(find_result.slot_ptr);
                 },
                 Err(e) => {
                     // TODO: Non-detectable CAS
@@ -719,35 +717,38 @@ fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bu
     alloc_persist(Node::from(PAtomic::from(data)), pool)
 }
 
-impl<K, V: Collectable> Drop for Clevel<K, V> {
-    fn drop(&mut self) {
-        let pool = global_pool().unwrap();
-        let guard = unsafe { epoch::unprotected() };
-        let context = self.context.load(Ordering::Relaxed, guard, pool);
-        let context_ref = unsafe { context.deref(pool) };
+// TODO: Compile
+// impl<K, V: Collectable> Drop for Clevel<K, V> {
+//     fn drop(&mut self) {
+//         let pool = global_pool().unwrap();
+//         let guard = unsafe { epoch::unprotected() };
+//         let context = self.context.load(Ordering::Relaxed, guard, pool);
+//         let context_ref = unsafe { context.deref(pool) };
 
-        let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
-        while let Some(node_ref) = unsafe { node.as_ref(pool) } {
-            let next = node_ref.next.load(Ordering::Relaxed, guard, pool);
-            let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
-            for bucket in data.iter() {
-                for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
-                    let slot_ptr = slot.load(Ordering::Relaxed, guard, pool);
-                    if !slot_ptr.is_null() {
-                        unsafe { guard.defer_pdestroy(slot_ptr) };
-                    }
-                }
-            }
-            unsafe { guard.defer_pdestroy(node) };
-            node = next;
-        }
-    }
-}
+//         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
+//         while let Some(node_ref) = unsafe { node.as_ref(pool) } {
+//             let next = node_ref.next.load(Ordering::Relaxed, guard, pool);
+//             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+//             for bucket in data.iter() {
+//                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
+//                     let slot_ptr = slot.load(Ordering::Relaxed, guard, pool);
+//                     if !slot_ptr.is_null() {
+//                         unsafe { guard.defer_pdestroy(slot_ptr) };
+//                     }
+//                 }
+//             }
+//             unsafe { guard.defer_pdestroy(node) };
+//             node = next;
+//         }
+//     }
+// }
 
 impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     /// Check if resizing
-    pub fn is_resizing(&self, guard: &Guard, pool: &PoolHandle) -> bool {
-        let context = self.context.load(Ordering::Acquire, guard, pool);
+    pub fn is_resizing(&self, handle: &Handle) -> bool {
+        let (guard, pool) = (&handle.guard, handle.pool);
+
+        let context = self.context.load(Ordering::Acquire, handle);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
 
@@ -774,7 +775,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             .next_level_chk
             .checkpoint(
                 || {
-                    let next_lv = fst_lv.next.load(Ordering::Acquire, guard, pool);
+                    let next_lv = fst_lv.next.load(Ordering::Acquire, handle);
                     PAtomic::from(next_lv)
                 },
                 handle,
@@ -944,7 +945,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                                 .slots
                                 .get_unchecked(i)
                         };
-                        let slot_first_level = slot.load(Ordering::Acquire, guard, pool);
+                        let slot_first_level = slot.load(Ordering::Acquire, handle);
                         Some((
                             unsafe { slot.as_pptr(pool) },
                             PAtomic::from(slot_first_level),
@@ -1091,7 +1092,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             for (_, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                 let slot_ptr = some_or!(
                     {
-                        let mut slot_ptr = slot.load(Ordering::Acquire, guard, pool);
+                        let mut slot_ptr = slot.load(Ordering::Acquire, handle);
                         loop {
                             if slot_ptr.is_null() {
                                 break None;
@@ -1100,7 +1101,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                             // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
                             // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
                             if slot_ptr.tag() == 1 {
-                                slot_ptr = slot.load(Ordering::Acquire, guard, pool);
+                                slot_ptr = slot.load(Ordering::Acquire, handle);
                                 continue;
                             }
 
@@ -1161,7 +1162,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                             first_level: ctx_ref.first_level.load(Ordering::Acquire, guard).into(),
                             last_level: unsafe { old_last_lv.deref(pool) }
                                 .next
-                                .load(Ordering::Acquire, guard, pool)
+                                .load(Ordering::Acquire, handle)
                                 .into(),
                             resize_size: AtomicUsize::new(
                                 ctx_ref.resize_size.load(Ordering::Relaxed),
@@ -1220,11 +1221,9 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     }
 
     pub fn resize(&self, recv: &Receiver<()>, mmt: &mut Resize<K, V>, handle: &Handle) {
-        let (guard, pool) = (&handle.guard, handle.pool);
-
         while mmt.recv_chk.checkpoint(|| recv.recv().is_ok(), handle) {
             println!("[resize] Do resize!");
-            let ctx = self.context.load(Ordering::Acquire, guard, pool);
+            let ctx = self.context.load(Ordering::Acquire, handle);
             self.resize_inner(ctx, &mut mmt.resize_inner, handle);
             // handle.guard.repin_after(|| {}); // TODO: uncomment
         }
@@ -1237,18 +1236,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         key_hashes: [u32; 2],
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let (guard, pool) = (&handle.guard, handle.pool);
-
-        let mut ctx = self.context.load(Ordering::Acquire, guard, pool);
+        let mut ctx = self.context.load(Ordering::Acquire, handle);
         loop {
-            let ctx_ref = unsafe { ctx.deref(pool) };
-            let res = ctx_ref.find_fast(key, key_tag, key_hashes, guard, pool);
+            let ctx_ref = unsafe { ctx.deref(handle.pool) };
+            let res = ctx_ref.find_fast(key, key_tag, key_hashes, handle);
             let res = ok_or!(res, {
-                ctx = self.context.load(Ordering::Acquire, guard, pool);
+                ctx = self.context.load(Ordering::Acquire, handle);
                 continue;
             });
             let res = some_or!(res, {
-                let ctx_new = self.context.load(Ordering::Acquire, guard, pool);
+                let ctx_new = self.context.load(Ordering::Acquire, handle);
 
                 // However, a rare case for missing is: after a search operation starts, other
                 // threads add a new level through expansion and rehashing threads move the item
@@ -1277,18 +1274,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         key_hashes: [u32; 2],
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, Option<FindResult<'g, K, V>>) {
-        let (guard, pool) = (&handle.guard, handle.pool);
-
-        let mut ctx = self.context.load(Ordering::Acquire, guard, pool);
+        let mut ctx = self.context.load(Ordering::Acquire, handle);
         loop {
-            let ctx_ref = unsafe { ctx.deref(pool) };
-            let res = ctx_ref.find(key, key_tag, key_hashes, guard, pool);
+            let ctx_ref = unsafe { ctx.deref(handle.pool) };
+            let res = ctx_ref.find(key, key_tag, key_hashes, handle);
             let res = ok_or!(res, {
-                ctx = self.context.load(Ordering::Acquire, guard, pool);
+                ctx = self.context.load(Ordering::Acquire, handle);
                 continue;
             });
             let res = some_or!(res, {
-                let ctx_new = self.context.load(Ordering::Acquire, guard, pool);
+                let ctx_new = self.context.load(Ordering::Acquire, handle);
 
                 // the same possible corner case as `find_fast`
                 if ctx != ctx_new {
@@ -1301,8 +1296,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    pub fn get_capacity(&self, guard: &Guard, pool: &PoolHandle) -> usize {
-        let context = self.context.load(Ordering::Acquire, guard, pool);
+    pub fn get_capacity(&self, handle: &Handle) -> usize {
+        let (guard, pool) = (&handle.guard, handle.pool);
+
+        let context = self.context.load(Ordering::Acquire, handle);
         let context_ref = unsafe { context.deref(pool) };
         let last_level = context_ref.last_level.load(Ordering::Relaxed, guard);
         let first_level = context_ref.first_level.load(Ordering::Relaxed, guard);
@@ -1339,7 +1336,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         mmt: &mut TrySlotInsert<K, V>,
         handle: &'g Handle,
     ) -> Result<FindResult<'g, K, V>, ()> {
-        let (guard, pool) = (&handle.guard, handle.pool);
+        let pool = handle.pool;
 
         if handle.rec.load(Ordering::Relaxed) {
             if mmt.fail.peek(handle).is_some() {
@@ -1361,7 +1358,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         let context_ref = unsafe { context.deref(pool) };
         let mut arrays = tiny_vec!([_; TINY_VEC_CAPACITY]);
-        for array in context_ref.level_iter(guard) {
+        for array in context_ref.level_iter(handle) {
             arrays.push(array);
         }
 
@@ -1381,7 +1378,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             for i in 0..SLOTS_IN_BUCKET {
                 for key_hash in key_hashes.clone() {
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
-                    if !slot.load(Ordering::Acquire, guard, pool).is_null() {
+                    if !slot.load(Ordering::Acquire, handle).is_null() {
                         continue;
                     }
 
@@ -1454,7 +1451,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             .context_new_chk
             .checkpoint(
                 || {
-                    let ctx_new = self.context.load(Ordering::Acquire, guard, pool);
+                    let ctx_new = self.context.load(Ordering::Acquire, handle);
                     PAtomic::from(ctx_new)
                 },
                 handle,
@@ -1674,6 +1671,7 @@ mod simple_test {
     };
 
     use super::*;
+    use crossbeam_channel as channel;
 
     const SMOKE_CNT: usize = 100_000;
 
@@ -1850,6 +1848,7 @@ mod simple_test {
 #[cfg(test)]
 mod test {
     use crate::test_utils::tests::*;
+    use crossbeam_channel as channel;
 
     use super::*;
 

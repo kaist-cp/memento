@@ -7,7 +7,7 @@ use crossbeam_utils::CachePadded;
 use etrace::some_or;
 use std::cmp::Ordering::{Equal, Greater, Less};
 
-use crate::pepoch::{Guard, PAtomic, PDestroyable, POwned, PShared};
+use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::pmem::ralloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*, AsPPtr, PPtr};
 use crate::*;
