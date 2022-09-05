@@ -193,6 +193,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let tmp_new = new.with_aux_bit((!p_own) as _).with_tid(tid);
 
         loop {
+            // 1. First cas
             let res = self.inner.compare_exchange(
                 old,
                 tmp_new,
@@ -218,6 +219,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             // Checkpoint success
             let t = mmt.checkpoint_succ(!p_own, handle);
 
+            // 2. Second cas
             // By inserting a pointer with tid removed, it prevents further helping.
             if let Err(e) = self.inner.compare_exchange(
                 tmp_new,
@@ -579,10 +581,7 @@ impl Cas {
         self.checkpoint = ts_succ;
         persist_obj(&self.checkpoint, false); // CAS soon
 
-        compiler_fence(Ordering::Release);
-
         handle.pool.exec_info.cas_info.own[handle.tid].store(ts_succ);
-        handle.pool.exec_info.cas_info.help[handle.tid].store(!parity, t); // preventing other threads from helping the previous CAS.
         handle.local_max_time.store(t);
         t
     }
