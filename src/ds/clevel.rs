@@ -1,6 +1,5 @@
 //! Concurrent Level Hash Table.
 #![allow(missing_docs)]
-use core::cmp;
 use core::fmt::Debug;
 use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
@@ -276,11 +275,7 @@ impl<K, V: Collectable> Default for ResizeInner<K, V> {
 /// Resize clean client
 #[derive(Debug, Memento, Collectable)]
 pub struct ResizeClean<K, V: Collectable> {
-    slot_slot_ptr_chk: Checkpoint<(
-        PPtr<DetectableCASAtomic<Slot<K, V>>>,
-        PAtomic<Slot<K, V>>,
-        PPtr<Node<Bucket<K, V>>>,
-    )>,
+    slot_slot_ptr_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
     slot_cas: Cas,
     resize_move: ResizeMove<K, V>,
 }
@@ -316,12 +311,14 @@ impl<K, V: Collectable> Default for ResizeChangeContext<K, V> {
 /// Resize move client
 #[derive(Debug, Memento, Collectable)]
 pub struct ResizeMove<K, V: Collectable> {
+    ctx_fst_chk: Checkpoint<(PAtomic<Context<K, V>>, PPtr<Node<Bucket<K, V>>>)>,
     resize_move_inner: ResizeMoveInner<K, V>,
 }
 
 impl<K, V: Collectable> Default for ResizeMove<K, V> {
     fn default() -> Self {
         Self {
+            ctx_fst_chk: Default::default(),
             resize_move_inner: Default::default(),
         }
     }
@@ -871,10 +868,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
     fn resize_move_slot_insert(
         &self,
-        slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
-        key_tag: u16,                      // must be stable
-        key_hashes: [u32; 2],              // must be stable
-        first_level_ref: &Node<Bucket<K, V>>,
+        slot_ptr: PShared<'_, Slot<K, V>>,
+        key_tag: u16,
+        key_hashes: [u32; 2],
+        fst_lv_ref: &Node<Bucket<K, V>>,
         mmt: &mut ResizeMoveSlotInsert<K, V>,
         handle: &Handle,
     ) -> Result<(), ()> {
@@ -916,20 +913,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     return Ok(());
                 }
             }
-
-            // TODO: Should we change rec to `false`?
         }
 
-        let first_level_data = unsafe {
-            first_level_ref
-                .data
-                .load(Ordering::Relaxed, guard)
-                .deref(pool)
-        };
-        let first_level_size = first_level_data.len();
+        let fst_lv_data = unsafe { fst_lv_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
+        let fst_lv_size = fst_lv_data.len();
         let key_hashes = key_hashes
             .into_iter()
-            .map(|key_hash| key_hash as usize % first_level_size)
+            .map(|key_hash| key_hash as usize % fst_lv_size)
             .sorted()
             .dedup();
         for i in 0..SLOTS_IN_BUCKET {
@@ -937,7 +927,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 let chk = mmt.slot_slot_first_chk.checkpoint(
                     || {
                         let slot = unsafe {
-                            first_level_data[key_hash]
+                            fst_lv_data[key_hash]
                                 .assume_init_ref()
                                 .slots
                                 .get_unchecked(i)
@@ -950,11 +940,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     },
                     handle,
                 );
-                let chk = chk.unwrap();
-                let (slot, slot_first_level) = (
-                    unsafe { chk.0.deref(pool) },
-                    chk.1.load(Ordering::Relaxed, guard),
-                );
+                let (slot, slot_first_level) = {
+                    let chk = chk.unwrap();
+                    (
+                        unsafe { chk.0.deref(pool) },
+                        chk.1.load(Ordering::Relaxed, guard),
+                    )
+                };
 
                 if let Some(slot_ref) = unsafe { slot_first_level.as_ref(pool) } {
                     // 2-byte tag checking
@@ -978,17 +970,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        let () = mmt.fail.checkpoint(|| (), handle);
-        Err(())
+        Err(mmt.fail.checkpoint(|| (), handle))
     }
 
     fn resize_move_inner<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
+        ctx: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>, // must be stable
         key_tag: u16,                      // must be stable
         key_hashes: [u32; 2],              // must be stable
-        first_level_ref: &'g Node<Bucket<K, V>>,
+        fst_lv_ref: &'g Node<Bucket<K, V>>,
         mmt: &mut ResizeMoveInner<K, V>,
         handle: &'g Handle,
     ) -> Result<&'g Node<Bucket<K, V>>, (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>)> {
@@ -999,48 +990,47 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 slot_ptr,
                 key_tag,
                 key_hashes,
-                first_level_ref,
+                fst_lv_ref,
                 &mut mmt.resize_move_slot_insert,
                 handle,
             )
             .is_ok()
         {
-            return Ok(first_level_ref);
+            return Ok(fst_lv_ref);
         }
 
         // The first level is full. Resize and retry.
-        let (context_new, _) = self.add_level(context, &mut mmt.add_lv, handle);
-        let ctx = context_new;
-        let ctx_ref = unsafe { ctx.deref(pool) };
-        let fst_lv = ctx_ref.first_level.load(Ordering::Acquire, guard);
-        let fst_lv_ref = unsafe { fst_lv.deref(pool) };
-        Err((ctx, fst_lv_ref))
+        let (ctx_new, _) = self.add_level(ctx, &mut mmt.add_lv, handle);
+        let ctx_new_ref = unsafe { ctx_new.deref(pool) };
+        let fst_lv_new = ctx_new_ref.first_level.load(Ordering::Acquire, guard);
+        let fst_lv_new_ref = unsafe { fst_lv_new.deref(pool) };
+        Err((ctx_new, fst_lv_new_ref))
     }
 
     fn resize_move<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
+        mut ctx: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
-        first_level_ref: &'g Node<Bucket<K, V>>,
+        mut fst_lv_ref: &'g Node<Bucket<K, V>>,
         mmt: &mut ResizeMove<K, V>,
         handle: &'g Handle,
     ) -> &'g Node<Bucket<K, V>> {
+        let (guard, pool) = (&handle.guard, handle.pool);
+
         let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(handle.pool) }.key);
 
-        let mut res = self.resize_move_inner(
-            context,
-            slot_ptr,
-            key_tag,
-            key_hashes,
-            first_level_ref,
-            &mut mmt.resize_move_inner,
-            handle,
-        );
+        loop {
+            (ctx, fst_lv_ref) = {
+                let chk = mmt.ctx_fst_chk.checkpoint(
+                    || (PAtomic::from(ctx), unsafe { fst_lv_ref.as_pptr(pool) }),
+                    handle,
+                );
+                (chk.0.load(Ordering::Relaxed, guard), unsafe {
+                    chk.1.deref(pool)
+                })
+            };
 
-        // TODO: remove retry call
-
-        while let Err((ctx, fst_lv_ref)) = res {
-            res = self.resize_move_inner(
+            match self.resize_move_inner(
                 ctx,
                 slot_ptr,
                 key_tag,
@@ -1048,17 +1038,21 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 fst_lv_ref,
                 &mut mmt.resize_move_inner,
                 handle,
-            );
+            ) {
+                Ok(f) => return f,
+                Err((c, f)) => {
+                    ctx = c;
+                    fst_lv_ref = f;
+                }
+            }
         }
-
-        res.unwrap()
     }
 
     fn resize_clean<'g>(
         &'g self,
-        context: PShared<'g, Context<K, V>>,
-        mut first_level_ref: &'g Node<Bucket<K, V>>,
-        last_level_data: &'g [MaybeUninit<Bucket<K, V>>], // must be stable
+        ctx: PShared<'g, Context<K, V>>,
+        mut fst_lv_ref: &'g Node<Bucket<K, V>>,
+        last_lv_data: &'g [MaybeUninit<Bucket<K, V>>],
         mmt: &mut ResizeClean<K, V>,
         handle: &'g Handle,
     ) {
@@ -1066,30 +1060,22 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         if handle.rec.load(Ordering::Relaxed) {
             if let Some(chk) = mmt.slot_slot_ptr_chk.peek(handle) {
-                let (slot, slot_ptr, fst_lv_ref) = (
+                let (slot, slot_ptr) = (
                     unsafe { chk.0.deref(pool) },
                     chk.1.load(Ordering::Relaxed, guard),
-                    unsafe { chk.2.deref(pool) },
                 );
 
                 if slot
                     .cas(slot_ptr, slot_ptr.with_tag(1), &mut mmt.slot_cas, handle)
                     .is_ok()
                 {
-                    first_level_ref = self.resize_move(
-                        context,
-                        slot_ptr,
-                        fst_lv_ref,
-                        &mut mmt.resize_move,
-                        handle,
-                    );
+                    fst_lv_ref =
+                        self.resize_move(ctx, slot_ptr, fst_lv_ref, &mut mmt.resize_move, handle);
                 }
             }
-
-            // TODO: Should we change rec to `false`?
         }
 
-        for (_, bucket) in last_level_data.iter().enumerate() {
+        for (_, bucket) in last_lv_data.iter().enumerate() {
             for (_, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
                 let slot_ptr = some_or!(
                     {
@@ -1106,20 +1092,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                                 continue;
                             }
 
-                            let chk = mmt.slot_slot_ptr_chk.checkpoint(
-                                || unsafe {
-                                    (
-                                        slot.as_pptr(pool),
-                                        PAtomic::from(slot_ptr),
-                                        first_level_ref.as_pptr(pool),
-                                    )
-                                },
-                                handle,
-                            );
-                            let (slot, slot_ptr_checked) = (
-                                unsafe { chk.0.deref(pool) },
-                                chk.1.load(Ordering::Relaxed, guard),
-                            );
+                            let (slot, slot_ptr_checked) = {
+                                let chk = mmt.slot_slot_ptr_chk.checkpoint(
+                                    || unsafe { (slot.as_pptr(pool), PAtomic::from(slot_ptr)) },
+                                    handle,
+                                );
+                                (
+                                    unsafe { chk.0.deref(pool) },
+                                    chk.1.load(Ordering::Relaxed, guard),
+                                )
+                            };
 
                             if let Err(e) = slot.cas(
                                 slot_ptr_checked,
@@ -1131,19 +1113,14 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                                 continue;
                             }
 
-                            break Some(slot_ptr);
+                            break Some(slot_ptr_checked);
                         }
                     },
                     continue
                 );
 
-                first_level_ref = self.resize_move(
-                    context,
-                    slot_ptr,
-                    first_level_ref,
-                    &mut mmt.resize_move,
-                    handle,
-                );
+                fst_lv_ref =
+                    self.resize_move(ctx, slot_ptr, fst_lv_ref, &mut mmt.resize_move, handle);
             }
         }
     }
@@ -1412,8 +1389,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        let () = mmt.fail.checkpoint(|| (), handle);
-        Err(())
+        Err(mmt.fail.checkpoint(|| (), handle))
     }
 
     fn insert_inner<'g>(
