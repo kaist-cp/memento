@@ -87,6 +87,7 @@ pub(crate) mod ordo {
 
 #[doc(hidden)]
 pub mod tests {
+    use atomic::Atomic;
     use crossbeam_utils::Backoff;
     use mmt_derive::Collectable;
     use std::backtrace::Backtrace;
@@ -311,7 +312,7 @@ pub mod tests {
     struct TestInfo {
         tid: usize,
         state: AtomicI32,
-        checked: AtomicBool,
+        checked: Atomic<Option<bool>>,
         results: [AtomicUsize; Self::MAX_COUNT],
         crash_seq: usize,
     }
@@ -331,7 +332,7 @@ pub mod tests {
             Self {
                 tid,
                 state: AtomicI32::new(Self::STATE_INIT),
-                checked: AtomicBool::new(false),
+                checked: Atomic::new(None),
                 results: array_init::array_init(|_| AtomicUsize::new(Self::RESULT_INIT)),
                 crash_seq: rdtscp() as usize % nr_count,
             }
@@ -397,36 +398,40 @@ pub mod tests {
             }
         }
 
-        pub fn uncheck_thread(&self, handle: &Handle) {
-            let inner_tid = handle.tid - 1;
-            let info = &self.infos[inner_tid];
-
-            info.state.store(TestInfo::STATE_FINISHED, Ordering::SeqCst);
-            info.checked.store(false, Ordering::SeqCst);
-        }
-
-        // TODO: add killed
         // TODO: get handle, not tid
-        // TODO: remove checked
         pub fn testee(&self, tid: usize, checked: bool) -> Testee<'_> {
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
 
-            info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
-            info.checked.store(true, Ordering::SeqCst);
+            info.checked.store(Some(checked), Ordering::SeqCst);
+            if checked {
+                info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
+            } else {
+                info.enable_killed();
+            }
 
             #[cfg(feature = "tcrash")]
-            println!(
-                "[Testee {tid}] Crash may occur after seq {}.",
-                info.crash_seq
-            );
+            if checked {
+                println!(
+                    "[Testee {tid}] Crash may occur after seq {}.",
+                    info.crash_seq
+                );
+            }
 
             Testee { info }
         }
 
+        fn is_started(&self) -> bool {
+            (0..self.nr_thread).all(|tid| self.infos[tid].checked.load(Ordering::SeqCst).is_some())
+        }
+
         pub fn is_finished(&self) -> bool {
-            (0..self.nr_thread)
-                .all(|tid| self.infos[tid].state.load(Ordering::SeqCst) == TestInfo::STATE_FINISHED)
+            self.is_started()
+                && (0..self.nr_thread)
+                    .filter(|tid| self.infos[*tid].checked.load(Ordering::SeqCst).unwrap())
+                    .all(|tid| {
+                        self.infos[tid].state.load(Ordering::SeqCst) == TestInfo::STATE_FINISHED
+                    })
         }
 
         /// Kill arbitrary child thread
@@ -436,37 +441,45 @@ pub mod tests {
             let backoff = Backoff::new();
 
             loop {
-                let mut done = true;
-                for (tid, state) in (0..self.nr_thread)
-                    .map(|tid| (tid, self.infos[tid].state.load(Ordering::SeqCst)))
+                for (tid, unix_tid, checked) in (0..self.nr_thread)
+                    .map(|tid| {
+                        (
+                            tid,
+                            self.infos[tid].state.load(Ordering::SeqCst),
+                            self.infos[tid].checked.load(Ordering::SeqCst),
+                        )
+                    })
+                    .filter(|(_, state, checked)| {
+                        checked.is_some()
+                            && *state != TestInfo::STATE_INIT
+                            && *state != TestInfo::STATE_FINISHED
+                    })
                 {
-                    if state == TestInfo::STATE_FINISHED {
+                    if !checked.unwrap() && rdtscp() % 1_000_000 != 0 {
                         continue;
                     }
 
-                    done = false;
-
-                    if state == TestInfo::STATE_INIT {
-                        continue;
-                    }
-
-                    let unix_tid = state;
-
-                    if let Err(e) = self.infos[tid].state.compare_exchange(
-                        unix_tid,
-                        TestInfo::STATE_KILLED,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    ) {
-                        assert_eq!(e, TestInfo::STATE_FINISHED);
-                    } else {
-                        println!("[Tester] Killing t{}", tid + 1);
+                    if self.infos[tid]
+                        .state
+                        .compare_exchange(
+                            unix_tid,
+                            TestInfo::STATE_KILLED,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        println!(
+                            "[Tester] Killing t{} (checked: {})",
+                            tid + 1,
+                            checked.unwrap()
+                        );
                         let _ = unsafe { libc::syscall(libc::SYS_tgkill, pid, unix_tid, SIGUSR2) };
                         return;
                     }
                 }
 
-                if done {
+                if self.is_finished() {
                     println!("[Tester] No kill");
                     return;
                 }
@@ -481,6 +494,7 @@ pub mod tests {
             for (to_tid, results) in self.infos.iter().filter_map(|info| {
                 info.checked
                     .load(Ordering::SeqCst)
+                    .unwrap_or_default()
                     .then_some((info.tid, &info.results))
             }) {
                 for (to_seq, result) in (0..self.nr_count)
