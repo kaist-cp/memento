@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
+use atomic::fence;
 use cfg_if::cfg_if;
 use crossbeam_utils::CachePadded;
 use mmt_derive::Collectable;
@@ -174,7 +175,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         &'g self,
         old: PShared<'_, N>,
         new: PShared<'_, N>,
-        mmt: &mut Cas,
+        mmt: &mut Cas<N>,
         handle: &'g Handle,
     ) -> Result<(), PShared<'_, N>> {
         let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
@@ -185,6 +186,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             handle.rec.store(false, Ordering::Relaxed);
         }
 
+        let (stale, _) = mmt.stale_latest_idx();
         let (p_own, _, _) = pool.exec_info.cas_info.own[tid].load().decode();
         let tmp_new = new.with_aux_bit((!p_own) as _).with_tid(tid);
 
@@ -205,7 +207,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                     continue;
                 }
 
-                mmt.checkpoint_fail(handle);
+                mmt.buf[stale].checkpoint_fail(cur, handle);
                 return Err(cur);
             }
 
@@ -213,7 +215,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             persist_obj(&self.inner, true);
 
             // Checkpoint success
-            let t = mmt.checkpoint_succ(!p_own, handle);
+            let t = mmt.buf[stale].checkpoint_succ(!p_own, handle);
 
             // 2. Second cas
             // By inserting a pointer with tid removed, it prevents further helping.
@@ -240,12 +242,14 @@ impl<N: Collectable> DetectableCASAtomic<N> {
     fn cas_result<'g>(
         &'g self,
         new: PShared<'_, N>,
-        mmt: &mut Cas,
+        mmt: &mut Cas<N>,
         handle: &'g Handle,
     ) -> Option<Result<(), PShared<'_, N>>> {
         let (tid, guard, exec_info) = (handle.tid, &handle.guard, &handle.pool.exec_info);
 
-        let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
+        let (stale, latest) = mmt.stale_latest_idx();
+
+        let (_, f_mmt, t_mmt) = mmt.buf[latest].checkpoint.decode();
         let t_local = handle.local_max_time.load();
 
         let (p_own, _, t_own) = exec_info.cas_info.own[tid].load().decode();
@@ -254,14 +258,13 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             if f_mmt {
                 // failed
                 handle.local_max_time.store(t_mmt);
-                let cur = self.inner.load(Ordering::SeqCst, guard);
-                let cur = self.load_help(cur, handle);
+                let cur = mmt.buf[latest].fail_current.load(Ordering::Relaxed, guard);
                 return Some(Err(cur));
             }
 
             // already successful
             if t_mmt >= t_own {
-                handle.pool.exec_info.cas_info.own[tid].store(mmt.checkpoint);
+                handle.pool.exec_info.cas_info.own[tid].store(mmt.buf[latest].checkpoint);
                 let _ = self.inner.compare_exchange(
                     new.with_aux_bit(p_own as _).with_tid(tid),
                     new.with_aux_bit(0).with_tid(0),
@@ -285,7 +288,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         // Success because the checkpoint written by the helper is higher than the last CAS
         // Since the value of location has already been changed, I just need to finalize my checkpoint.
-        let _ = mmt.checkpoint_succ(!p_own, handle);
+        let _ = mmt.buf[stale].checkpoint_succ(!p_own, handle);
         sfence();
 
         Some(Ok(()))
@@ -621,28 +624,73 @@ impl CasInfo {
 
 /// Compare and Set memento
 #[derive(Debug)]
-pub struct Cas {
-    checkpoint: CasTimestamp, // TODO: CachePadded
+pub struct Cas<N: Collectable> {
+    buf: [CachePadded<CasInner<N>>; 2],
 }
 
-impl Memento for Cas {
-    #[inline]
-    fn clear(&mut self) {
-        self.checkpoint = CasTimestamp::new(false, false, Timestamp::from(0));
-        persist_obj(&self.checkpoint, false);
-    }
-}
-
-impl Default for Cas {
+impl<N: Collectable> Default for Cas<N> {
     fn default() -> Self {
         Self {
-            checkpoint: CasTimestamp(0),
+            buf: [Default::default(), Default::default()],
         }
     }
 }
 
-impl Collectable for Cas {
-    fn filter(mmt: &mut Self, tid: usize, _: &mut GarbageCollection, pool: &mut PoolHandle) {
+impl<N: Collectable> Memento for Cas<N> {
+    #[inline]
+    fn clear(&mut self) {
+        self.buf[0].clear();
+        self.buf[1].clear();
+    }
+}
+
+impl<N: Collectable> Collectable for Cas<N> {
+    fn filter(mmt: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
+        Collectable::filter(&mut mmt.buf[0], tid, gc, pool);
+        Collectable::filter(&mut mmt.buf[1], tid, gc, pool);
+    }
+}
+
+impl<N: Collectable> Cas<N> {
+    #[inline]
+    fn stale_latest_idx(&self) -> (usize, usize) {
+        let t0 = self.buf[0].checkpoint.decode().2;
+        let t1 = self.buf[1].checkpoint.decode().2;
+
+        if t0 < t1 {
+            (0, 1)
+        } else {
+            (1, 0)
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CasInner<N: Collectable> {
+    checkpoint: CasTimestamp,
+    fail_current: PAtomic<N>,
+}
+
+impl<N: Collectable> Memento for CasInner<N> {
+    #[inline]
+    fn clear(&mut self) {
+        self.checkpoint = CasTimestamp::new(false, false, Timestamp::from(0));
+        self.fail_current = Default::default();
+        persist_obj(self, false);
+    }
+}
+
+impl<N: Collectable> Default for CasInner<N> {
+    fn default() -> Self {
+        Self {
+            checkpoint: CasTimestamp(0),
+            fail_current: Default::default(),
+        }
+    }
+}
+
+impl<N: Collectable> Collectable for CasInner<N> {
+    fn filter(mmt: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
         // Among CAS clients, those with max checkpoint are recorded
         let (_, f_mmt, t_mmt) = mmt.checkpoint.decode();
         if f_mmt {
@@ -654,10 +702,12 @@ impl Collectable for Cas {
         if t_mmt > t_own {
             pool.exec_info.cas_info.own[tid].store(mmt.checkpoint);
         }
+
+        Collectable::filter(&mut mmt.fail_current, tid, gc, pool);
     }
 }
 
-impl Cas {
+impl<N: Collectable> CasInner<N> {
     #[inline]
     fn checkpoint_succ(&mut self, parity: bool, handle: &Handle) -> Timestamp {
         let t = handle.pool.exec_info.exec_time();
@@ -672,20 +722,21 @@ impl Cas {
     }
 
     #[inline]
-    fn checkpoint_fail(&mut self, handle: &Handle) {
+    fn checkpoint_fail(&mut self, current: PShared<'_, N>, handle: &Handle) {
         let t = handle.pool.exec_info.exec_time();
         let ts_fail = CasTimestamp::new(false, true, t);
+        self.fail_current.store(current, Ordering::Relaxed);
+        fence(Ordering::Release);
         self.checkpoint = ts_fail;
-        persist_obj(&self.checkpoint, true);
+        persist_obj(self, true);
         handle.local_max_time.store(t);
     }
 }
 
-#[allow(unused)]
 #[cfg(test)]
 mod test {
     use crate::{
-        pepoch::{atomic::Pointer, POwned},
+        pepoch::POwned,
         ploc::Handle,
         pmem::{persist_obj, ralloc::Collectable, RootObj},
         test_utils::tests::*,
@@ -694,8 +745,6 @@ mod test {
 
     use std::sync::atomic::Ordering;
 
-    use crossbeam_epoch::Guard;
-    use etrace::some_or;
     use mmt_derive::Collectable;
 
     use crate::{
@@ -715,7 +764,7 @@ mod test {
     #[derive(Debug, Memento, Collectable)]
     pub(crate) struct Swap<T: Collectable> {
         old: Checkpoint<PAtomic<Node<T>>>,
-        cas: Cas,
+        cas: Cas<Node<T>>,
     }
 
     impl<T: Collectable> Default for Swap<T> {
@@ -750,9 +799,9 @@ mod test {
         #[inline]
         pub(crate) fn cas_wo_failure(
             &self,
-            mut old: PShared<'_, Node<T>>,
+            old: PShared<'_, Node<T>>,
             new: PShared<'_, Node<T>>,
-            cas: &mut Cas,
+            cas: &mut Cas<Node<T>>,
             handle: &Handle,
         ) {
             while self.loc.cas(old, new, cas, handle).is_err() {}
@@ -801,7 +850,7 @@ mod test {
 
     struct Updates {
         nodes: [Checkpoint<PAtomic<Node<TestValue>>>; NR_COUNT],
-        upds: [(Cas, Swap<TestValue>); NR_COUNT],
+        upds: [(Cas<Node<TestValue>>, Swap<TestValue>); NR_COUNT],
     }
 
     impl Memento for Updates {
