@@ -25,20 +25,20 @@ crossbeam-utils = { path = "./crossbeam-persistency/crossbeam-utils" }
 crossbeam-channel = "0.5.6"
 atomic = "0.5"
 etrace = "1.1.1"
-rand = "0.8.4"
-tempfile = "3.2.0"
-array-init = "2.0.0"
+rand = "0.8.5"
+tempfile = "3.3.0"
+array-init = "2.0.1"
 lazy_static = "1.4.0"
 itertools = "0.10.3"
 fasthash = "0.4.0"
 cfg-if = "1.0.0"
-tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
-libc = "0.2.109"
+tinyvec = { version = "1.6.0", features = ["alloc", "rustc_1_40"] }
+libc = "0.2.132"
 num_cpus = "1.13.1"
 
 
 [dev-dependencies]
-log = "0.4.14"
+log = "0.4.17"
 rusty-fork = "0.3.0"
 
 [profile.release]

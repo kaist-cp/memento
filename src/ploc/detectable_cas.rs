@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
+use cfg_if::cfg_if;
 use crossbeam_utils::CachePadded;
 use mmt_derive::Collectable;
 use std::ops::Deref;
@@ -297,8 +298,6 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         self.load_help(cur, handle)
     }
 
-    const PATIENCE: u64 = 40000;
-
     #[inline]
     fn load_help<'g>(&self, mut old: PShared<'g, N>, handle: &'g Handle) -> PShared<'g, N> {
         let (exec_info, guard) = (&handle.pool.exec_info, &handle.guard);
@@ -337,7 +336,16 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
                     // if patience is over, I have to help it.
                     let wait2 = exec_info.exec_time();
-                    if wait2 > t_cur + Timestamp::from(Self::PATIENCE) {
+
+                    cfg_if! {
+                        if #[cfg(not(feature = "tcrash"))] {
+                            let patience = Timestamp::from(40_000);
+                        } else {
+                            let patience = handle.pool.exec_info.tsc_offset;
+                        }
+                    };
+
+                    if wait2 > t_cur + patience {
                         break 'chk t_cur;
                     }
                 }

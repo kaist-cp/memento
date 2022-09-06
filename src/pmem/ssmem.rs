@@ -219,7 +219,7 @@ pub fn ssmem_gc_thread_init(a: *mut SsmemAllocator, id: isize, pool: Option<&Poo
             ts_ref.next = unsafe { SSMEM_TS_LIST };
 
             let (_, ok) = unsafe {
-                intrinsics::atomic_cxchg(
+                intrinsics::atomic_cxchg_seqcst_seqcst(
                     &mut SSMEM_TS_LIST as *mut _,
                     ts_ref.next,
                     ts_ref as *mut _,
@@ -229,7 +229,7 @@ pub fn ssmem_gc_thread_init(a: *mut SsmemAllocator, id: isize, pool: Option<&Poo
                 break;
             }
         }
-        let _ = unsafe { intrinsics::atomic_xadd(&mut SSMEM_TS_LIST_LEN as *mut usize, 1) };
+        let _ = unsafe { intrinsics::atomic_xadd_seqcst(&mut SSMEM_TS_LIST_LEN as *mut usize, 1) };
     }
 }
 
