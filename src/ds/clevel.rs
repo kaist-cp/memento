@@ -1748,7 +1748,7 @@ mod simple_test {
         const FILE_NAME: &str = "clevel_smoke";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        let (send, recv) = channel::unbounded();
+        let (send, recv) = channel::bounded(1024);
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             SEND.as_mut().unwrap()[2] = Some(send);
@@ -1825,7 +1825,7 @@ mod simple_test {
         const FILE_NAME: &str = "clevel_insert_search";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        let (send, recv) = channel::unbounded();
+        let (send, recv) = channel::bounded(1024);
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             RECV = Some(recv);
@@ -1954,7 +1954,7 @@ mod test {
         const FILE_NAME: &str = "clevel";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        let (send, recv) = channel::unbounded();
+        let (send, recv) = channel::bounded(1024);
         unsafe {
             SEND = Some(array_init::array_init(|_| None));
             RECV = Some(recv);
