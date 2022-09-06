@@ -146,7 +146,7 @@ impl PDefault for CombiningQueue {
                 inner: CachePadded::new(CombStruct::new(
                     Some(&Self::persist_new_nodes), // persist new nodes
                     Some(&Self::update_old_tail),   // update old tail
-                    &*E_LOCK,
+                    &E_LOCK,
                     array_init(|_| CachePadded::new(Default::default())),
                     CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
                 )),
@@ -159,7 +159,7 @@ impl PDefault for CombiningQueue {
                 inner: CachePadded::new(CombStruct::new(
                     None,
                     None,
-                    &*D_LOCK,
+                    &D_LOCK,
                     array_init(|_| CachePadded::new(Default::default())),
                     CachePadded::new(PAtomic::new(CombStateRec::new(PAtomic::from(dummy)), pool)),
                 )),

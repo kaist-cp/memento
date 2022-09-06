@@ -180,7 +180,7 @@ mod test {
             let mut items = (0..NR_COUNT).collect_vec();
 
             for seq in 0..NR_COUNT {
-                let i = chks.chks[seq].checkpoint(|| rdtscp() as usize % items.len(), &handle);
+                let i = chks.chks[seq].checkpoint(|| rdtscp() as usize % items.len(), handle);
                 // let val = items[i];
                 let val = items.remove(i);
                 testee.report(seq, TestValue::new(handle.tid, val))

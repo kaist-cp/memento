@@ -1972,7 +1972,7 @@ mod tests {
         #[test]
         fn array_init() {
             let pool = get_dummy_handle(8 * 1024 * 1024 * 1024).unwrap();
-            let owned = POwned::<[MaybeUninit<usize>]>::init(10, &pool);
+            let owned = POwned::<[MaybeUninit<usize>]>::init(10, pool);
             let arr: &[MaybeUninit<usize>] = unsafe { owned.deref(&pool) };
             assert_eq!(arr.len(), 10);
         }

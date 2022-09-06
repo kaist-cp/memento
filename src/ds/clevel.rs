@@ -983,7 +983,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        Err(mmt.fail.checkpoint(|| (), handle))
+        mmt.fail.checkpoint(|| (), handle);
+        Err(())
     }
 
     fn resize_move_inner<'g>(
@@ -1398,7 +1399,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
         }
 
-        Err(mmt.fail.checkpoint(|| (), handle))
+        mmt.fail.checkpoint(|| (), handle);
+        Err(())
     }
 
     fn insert_inner<'g>(
@@ -1802,7 +1804,7 @@ mod simple_test {
                 // T1: Resize loop
                 1 => {
                     let recv = unsafe { RECV.as_ref().unwrap() };
-                    kv.resize(&recv, &mut mmt.resize, handle);
+                    kv.resize(recv, &mut mmt.resize, handle);
                 }
                 _ => {
                     let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };

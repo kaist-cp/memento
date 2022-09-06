@@ -460,7 +460,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             self.inner
                 .compare_exchange(old, winner_new, Ordering::SeqCst, Ordering::SeqCst, guard);
         persist_obj(&self.inner, true); // persist before return
-        return res.map_err(|e| e.current);
+        res.map_err(|e| e.current)
     }
 }
 
@@ -767,13 +767,13 @@ mod test {
                             persist_obj(unsafe { node.deref(handle.pool) }, true);
                             PAtomic::from(node)
                         },
-                        &handle,
+                        handle,
                     )
                     .load(Ordering::Relaxed, &handle.guard);
 
-                loc.cas_wo_failure(PShared::null(), node, &mut mmt.upds[seq].0, &handle);
+                loc.cas_wo_failure(PShared::null(), node, &mut mmt.upds[seq].0, handle);
 
-                let old = loc.swap(PShared::null(), &mut mmt.upds[seq].1, &handle);
+                let old = loc.swap(PShared::null(), &mut mmt.upds[seq].1, handle);
 
                 let val = unsafe { std::ptr::read(&old.deref(handle.pool).data) };
                 testee.report(seq, val);

@@ -3,7 +3,7 @@ use std::process::Command;
 fn main() {
     // Build Ralloc
     Command::new("make")
-        .args(&["clean"])
+        .args(["clean"])
         .current_dir("./ext/ralloc/test")
         .status()
         .expect("failed to make clean!");
