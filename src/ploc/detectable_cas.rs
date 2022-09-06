@@ -337,8 +337,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
                     // if patience is over, I have to help it.
                     let wait2 = exec_info.exec_time();
-                    if wait2 > t_cur + exec_info.tsc_offset {
-                        // TODO: use PATIENCE
+                    if wait2 > t_cur + Timestamp::from(Self::PATIENCE) {
                         break 'chk t_cur;
                     }
                 }
