@@ -18,16 +18,17 @@
 #ifndef _EXAMPLE_H
 #define _EXAMPLE_H
 
-// Same key/value type as Clevel
+// Same key,value type as Clevel
 typedef uint64_t Key;
 typedef uint64_t Value;
 
 enum RootIdx
 {
-    RootObj,       // root obj
-    CASCheckpoint, // cas general checkpoint
-    NrMemento,     // num of memento
-    MementoStart,  // start index of root memento(s)
+    RootObj,        // root obj
+    CASHelpArr,     // cas help array
+    CASHelpDescArr, // cas help descriptor array
+    NrMemento,      // number of root mementos
+    MementoStart,   // start index of root memento(s)
 };
 
 #ifdef __cplusplus
@@ -37,18 +38,17 @@ extern "C"
     typedef struct _poolhandle PoolHandle;
     PoolHandle *pool_create(char *path, size_t size, int tnum);
     void *get_root(size_t ix, PoolHandle *pool);
-    void thread_init(int tid);
+    void thread_init(int tid, PoolHandle *pool);
 
     typedef struct _clevel Clevel;
-    bool search(Clevel *obj, unsigned tid, Key k, PoolHandle *pool);
-    size_t get_capacity(Clevel *c, PoolHandle *pool);
-    bool is_resizing(Clevel *c, PoolHandle *pool);
+    bool search(Clevel *obj, unsigned tid, Key k);
+    size_t get_capacity(Clevel *c, unsigned tid);
+    bool is_resizing(Clevel *c, unsigned tid);
 
     typedef struct _memento ClevelMemento;
-    bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
-    bool run_update(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v, PoolHandle *pool);
-    bool run_delete(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, PoolHandle *pool);
-    void run_resize_loop(ClevelMemento *m, Clevel *obj, unsigned tid, PoolHandle *pool);
+    bool run_insert(ClevelMemento *m, Clevel *obj, unsigned tid, Key k, Value v);
+    bool run_delete(ClevelMemento *m, Clevel *obj, unsigned tid, Key k);
+    void run_resize(ClevelMemento *m, Clevel *obj, unsigned tid);
 
 #ifdef __cplusplus
 }
@@ -80,12 +80,13 @@ public:
 
         // `tnum+1` thread is only for resize loop
         ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tnum + 1, pool));
-        std::thread{run_resize_loop, m_resize, c, tnum, pool}.detach();
+        thread_init(tnum, pool);
+        std::thread{run_resize, m_resize, c, tnum}.detach();
     }
     ~CLevelMemento(){};
     bool hash_is_resizing()
     {
-        return is_resizing(c, pool);
+        return is_resizing(c, 1);
     }
     std::string hash_name()
     {
@@ -94,19 +95,19 @@ public:
     hash_Utilization utilization()
     {
         hash_Utilization h;
-        h.load_factor = ((float)inserted / get_capacity(c, pool)) * 100;
+        h.load_factor = ((float)inserted / get_capacity(c, 1)) * 100;
         return h;
     }
     void thread_ini(int tid)
     {
         tid = tid + 1; // pibench can give tid 0, but tid in memento starts from 1
-        thread_init(tid);
+        thread_init(tid, pool);
     }
     bool find(const char *key, size_t key_sz, char *value_out, unsigned tid)
     {
         tid = tid + 1; // pibench can give tid 0, but tid in memento starts from 1
         auto k = *reinterpret_cast<const Key *>(key);
-        return search(c, tid, k, pool);
+        return search(c, tid, k);
     }
 
     bool insert(const char *key, size_t key_sz, const char *value,
@@ -116,7 +117,7 @@ public:
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
 
-        bool ret = run_insert(m[tid], c, tid, k, v, pool);
+        bool ret = run_insert(m[tid], c, tid, k, v);
         if (ret)
         {
             inserted += 1;
@@ -129,7 +130,7 @@ public:
         tid = tid + 1; // pibench can give tid 0, but tid in memento starts from 1
         auto k = *reinterpret_cast<const Key *>(key);
         auto v = *reinterpret_cast<const Value *>(value);
-        return run_insert(m[tid], c, tid, k, v, pool);
+        return run_insert(m[tid], c, tid, k, v);
     }
     bool update(const char *key, size_t key_sz, const char *value,
                 size_t value_sz)
@@ -141,7 +142,7 @@ public:
     {
         tid = tid + 1; // pibench can give tid 0, but tid in memento starts from 1
         auto k = *reinterpret_cast<const Key *>(key);
-        return run_delete(m[tid], c, tid, k, pool);
+        return run_delete(m[tid], c, tid, k);
     }
 
     int scan(const char *key, size_t key_sz, int scan_sz, char *&values_out)
