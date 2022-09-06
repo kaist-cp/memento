@@ -677,20 +677,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Context<K, V> {
         for find_result in owned_found.into_iter() {
             // caution: we need **strong** CAS to guarantee uniqueness. maybe next time...
             // exploit invariant
-            match find_result.slot.inner.compare_exchange(
-                find_result.slot_ptr,
-                PShared::null(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-                &handle.guard,
-            ) {
+            match find_result
+                .slot
+                .cas_non_detectable(find_result.slot_ptr, PShared::null(), handle)
+            {
                 Ok(_) => unsafe {
                     handle.guard.defer_pdestroy(find_result.slot_ptr);
                 },
                 Err(e) => {
-                    // TODO: Non-detectable CAS
-                    // exploit invariant
-                    if e.current.with_aux_bit(0).with_tid(0) == find_result.slot_ptr.with_tag(1) {
+                    if e == find_result.slot_ptr.with_tag(1) {
                         // If the item is moved, retry.
                         return Err(());
                     }
