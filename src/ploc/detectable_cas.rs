@@ -291,6 +291,68 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         Some(Ok(()))
     }
 
+    /// Compare And Set (Non-detectable ver.)
+    ///
+    /// Used when the recovery is not critical (e.g. helping CAS).
+    /// WARN: The return value is not stable.
+    pub fn cas_non_detectable<'g>(
+        &'g self,
+        old: PShared<'_, N>,
+        new: PShared<'_, N>,
+        handle: &'g Handle,
+    ) -> Result<(), PShared<'_, N>> {
+        let guard = &handle.guard;
+
+        let tmp_new = new.with_aux_bit(1);
+
+        loop {
+            // 1. First cas
+            let res = self.inner.compare_exchange(
+                old,
+                tmp_new,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                guard,
+            );
+
+            if let Err(e) = res {
+                let cur = self.load_help(e.current, handle);
+                if cur == old {
+                    // retry for the property of strong CAS
+                    continue;
+                }
+
+                return Err(cur);
+            }
+
+            // If successful, persist the location
+            persist_obj(&self.inner, true);
+
+            // 2. Second cas
+            // By inserting a pointer with tid removed, it prevents further helping.
+            let _ = self
+                .inner
+                .compare_exchange(
+                    tmp_new,
+                    new.with_aux_bit(0).with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    &handle.guard,
+                )
+                .map_err(|_| {
+                    // In case of CAS failure, sfence is required for synchronous flush.
+                    sfence()
+                });
+
+            return Ok(());
+        }
+    }
+
+    #[inline]
+    fn is_non_detectable_cas(ptr: PShared<'_, N>) -> bool {
+        ptr.aux_bit() == 1 && ptr.tid() == 0
+    }
+
     /// Load
     #[inline]
     pub fn load<'g>(&self, ord: Ordering, handle: &'g Handle) -> PShared<'g, N> {
@@ -298,6 +360,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         self.load_help(cur, handle)
     }
 
+    // Location State
+    // - [parity: 0 | desc: 0 | tid: 0     | data]: `data` is a ptr and it guarantees to be persisted.
+    // - [parity: p | desc: 0 | tid: non-0 | data]: `data` is a ptr that may not be persisted. The `tid` wants a help in the context of parity `p`.
+    // - [parity: 1 | desc: 0 | tid: 0     | data]: `data` is a ptr that may not be persisted. Someone wants a help but it doesn't need to be announced. (non-detectable way)
+    // - [parity: 0 | desc: 1 | tid: non-0 | data]: `data` is a sequence number of `tid`'s descriptor.
     #[inline]
     fn load_help<'g>(&self, mut old: PShared<'g, N>, handle: &'g Handle) -> PShared<'g, N> {
         let (exec_info, guard) = (&handle.pool.exec_info, &handle.guard);
@@ -353,6 +420,22 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             // Persist the pointer before registering help descriptor
             persist_obj(&self.inner, false);
 
+            // If non-detectable CAS is proceeded, just CAS to clean ptr w/o help announcement.
+            if Self::is_non_detectable_cas(old) {
+                match self.inner.compare_exchange(
+                    old,
+                    old.with_aux_bit(0).with_tid(0),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    guard,
+                ) {
+                    Ok(clean_ptr) => return clean_ptr,
+                    Err(e) => old = e.current,
+                };
+
+                continue;
+            }
+
             // Register my help descriptor if there is no descriptor yet.
             if old.desc_bit() == 0 {
                 match self.register_help(old, handle) {
@@ -370,8 +453,8 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             // Finalize the help descriptor.
             match self.finalize_help(old, t_cur, handle) {
-                Ok(ret) => {
-                    return ret;
+                Ok(clean_ptr) => {
+                    return clean_ptr;
                 }
                 Err(e) => {
                     old = e;
