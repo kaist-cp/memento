@@ -63,7 +63,7 @@ struct TryInsert<K, V: Collectable> {
         PPtr<DetectableCASAtomic<Node<K, V>>>,
         PAtomic<Node<K, V>>,
     )>,
-    insert: Cas,
+    insert: Cas<Node<K, V>>,
 }
 
 impl<K, V: Collectable> Default for TryInsert<K, V> {
@@ -99,8 +99,8 @@ struct TryDelete<K, V: Collectable> {
         PAtomic<Node<K, V>>,
     )>,
     next: Checkpoint<PAtomic<Node<K, V>>>,
-    logical: Cas,
-    physical: Cas,
+    logical: Cas<Node<K, V>>,
+    physical: Cas<Node<K, V>>,
 }
 
 impl<K, V: Collectable> Default for TryDelete<K, V> {
