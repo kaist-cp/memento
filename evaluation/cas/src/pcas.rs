@@ -280,7 +280,7 @@ fn pmwcas_inner(md: &PMwCasDescriptor, guard: &Guard, pool: &PoolHandle) -> bool
         Ordering::SeqCst,
         Ordering::SeqCst,
     ) {
-        Ok(_) => (st | DIRTY_FLAG),
+        Ok(_) => st | DIRTY_FLAG,
         Err(e) => e,
     };
     if cur_st & DIRTY_FLAG != 0 {
