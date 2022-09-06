@@ -34,7 +34,7 @@ impl TestNOps for TestMCas {}
 
 impl TestableCas for TestMCas {
     type Location = DetectableCASAtomic<Node>;
-    type Input = &'static mut Cas; // mmt
+    type Input = &'static mut Cas<Node>; // mmt
 
     fn cas(&self, mmt: Self::Input, loc: &Self::Location, handle: &Handle) -> bool {
         mcas(loc, mmt, handle)
@@ -43,7 +43,7 @@ impl TestableCas for TestMCas {
 
 #[derive(Default, Debug, Memento, Collectable)]
 pub struct TestMCasMmt {
-    pub cas: CachePadded<Cas>,
+    pub cas: CachePadded<Cas<Node>>,
 }
 
 impl RootObj<TestMCasMmt> for TestMCas {
@@ -53,7 +53,7 @@ impl RootObj<TestMCasMmt> for TestMCas {
 
         let (ops, failed) = self.test_nops(
             &|_| {
-                let mmt = unsafe { (&*mmt.cas as *const _ as *mut Cas).as_mut() }.unwrap();
+                let mmt = unsafe { (&*mmt.cas as *const _ as *mut Cas<Node>).as_mut() }.unwrap();
                 cas_random_loc(self, mmt, locs_ref, handle)
             },
             handle.tid,
@@ -65,7 +65,7 @@ impl RootObj<TestMCasMmt> for TestMCas {
     }
 }
 
-fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, handle: &Handle) -> bool {
+fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas<Node>, handle: &Handle) -> bool {
     let old = loc.load(Ordering::SeqCst, handle);
     let new = unsafe { PShared::from_usize(handle.tid) }; // TODO: various new value
     loc.cas(old, new, mmt, handle).is_ok()
