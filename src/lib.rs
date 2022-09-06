@@ -14,7 +14,7 @@
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
 #![deny(unaligned_references)]
-#![deny(unused_crate_dependencies)]
+// #![deny(unused_crate_dependencies)] // TODO: uncomment
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
