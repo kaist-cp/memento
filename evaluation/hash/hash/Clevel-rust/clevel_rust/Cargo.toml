@@ -9,6 +9,7 @@ edition = "2021"
 memento  = { path = "../../../../../" }
 crossbeam-epoch = { path = "../../../../../crossbeam-persistency/crossbeam-epoch" }
 crossbeam-utils = { path = "../../../../../crossbeam-persistency/crossbeam-utils" }
+crossbeam-channel = "0.5.6"
 itertools = "0.10.3"
 etrace = "1.1.1"
 hashers = "1.0.1"
@@ -27,5 +28,4 @@ crate_type = ["staticlib"]
 # default = ["stress"]
 default = []
 stress = []
-alloc_lock = ["memento/clevel_alloc_lock"]
 no_persist = ["memento/no_persist"]

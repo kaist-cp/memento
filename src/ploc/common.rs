@@ -152,7 +152,8 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub(crate) fn new(tid: usize, guard: Guard, pool: &'static PoolHandle) -> Self {
+    /// Create new handle
+    pub fn new(tid: usize, guard: Guard, pool: &'static PoolHandle) -> Self {
         Self {
             tid,
             local_max_time: LocalMaxTime::default(),

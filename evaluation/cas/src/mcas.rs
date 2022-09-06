@@ -66,7 +66,7 @@ impl RootObj<TestMCasMmt> for TestMCas {
 }
 
 fn mcas(loc: &DetectableCASAtomic<Node>, mmt: &mut Cas, handle: &Handle) -> bool {
-    let old = loc.load(Ordering::SeqCst, &handle.guard, handle.pool);
+    let old = loc.load(Ordering::SeqCst, handle);
     let new = unsafe { PShared::from_usize(handle.tid) }; // TODO: various new value
     loc.cas(old, new, mmt, handle).is_ok()
 }
