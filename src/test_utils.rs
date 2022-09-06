@@ -352,7 +352,6 @@ pub mod tests {
         }
 
         /// Enable being selected by `kill()`
-        // TODO: How to kill resizer in clevel?
         #[inline]
         fn enable_killed(&self) {
             let unix_tid = unsafe { libc::gettid() };
