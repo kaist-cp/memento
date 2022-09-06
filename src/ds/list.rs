@@ -56,67 +56,13 @@ impl<K, V: Collectable> Default for Harris<K, V> {
     }
 }
 
-#[derive(Debug, Default, Memento, Collectable)]
-struct Help {
-    cas: Cas,
-}
-
-#[derive(Debug, Memento, Collectable)]
-struct TryFind<K, V: Collectable> {
-    found: Checkpoint<(
-        bool,
-        PPtr<DetectableCASAtomic<Node<K, V>>>,
-        PAtomic<Node<K, V>>,
-        PAtomic<Node<K, V>>,
-    )>,
-    help: Help,
-}
-
-impl<K, V: Collectable> Default for TryFind<K, V> {
-    fn default() -> Self {
-        Self {
-            found: Default::default(),
-            help: Default::default(),
-        }
-    }
-}
-
-#[derive(Debug, Memento, Collectable)]
-struct Find<K, V: Collectable> {
-    try_find: TryFind<K, V>,
-}
-
-impl<K, V: Collectable> Default for Find<K, V> {
-    fn default() -> Self {
-        Self {
-            try_find: Default::default(),
-        }
-    }
-}
-
-/// Lookup memento
-#[derive(Debug, Memento, Collectable)]
-pub struct Lookup<K, V: Collectable> {
-    find: Find<K, V>,
-}
-
-impl<K, V: Collectable> Default for Lookup<K, V> {
-    fn default() -> Self {
-        Self {
-            find: Default::default(),
-        }
-    }
-}
-
 #[derive(Debug, Memento, Collectable)]
 struct TryInsert<K, V: Collectable> {
     found: Checkpoint<(
         bool,
         PPtr<DetectableCASAtomic<Node<K, V>>>,
         PAtomic<Node<K, V>>,
-        PAtomic<Node<K, V>>,
     )>,
-    help: Help,
     insert: Cas,
 }
 
@@ -124,7 +70,6 @@ impl<K, V: Collectable> Default for TryInsert<K, V> {
     fn default() -> Self {
         Self {
             found: Default::default(),
-            help: Default::default(),
             insert: Default::default(),
         }
     }
@@ -134,7 +79,6 @@ impl<K, V: Collectable> Default for TryInsert<K, V> {
 #[derive(Debug, Memento, Collectable)]
 pub struct Insert<K, V: Collectable> {
     node: Checkpoint<PAtomic<Node<K, V>>>,
-    find: Find<K, V>,
     try_ins: TryInsert<K, V>,
 }
 
@@ -142,7 +86,6 @@ impl<K, V: Collectable> Default for Insert<K, V> {
     fn default() -> Self {
         Self {
             node: Default::default(),
-            find: Default::default(),
             try_ins: Default::default(),
         }
     }
@@ -150,7 +93,11 @@ impl<K, V: Collectable> Default for Insert<K, V> {
 
 #[derive(Debug, Memento, Collectable)]
 struct TryDelete<K, V: Collectable> {
-    find: Find<K, V>,
+    found: Checkpoint<(
+        bool,
+        PPtr<DetectableCASAtomic<Node<K, V>>>,
+        PAtomic<Node<K, V>>,
+    )>,
     next: Checkpoint<PAtomic<Node<K, V>>>,
     logical: Cas,
     physical: Cas,
@@ -159,7 +106,7 @@ struct TryDelete<K, V: Collectable> {
 impl<K, V: Collectable> Default for TryDelete<K, V> {
     fn default() -> Self {
         Self {
-            find: Default::default(),
+            found: Default::default(),
             next: Default::default(),
             logical: Default::default(),
             physical: Default::default(),
@@ -251,7 +198,6 @@ impl<K: Ord, V: Collectable> List<K, V> {
         prev: &'g DetectableCASAtomic<Node<K, V>>,
         prev_next: PShared<'g, Node<K, V>>,
         curr: PShared<'g, Node<K, V>>,
-        help: &mut Help,
         handle: &Handle,
     ) -> Result<(), ()> {
         // If prev and curr WERE adjacent, no need to clean up
@@ -260,7 +206,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
         }
 
         // cleanup marked nodes between prev and curr
-        prev.cas(prev_next, curr, &mut help.cas, handle)
+        prev.cas_non_detectable(prev_next, curr, handle)
             .map_err(|_| ())?;
 
         // defer_destroy from cursor.prev.load() to cursor.curr (exclusive)
@@ -276,47 +222,9 @@ impl<K: Ord, V: Collectable> List<K, V> {
         Ok(())
     }
 
-    fn try_find<'g>(
-        &self,
-        key: &K,
-        try_find: &mut TryFind<K, V>,
-        handle: &'g Handle,
-    ) -> Result<
-        (
-            bool,
-            &'g DetectableCASAtomic<Node<K, V>>,
-            PShared<'g, Node<K, V>>,
-        ),
-        (),
-    > {
-        let (guard, pool) = (&handle.guard, handle.pool);
-        let chk = try_find.found.checkpoint(
-            || {
-                let (found, prev, prev_next, curr) = self.find_inner(key, handle);
-                (
-                    found,
-                    unsafe { prev.as_pptr(pool) },
-                    PAtomic::from(prev_next),
-                    PAtomic::from(curr),
-                )
-            },
-            handle,
-        );
-        let (found, prev, prev_next, curr) = (
-            chk.0,
-            unsafe { chk.1.deref(pool) },
-            chk.2.load(Ordering::Relaxed, guard),
-            chk.3.load(Ordering::Relaxed, guard),
-        );
-
-        self.help(prev, prev_next, curr, &mut try_find.help, handle)
-            .map(|_| (found, prev, curr))
-    }
-
     fn find<'g>(
-        &self,
+        &'g self,
         key: &K,
-        find: &mut Find<K, V>,
         handle: &'g Handle,
     ) -> (
         bool,
@@ -324,20 +232,16 @@ impl<K: Ord, V: Collectable> List<K, V> {
         PShared<'g, Node<K, V>>,
     ) {
         loop {
-            if let Ok(res) = self.try_find(key, &mut find.try_find, handle) {
-                return res;
+            let (found, prev, prev_next, curr) = self.find_inner(key, handle);
+            if self.help(prev, prev_next, curr, handle).is_ok() {
+                return (found, prev, curr);
             }
         }
     }
 
     /// Lookup
-    pub fn lookup<'g>(
-        &self,
-        key: &'g K,
-        look: &mut Lookup<K, V>,
-        handle: &'g Handle,
-    ) -> Option<&'g V> {
-        let (found, _, curr) = self.find(key, &mut look.find, handle);
+    pub fn lookup<'g>(&'g self, key: &'g K, handle: &'g Handle) -> Option<&'g V> {
+        let (found, _, curr) = self.find(key, handle);
         if found {
             unsafe { curr.as_ref(handle.pool).map(|n| &n.value) }
         } else {
@@ -353,34 +257,29 @@ impl<K: Ord, V: Collectable> List<K, V> {
         handle: &Handle,
     ) -> Result<(), ListErr> {
         let (guard, pool) = (&handle.guard, handle.pool);
-        let chk = try_ins.found.checkpoint(
-            || {
-                let (found, prev, prev_next, curr) = self.find_inner(key, handle);
-                if !found {
-                    let node_ref = unsafe { node.deref(pool) };
-                    // TODO: check if same & otherwise store/flush
-                    node_ref.next.inner.store(curr, Ordering::Relaxed);
-                    persist_obj(unsafe { &node.deref(pool).next }, true);
-                }
 
-                (
-                    found,
-                    unsafe { prev.as_pptr(pool) },
-                    PAtomic::from(prev_next),
-                    PAtomic::from(curr),
-                )
-            },
-            handle,
-        );
-        let (found, prev, prev_next, curr) = (
-            chk.0,
-            unsafe { chk.1.deref(pool) },
-            chk.2.load(Ordering::Relaxed, guard),
-            chk.3.load(Ordering::Relaxed, guard),
-        );
+        let (found, prev, curr) = {
+            let chk = try_ins.found.checkpoint(
+                || {
+                    let (found, prev, curr) = self.find(key, handle);
 
-        self.help(prev, prev_next, curr, &mut try_ins.help, handle)
-            .map_err(|_| ListErr::Retry)?;
+                    if !found {
+                        let node_ref = unsafe { node.deref(pool) };
+                        // TODO: check if same & otherwise store/flush
+                        node_ref.next.inner.store(curr, Ordering::Relaxed);
+                        persist_obj(unsafe { &node.deref(pool).next }, true);
+                    }
+
+                    (found, unsafe { prev.as_pptr(pool) }, PAtomic::from(curr))
+                },
+                handle,
+            );
+            (
+                chk.0,
+                unsafe { chk.1.deref(pool) },
+                chk.2.load(Ordering::Relaxed, guard),
+            )
+        };
 
         if found {
             unsafe { guard.defer_pdestroy(node) };
@@ -429,7 +328,23 @@ impl<K: Ord, V: Collectable> List<K, V> {
         try_del: &mut TryDelete<K, V>,
         handle: &Handle,
     ) -> Result<(), ListErr> {
-        let (found, prev, curr) = self.find(key, &mut try_del.find, handle);
+        let (guard, pool) = (&handle.guard, handle.pool);
+
+        let (found, prev, curr) = {
+            let chk = try_del.found.checkpoint(
+                || {
+                    let (found, prev, curr) = self.find(key, handle);
+                    (found, unsafe { prev.as_pptr(pool) }, PAtomic::from(curr))
+                },
+                handle,
+            );
+            (
+                chk.0,
+                unsafe { chk.1.deref(pool) },
+                chk.2.load(Ordering::Relaxed, guard),
+            )
+        };
+
         if !found {
             return Err(ListErr::Fail);
         }
@@ -496,9 +411,9 @@ mod test {
 
     struct InsDelLook {
         inserts: [Insert<TestValue, TestValue>; NR_COUNT],
-        ins_lookups: [Lookup<TestValue, TestValue>; NR_COUNT],
+        ins_lookups: [Checkpoint<Option<TestValue>>; NR_COUNT],
         deletes: [Delete<TestValue, TestValue>; NR_COUNT],
-        del_lookups: [Lookup<TestValue, TestValue>; NR_COUNT],
+        del_lookups: [Checkpoint<Option<TestValue>>; NR_COUNT],
     }
 
     impl Memento for InsDelLook {
@@ -526,10 +441,10 @@ mod test {
     impl Collectable for InsDelLook {
         fn filter(m: &mut Self, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle) {
             for i in 0..NR_COUNT {
-                Insert::filter(&mut m.inserts[i], tid, gc, pool);
-                Lookup::filter(&mut m.ins_lookups[i], tid, gc, pool);
-                Delete::filter(&mut m.deletes[i], tid, gc, pool);
-                Lookup::filter(&mut m.del_lookups[i], tid, gc, pool);
+                Collectable::filter(&mut m.inserts[i], tid, gc, pool);
+                Collectable::filter(&mut m.ins_lookups[i], tid, gc, pool);
+                Collectable::filter(&mut m.deletes[i], tid, gc, pool);
+                Collectable::filter(&mut m.del_lookups[i], tid, gc, pool);
             }
         }
     }
@@ -548,14 +463,20 @@ mod test {
                     .obj
                     .insert(key, key, &mut mmt.inserts[seq], handle)
                     .is_ok());
-                let res = self.obj.lookup(&key, &mut mmt.ins_lookups[seq], handle);
+                let res = mmt.ins_lookups[seq].checkpoint(
+                    || self.obj.lookup(&key, handle).map_or(None, |v| Some(*v)),
+                    handle,
+                );
 
                 assert!(res.is_some(), "tid:{tid}, seq:{seq}");
-                testee.report(seq, *res.unwrap());
+                testee.report(seq, res.unwrap());
 
                 // delete and lookup
                 assert!(self.obj.delete(&key, &mut mmt.deletes[seq], handle).is_ok());
-                let res = self.obj.lookup(&key, &mut mmt.del_lookups[seq], handle);
+                let res = mmt.del_lookups[seq].checkpoint(
+                    || self.obj.lookup(&key, handle).map_or(None, |v| Some(*v)),
+                    handle,
+                );
 
                 assert!(res.is_none(), "tid:{tid}, seq:{seq}");
             }
