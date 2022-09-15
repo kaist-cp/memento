@@ -88,13 +88,13 @@ pub struct Delete(Failed);
 /// Atomic pointer for use of `Insert' and `Delete`
 #[derive(Debug, Collectable)]
 pub struct SMOAtomic<N: Node + Collectable> {
-    inner: PAtomic<N>, // TODO: CachePadded
+    inner: CachePadded<PAtomic<N>>,
 }
 
 impl<N: Node + Collectable> Default for SMOAtomic<N> {
     fn default() -> Self {
         Self {
-            inner: PAtomic::null(),
+            inner: CachePadded::new(PAtomic::null()),
         }
     }
 }
@@ -102,7 +102,7 @@ impl<N: Node + Collectable> Default for SMOAtomic<N> {
 impl<N: Node + Collectable> From<PShared<'_, N>> for SMOAtomic<N> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
-            inner: PAtomic::from(node),
+            inner: CachePadded::new(PAtomic::from(node)),
         }
     }
 }
@@ -184,7 +184,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
 
                 let now = rdtsc();
                 if now > start + Self::PATIENCE {
-                    persist_obj(&self.inner, false);
+                    persist_obj(&*self.inner, false);
                     match self.inner.compare_exchange(
                         old,
                         old.with_aux_bit(0),
@@ -243,7 +243,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             // retry for the property of strong CAS
         }
 
-        persist_obj(&self.inner, false);
+        persist_obj(&*self.inner, false);
         let _ = self.inner.compare_exchange(
             new.with_aux_bit(1),
             new,
@@ -260,7 +260,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
     pub fn load<'g>(&self, persist: bool, ord: Ordering, guard: &'g Guard) -> PShared<'g, N> {
         let cur = self.inner.load(ord, guard);
         if persist {
-            persist_obj(&self.inner, true);
+            persist_obj(&*self.inner, true);
         }
         cur
     }
@@ -296,7 +296,7 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             return Err(e.current);
         }
 
-        persist_obj(&self.inner, true);
+        persist_obj(&*self.inner, true);
         Ok(())
     }
 

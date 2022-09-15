@@ -134,8 +134,10 @@ impl CasHelp {
 }
 
 #[derive(Debug, Default, Collectable)]
+pub(crate) struct CasHelpDescriptor(CachePadded<CasHelpDescriptorInner>);
 
-pub(crate) struct CasHelpDescriptor {
+#[derive(Debug, Default, Collectable)]
+struct CasHelpDescriptorInner {
     tmp_new: AtomicUsize,
     seq: AtomicUsize, // sequence of help descriptor
 }
@@ -144,13 +146,13 @@ pub(crate) struct CasHelpDescriptor {
 #[derive(Debug, Collectable)]
 pub struct DetectableCASAtomic<N: Collectable> {
     /// Atomic pointer
-    pub inner: PAtomic<N>, // TODO: CachePadded
+    pub inner: CachePadded<PAtomic<N>>,
 }
 
 impl<N: Collectable> Default for DetectableCASAtomic<N> {
     fn default() -> Self {
         Self {
-            inner: PAtomic::null(),
+            inner: CachePadded::new(PAtomic::null()),
         }
     }
 }
@@ -164,7 +166,7 @@ impl<N: Collectable> PDefault for DetectableCASAtomic<N> {
 impl<N: Collectable> From<PShared<'_, N>> for DetectableCASAtomic<N> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
-            inner: PAtomic::from(node),
+            inner: CachePadded::new(PAtomic::from(node)),
         }
     }
 }
@@ -212,7 +214,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // If successful, persist the location
-            persist_obj(&self.inner, true);
+            persist_obj(&*self.inner, true);
 
             // Checkpoint success
             let t = mmt.buf[stale].checkpoint_succ(!p_own, handle);
@@ -329,7 +331,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // If successful, persist the location
-            persist_obj(&self.inner, true);
+            persist_obj(&*self.inner, true);
 
             // 2. Second cas
             // By inserting a pointer with tid removed, it prevents further helping.
@@ -421,7 +423,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 }
             };
             // Persist the pointer before registering help descriptor
-            persist_obj(&self.inner, false);
+            persist_obj(&*self.inner, false);
 
             // If non-detectable CAS is proceeded, just CAS to clean ptr w/o help announcement.
             if Self::is_non_detectable_cas(old) {
@@ -475,13 +477,14 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         assert!(old.desc_bit() == 0);
         let (my_tid, my_help_desc) = (
             handle.tid,
-            &handle.pool.exec_info.cas_info.help_desc[handle.tid],
+            &*handle.pool.exec_info.cas_info.help_desc[handle.tid].0,
         );
 
         // 1. Set my descriptor
         let my_new_seq = my_help_desc.seq.load(Ordering::SeqCst) + 1;
         my_help_desc.seq.store(my_new_seq, Ordering::SeqCst);
         // TODO: Add fence here after relaxing.
+        // persist ordering is guaranteed because it lies in same cache line.
         my_help_desc
             .tmp_new
             .store(old.into_usize(), Ordering::SeqCst);
@@ -515,6 +518,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let winner_tmp_new = unsafe {
             PShared::<N>::from_usize(
                 cas_info.help_desc[old.tid()] // `old.tid` is leader of help.
+                    .0
                     .tmp_new
                     .load(Ordering::SeqCst),
             )
@@ -526,7 +530,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             .with_desc_bit(0)
             .with_tid(0)
             .into_usize();
-        if seq != cas_info.help_desc[old.tid()].seq.load(Ordering::SeqCst) {
+        if seq != cas_info.help_desc[old.tid()].0.seq.load(Ordering::SeqCst) {
             // This help has already done.
             return Err(self.inner.load(Ordering::SeqCst, &handle.guard));
         }
@@ -545,7 +549,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let res =
             self.inner
                 .compare_exchange(old, winner_new, Ordering::SeqCst, Ordering::SeqCst, guard);
-        persist_obj(&self.inner, true); // persist before return
+        persist_obj(&*self.inner, true); // persist before return
         res.map_err(|e| e.current)
     }
 }

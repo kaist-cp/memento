@@ -41,7 +41,7 @@ impl<T: Collectable> Drop for Node<T> {
 #[derive(Debug, Memento, Collectable)]
 pub struct TryPush<T: Collectable + Clone> {
     top: Checkpoint<PAtomic<Node<T>>>,
-    insert: Cas,
+    insert: Cas<Node<T>>,
 }
 
 unsafe impl<T: Collectable + Clone> Send for TryPush<T> {}
@@ -76,7 +76,7 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for Push<T> {}
 /// Try pop memento
 #[derive(Debug, Memento, Collectable)]
 pub struct TryPop<T: Clone + Collectable> {
-    delete: Cas,
+    delete: Cas<Node<T>>,
     top: Checkpoint<PAtomic<Node<T>>>,
 }
 
