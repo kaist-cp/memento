@@ -403,11 +403,22 @@ impl<K: Ord, V: Collectable> List<K, V> {
 
 #[cfg(test)]
 mod test {
+    use std::sync::atomic::AtomicUsize;
+
+    use itertools::Itertools;
+
     use super::*;
     use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;
+
+    lazy_static::lazy_static! {
+        static ref ITEMS: [[AtomicUsize; NR_COUNT]; NR_THREAD+1] = array_init::array_init(|_| array_init::array_init(|_| AtomicUsize::new(INIT)));
+    }
+
+    const INIT: usize = 0;
+    const INSERTED: usize = usize::MAX;
 
     struct InsDelLook {
         inserts: [Insert<TestValue, TestValue>; NR_COUNT],
@@ -458,27 +469,79 @@ mod test {
             for seq in 0..NR_COUNT {
                 let key = TestValue::new(tid, seq);
 
-                // insert and lookup
+                // insert
                 assert!(self
                     .obj
                     .insert(key, key, &mut mmt.inserts[seq], handle)
                     .is_ok());
+                // mark as inserted
+                let _ = ITEMS[tid][seq].compare_exchange(
+                    INIT,
+                    INSERTED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                );
+
+                // decide key to remove
+                let get_key_remove = || {
+                    // check if there is already marked by me
+                    for t in 1..NR_THREAD + 1 {
+                        if ITEMS[t][seq].load(Ordering::SeqCst) == tid {
+                            return TestValue::new(t, seq);
+                        }
+                    }
+                    // mark as removed
+                    let mut tids = (1..NR_THREAD + 1).collect_vec();
+                    tids.rotate_left(tid); // start from tid+1
+                    for t in tids {
+                        if ITEMS[t][seq]
+                            .compare_exchange(INSERTED, tid, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            return TestValue::new(t, seq);
+                        }
+                    }
+
+                    panic!();
+                };
+                let key_remove = get_key_remove();
+
+                // lookup before delete
                 let res = mmt.ins_lookups[seq].checkpoint(
-                    || self.obj.lookup(&key, handle).map_or(None, |v| Some(*v)),
+                    || {
+                        self.obj
+                            .lookup(&key_remove, handle)
+                            .map_or(None, |v| Some(*v))
+                    },
                     handle,
                 );
+                assert!(
+                    res.is_some(),
+                    "tid:{tid}, seq:{seq}, remove{:?}",
+                    key_remove
+                );
 
-                assert!(res.is_some(), "tid:{tid}, seq:{seq}");
-                testee.report(seq, res.unwrap());
+                // delete
+                assert!(self
+                    .obj
+                    .delete(&key_remove, &mut mmt.deletes[seq], handle)
+                    .is_ok());
 
-                // delete and lookup
-                assert!(self.obj.delete(&key, &mut mmt.deletes[seq], handle).is_ok());
+                // lookup after delete
                 let res = mmt.del_lookups[seq].checkpoint(
-                    || self.obj.lookup(&key, handle).map_or(None, |v| Some(*v)),
+                    || {
+                        self.obj
+                            .lookup(&key_remove, handle)
+                            .map_or(None, |v| Some(*v))
+                    },
                     handle,
                 );
-
-                assert!(res.is_none(), "tid:{tid}, seq:{seq}");
+                assert!(
+                    res.is_none(),
+                    "tid:{tid}, seq:{seq}, remove:{:?}",
+                    key_remove
+                );
+                testee.report(seq, key_remove);
             }
         }
     }
@@ -487,6 +550,8 @@ mod test {
     fn ins_del_look() {
         const FILE_NAME: &str = "list";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        lazy_static::initialize(&ITEMS);
 
         run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
