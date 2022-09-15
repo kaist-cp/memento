@@ -1844,7 +1844,7 @@ mod simple_test {
 
 #[cfg(test)]
 mod test {
-    use crate::test_utils::tests::*;
+    use crate::test_utils::{distributer::Distributer, tests::*};
     use crossbeam_channel as channel;
 
     use super::*;
@@ -1854,6 +1854,12 @@ mod test {
 
     static mut SEND: Option<[Option<Sender<()>>; NR_THREAD + 1]> = None;
     static mut RECV: Option<Receiver<()>> = None;
+
+    const PADDED: usize = NR_THREAD + 1; // TODO: How to remove this?
+
+    lazy_static::lazy_static! {
+        static ref ITEMS: Distributer<PADDED, NR_COUNT> = Distributer::new();
+    }
 
     struct InsDelLook {
         resize: Resize<TestValue, TestValue>,
@@ -1924,22 +1930,47 @@ mod test {
                             .obj
                             .insert(key, key, &send, &mut mmt.inserts[seq], handle)
                             .is_ok());
+
+                        // make it can be removed by other thread
+                        let _ = ITEMS.produce(tid, seq);
+
+                        // decide key to delete
+                        let (t_producer, _) = ITEMS.consume(tid, seq).unwrap();
+                        let key_delete = TestValue::new(t_producer, seq);
+
+                        // lookup before delete
                         let res = mmt.ins_lookups[seq].checkpoint(
-                            || self.obj.search(&key, handle).map_or(None, |v| Some(*v)),
+                            || {
+                                self.obj
+                                    .search(&key_delete, handle)
+                                    .map_or(None, |v| Some(*v))
+                            },
                             handle,
                         );
 
-                        assert!(res.is_some(), "tid:{tid}, seq:{seq}");
-                        testee.report(seq, res.unwrap());
+                        assert!(
+                            res.is_some(),
+                            "tid:{tid}, seq:{seq}, remove:{:?}",
+                            key_delete
+                        );
 
                         // delete and lookup
                         assert!(self.obj.delete(&key, &mut mmt.deletes[seq], handle));
                         let res = mmt.del_lookups[seq].checkpoint(
-                            || self.obj.search(&key, handle).map_or(None, |v| Some(*v)),
+                            || {
+                                self.obj
+                                    .search(&key_delete, handle)
+                                    .map_or(None, |v| Some(*v))
+                            },
                             handle,
                         );
 
-                        assert!(res.is_none(), "tid:{tid}, seq:{seq}");
+                        assert!(
+                            res.is_none(),
+                            "tid:{tid}, seq:{seq}, remove:{:?}",
+                            key_delete
+                        );
+                        testee.report(seq, key_delete);
                     }
                 }
             }
@@ -1950,6 +1981,8 @@ mod test {
     fn clevel_ins_del_look() {
         const FILE_NAME: &str = "clevel";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        lazy_static::initialize(&ITEMS);
 
         let (send, recv) = channel::bounded(1024);
         unsafe {
