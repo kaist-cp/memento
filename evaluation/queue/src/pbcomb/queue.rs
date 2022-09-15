@@ -139,7 +139,7 @@ lazy_static::lazy_static! {
     static ref D_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 }
 
-/// TODO: doc
+/// TODO(seungmin): doc
 #[derive(Debug)]
 pub struct PBCombQueue {
     /// Shared non-volatile variables
@@ -680,7 +680,7 @@ pub struct TestPBCombQueue {
 
 impl Collectable for TestPBCombQueue {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 
@@ -706,7 +706,7 @@ pub struct TestPBCombQueueEnqDeq<const PAIR: bool, const FD: bool> {
 
 impl<const PAIR: bool, const FD: bool> Collectable for TestPBCombQueueEnqDeq<PAIR, FD> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 

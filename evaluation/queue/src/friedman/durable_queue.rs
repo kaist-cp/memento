@@ -47,7 +47,7 @@ struct DurableQueue<T: Clone> {
 
 impl<T: Clone> Collectable for DurableQueue<T> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 

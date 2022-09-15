@@ -73,7 +73,7 @@ struct LogQueue<T: Clone> {
 
 impl<T: Clone> Collectable for LogQueue<T> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 
@@ -271,7 +271,7 @@ pub struct TestLogQueue {
 
 impl Collectable for TestLogQueue {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 
@@ -296,7 +296,7 @@ pub struct TestLogQueueEnqDeq<const PAIR: bool> {
 
 impl<const PAIR: bool> Collectable for TestLogQueueEnqDeq<PAIR> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 

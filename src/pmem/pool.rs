@@ -430,7 +430,7 @@ impl Pool {
         Ok(pool)
     }
 
-    /// TODO(doc)
+    /// TODO(seungmin): Docuement
     pub fn remove(filepath: &str) -> Result<(), Error> {
         fs::remove_file(&(filepath.to_owned() + "_basemd"))?;
         fs::remove_file(&(filepath.to_owned() + "_desc"))?;

@@ -22,7 +22,7 @@ pub struct TestPCas {
 
 impl Collectable for TestPCas {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 
@@ -158,7 +158,7 @@ pub struct TestPMwCas {
 
 impl Collectable for TestPMwCas {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 

@@ -72,7 +72,7 @@ pub enum TestTarget {
     DSSQueue(TestKind),
     PBCombQueue(TestKind),
     PBCombQueueFullDetectable(TestKind),
-    CrndmQueue(TestKind), // TODO: CrndmQueue -> CorundumQueue
+    CrndmQueue(TestKind), // TODO(seungmin): CrndmQueue -> CorundumQueue
 }
 
 #[derive(Clone, Copy, Debug)]

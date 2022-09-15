@@ -76,7 +76,7 @@ pub struct DSSQueue<T: Clone> {
 
 impl<T: Clone> Collectable for DSSQueue<T> {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 

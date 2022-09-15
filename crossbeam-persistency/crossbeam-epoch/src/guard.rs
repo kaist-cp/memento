@@ -411,7 +411,7 @@ impl Guard {
         unsafe { self.local.as_ref().map(|local| local.collector()) }
     }
 
-    /// TODO: doc
+    /// TODO(seungmin): doc
     pub fn defer_persist<T>(&self, obj: &T) {
         if let Some(local) = unsafe { self.local.as_ref() } {
             local.push_persist(obj);

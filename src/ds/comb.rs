@@ -395,7 +395,7 @@ pub mod combining_lock {
         ///
         /// # Safety
         ///
-        /// TODO: Write Safety section
+        /// TODO(seungmin): Write Safety section
         ///
         /// unlock the lock with given ptr
         pub unsafe fn unlock(&self, ptr: usize) {

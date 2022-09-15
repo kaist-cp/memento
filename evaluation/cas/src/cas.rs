@@ -19,7 +19,7 @@ pub struct TestCas {
 
 impl Collectable for TestCas {
     fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        todo!()
+        // TODO(seungmin): derive
     }
 }
 

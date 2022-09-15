@@ -209,7 +209,6 @@ impl<T: Clone + Collectable> Queue<T> {
             return Err(TryFail);
         }
 
-        // TODO(must): This pattern is abstruse. How about returning depends on whether insert was rec success or not?
         if !handle.rec.load(Ordering::Relaxed) {
             let _ =
                 self.tail

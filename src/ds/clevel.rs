@@ -712,7 +712,7 @@ fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bu
     alloc_persist(Node::from(PAtomic::from(data)), pool)
 }
 
-// TODO: Compile
+// TODO(seungmin): Compile... or erase...? Please think about this.
 // impl<K, V: Collectable> Drop for Clevel<K, V> {
 //     fn drop(&mut self) {
 //         let pool = global_pool().unwrap();
@@ -1221,7 +1221,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             println!("[resize] Do resize!");
             let ctx = self.context.load(Ordering::Acquire, handle);
             self.resize_inner(ctx, &mut mmt.resize_inner, handle);
-            // handle.guard.repin_after(|| {}); // TODO: uncomment
+            // handle.guard.repin_after(|| {}); // TODO(seungmin): Change types of members in `Handle` so that we can uncomment here.
         }
     }
 
