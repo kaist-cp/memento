@@ -119,7 +119,7 @@ impl<K, V: Collectable> Default for MoveIfResized<K, V> {
 pub struct MoveIfResizedInner<K, V: Collectable> {
     prev_slot_chk: Checkpoint<PPtr<DetectableCASAtomic<Slot<K, V>>>>,
     context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
-    slot_cas: Cas,
+    slot_cas: Cas<Slot<K, V>>,
     insert_inner: InsertInner<K, V>,
 }
 
@@ -156,7 +156,7 @@ impl<K, V: Collectable> Default for InsertInner<K, V> {
 #[derive(Debug, Memento, Collectable)]
 pub struct TrySlotInsert<K, V: Collectable> {
     slot_chk: Checkpoint<Option<(usize, PPtr<DetectableCASAtomic<Slot<K, V>>>)>>,
-    slot_cas: Cas,
+    slot_cas: Cas<Slot<K, V>>,
     fail: Checkpoint<()>,
 }
 
@@ -175,7 +175,7 @@ impl<K, V: Collectable> Default for TrySlotInsert<K, V> {
 pub struct AddLevel<K, V: Collectable> {
     next_level: NextLevel<K, V>,
     ctx_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
-    ctx_cas: Cas,
+    ctx_cas: Cas<Context<K, V>>,
     ctx_chk: Checkpoint<PAtomic<Context<K, V>>>,
     len_size_chk: Checkpoint<bool>,
 }
@@ -197,7 +197,7 @@ impl<K, V: Collectable> Default for AddLevel<K, V> {
 pub struct NextLevel<K, V: Collectable> {
     next_level_chk: Checkpoint<PAtomic<Node<Bucket<K, V>>>>,
     my_node_chk: Checkpoint<PAtomic<Node<Bucket<K, V>>>>,
-    next_cas: Cas,
+    next_cas: Cas<Node<Bucket<K, V>>>,
 }
 
 impl<K, V: Collectable> Default for NextLevel<K, V> {
@@ -213,7 +213,7 @@ impl<K, V: Collectable> Default for NextLevel<K, V> {
 /// Delete client
 #[derive(Debug, Memento, Collectable)]
 pub struct TryDelete<K, V: Collectable> {
-    slot_cas: Cas,
+    slot_cas: Cas<Slot<K, V>>,
     find_result_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
 }
 
@@ -278,7 +278,7 @@ impl<K, V: Collectable> Default for ResizeInner<K, V> {
 #[derive(Debug, Memento, Collectable)]
 pub struct ResizeClean<K, V: Collectable> {
     slot_slot_ptr_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
-    slot_cas: Cas,
+    slot_cas: Cas<Slot<K, V>>,
     resize_move: ResizeMove<K, V>,
 }
 
@@ -297,7 +297,7 @@ impl<K, V: Collectable> Default for ResizeClean<K, V> {
 pub struct ResizeChangeContext<K, V: Collectable> {
     ctx_chk: Checkpoint<PAtomic<Context<K, V>>>,
     ctx_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
-    ctx_cas: Cas,
+    ctx_cas: Cas<Context<K, V>>,
 }
 
 impl<K, V: Collectable> Default for ResizeChangeContext<K, V> {
@@ -347,7 +347,7 @@ impl<K, V: Collectable> Default for ResizeMoveInner<K, V> {
 pub struct ResizeMoveSlotInsert<K, V: Collectable> {
     slot_slot_first_chk:
         Checkpoint<Option<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
-    slot_cas: Cas,
+    slot_cas: Cas<Slot<K, V>>,
     fail: Checkpoint<()>,
 }
 
