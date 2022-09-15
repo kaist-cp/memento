@@ -43,7 +43,6 @@ impl TestNOps for TestMementoList {}
 pub struct TestMementoInsDelRd {
     ins: CachePadded<Insert<usize, usize>>,
     del: CachePadded<Delete<usize, usize>>,
-    rd: CachePadded<Lookup<usize, usize>>,
 }
 
 impl Default for TestMementoInsDelRd {
@@ -51,7 +50,6 @@ impl Default for TestMementoInsDelRd {
         Self {
             ins: CachePadded::new(Default::default()),
             del: CachePadded::new(Default::default()),
-            rd: CachePadded::new(Default::default()),
         }
     }
 }
@@ -69,8 +67,6 @@ impl RootObj<TestMementoInsDelRd> for TestMementoList {
                     .unwrap();
                 let del = unsafe { (&*mmt.del as *const _ as *mut Delete<usize, usize>).as_mut() }
                     .unwrap();
-                let rd = unsafe { (&*mmt.rd as *const _ as *mut Lookup<usize, usize>).as_mut() }
-                    .unwrap();
 
                 let op = fast_random_range(1, 100);
                 let key = fast_random_range(1, unsafe { KEY_RANGE });
@@ -79,7 +75,7 @@ impl RootObj<TestMementoInsDelRd> for TestMementoList {
                 } else if op <= unsafe { INSERT_RATIO } + unsafe { DELETE_RATIO } {
                     let _ = list.delete(&key, del, handle);
                 } else {
-                    let _ = list.lookup(&key, rd, handle);
+                    let _ = list.lookup(&key, handle);
                 }
             },
             tid,
