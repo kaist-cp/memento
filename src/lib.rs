@@ -37,7 +37,9 @@
 #![feature(core_intrinsics)]
 #![feature(update_panic_count)] // to simulate thread crash
 #![feature(rt)] // to simulate thread crash
-#![feature(generic_arg_infer)]
+#![feature(bool_to_option)] // to simulate thread crash
+#![feature(generic_arg_infer)] // to simulate thread crash
+#![feature(backtrace)] // to debug test
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![recursion_limit = "512"]
