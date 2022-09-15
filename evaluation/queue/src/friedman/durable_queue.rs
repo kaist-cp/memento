@@ -46,9 +46,7 @@ struct DurableQueue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for DurableQueue<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl<T: Clone> PDefault for DurableQueue<T> {

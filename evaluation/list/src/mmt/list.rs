@@ -12,15 +12,9 @@ use crate::common::{
 };
 
 /// Root obj for evaluation of MementoQueueGeneral
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct TestMementoList {
     list: List<usize, usize>,
-}
-
-impl Collectable for TestMementoList {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
 }
 
 impl PDefault for TestMementoList {

@@ -458,7 +458,6 @@ mod test {
     }
 
     impl RootObj<InsDelLook> for TestRootObj<List<TestValue, TestValue>> {
-        // TODO(seungmin): Change test
         fn run(&self, mmt: &mut InsDelLook, handle: &Handle) {
             let tid = handle.tid;
             let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };

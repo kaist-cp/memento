@@ -139,7 +139,7 @@ lazy_static::lazy_static! {
     static ref D_LOCK_VALUE: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 }
 
-/// TODO(seungmin): doc
+/// PBComb Queue
 #[derive(Debug)]
 pub struct PBCombQueue {
     /// Shared non-volatile variables

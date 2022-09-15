@@ -72,9 +72,7 @@ struct LogQueue<T: Clone> {
 }
 
 impl<T: Clone> Collectable for LogQueue<T> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
+    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {}
 }
 
 impl<T: Clone> PDefault for LogQueue<T> {
@@ -264,15 +262,9 @@ impl<T: Clone> TestQueue for LogQueue<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct TestLogQueue {
     queue: LogQueue<usize>,
-}
-
-impl Collectable for TestLogQueue {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
 }
 
 impl PDefault for TestLogQueue {
@@ -288,16 +280,10 @@ impl PDefault for TestLogQueue {
 
 impl TestNOps for TestLogQueue {}
 
-#[derive(Default, Debug, Memento)]
+#[derive(Default, Debug, Memento, Collectable)]
 pub struct TestLogQueueEnqDeq<const PAIR: bool> {
     /// unique operation number
     op_num: CachePadded<usize>,
-}
-
-impl<const PAIR: bool> Collectable for TestLogQueueEnqDeq<PAIR> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
 }
 
 impl<const PAIR: bool> RootObj<TestLogQueueEnqDeq<PAIR>> for TestLogQueue {

@@ -712,32 +712,6 @@ fn new_node<K, V: Collectable>(size: usize, pool: &PoolHandle) -> POwned<Node<Bu
     alloc_persist(Node::from(PAtomic::from(data)), pool)
 }
 
-// TODO(seungmin): Compile... or erase...? Please think about this.
-// impl<K, V: Collectable> Drop for Clevel<K, V> {
-//     fn drop(&mut self) {
-//         let pool = global_pool().unwrap();
-//         let guard = unsafe { epoch::unprotected() };
-//         let context = self.context.load(Ordering::Relaxed, guard, pool);
-//         let context_ref = unsafe { context.deref(pool) };
-
-//         let mut node = context_ref.last_level.load(Ordering::Relaxed, guard);
-//         while let Some(node_ref) = unsafe { node.as_ref(pool) } {
-//             let next = node_ref.next.load(Ordering::Relaxed, guard, pool);
-//             let data = unsafe { node_ref.data.load(Ordering::Relaxed, guard).deref(pool) };
-//             for bucket in data.iter() {
-//                 for slot in unsafe { bucket.assume_init_ref().slots.iter() } {
-//                     let slot_ptr = slot.load(Ordering::Relaxed, guard, pool);
-//                     if !slot_ptr.is_null() {
-//                         unsafe { guard.defer_pdestroy(slot_ptr) };
-//                     }
-//                 }
-//             }
-//             unsafe { guard.defer_pdestroy(node) };
-//             node = next;
-//         }
-//     }
-// }
-
 impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     /// Check if resizing
     pub fn is_resizing(&self, handle: &Handle) -> bool {

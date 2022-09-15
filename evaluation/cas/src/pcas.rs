@@ -16,14 +16,9 @@ use crate::{
     TOTAL_NOPS_FAILED,
 };
 
+#[derive(Collectable)]
 pub struct TestPCas {
     locs: PFixedVec<PAtomic<Node>>,
-}
-
-impl Collectable for TestPCas {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
 }
 
 impl PDefault for TestPCas {
@@ -152,14 +147,9 @@ impl Default for PMwCasDescriptor {
     }
 }
 
+#[derive(Collectable)]
 pub struct TestPMwCas {
     locs: PFixedVec<PAtomic<Node>>,
-}
-
-impl Collectable for TestPMwCas {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
 }
 
 impl PDefault for TestPMwCas {
