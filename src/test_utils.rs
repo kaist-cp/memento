@@ -517,3 +517,62 @@ pub mod tests {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) mod distributer {
+    use std::sync::atomic::AtomicUsize;
+
+    use atomic::Ordering;
+    use itertools::Itertools;
+
+    pub(crate) struct Distributer<const NR_THREAD: usize, const NR_COUNT: usize> {
+        items: [[AtomicUsize; NR_COUNT]; NR_THREAD],
+    }
+
+    impl<const NR_THREAD: usize, const NR_COUNT: usize> Distributer<NR_THREAD, NR_COUNT> {
+        const NONE: usize = 0;
+        const PRODUCED: usize = usize::MAX;
+
+        pub(crate) fn new() -> Self {
+            Self {
+                items: array_init::array_init(|_| {
+                    array_init::array_init(|_| AtomicUsize::new(Self::NONE))
+                }),
+            }
+        }
+
+        /// Mark items[tid][seq] as produced so that other thread can consume this.
+        pub(crate) fn produce(&self, tid: usize, seq: usize) -> bool {
+            self.items[tid][seq]
+                .compare_exchange(
+                    Self::NONE,
+                    Self::PRODUCED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+        }
+
+        /// Mark items[tid][seq] as consumed.
+        pub(crate) fn consume(&self, tid: usize, seq: usize) -> Option<(usize, usize)> {
+            // check if there is already marked by me
+            for t in 0..NR_THREAD {
+                if self.items[t][seq].load(Ordering::SeqCst) == tid {
+                    return Some((t, seq));
+                }
+            }
+            // mark as consumed
+            let mut tids = (0..NR_THREAD).collect_vec();
+            tids.rotate_left(tid); // start from tid+1
+            for t in tids {
+                if self.items[t][seq]
+                    .compare_exchange(Self::PRODUCED, tid, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    return Some((t, seq));
+                }
+            }
+            return None;
+        }
+    }
+}

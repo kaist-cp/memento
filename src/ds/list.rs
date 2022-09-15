@@ -403,11 +403,19 @@ impl<K: Ord, V: Collectable> List<K, V> {
 
 #[cfg(test)]
 mod test {
+    use test_utils::distributer::*;
+
     use super::*;
     use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;
+
+    const PADDED: usize = NR_THREAD + 1; // TODO: How to remove this?
+
+    lazy_static::lazy_static! {
+        static ref ITEMS: Distributer<PADDED, NR_COUNT> = Distributer::new();
+    }
 
     struct InsDelLook {
         inserts: [Insert<TestValue, TestValue>; NR_COUNT],
@@ -458,27 +466,55 @@ mod test {
             for seq in 0..NR_COUNT {
                 let key = TestValue::new(tid, seq);
 
-                // insert and lookup
+                // insert
                 assert!(self
                     .obj
                     .insert(key, key, &mut mmt.inserts[seq], handle)
                     .is_ok());
+
+                // make it can be removed by other thread
+                let _ = ITEMS.produce(tid, seq);
+
+                // decide key to delete
+                let (t_producer, _) = ITEMS.consume(tid, seq).unwrap();
+                let key_delete = TestValue::new(t_producer, seq);
+
+                // lookup before delete
                 let res = mmt.ins_lookups[seq].checkpoint(
-                    || self.obj.lookup(&key, handle).map_or(None, |v| Some(*v)),
+                    || {
+                        self.obj
+                            .lookup(&key_delete, handle)
+                            .map_or(None, |v| Some(*v))
+                    },
                     handle,
                 );
+                assert!(
+                    res.is_some(),
+                    "tid:{tid}, seq:{seq}, remove{:?}",
+                    key_delete
+                );
 
-                assert!(res.is_some(), "tid:{tid}, seq:{seq}");
-                testee.report(seq, res.unwrap());
+                // delete
+                assert!(self
+                    .obj
+                    .delete(&key_delete, &mut mmt.deletes[seq], handle)
+                    .is_ok());
 
-                // delete and lookup
-                assert!(self.obj.delete(&key, &mut mmt.deletes[seq], handle).is_ok());
+                // lookup after delete
                 let res = mmt.del_lookups[seq].checkpoint(
-                    || self.obj.lookup(&key, handle).map_or(None, |v| Some(*v)),
+                    || {
+                        self.obj
+                            .lookup(&key_delete, handle)
+                            .map_or(None, |v| Some(*v))
+                    },
                     handle,
                 );
-
-                assert!(res.is_none(), "tid:{tid}, seq:{seq}");
+                assert!(
+                    res.is_none(),
+                    "tid:{tid}, seq:{seq}, remove:{:?}",
+                    key_delete
+                );
+                testee.report(seq, key_delete);
             }
         }
     }
@@ -487,6 +523,8 @@ mod test {
     fn ins_del_look() {
         const FILE_NAME: &str = "list";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        lazy_static::initialize(&ITEMS);
 
         run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
