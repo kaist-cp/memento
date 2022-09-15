@@ -403,9 +403,7 @@ impl<K: Ord, V: Collectable> List<K, V> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::atomic::AtomicUsize;
-
-    use itertools::Itertools;
+    use test_utils::distributer::*;
 
     use super::*;
     use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
@@ -413,12 +411,11 @@ mod test {
     const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;
 
-    lazy_static::lazy_static! {
-        static ref ITEMS: [[AtomicUsize; NR_COUNT]; NR_THREAD+1] = array_init::array_init(|_| array_init::array_init(|_| AtomicUsize::new(INIT)));
-    }
+    const PADDED: usize = NR_THREAD + 1; // TODO: How to remove this?
 
-    const INIT: usize = 0;
-    const INSERTED: usize = usize::MAX;
+    lazy_static::lazy_static! {
+        static ref ITEMS: Distributer<PADDED, NR_COUNT> = Distributer::new();
+    }
 
     struct InsDelLook {
         inserts: [Insert<TestValue, TestValue>; NR_COUNT],
@@ -474,43 +471,19 @@ mod test {
                     .obj
                     .insert(key, key, &mut mmt.inserts[seq], handle)
                     .is_ok());
-                // mark as inserted
-                let _ = ITEMS[tid][seq].compare_exchange(
-                    INIT,
-                    INSERTED,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                );
 
-                // decide key to remove
-                let get_key_remove = || {
-                    // check if there is already marked by me
-                    for t in 1..NR_THREAD + 1 {
-                        if ITEMS[t][seq].load(Ordering::SeqCst) == tid {
-                            return TestValue::new(t, seq);
-                        }
-                    }
-                    // mark as removed
-                    let mut tids = (1..NR_THREAD + 1).collect_vec();
-                    tids.rotate_left(tid); // start from tid+1
-                    for t in tids {
-                        if ITEMS[t][seq]
-                            .compare_exchange(INSERTED, tid, Ordering::SeqCst, Ordering::SeqCst)
-                            .is_ok()
-                        {
-                            return TestValue::new(t, seq);
-                        }
-                    }
+                // make it can be removed by other thread
+                let _ = ITEMS.produce(tid, seq);
 
-                    panic!();
-                };
-                let key_remove = get_key_remove();
+                // decide key to delete
+                let (t_producer, _) = ITEMS.consume(tid, seq).unwrap();
+                let key_delete = TestValue::new(t_producer, seq);
 
                 // lookup before delete
                 let res = mmt.ins_lookups[seq].checkpoint(
                     || {
                         self.obj
-                            .lookup(&key_remove, handle)
+                            .lookup(&key_delete, handle)
                             .map_or(None, |v| Some(*v))
                     },
                     handle,
@@ -518,20 +491,20 @@ mod test {
                 assert!(
                     res.is_some(),
                     "tid:{tid}, seq:{seq}, remove{:?}",
-                    key_remove
+                    key_delete
                 );
 
                 // delete
                 assert!(self
                     .obj
-                    .delete(&key_remove, &mut mmt.deletes[seq], handle)
+                    .delete(&key_delete, &mut mmt.deletes[seq], handle)
                     .is_ok());
 
                 // lookup after delete
                 let res = mmt.del_lookups[seq].checkpoint(
                     || {
                         self.obj
-                            .lookup(&key_remove, handle)
+                            .lookup(&key_delete, handle)
                             .map_or(None, |v| Some(*v))
                     },
                     handle,
@@ -539,9 +512,9 @@ mod test {
                 assert!(
                     res.is_none(),
                     "tid:{tid}, seq:{seq}, remove:{:?}",
-                    key_remove
+                    key_delete
                 );
-                testee.report(seq, key_remove);
+                testee.report(seq, key_delete);
             }
         }
     }
