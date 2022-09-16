@@ -10,7 +10,6 @@ use memento::pmem::{Collectable, GarbageCollection, Pool, PoolHandle, RootObj};
 use memento::{Collectable, Memento};
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
-use std::ptr;
 
 type Key = u64;
 type Value = u64;
@@ -39,8 +38,7 @@ fn get_handle(tid: usize) -> &'static Handle {
     unsafe {
         CNT[tid] += 1;
         if CNT[tid] % 1024 == 0 {
-            let guard = &mut ptr::read(&handle.guard);
-            guard.repin_after(|| {});
+            handle.repin_guard();
         }
     }
     handle

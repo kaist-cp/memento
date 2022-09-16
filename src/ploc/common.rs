@@ -162,6 +162,12 @@ impl Handle {
             pool,
         }
     }
+
+    /// Repin the guard so that deferred destory and persist can be executed
+    pub fn repin_guard(&self) {
+        let guard = unsafe { &mut std::ptr::read(&self.guard) };
+        guard.repin_after(|| {});
+    }
 }
 
 unsafe impl Send for Handle {}
