@@ -9,7 +9,7 @@ use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::ploc::Handle;
 use memento::pmem::ralloc::{Collectable, GarbageCollection};
 use memento::pmem::{mfence, persist_obj, pool::*, sfence, PPtr};
-use memento::{Memento, PDefault};
+use memento::{Collectable, Memento, PDefault};
 use std::sync::atomic::AtomicUsize;
 use tinyvec::tiny_vec;
 
@@ -673,15 +673,9 @@ impl TestQueue for PBCombQueue {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Collectable)]
 pub struct TestPBCombQueue {
     queue: PBCombQueue,
-}
-
-impl Collectable for TestPBCombQueue {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
 }
 
 impl PDefault for TestPBCombQueue {
@@ -697,17 +691,11 @@ impl PDefault for TestPBCombQueue {
 
 impl TestNOps for TestPBCombQueue {}
 
-#[derive(Debug, Default, Memento)]
+#[derive(Debug, Default, Memento, Collectable)]
 pub struct TestPBCombQueueEnqDeq<const PAIR: bool, const FD: bool> {
     enq_seq: CachePadded<u32>,
     deq_seq: CachePadded<u32>,
     deq_retval: CachePadded<Option<usize>>,
-}
-
-impl<const PAIR: bool, const FD: bool> Collectable for TestPBCombQueueEnqDeq<PAIR, FD> {
-    fn filter(_: &mut Self, _: usize, _: &mut GarbageCollection, _: &mut PoolHandle) {
-        // TODO(seungmin): derive
-    }
 }
 
 impl<const PAIR: bool, const FD: bool> RootObj<TestPBCombQueueEnqDeq<PAIR, FD>>

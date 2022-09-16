@@ -33,7 +33,7 @@ fn parse_target(target: &str, kind: &str) -> TestTarget {
         "dss_queue" => TestTarget::DSSQueue(kind),
         "pbcomb_queue" => TestTarget::PBCombQueue(kind),
         "pbcomb_queue_full_detectable" => TestTarget::PBCombQueueFullDetectable(kind),
-        "crndm_queue" => TestTarget::CrndmQueue(kind),
+        "crndm_queue" => TestTarget::CorundumQueue(kind),
         _ => unreachable!("invalid target"),
     }
 }
@@ -98,7 +98,7 @@ fn bench(opt: &Opt) -> f64 {
         | TestTarget::DSSQueue(_)
         | TestTarget::PBCombQueue(_)
         | TestTarget::PBCombQueueFullDetectable(_)
-        | TestTarget::CrndmQueue(_) => bench_queue(opt, target),
+        | TestTarget::CorundumQueue(_) => bench_queue(opt, target),
     };
     let avg_ops = (nops as f64) / opt.duration;
     println!("avg ops: {}", avg_ops);

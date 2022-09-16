@@ -398,6 +398,7 @@ pub mod tests {
         }
 
         // TODO(seungmin): get handle, not tid
+        // @seungmin: why?
         pub fn testee(&self, tid: usize, checked: bool) -> Testee<'_> {
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];

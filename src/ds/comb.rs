@@ -395,9 +395,7 @@ pub mod combining_lock {
         ///
         /// # Safety
         ///
-        /// TODO(seungmin): Write Safety section
-        ///
-        /// unlock the lock with given ptr
+        /// Only the thread who get `Ok()` as return value from `try_lock()` should call `unlock()`. Also, that thread shouldn't call twice or more for one `try_lock()`.
         pub unsafe fn unlock(&self, ptr: usize) {
             self.inner
                 .store(compose_aux_bit(ptr, Self::RELEASED), Ordering::Release);

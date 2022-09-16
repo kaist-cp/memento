@@ -72,7 +72,7 @@ pub enum TestTarget {
     DSSQueue(TestKind),
     PBCombQueue(TestKind),
     PBCombQueueFullDetectable(TestKind),
-    CrndmQueue(TestKind), // TODO(seungmin): CrndmQueue -> CorundumQueue
+    CorundumQueue(TestKind),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -305,7 +305,7 @@ pub mod queue {
                     }
                 }
             }
-            TestTarget::CrndmQueue(kind) => {
+            TestTarget::CorundumQueue(kind) => {
                 let root = P::open::<TestCrndmQueue>(&opt.filepath, O_128GB | O_CF).unwrap();
 
                 match kind {
