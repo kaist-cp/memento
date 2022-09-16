@@ -316,7 +316,7 @@ mod tests {
     impl RootObj<ExchangeOnce> for TestRootObj<Exchanger<usize>> {
         fn run(&self, xchg_once: &mut ExchangeOnce, handle: &Handle) {
             let tid = handle.tid;
-            let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
+            let _ = unsafe { TESTER.as_ref().unwrap().testee(false, handle) };
 
             assert!(tid == 1 || tid == 2);
 
@@ -369,7 +369,7 @@ mod tests {
         /// After rotation  : [2]  [3]  [1]
         fn run(&self, rotl: &mut RotateLeft, handle: &Handle) {
             let tid = handle.tid;
-            let _ = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
+            let _ = unsafe { TESTER.as_ref().unwrap().testee(false, handle) };
 
             // Alias
             let lxchg = &self.obj[0];

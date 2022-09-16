@@ -315,7 +315,7 @@ mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<CombiningQueue> {
         fn run(&self, enq_deq: &mut EnqDeq, handle: &Handle) {
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(handle.tid, true) };
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
             for seq in 0..NR_COUNT {
                 let _ = self.obj.comb_enqueue(

@@ -887,7 +887,7 @@ mod test {
 
     impl RootObj<Updates> for TestRootObj<Location<TestValue>> {
         fn run(&self, mmt: &mut Updates, handle: &Handle) {
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(handle.tid, true) };
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
             let loc = &self.obj;
 
             for seq in 0..NR_COUNT {

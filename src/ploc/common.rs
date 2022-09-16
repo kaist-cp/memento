@@ -136,6 +136,7 @@ impl ExecInfo {
 #[derive(Debug)]
 pub struct Handle {
     /// Logical tid
+    // TODO: pub(crate)
     pub tid: usize,
 
     /// Maximum checkpoint time checked per thread

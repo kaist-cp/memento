@@ -397,9 +397,8 @@ pub mod tests {
             }
         }
 
-        // TODO(seungmin): get handle, not tid
-        // @seungmin: why?
-        pub fn testee(&self, tid: usize, checked: bool) -> Testee<'_> {
+        pub fn testee(&self, checked: bool, handle: &Handle) -> Testee<'_> {
+            let tid = handle.tid;
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
 

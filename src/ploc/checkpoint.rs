@@ -174,7 +174,7 @@ mod test {
 
     impl RootObj<Checkpoints> for TestRootObj<DummyRootObj> {
         fn run(&self, chks: &mut Checkpoints, handle: &Handle) {
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(handle.tid, true) };
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
             // let mut items: [usize; NR_COUNT] = array_init::array_init(|i| i);
             let mut items = (0..NR_COUNT).collect_vec();

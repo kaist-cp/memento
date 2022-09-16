@@ -100,7 +100,7 @@ pub(crate) mod tests {
         /// - Finally, it is checked whether the results of all pops so far have the correct cumulative count of each tid value.
         fn run(&self, push_pop: &mut PushPop<S, NR_THREAD, COUNT>, handle: &Handle) {
             let tid = handle.tid;
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
             // push; pop;
             for seq in 0..COUNT {

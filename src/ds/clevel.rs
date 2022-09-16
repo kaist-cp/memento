@@ -1689,7 +1689,7 @@ mod simple_test {
         fn run(&self, mmt: &mut Smoke, handle: &Handle) {
             let tid = handle.tid;
 
-            let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
+            let _testee = unsafe { TESTER.as_ref().unwrap().testee(false, handle) };
             let kv = &self.obj;
 
             match tid {
@@ -1766,7 +1766,7 @@ mod simple_test {
     impl RootObj<InsSch> for TestRootObj<Clevel<usize, usize>> {
         fn run(&self, mmt: &mut InsSch, handle: &Handle) {
             let tid = handle.tid;
-            let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
+            let _testee = unsafe { TESTER.as_ref().unwrap().testee(false, handle) };
 
             let kv = &self.obj;
             match tid {
@@ -1886,14 +1886,14 @@ mod test {
             match tid {
                 // T1: Resize loop
                 1 => {
-                    let _testee = unsafe { TESTER.as_ref().unwrap().testee(tid, false) };
+                    let _testee = unsafe { TESTER.as_ref().unwrap().testee(false, handle) };
 
                     let recv = unsafe { RECV.as_ref().unwrap() };
                     self.obj.resize(&recv, &mut mmt.resize, handle);
                 }
                 // Threads other than T1 and T2 perform { insert; lookup; delete; lookup; }
                 _ => {
-                    let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+                    let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
                     let send = unsafe { SEND.as_mut().unwrap()[tid].as_ref().unwrap() };
                     for seq in 0..NR_COUNT {

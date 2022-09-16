@@ -460,7 +460,7 @@ mod test {
     impl RootObj<InsDelLook> for TestRootObj<List<TestValue, TestValue>> {
         fn run(&self, mmt: &mut InsDelLook, handle: &Handle) {
             let tid = handle.tid;
-            let testee = unsafe { TESTER.as_ref().unwrap().testee(tid, true) };
+            let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
             for seq in 0..NR_COUNT {
                 let key = TestValue::new(tid, seq);
