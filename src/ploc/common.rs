@@ -143,6 +143,7 @@ pub struct Handle {
     pub(crate) local_max_time: LocalMaxTime,
 
     /// Recovery flag
+    /// TODO: remove Atomic
     pub(crate) rec: AtomicBool,
 
     /// Guard
