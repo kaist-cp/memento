@@ -146,13 +146,13 @@ struct CasHelpDescriptorInner {
 #[derive(Debug, Collectable)]
 pub struct DetectableCASAtomic<N: Collectable> {
     /// Atomic pointer
-    pub inner: CachePadded<PAtomic<N>>,
+    pub inner: PAtomic<N>,
 }
 
 impl<N: Collectable> Default for DetectableCASAtomic<N> {
     fn default() -> Self {
         Self {
-            inner: CachePadded::new(PAtomic::null()),
+            inner: PAtomic::null(),
         }
     }
 }
@@ -166,7 +166,7 @@ impl<N: Collectable> PDefault for DetectableCASAtomic<N> {
 impl<N: Collectable> From<PShared<'_, N>> for DetectableCASAtomic<N> {
     fn from(node: PShared<'_, N>) -> Self {
         Self {
-            inner: CachePadded::new(PAtomic::from(node)),
+            inner: PAtomic::from(node),
         }
     }
 }
@@ -214,7 +214,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // If successful, persist the location
-            persist_obj(&*self.inner, true);
+            persist_obj(&self.inner, true);
 
             // Checkpoint success
             let t = mmt.buf[stale].checkpoint_succ(!p_own, handle);
@@ -331,7 +331,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
             }
 
             // If successful, persist the location
-            persist_obj(&*self.inner, true);
+            persist_obj(&self.inner, true);
 
             // 2. Second cas
             // By inserting a pointer with tid removed, it prevents further helping.
@@ -423,7 +423,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
                 }
             };
             // Persist the pointer before registering help descriptor
-            persist_obj(&*self.inner, false);
+            persist_obj(&self.inner, false);
 
             // If non-detectable CAS is proceeded, just CAS to clean ptr w/o help announcement.
             if Self::is_non_detectable_cas(old) {
@@ -549,7 +549,7 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         let res =
             self.inner
                 .compare_exchange(old, winner_new, Ordering::SeqCst, Ordering::SeqCst, guard);
-        persist_obj(&*self.inner, true); // persist before return
+        persist_obj(&self.inner, true); // persist before return
         res.map_err(|e| e.current)
     }
 }
