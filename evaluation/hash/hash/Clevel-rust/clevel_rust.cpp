@@ -67,7 +67,7 @@ public:
     CLevelMemento(int tnum = 1)
     {
         char *path = "/mnt/pmem0/clevel_memento";
-        const size_t size = 128UL * 1024 * 1024 * 1024;
+        const size_t size = 256UL * 1024 * 1024 * 1024;
         pool = pool_create(path, size, tnum);
         c = reinterpret_cast<Clevel *>(get_root(RootObj, pool));
         m = (ClevelMemento **)malloc(sizeof(ClevelMemento *) * tnum);
