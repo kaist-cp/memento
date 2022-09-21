@@ -318,12 +318,6 @@ namespace PiBench
     }
 
     is_resizing = tree_->hash_is_resizing();
-    stopwatch_t sw_rsz;
-    sw_rsz.start();
-    while (tree_->hash_is_resizing())
-    {
-    }
-    float elapsed_rsz = sw_rsz.elapsed<std::chrono::microseconds>();
 
 #pragma omp single nowait
     {
@@ -365,7 +359,6 @@ namespace PiBench
     }
     if (opt_.throughput)
     {
-      std::cout << "\tFinal resize time(ms): " << elapsed_rsz / 1000 << std::endl;
       std::cout << "\tRun time(ms): " << elapsed / 1000 << std::endl;
       std::cout << "\tThroughput(Mops/s): " << (float)opt_.num_ops / elapsed
                 << std::endl;
