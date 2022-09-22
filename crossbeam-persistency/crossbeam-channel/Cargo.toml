@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 crossbeam-queue = "0.3.0"
 crossbeam-utils = { path = "../crossbeam-utils" }
+atomic = "0.5"

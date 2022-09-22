@@ -1,139 +1,153 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
+use atomic::Atomic;
 use crossbeam_queue::ArrayQueue;
+use crossbeam_utils::Backoff;
 
 pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
-    let queue = Box::into_raw(Box::new((ArrayQueue::<T>::new(cap))));
-    let cnt_sender = Box::into_raw(Box::new(AtomicUsize::new(1)));
-    let cnt_recver = Box::into_raw(Box::new(AtomicUsize::new(1)));
+    let queue = Box::into_raw(Box::new(ArrayQueue::<T>::new(cap)));
+    let counter = Box::into_raw(Box::new(Counter::default()));
 
     (
         Sender {
             msgs: queue,
-            cnt: cnt_sender,
-            cnt_recver,
+            counter,
         },
         Receiver {
             msgs: queue,
-            cnt: cnt_recver,
-            cnt_sender,
+            counter,
         },
     )
 }
 
 pub struct Sender<T> {
     msgs: *mut ArrayQueue<T>,
-    cnt: *mut AtomicUsize,
-    cnt_recver: *mut AtomicUsize,
+    counter: *mut Counter,
 }
 
 impl<T> Sender<T> {
-    unsafe fn inner(&self) -> &ArrayQueue<T> {
-        todo!()
+    unsafe fn msgs(&self) -> &ArrayQueue<T> {
+        self.msgs.as_ref().unwrap()
     }
 
-    /// Attempts to send a message into the channel without blocking.
-    pub fn try_send(&self, msg: T) -> Result<(), T> {
-        unsafe { self.inner() }.push(msg)
+    unsafe fn counter(&self) -> &Counter {
+        self.counter.as_ref().unwrap()
     }
 
     /// Blocks the current thread until a message is sent or the channel is disconnected.
-    pub fn send(&self, msg: T) {
-        // let backoff = Backoff;
+    pub fn send(&self, msg: T) -> Result<(), T> {
+        let backoff = Backoff::new();
         let mut msg = msg;
-        while let Err(m) = self.try_send(msg) {
-            msg = m
-            // TODO: backoff
+        loop {
+            // return Err if there is no receiver
+            if unsafe { self.counter() }.peek().1 == 0 {
+                return Err(msg);
+            }
+
+            match unsafe { self.msgs() }.push(msg) {
+                Ok(_) => return Ok(()),
+                Err(m) => {
+                    msg = m;
+                    backoff.snooze();
+                }
+            }
         }
     }
 }
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        let _ = unsafe { self.cnt.as_ref() }
-            .unwrap()
-            .fetch_add(1, Ordering::SeqCst);
+        let _ = unsafe { self.counter() }.add(1, 0);
+
         Self {
             msgs: self.msgs.clone(),
-            cnt: self.cnt.clone(),
-            cnt_recver: self.cnt_recver.clone(),
+            counter: self.counter.clone(),
         }
     }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        let cnt_prev = unsafe { self.cnt.as_ref() }
-            .unwrap()
-            .fetch_sub(1, Ordering::SeqCst);
-        if cnt_prev == 1
-            && unsafe { self.cnt_recver.as_ref() }
-                .unwrap()
-                .load(Ordering::SeqCst)
-                == 0
-        {
-            // I am the owner who can drop this channel
-            todo!("drop queue, cnt_sender, cnt_recver")
+        unsafe {
+            if self.counter().add(-1, 0) == (0, 0) {
+                // Drop channel components if i am the last one.
+                drop(Box::from_raw(self.msgs));
+                drop(Box::from_raw(self.counter));
+            }
         }
     }
 }
 
 pub struct Receiver<T> {
-    msgs: *const ArrayQueue<T>,
-    cnt: *const AtomicUsize,
-    cnt_sender: *const AtomicUsize,
+    msgs: *mut ArrayQueue<T>,
+    counter: *mut Counter,
 }
 
 impl<T> Receiver<T> {
-    unsafe fn inner(&self) -> &ArrayQueue<T> {
-        todo!()
+    unsafe fn msgs(&self) -> &ArrayQueue<T> {
+        self.msgs.as_ref().unwrap()
     }
 
-    /// Attempts to receive a message from the channel without blocking.
-    ///
-    /// This method will either receive a message from the channel immediately or return an error
-    /// if the channel is empty.
-    pub fn try_recv(&self) -> Result<T, ()> {
-        unsafe { self.inner() }.pop().ok_or(())
+    unsafe fn counter(&self) -> &Counter {
+        self.counter.as_ref().unwrap()
     }
 
     pub fn recv(&self) -> Result<T, ()> {
-        // let backoff = Backoff;
+        let backoff = Backoff::new();
         loop {
-            if let Ok(msg) = self.try_recv() {
-                return Ok(msg);
+            match unsafe { self.msgs() }.pop() {
+                Some(msg) => return Ok(msg),
+                None => {
+                    // return Err if there is no sender and no messages in the buffer.
+                    if unsafe { self.counter() }.peek().0 == 0 {
+                        return Err(());
+                    }
+                    backoff.snooze()
+                }
             }
-            // TODO: backoff
-        }
-    }
-}
-
-impl<T> Clone for Receiver<T> {
-    fn clone(&self) -> Self {
-        let _ = unsafe { self.cnt.as_ref() }
-            .unwrap()
-            .fetch_add(1, Ordering::SeqCst);
-        Self {
-            msgs: self.msgs.clone(),
-            cnt: self.cnt.clone(),
-            cnt_sender: self.cnt_sender.clone(),
         }
     }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        let cnt_prev = unsafe { self.cnt.as_ref() }
-            .unwrap()
-            .fetch_sub(1, Ordering::SeqCst);
-        if cnt_prev == 1
-            && unsafe { self.cnt_sender.as_ref() }
-                .unwrap()
-                .load(Ordering::SeqCst)
-                == 0
-        {
-            // I am the owner who can drop this channel
-            todo!("drop queue, cnt_sender, cnt_recver")
+        unsafe {
+            if self.counter().add(0, -1) == (0, 0) {
+                // Drop channel components if i am the last one.
+                drop(Box::from_raw(self.msgs));
+                drop(Box::from_raw(self.counter));
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct Counter {
+    // left: number of sender
+    // right: number of receiver (n<=1 in this implementation because it is mpsc)
+    sender_recver: Atomic<(u32, u32)>,
+}
+
+impl Counter {
+    fn peek(&self) -> (u32, u32) {
+        self.sender_recver.load(Ordering::SeqCst)
+    }
+
+    fn add(&self, left: i32, right: i32) -> (u32, u32) {
+        let backoff = Backoff::new();
+        loop {
+            let old = self.sender_recver.load(Ordering::SeqCst); // (cnt_sender, cnt_recver)
+            let new = (old.0 + left as u32, old.1 + right as u32); // (cnt_sender + left, cnt_recver + right);
+
+            if self
+                .sender_recver
+                .compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return new;
+            }
+
+            backoff.snooze();
         }
     }
 }
