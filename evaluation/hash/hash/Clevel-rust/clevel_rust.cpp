@@ -79,9 +79,10 @@ public:
         }
 
         // `tnum+1` thread is only for resize loop
-        ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tnum + 1, pool));
-        thread_init(tnum, pool);
-        std::thread{run_resize, m_resize, c, tnum}.detach();
+        int tid_resize = tnum + 1;
+        ClevelMemento *m_resize = reinterpret_cast<ClevelMemento *>(get_root(MementoStart + tid_resize, pool));
+        thread_init(tid_resize, pool);
+        std::thread{run_resize, m_resize, c, tid_resize}.detach();
     }
     ~CLevelMemento(){};
     bool hash_is_resizing()
