@@ -22,7 +22,10 @@ stress = []
 mmt_derive = { path = "./src/derive" }
 crossbeam-epoch = { path = "./crossbeam-persistency/crossbeam-epoch" }
 crossbeam-utils = { path = "./crossbeam-persistency/crossbeam-utils" }
-crossbeam-channel = "0.5.6"
+# crossbeam-channel = "0.5.6"
+
+crossbeam-channel = { path = "./crossbeam-persistency/crossbeam-channel" }
+
 atomic = "0.5"
 etrace = "1.1.1"
 rand = "0.8.5"

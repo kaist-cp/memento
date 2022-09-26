@@ -9,13 +9,14 @@ edition = "2021"
 memento  = { path = "../../../../../" }
 crossbeam-epoch = { path = "../../../../../crossbeam-persistency/crossbeam-epoch" }
 crossbeam-utils = { path = "../../../../../crossbeam-persistency/crossbeam-utils" }
-crossbeam-channel = "0.5.6"
+crossbeam-channel = { path = "../../../../../crossbeam-persistency/crossbeam-channel" }
+
 itertools = "0.10.3"
 etrace = "1.1.1"
 hashers = "1.0.1"
 scopeguard = "1.1.0"
 cfg-if = "1.0.0"
-parking_lot = "0.11.2"
+parking_lot = "0.12.1"
 derivative = "2.2.0"
 tinyvec = { version = "1.5.1", features = ["alloc", "rustc_1_40"] }
 array-init = "2.0.0"

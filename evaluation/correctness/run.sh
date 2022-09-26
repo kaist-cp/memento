@@ -11,7 +11,7 @@ else
 fi
 COMMIT=$(git log -1 --format="%h")
 BUG_LIMIT=30     # Limitation of the number of saving pool file when a bug occurs
-TIMEOUT=10
+TIMEOUT=50
 
 # Initialize
 trap "exit;" SIGINT SIGTERM
