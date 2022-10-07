@@ -1192,7 +1192,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
     pub fn resize(&self, recv: &Receiver<()>, mmt: &mut Resize<K, V>, handle: &Handle) {
         while mmt.recv_chk.checkpoint(|| recv.recv().is_ok(), handle) {
-            println!("[resize] Do resize!");
             let ctx = self.context.load(Ordering::Acquire, handle);
             self.resize_inner(ctx, &mut mmt.resize_inner, handle);
             handle.repin_guard();
