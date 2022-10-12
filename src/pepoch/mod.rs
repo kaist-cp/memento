@@ -3,7 +3,6 @@
 pub mod atomic;
 
 pub use self::atomic::{PAtomic, POwned, PShared};
-use cfg_if::cfg_if;
 pub use crossbeam_epoch::{pin, unprotected, Guard};
 
 /// A trait to allow the crossbeam's Guard to handle PAtomic pointers as well
@@ -86,15 +85,7 @@ pub trait PDestroyable {
 }
 
 impl PDestroyable for Guard {
-    cfg_if! {
-        if #[cfg(not(feature = "tcrash"))] {
-            unsafe fn defer_pdestroy<T>(&self, ptr: PShared<'_, T>) {
-                self.defer_unchecked(move || ptr.into_owned(), Some(ptr.as_ptr().into_offset()));
-            }
-        } else {
-            unsafe fn defer_pdestroy<T>(&self, _ptr: PShared<'_, T>) {
-                // TODO: Retirement makes crashed thread blocked.
-            }
-        }
+    unsafe fn defer_pdestroy<T>(&self, ptr: PShared<'_, T>) {
+        self.defer_unchecked(move || ptr.into_owned(), Some(ptr.as_ptr().into_offset()));
     }
 }
