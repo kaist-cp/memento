@@ -11,7 +11,7 @@ else
 fi
 COMMIT=$(git log -1 --format="%h")
 BUG_LIMIT=30     # Limitation of the number of saving pool file when a bug occurs
-TIMEOUT=50
+TIMEOUT=10
 RETRY_LIMIT=10   # Limiations of the number of retrying the timeout.
 
 # Initialize
@@ -78,7 +78,7 @@ while true; do
             pmsg "[${i}th test] success (try: $try)"
             break
         # Retry if the timeout occurs. (exit code=124)
-        elif [[$ext -eq 124] && [$try -ne $RETRY_LIMIT]]; then
+        elif [[ $ext -eq 124 && $try -ne $RETRY_LIMIT ]]; then
             dmsg "fails with exit code $ext. Retry it. (try: $try)"
             pmsg "[${i}th test] fails with exit code $ext. Retry it. (try: $try)"
             try=$(($try+1))
@@ -100,7 +100,7 @@ while true; do
             break
         fi
         dmsg "⎿___________________________________________________________________________⏌"
-    done;
+    done
 
     cat $log_tmp >> $OUT_LOG
 done
