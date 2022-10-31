@@ -386,11 +386,11 @@ impl Local {
                 entry: Entry::default(),
                 epoch: AtomicEpoch::new(Epoch::starting()),
                 collector: UnsafeCell::new(ManuallyDrop::new(collector.clone())),
-                bag: UnsafeCell::new(vec![]),
+                bag: UnsafeCell::new(Vec::with_capacity(2_usize.pow(14))),
                 guard_count: Cell::new(0),
                 handle_count: Cell::new(1),
                 pin_count: Cell::new(Wrapping(0)),
-                persists: UnsafeCell::new(vec![]),
+                persists: UnsafeCell::new(Vec::with_capacity(2_usize.pow(14))),
                 is_repinning: Cell::new(false),
             })
             .into_shared(unprotected());
