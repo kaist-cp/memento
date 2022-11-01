@@ -1571,6 +1571,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(())
     }
 
+    // @seungmin: reviewed
     fn try_delete(
         &self,
         key: &K,
@@ -1616,6 +1617,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(true)
     }
 
+    // @seungmin: reviewed
     pub fn delete(&self, key: &K, mmt: &mut Delete<K, V>, handle: &Handle) -> bool {
         let (key_tag, key_hashes) = hashes(&key);
 
