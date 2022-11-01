@@ -1583,7 +1583,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let (found, slot, ctx) = {
             let chk = mmt.found_slot.checkpoint(
                 || {
-                    // TODO(composition rule): 이 find는 stable 여부 신경 안써도 되는가? 만약 그렇다면 read-only라서?
+                    // TODO(composition rule): 이 find는 read-only 및 mmt function이라 리뷰 안함. 내부로직 리뷰할 필요가 있을지?
                     let (ctx, find_res) = self.find(&key, key_tag, key_hashes, handle);
                     let found = find_res.is_some();
                     let slot = if found {
