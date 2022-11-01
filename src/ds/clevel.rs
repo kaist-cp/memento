@@ -177,7 +177,7 @@ pub struct AddLevel<K, V: Collectable> {
     ctx_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     ctx_cas: Cas<Context<K, V>>,
     ctx_chk: Checkpoint<PAtomic<Context<K, V>>>,
-    len_size_chk: Checkpoint<bool>,
+    len_chk: Checkpoint<bool>,
 }
 
 impl<K, V: Collectable> Default for AddLevel<K, V> {
@@ -187,7 +187,7 @@ impl<K, V: Collectable> Default for AddLevel<K, V> {
             ctx_new_chk: Default::default(),
             ctx_cas: Default::default(),
             ctx_chk: Default::default(),
-            len_size_chk: Default::default(),
+            len_chk: Default::default(),
         }
     }
 }
@@ -810,49 +810,50 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             .load(Ordering::Relaxed, guard);
         let ctx_new_ref = unsafe { ctx_new.deref(pool) };
 
-        // TODO(composition rule): 로직 리뷰 필요 (rule에 따라 loop 처음에 checkpoint부터 오도록 바꿈)
-        if let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.ctx_cas, handle) {
-            let mut phi = cur;
-            loop {
-                let out = mmt.len_size_chk.checkpoint(
-                    || {
-                        let ctx_ref = unsafe { phi.deref(pool) };
-                        let len = unsafe {
-                            ctx_ref
-                                .first_level
-                                .load(Ordering::Acquire, guard)
-                                .deref(pool)
-                                .data
-                                .load(Ordering::Relaxed, guard)
-                                .deref(pool)
-                        }
-                        .len();
+        let mut phi = PAtomic::from(ctx);
+        loop {
+            let ctx = mmt
+                .ctx_chk
+                .checkpoint(|| phi, handle)
+                .load(Ordering::Relaxed, guard);
 
-                        let out = len >= next_lv_size;
-                        if out {
-                            // TODO(logic): 이 defer_pdestroy는 빼도 되지 않나? 어차피 밖에서 함.
-                            unsafe { guard.defer_pdestroy(ctx_new) };
-                        } else {
-                            let last_lv = ctx_ref.last_level.load(Ordering::Acquire, guard);
-                            ctx_new_ref.last_level.store(last_lv, Ordering::Relaxed);
-                            persist_obj(&ctx_new_ref.last_level, false); // cas soon
-                        }
-                        out
-                    },
-                    handle,
-                );
-
-                if out {
-                    unsafe { guard.defer_pdestroy(ctx_new) };
-                    return (phi, false);
-                }
-
-                if let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.ctx_cas, handle) {
-                    phi = cur;
-                } else {
-                    break;
-                }
+            let res = self.context.cas(ctx, ctx_new, &mut mmt.ctx_cas, handle);
+            if res.is_ok() {
+                break;
             }
+
+            let cur = res.unwrap_err();
+            let out = mmt.len_chk.checkpoint(
+                || {
+                    let cur_ref = unsafe { cur.deref(pool) };
+                    let len = unsafe {
+                        cur_ref
+                            .first_level
+                            .load(Ordering::Acquire, guard)
+                            .deref(pool)
+                            .data
+                            .load(Ordering::Relaxed, guard)
+                            .deref(pool)
+                    }
+                    .len();
+
+                    let out = len >= next_lv_size;
+                    if !out {
+                        let last_lv = cur_ref.last_level.load(Ordering::Acquire, guard);
+                        ctx_new_ref.last_level.store(last_lv, Ordering::Relaxed);
+                        persist_obj(&ctx_new_ref.last_level, false); // cas soon
+                    }
+                    out
+                },
+                handle,
+            );
+
+            if out {
+                unsafe { guard.defer_pdestroy(ctx_new) };
+                return (cur, false);
+            }
+
+            phi = PAtomic::from(cur);
         }
 
         fence(Ordering::SeqCst);
@@ -1405,11 +1406,11 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         mmt: &mut InsertInner<K, V>,
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
-        let mut phi = ctx;
+        let mut phi = PAtomic::from(ctx);
         loop {
             let ctx_chk = mmt
                 .ctx_chk
-                .checkpoint(|| PAtomic::from(phi), handle)
+                .checkpoint(|| phi, handle)
                 .load(Ordering::Relaxed, &handle.guard);
 
             if let Ok(res) = self.try_slot_insert(
@@ -1433,7 +1434,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 let _ = snd.send(());
             }
 
-            phi = ctx_new;
+            phi = PAtomic::from(ctx_new);
         }
     }
 
@@ -1520,7 +1521,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         mmt: &mut MoveIfResized<K, V>,
         handle: &'g Handle,
     ) {
-        let mut phi = (ctx, ins_res);
+        let mut phi = (ctx, ins_res); // TODO: return phi
         loop {
             let (ctx, slot, size) = {
                 let chk = mmt.arg_chk.checkpoint(
