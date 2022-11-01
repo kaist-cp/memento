@@ -1428,9 +1428,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 handle,
             );
             if added {
-                // TODO(composition rule): send()는 stable하지 않다. 두 번 send 되어도 괜찮은가?
-                // - 두 번 해도 불필요한 resize를 할 뿐 correctness에 영향 없을 거긴 함.
-                // - 한 번만 하려면 checkpoint를 이용하면 됨. 단 이러면 성능 영향. (참고: add_level의 `out`)
                 let _ = snd.send(());
             }
 
@@ -1500,7 +1497,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             handle,
         );
 
-        // TODO(composition rule): 이러한 invariant를 이용한 store는 composition rule에 의해 표현되는가?
         ins_res
             .slot
             .inner
@@ -1583,7 +1579,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let (found, slot, ctx) = {
             let chk = mmt.found_slot.checkpoint(
                 || {
-                    // TODO(composition rule): 이 find는 read-only 및 mmt function이라 리뷰 안함. 내부로직 리뷰할 필요가 있을지?
                     let (ctx, find_res) = self.find(&key, key_tag, key_hashes, handle);
                     let found = find_res.is_some();
                     let slot = if found {
