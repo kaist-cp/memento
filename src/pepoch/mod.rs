@@ -88,7 +88,7 @@ impl PDestroyable for Guard {
     /// # Safety
     ///
     /// This function is stable if the `ptr` is stable.
-    /// Because even if the drop of the same `ptr` is deferred twice, it will be de-duplicate by crossbeam-persistency.
+    /// Because even if the drop of the same `ptr` is deferred twice, it will be de-duplicated by crossbeam-persistency.
     unsafe fn defer_pdestroy<T>(&self, ptr: PShared<'_, T>) {
         self.defer_unchecked(move || ptr.into_owned(), Some(ptr.as_ptr().into_offset()));
     }
