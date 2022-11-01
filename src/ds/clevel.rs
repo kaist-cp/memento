@@ -731,6 +731,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }) <= context_ref.resize_size.load(Ordering::Relaxed)
     }
 
+    // @seungmin: reviewed
     fn next_level<'g>(
         &self,
         fst_lv: &'g Node<Bucket<K, V>>,
@@ -771,9 +772,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         my_node
     }
 
+    // @seungmin: reviewed. rule에 맞게 변경한 로직 검토 필요
     fn add_level<'g>(
         &'g self,
-        mut ctx: PShared<'g, Context<K, V>>,
+        ctx: PShared<'g, Context<K, V>>,
         mmt: &mut AddLevel<K, V>,
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, bool) {
@@ -808,39 +810,48 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             .load(Ordering::Relaxed, guard);
         let ctx_new_ref = unsafe { ctx_new.deref(pool) };
 
-        while let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.ctx_cas, handle) {
-            ctx = cur;
+        // TODO(composition rule): 로직 리뷰 필요 (rule에 따라 loop 처음에 checkpoint부터 오도록 바꿈)
+        if let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.ctx_cas, handle) {
+            let mut phi = cur;
+            loop {
+                let out = mmt.len_size_chk.checkpoint(
+                    || {
+                        let ctx_ref = unsafe { phi.deref(pool) };
+                        let len = unsafe {
+                            ctx_ref
+                                .first_level
+                                .load(Ordering::Acquire, guard)
+                                .deref(pool)
+                                .data
+                                .load(Ordering::Relaxed, guard)
+                                .deref(pool)
+                        }
+                        .len();
 
-            let ctx_ref = unsafe { ctx.deref(pool) };
-            let len = unsafe {
-                ctx_ref
-                    .first_level
-                    .load(Ordering::Acquire, guard)
-                    .deref(pool)
-                    .data
-                    .load(Ordering::Relaxed, guard)
-                    .deref(pool)
-            }
-            .len();
+                        let out = len >= next_lv_size;
+                        if out {
+                            // TODO(logic): 이 defer_pdestroy는 빼도 되지 않나? 어차피 밖에서 함.
+                            unsafe { guard.defer_pdestroy(ctx_new) };
+                        } else {
+                            let last_lv = ctx_ref.last_level.load(Ordering::Acquire, guard);
+                            ctx_new_ref.last_level.store(last_lv, Ordering::Relaxed);
+                            persist_obj(&ctx_new_ref.last_level, false); // cas soon
+                        }
+                        out
+                    },
+                    handle,
+                );
 
-            let out = mmt.len_size_chk.checkpoint(
-                || {
-                    let out = len >= next_lv_size;
-                    if out {
-                        unsafe { guard.defer_pdestroy(ctx_new) };
-                    } else {
-                        let last_lv = ctx_ref.last_level.load(Ordering::Acquire, guard);
-                        ctx_new_ref.last_level.store(last_lv, Ordering::Relaxed);
-                        persist_obj(&ctx_new_ref.last_level, false); // cas soon
-                    }
-                    out
-                },
-                handle,
-            );
+                if out {
+                    unsafe { guard.defer_pdestroy(ctx_new) };
+                    return (phi, false);
+                }
 
-            if out {
-                unsafe { guard.defer_pdestroy(ctx_new) };
-                return (ctx, false);
+                if let Err(cur) = self.context.cas(ctx, ctx_new, &mut mmt.ctx_cas, handle) {
+                    phi = cur;
+                } else {
+                    break;
+                }
             }
         }
 
@@ -848,6 +859,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         (ctx_new, true)
     }
 
+    // TODO: review
     fn resize_move_slot_insert(
         &self,
         slot_ptr: PShared<'_, Slot<K, V>>,
@@ -956,6 +968,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(())
     }
 
+    // TODO: review
     fn resize_move_inner<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -990,6 +1003,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err((ctx_new, fst_lv_new_ref))
     }
 
+    // TODO: review
     fn resize_move<'g>(
         &'g self,
         mut ctx: PShared<'g, Context<K, V>>,
@@ -1031,6 +1045,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
+    // TODO: review
     fn resize_clean<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1108,6 +1123,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
+    // TODO: review
     fn resize_change_context<'g>(
         &'g self,
         mut ctx: PShared<'g, Context<K, V>>,
@@ -1155,6 +1171,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
+    // TODO: review
     fn resize_inner<'g>(
         &'g self,
         mut ctx: PShared<'g, Context<K, V>>,
@@ -1198,6 +1215,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
+    // TODO: review
     fn find_fast<'g>(
         &self,
         key: &K,
@@ -1236,6 +1254,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
+    // TODO: review
     fn find<'g>(
         &'g self,
         key: &K,
@@ -1265,6 +1284,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
+    // TODO: review
     pub fn get_capacity(&self, handle: &Handle) -> usize {
         let (guard, pool) = (&handle.guard, handle.pool);
 
@@ -1291,12 +1311,14 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         (first_level_data.len() * 2 - last_level_data.len()) * SLOTS_IN_BUCKET
     }
 
+    // TODO: review
     pub fn search<'g>(&'g self, key: &K, handle: &'g Handle) -> Option<&'g V> {
         let (key_tag, key_hashes) = hashes(key);
         let (_, find_result) = self.find_fast(key, key_tag, key_hashes, handle);
         Some(&unsafe { find_result?.slot_ptr.deref(handle.pool) }.value)
     }
 
+    // @seungmin: This is appendix.
     fn try_slot_insert<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
@@ -1371,37 +1393,51 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(())
     }
 
+    // @seungmin: reviewed.
+    //
+    // Stable if all body function is stable (`try_slot_insert`, `add_level`, `send`) (TODO: `send` is stable?)
     fn insert_inner<'g>(
         &'g self,
-        mut ctx: PShared<'g, Context<K, V>>,
+        ctx: PShared<'g, Context<K, V>>,
         slot: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         snd: &Sender<()>,
         mmt: &mut InsertInner<K, V>,
         handle: &'g Handle,
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
+        let mut phi = ctx;
         loop {
             let ctx_chk = mmt
                 .ctx_chk
-                .checkpoint(|| PAtomic::from(ctx), handle)
+                .checkpoint(|| PAtomic::from(phi), handle)
                 .load(Ordering::Relaxed, &handle.guard);
 
-            if let Ok(res) =
-                self.try_slot_insert(ctx_chk, slot, key_hashes, &mut mmt.try_slot_insert, handle)
-            {
+            if let Ok(res) = self.try_slot_insert(
+                ctx_chk,    // stable by checkpoint
+                slot,       // stable by caller
+                key_hashes, // stable by caller
+                &mut mmt.try_slot_insert,
+                handle,
+            ) {
                 return (ctx_chk, res);
             }
 
             // No remaining slots. Resize.
-            let (ctx_new, added) = self.add_level(ctx_chk, &mut mmt.add_lv, handle);
+            let (ctx_new, added) = self.add_level(
+                ctx_chk, // stable by checkpoint
+                &mut mmt.add_lv,
+                handle,
+            );
             if added {
+                // TODO(composition rule): send()는 stable하지 않다. 두 번 send 되어도 괜찮은가? 불필요한 resize를 할 뿐 correctness에 영향 없을 거긴 함.
                 let _ = snd.send(());
             }
 
-            ctx = ctx_new;
+            phi = ctx_new;
         }
     }
 
+    // @seungmin: reviewed
     fn move_if_resized_inner<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1444,8 +1480,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         if ins_res
             .slot
             .cas(
-                ins_res.slot_ptr,
-                ins_res.slot_ptr.with_tag(1),
+                ins_res.slot_ptr,             // stable by caller
+                ins_res.slot_ptr.with_tag(1), // stable by caller
                 &mut mmt.slot_cas,
                 handle,
             )
@@ -1455,13 +1491,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         let (ctx2, ins_res2) = self.insert_inner(
-            ctx_new,
-            ins_res.slot_ptr,
+            ctx_new,          // stable by checkpoint
+            ins_res.slot_ptr, //  stable by caller
             key_hashes,
             snd,
             &mut mmt.insert_inner,
             handle,
         );
+
+        // TODO(composition rule): 이러한 invariant를 이용한 store는 composition rule에 의해 표현되는가?
         ins_res
             .slot
             .inner
@@ -1471,50 +1509,59 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err((ctx2, ins_res2))
     }
 
+    // @seungmin: reviewed
     fn move_if_resized<'g>(
         &'g self,
-        mut ctx: PShared<'g, Context<K, V>>,
-        mut ins_res: FindResult<'g, K, V>,
+        ctx: PShared<'g, Context<K, V>>,
+        ins_res: FindResult<'g, K, V>,
         slot_ptr: PShared<'g, Slot<K, V>>,
         key_hashes: [u32; 2],
         snd: &Sender<()>,
         mmt: &mut MoveIfResized<K, V>,
         handle: &'g Handle,
     ) {
+        let mut phi = (ctx, ins_res);
         loop {
-            let chk = mmt.arg_chk.checkpoint(
-                || {
-                    (
-                        PAtomic::from(ctx),
-                        unsafe { ins_res.slot.as_pptr(handle.pool) },
-                        ins_res.size,
-                    )
-                },
-                handle,
-            );
+            let (ctx, slot, size) = {
+                let chk = mmt.arg_chk.checkpoint(
+                    || {
+                        (
+                            PAtomic::from(phi.0),
+                            unsafe { phi.1.slot.as_pptr(handle.pool) },
+                            phi.1.size,
+                        )
+                    },
+                    handle,
+                );
+                (
+                    chk.0.load(Ordering::Relaxed, &handle.guard),
+                    unsafe { chk.1.deref(handle.pool) },
+                    chk.2,
+                )
+            };
 
             let info = FindResult {
-                size: chk.2,
-                slot: unsafe { chk.1.deref(handle.pool) },
-                slot_ptr,
+                size,     // stable by checkpoint
+                slot,     // stable by checkpoint
+                slot_ptr, // stable by caller
             };
 
             if let Err((c, r)) = self.move_if_resized_inner(
-                ctx, // stable by move_if_resized_inner
-                info,
+                ctx,  // stable by checkpoint
+                info, // stable by caller and checkpoint
                 key_hashes,
                 snd,
                 &mut mmt.move_if_resized_inner,
                 handle,
             ) {
-                ctx = c;
-                ins_res = r;
+                phi = (c, r);
             } else {
                 return;
             }
         }
     }
 
+    // @seungmin: reviewed
     pub fn insert(
         &self,
         key: K,
@@ -1530,38 +1577,49 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         let (key_tag, key_hashes) = hashes(&key);
 
-        let chk = mmt.found_slot.checkpoint(
-            || {
-                let (ctx, find_res) = self.find(&key, key_tag, key_hashes, handle);
-                let found = find_res.is_some();
-                let slot = if found {
-                    PAtomic::null()
-                } else {
-                    PAtomic::from(
-                        alloc_persist(Slot { key, value }, pool).with_high_tag(key_tag as usize),
-                    )
-                };
-                (found, slot, PAtomic::from(ctx))
-            },
-            handle,
-        );
-        let (found, slot, ctx) = (
-            chk.0,
-            chk.1.load(Ordering::Relaxed, guard),
-            chk.2.load(Ordering::Relaxed, guard),
-        );
+        let (found, slot, ctx) = {
+            let chk = mmt.found_slot.checkpoint(
+                || {
+                    // TODO(composition rule): 이 find는 stable 여부 신경 안써도 되는가? 만약 그렇다면 read-only라서?
+                    let (ctx, find_res) = self.find(&key, key_tag, key_hashes, handle);
+                    let found = find_res.is_some();
+                    let slot = if found {
+                        PAtomic::null()
+                    } else {
+                        PAtomic::from(
+                            alloc_persist(Slot { key, value }, pool)
+                                .with_high_tag(key_tag as usize),
+                        )
+                    };
+                    (found, slot, PAtomic::from(ctx))
+                },
+                handle,
+            );
+
+            (
+                chk.0,
+                chk.1.load(Ordering::Relaxed, guard),
+                chk.2.load(Ordering::Relaxed, guard),
+            )
+        };
 
         if found {
             return Err(InsertError::Occupied);
         }
 
-        let (ctx_new, ins_res) =
-            self.insert_inner(ctx, slot, key_hashes, snd, &mut mmt.insert_inner, handle);
+        let (ctx_new, ins_res) = self.insert_inner(
+            ctx,  // stable by checkpoint
+            slot, // stable by checkpoint
+            key_hashes,
+            snd,
+            &mut mmt.insert_inner,
+            handle,
+        );
 
         self.move_if_resized(
             ctx_new, // stable by insert_inner
             ins_res, // stable by insert_inner
-            slot,
+            slot,    // stable by checkpoint
             key_hashes,
             snd,
             &mut mmt.move_if_resized,
