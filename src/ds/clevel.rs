@@ -1571,6 +1571,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(())
     }
 
+    // @seungmin: reviewed
     fn try_delete(
         &self,
         key: &K,
@@ -1581,31 +1582,31 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) -> Result<bool, ()> {
         let (guard, pool) = (&handle.guard, handle.pool);
 
-        let chk = mmt.find_result_chk.checkpoint(
-            || {
-                let (_, find_result) = self.find(key, key_tag, key_hashes, handle);
+        let (slot_loc, slot_ptr) = {
+            let chk = mmt.find_result_chk.checkpoint(
+                || {
+                    let (_, find_result) = self.find(key, key_tag, key_hashes, handle);
 
-                let (slot, slot_ptr) = match find_result {
-                    Some(res) => (
-                        unsafe { res.slot.as_pptr(pool) },
-                        PAtomic::from(res.slot_ptr),
-                    ),
-                    None => (PPtr::null(), PAtomic::null()),
-                };
-                (slot, slot_ptr)
-            },
-            handle,
-        );
+                    let (slot, slot_ptr) = match find_result {
+                        Some(res) => (
+                            unsafe { res.slot.as_pptr(pool) },
+                            PAtomic::from(res.slot_ptr),
+                        ),
+                        None => (PPtr::null(), PAtomic::null()),
+                    };
+                    (slot, slot_ptr)
+                },
+                handle,
+            );
+            (chk.0, chk.1.load(Ordering::Relaxed, guard))
+        };
 
-        if chk.0.is_null() {
+        if slot_loc.is_null() {
             // slot is null if find result is none
             return Ok(false);
         }
 
-        let slot = unsafe { chk.0.deref(pool) };
-        let slot_ptr = chk.1.load(Ordering::Relaxed, guard);
-
-        if slot
+        if unsafe { slot_loc.deref(pool) }
             .cas(slot_ptr, PShared::null(), &mut mmt.slot_cas, handle)
             .is_err()
         {
@@ -1616,10 +1617,12 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(true)
     }
 
+    // @seungmin: reviewed
     pub fn delete(&self, key: &K, mmt: &mut Delete<K, V>, handle: &Handle) -> bool {
         let (key_tag, key_hashes) = hashes(&key);
 
         loop {
+            // ~= checkpoint(unit)
             if let Ok(ret) = self.try_delete(key, key_tag, key_hashes, &mut mmt.try_delete, handle)
             {
                 return ret;
