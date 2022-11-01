@@ -1395,8 +1395,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     }
 
     // @seungmin: reviewed.
-    //
-    // Stable if all body function is stable (`try_slot_insert`, `add_level`, `send`) (TODO: `send` is stable?)
     fn insert_inner<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1430,7 +1428,9 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 handle,
             );
             if added {
-                // TODO(composition rule): send()는 stable하지 않다. 두 번 send 되어도 괜찮은가? 불필요한 resize를 할 뿐 correctness에 영향 없을 거긴 함.
+                // TODO(composition rule): send()는 stable하지 않다. 두 번 send 되어도 괜찮은가?
+                // - 두 번 해도 불필요한 resize를 할 뿐 correctness에 영향 없을 거긴 함.
+                // - 한 번만 하려면 checkpoint를 이용하면 됨. 단 이러면 성능 영향. (참고: add_level의 `out`)
                 let _ = snd.send(());
             }
 
@@ -1521,19 +1521,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         mmt: &mut MoveIfResized<K, V>,
         handle: &'g Handle,
     ) {
-        let mut phi = (ctx, ins_res); // TODO: return phi
+        let mut phi = (
+            PAtomic::from(ctx),
+            unsafe { ins_res.slot.as_pptr(handle.pool) },
+            ins_res.size,
+        );
+
         loop {
             let (ctx, slot, size) = {
-                let chk = mmt.arg_chk.checkpoint(
-                    || {
-                        (
-                            PAtomic::from(phi.0),
-                            unsafe { phi.1.slot.as_pptr(handle.pool) },
-                            phi.1.size,
-                        )
-                    },
-                    handle,
-                );
+                let chk = mmt.arg_chk.checkpoint(|| phi, handle);
                 (
                     chk.0.load(Ordering::Relaxed, &handle.guard),
                     unsafe { chk.1.deref(handle.pool) },
@@ -1547,18 +1543,24 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 slot_ptr, // stable by caller
             };
 
-            if let Err((c, r)) = self.move_if_resized_inner(
+            let res = self.move_if_resized_inner(
                 ctx,  // stable by checkpoint
                 info, // stable by caller and checkpoint
                 key_hashes,
                 snd,
                 &mut mmt.move_if_resized_inner,
                 handle,
-            ) {
-                phi = (c, r);
-            } else {
+            );
+            if res.is_ok() {
                 return;
             }
+
+            let (c, r) = res.unwrap_err();
+            phi = (
+                PAtomic::from(c),
+                unsafe { r.slot.as_pptr(handle.pool) },
+                r.size,
+            );
         }
     }
 
