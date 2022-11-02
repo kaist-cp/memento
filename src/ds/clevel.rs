@@ -1074,6 +1074,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let (guard, pool) = (&handle.guard, handle.pool);
 
         if handle.rec.load(Ordering::Relaxed) {
+            // TODO(LOOP-TRY rule): rule과 안맞는 듯? fail chk 후 err 리턴 같은게 없다.
             if let Some(chk) = mmt.slot_slot_ptr_chk.peek(handle) {
                 let (slot, slot_ptr) = (
                     unsafe { chk.0.deref(pool) },
