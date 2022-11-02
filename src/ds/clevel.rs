@@ -1194,11 +1194,11 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) {
         let (guard, pool) = (&handle.guard, handle.pool);
 
-        let mut phi = ctx;
+        let mut phi = PAtomic::from(ctx);
         loop {
             let ctx = mmt
                 .ctx_chk
-                .checkpoint(|| PAtomic::from(phi), handle)
+                .checkpoint(|| phi, handle)
                 .load(Ordering::Relaxed, &handle.guard);
 
             // TODO(refactoring): load 및 deref들은 전부 checkpoint안에 넣자. queue들도 리팩토링해야함.
@@ -1226,11 +1226,11 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             );
 
             // next
-            phi = self.resize_change_context(
+            phi = PAtomic::from(self.resize_change_context(
                 ctx, // stable by checkpoint
                 &mut mmt.resize_chg_ctx,
                 handle,
-            );
+            ));
         }
     }
 
