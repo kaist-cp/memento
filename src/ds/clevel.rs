@@ -865,7 +865,34 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         (ctx_new, true)
     }
 
-    // TODO: review based on optimization rule on appendix (if rec { ... })
+    /// f() function in LOOP-TRY rule for `resize_move_slot_insert`
+    fn resize_move_slot_insert_inner(
+        slot: &DetectableCASAtomic<Slot<K, V>>,
+        slot_ptr: PShared<'_, Slot<K, V>>,
+        slot_first_level: PShared<'_, Slot<K, V>>,
+        key_tag: u16,
+        mmt: &mut Cas<Slot<K, V>>,
+        handle: &Handle,
+    ) -> Result<(), ()> {
+        if let Some(slot_ref) = unsafe { slot_first_level.as_ref(handle.pool) } {
+            // 2-byte tag checking
+            if slot_first_level.high_tag() != key_tag as usize {
+                return Err(());
+            }
+
+            if slot_ref.key != unsafe { slot_ptr.deref(handle.pool) }.key {
+                return Err(());
+            }
+
+            return Ok(());
+        }
+        if slot.cas(PShared::null(), slot_ptr, mmt, handle).is_ok() {
+            return Ok(());
+        }
+        return Err(());
+    }
+
+    // @seungmin: reviewed
     fn resize_move_slot_insert(
         &self,
         slot_ptr: PShared<'_, Slot<K, V>>,
@@ -889,28 +916,15 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                     chk.1.load(Ordering::Relaxed, guard),
                 );
 
-                let mut retry = false;
-                if let Some(slot_ref) = unsafe { slot_first_level.as_ref(pool) } {
-                    // 2-byte tag checking
-                    if slot_first_level.high_tag() != key_tag as usize {
-                        retry = true;
-                    }
-
-                    if slot_ref.key != unsafe { slot_ptr.deref(pool) }.key {
-                        retry = true;
-                    }
-
-                    if !retry {
-                        return Ok(());
-                    }
-                }
-
-                if !retry
-                    && slot
-                        .cas(PShared::null(), slot_ptr, &mut mmt.slot_cas, handle)
-                        .is_ok()
-                {
-                    return Ok(());
+                if let Ok(res) = Self::resize_move_slot_insert_inner(
+                    slot,
+                    slot_ptr,
+                    slot_first_level,
+                    key_tag,
+                    &mut mmt.slot_cas,
+                    handle,
+                ) {
+                    return Ok(res);
                 }
             }
         }
@@ -922,50 +936,46 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             .map(|key_hash| key_hash as usize % fst_lv_size)
             .sorted()
             .dedup();
+
+        // `(i, key_hash)`: argument of `i`th iteration of loop
         for i in 0..SLOTS_IN_BUCKET {
             for key_hash in key_hashes.clone() {
-                let chk = mmt.slot_slot_first_chk.checkpoint(
-                    || {
-                        let slot = unsafe {
-                            fst_lv_data[key_hash]
-                                .assume_init_ref()
-                                .slots
-                                .get_unchecked(i)
-                        };
-                        let slot_first_level = slot.load(Ordering::Acquire, handle);
-                        Some((
-                            unsafe { slot.as_pptr(pool) },
-                            PAtomic::from(slot_first_level),
-                        ))
-                    },
-                    handle,
-                );
                 let (slot, slot_first_level) = {
-                    let chk = chk.unwrap();
+                    let chk = mmt
+                        .slot_slot_first_chk
+                        .checkpoint(
+                            || {
+                                let slot = unsafe {
+                                    fst_lv_data[key_hash]
+                                        .assume_init_ref()
+                                        .slots
+                                        .get_unchecked(i)
+                                };
+                                let slot_first_level = slot.load(Ordering::Acquire, handle);
+                                Some((
+                                    unsafe { slot.as_pptr(pool) },
+                                    PAtomic::from(slot_first_level),
+                                ))
+                            },
+                            handle,
+                        )
+                        .unwrap();
+
                     (
                         unsafe { chk.0.deref(pool) },
                         chk.1.load(Ordering::Relaxed, guard),
                     )
                 };
 
-                if let Some(slot_ref) = unsafe { slot_first_level.as_ref(pool) } {
-                    // 2-byte tag checking
-                    if slot_first_level.high_tag() != key_tag as usize {
-                        continue;
-                    }
-
-                    if slot_ref.key != unsafe { slot_ptr.deref(pool) }.key {
-                        continue;
-                    }
-
-                    return Ok(());
-                }
-
-                if slot
-                    .cas(PShared::null(), slot_ptr, &mut mmt.slot_cas, handle)
-                    .is_ok()
-                {
-                    return Ok(());
+                if let Ok(res) = Self::resize_move_slot_insert_inner(
+                    slot,             // stable by checkpoint
+                    slot_ptr,         // stable by callerr
+                    slot_first_level, // stable by checkpoint
+                    key_tag,
+                    &mut mmt.slot_cas,
+                    handle,
+                ) {
+                    return Ok(res);
                 }
             }
         }
@@ -1064,6 +1074,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         let (guard, pool) = (&handle.guard, handle.pool);
 
         if handle.rec.load(Ordering::Relaxed) {
+            // TODO(LOOP-TRY rule): rule과 안맞는 듯? fail chk 후 err 리턴 같은게 없다.
             if let Some(chk) = mmt.slot_slot_ptr_chk.peek(handle) {
                 let (slot, slot_ptr) = (
                     unsafe { chk.0.deref(pool) },
@@ -1362,7 +1373,25 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Some(&unsafe { find_result?.slot_ptr.deref(handle.pool) }.value)
     }
 
-    // TODO: review based on optimization rule on appendix (if rec { ... })
+    /// f() function in LOOP-TRY rule for `try_slot_insert`
+    fn try_slot_insert_inner<'g>(
+        size: usize,
+        slot: &'g DetectableCASAtomic<Slot<K, V>>,
+        slot_new: PShared<'g, Slot<K, V>>,
+        mmt: &mut Cas<Slot<K, V>>,
+        handle: &'g Handle,
+    ) -> Result<FindResult<'g, K, V>, ()> {
+        if slot.cas(PShared::null(), slot_new, mmt, handle).is_ok() {
+            return Ok(FindResult {
+                size,
+                slot,
+                slot_ptr: slot_new,
+            });
+        }
+        return Err(());
+    }
+
+    // @seungmin: reviewed
     fn try_slot_insert<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
@@ -1378,15 +1407,16 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 return Err(());
             }
 
+            // `mmt.slot_chk`: mmt.arg in paper
+            // `mmt.slot_cas`: mmt.f in paper
             if let Some(v) = mmt.slot_chk.peek(handle) {
                 let (size, slot) = some_or!(v, return Err(()));
                 let slot = unsafe { slot.deref(pool) };
-                if let Ok(()) = slot.cas(PShared::null(), slot_new, &mut mmt.slot_cas, handle) {
-                    return Ok(FindResult {
-                        size,
-                        slot,
-                        slot_ptr: slot_new,
-                    });
+
+                if let Ok(res) =
+                    Self::try_slot_insert_inner(size, slot, slot_new, &mut mmt.slot_cas, handle)
+                {
+                    return Ok(res);
                 }
             }
         }
@@ -1398,6 +1428,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
 
         // top-to-bottom search
+        // `(array, i, key_hash)`: argument of `i`th iteration of loop
         for array in arrays.into_iter().rev() {
             let size = array.len();
             if context_ref.resize_size.load(Ordering::Relaxed) >= size {
@@ -1412,22 +1443,28 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 .dedup();
             for i in 0..SLOTS_IN_BUCKET {
                 for key_hash in key_hashes.clone() {
+                    // check if the argument exists
                     let slot = unsafe { array[key_hash].assume_init_ref().slots.get_unchecked(i) };
                     if !slot.load(Ordering::Acquire, handle).is_null() {
                         continue;
                     }
 
-                    let _ = unsafe {
-                        mmt.slot_chk
+                    let (size, slot) = unsafe {
+                        let chk = mmt
+                            .slot_chk
                             .checkpoint(|| Some((size, slot.as_pptr(pool))), handle)
+                            .unwrap();
+                        (chk.0, chk.1.deref(pool))
                     };
 
-                    if let Ok(()) = slot.cas(PShared::null(), slot_new, &mut mmt.slot_cas, handle) {
-                        return Ok(FindResult {
-                            size,
-                            slot,
-                            slot_ptr: slot_new,
-                        });
+                    if let Ok(res) = Self::try_slot_insert_inner(
+                        size,     // stable by checkpoint
+                        slot,     // stable by checkpoint
+                        slot_new, // stable by caller
+                        &mut mmt.slot_cas,
+                        handle,
+                    ) {
+                        return Ok(res);
                     }
                 }
             }
