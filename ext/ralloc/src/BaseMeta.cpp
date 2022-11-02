@@ -858,7 +858,7 @@ void GarbageCollection::operator() () {
                 } else {
                     // this sb is partially used
                     assert(free_blocks_head != nullptr);
-                    assert((uint64_t)(free_blocks_head - curr_sb)%curr_desc->block_size == 0);
+                    // assert((uint64_t)(free_blocks_head - curr_sb)%curr_desc->block_size == 0);
                     anchor.avail = (uint64_t)(free_blocks_head - curr_sb)/curr_desc->block_size;
                     anchor.state = SB_PARTIAL; // it must be SB_PARTIAL already but we assign it anyway
 
