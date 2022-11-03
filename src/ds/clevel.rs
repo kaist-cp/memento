@@ -279,17 +279,36 @@ impl<K, V: Collectable> Default for ResizeInner<K, V> {
 /// Resize clean client
 #[derive(Debug, Memento, Collectable)]
 pub struct ResizeClean<K, V: Collectable> {
-    slot_slot_ptr_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
-    slot_cas: Cas<Slot<K, V>>,
+    loop_i: Checkpoint<usize>,
+    loop_j: Checkpoint<(usize, PAtomic<Context<K, V>>, PPtr<Node<Bucket<K, V>>>)>,
+    resize_clean_inner: ResizeCleanInner<K, V>,
     resize_move: ResizeMove<K, V>,
 }
 
 impl<K, V: Collectable> Default for ResizeClean<K, V> {
     fn default() -> Self {
         Self {
-            slot_slot_ptr_chk: Default::default(),
-            slot_cas: Default::default(),
+            loop_i: Default::default(),
+            loop_j: Default::default(),
+            resize_clean_inner: Default::default(),
             resize_move: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Memento, Collectable)]
+struct ResizeCleanInner<K, V: Collectable> {
+    res_slot_slot_ptr_chk:
+        Checkpoint<Option<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
+    slot_cas: Cas<Slot<K, V>>,
+}
+
+impl<K, V: Collectable> Default for ResizeCleanInner<K, V> {
+    fn default() -> Self {
+        Self {
+            res_slot_slot_ptr_chk: Default::default(),
+
+            slot_cas: Default::default(),
         }
     }
 }
@@ -777,7 +796,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         my_node
     }
 
-    // @seungmin: reviewed. rule에 맞게 변경한 로직 검토 필요
+    // @seungmin: reviewed
     fn add_level<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -994,7 +1013,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         fst_lv_ref: &'g Node<Bucket<K, V>>,
         mmt: &mut ResizeMoveInner<K, V>,
         handle: &'g Handle,
-    ) -> Result<&'g Node<Bucket<K, V>>, (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>)> {
+    ) -> Result<
+        (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>),
+        (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>),
+    > {
         let (guard, pool) = (&handle.guard, handle.pool);
 
         if self
@@ -1008,7 +1030,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             )
             .is_ok()
         {
-            return Ok(fst_lv_ref);
+            return Ok((ctx, fst_lv_ref));
         }
 
         // The first level is full. Resize and retry.
@@ -1031,7 +1053,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         fst_lv_ref: &'g Node<Bucket<K, V>>,
         mmt: &mut ResizeMove<K, V>,
         handle: &'g Handle,
-    ) -> &'g Node<Bucket<K, V>> {
+    ) -> (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>) {
         let (guard, pool) = (&handle.guard, handle.pool);
 
         let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(handle.pool) }.key);
@@ -1054,10 +1076,66 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 &mut mmt.resize_move_inner,
                 handle,
             ) {
-                Ok(f) => return f,
+                Ok((c, f)) => return (c, f),
                 Err((c, f)) => {
                     phi = (PAtomic::from(c), unsafe { f.as_pptr(pool) });
                 }
+            }
+        }
+    }
+
+    // @seungminjeon: reviewed
+    fn resize_clean_inner<'g>(
+        &self,
+        slot: &DetectableCASAtomic<Slot<K, V>>,
+        mmt: &mut ResizeCleanInner<K, V>,
+        handle: &'g Handle,
+    ) -> Option<PShared<'g, Slot<K, V>>> {
+        let (guard, pool) = (&handle.guard, handle.pool);
+
+        // loop-simple
+        loop {
+            let (slot, slot_ptr_checked) = {
+                let chk = mmt.res_slot_slot_ptr_chk.checkpoint(
+                    || {
+                        // Read only loop for getting clean slot (~= find)
+                        loop {
+                            let slot_ptr = slot.load(Ordering::Acquire, handle);
+                            if slot_ptr.is_null() {
+                                return None;
+                            }
+
+                            // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
+                            // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
+                            if slot_ptr.tag() != 1 {
+                                return Some(unsafe {
+                                    (slot.as_pptr(handle.pool), PAtomic::from(slot_ptr))
+                                });
+                            }
+                        }
+                    },
+                    handle,
+                );
+
+                match chk {
+                    Some(chk) => (
+                        unsafe { chk.0.deref(pool) },
+                        chk.1.load(Ordering::Relaxed, guard),
+                    ),
+                    None => return None,
+                }
+            };
+
+            if slot
+                .cas(
+                    slot_ptr_checked,             // stable by checkpoint
+                    slot_ptr_checked.with_tag(1), // stable by checkpoint
+                    &mut mmt.slot_cas,
+                    handle,
+                )
+                .is_ok()
+            {
+                return Some(slot_ptr_checked);
             }
         }
     }
@@ -1066,78 +1144,62 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     fn resize_clean<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
-        mut fst_lv_ref: &'g Node<Bucket<K, V>>, // TODO(refactoring): 얘 없애도 될듯. ctx만 넘겨도 똑같은 거 얻을 수 있을 듯함.
-        last_lv_data: &'g [MaybeUninit<Bucket<K, V>>], // TODO(refactoring): 얘 없애도 될듯. ctx만 넘겨도 똑같은 거 얻을 수 있을 듯함.
+        fst_lv_ref: &'g Node<Bucket<K, V>>,
+        last_lv_data: &'g [MaybeUninit<Bucket<K, V>>],
         mmt: &mut ResizeClean<K, V>,
         handle: &'g Handle,
     ) {
         let (guard, pool) = (&handle.guard, handle.pool);
+        let i_max = last_lv_data.len(); // stable because it is constant function
 
-        if handle.rec.load(Ordering::Relaxed) {
-            // TODO(LOOP-TRY rule): rule과 안맞는 듯? fail chk 후 err 리턴 같은게 없다.
-            if let Some(chk) = mmt.slot_slot_ptr_chk.peek(handle) {
-                let (slot, slot_ptr) = (
-                    unsafe { chk.0.deref(pool) },
-                    chk.1.load(Ordering::Relaxed, guard),
-                );
+        // loop i: iterate level
+        let mut phi_i = 0;
+        loop {
+            let i = mmt.loop_i.checkpoint(|| phi_i, handle);
+            if i >= i_max {
+                break;
+            }
+            let bucket = unsafe { last_lv_data[i].assume_init_ref() }; // stable because i is stable
 
-                if slot
-                    .cas(slot_ptr, slot_ptr.with_tag(1), &mut mmt.slot_cas, handle)
-                    .is_ok()
-                {
-                    fst_lv_ref =
-                        self.resize_move(ctx, slot_ptr, fst_lv_ref, &mut mmt.resize_move, handle);
+            // loop j: iterate bucket
+            let mut phi_j = (0, PAtomic::from(ctx), unsafe { fst_lv_ref.as_pptr(pool) });
+            loop {
+                let (j, ctx, fst_lv_ref) = {
+                    let chk = mmt.loop_j.checkpoint(|| phi_j, handle);
+                    (chk.0, chk.1.load(Ordering::Relaxed, guard), unsafe {
+                        chk.2.deref(pool)
+                    })
+                };
+                if j >= SLOTS_IN_BUCKET {
+                    break;
                 }
+
+                let slot = &bucket.slots[j]; // stable because j is stable
+                let (ctx, fst_lv_ref) = match self.resize_clean_inner(
+                    slot, // stable by checkpoint
+                    &mut mmt.resize_clean_inner,
+                    handle,
+                ) {
+                    Some(slot_ptr) => {
+                        self.resize_move(
+                            ctx,        // stable by checkpoint
+                            slot_ptr,   // stable by `resize_clean_inner`
+                            fst_lv_ref, // stable by checkpoint
+                            &mut mmt.resize_move,
+                            handle,
+                        )
+                    }
+                    None => (ctx, fst_lv_ref),
+                };
+
+                // next j
+                phi_j = (j + 1, PAtomic::from(ctx), unsafe {
+                    fst_lv_ref.as_pptr(pool)
+                });
             }
-        }
 
-        for (_, bucket) in last_lv_data.iter().enumerate() {
-            for (_, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
-                let slot_ptr = some_or!(
-                    {
-                        let mut slot_ptr = slot.load(Ordering::Acquire, handle);
-                        loop {
-                            if slot_ptr.is_null() {
-                                break None;
-                            }
-
-                            // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
-                            // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                            if slot_ptr.tag() == 1 {
-                                slot_ptr = slot.load(Ordering::Acquire, handle);
-                                continue;
-                            }
-
-                            let (slot, slot_ptr_checked) = {
-                                let chk = mmt.slot_slot_ptr_chk.checkpoint(
-                                    || unsafe { (slot.as_pptr(pool), PAtomic::from(slot_ptr)) },
-                                    handle,
-                                );
-                                (
-                                    unsafe { chk.0.deref(pool) },
-                                    chk.1.load(Ordering::Relaxed, guard),
-                                )
-                            };
-
-                            if let Err(e) = slot.cas(
-                                slot_ptr_checked,
-                                slot_ptr_checked.with_tag(1),
-                                &mut mmt.slot_cas,
-                                handle,
-                            ) {
-                                slot_ptr = e;
-                                continue;
-                            }
-
-                            break Some(slot_ptr_checked);
-                        }
-                    },
-                    continue
-                );
-
-                fst_lv_ref =
-                    self.resize_move(ctx, slot_ptr, fst_lv_ref, &mut mmt.resize_move, handle);
-            }
+            // next i
+            phi_i += i + 1;
         }
     }
 
@@ -1486,6 +1548,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         let mut phi = PAtomic::from(ctx);
         loop {
+            // TODO: Remove Loop-carried dep.: Replace phi with load&chkpt?
             let ctx_chk = mmt
                 .ctx_chk
                 .checkpoint(|| phi, handle)
