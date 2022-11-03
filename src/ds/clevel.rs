@@ -280,6 +280,8 @@ impl<K, V: Collectable> Default for ResizeInner<K, V> {
 #[derive(Debug, Memento, Collectable)]
 pub struct ResizeClean<K, V: Collectable> {
     slot_slot_ptr_chk: Checkpoint<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>,
+    res_slot_slot_ptr_chk:
+        Checkpoint<Option<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)>>,
     slot_cas: Cas<Slot<K, V>>,
     resize_move: ResizeMove<K, V>,
 }
@@ -288,6 +290,7 @@ impl<K, V: Collectable> Default for ResizeClean<K, V> {
     fn default() -> Self {
         Self {
             slot_slot_ptr_chk: Default::default(),
+            res_slot_slot_ptr_chk: Default::default(),
             slot_cas: Default::default(),
             resize_move: Default::default(),
         }
@@ -777,7 +780,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         my_node
     }
 
-    // @seungmin: reviewed. rule에 맞게 변경한 로직 검토 필요
+    // @seungmin: reviewed
     fn add_level<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1062,17 +1065,40 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
+    fn get_clean_slot(
+        slot: &DetectableCASAtomic<Slot<K, V>>,
+        handle: &'_ Handle,
+    ) -> Option<(PPtr<DetectableCASAtomic<Slot<K, V>>>, PAtomic<Slot<K, V>>)> {
+        let mut phi = slot.load(Ordering::Acquire, handle);
+
+        // Read only loop
+        loop {
+            if phi.is_null() {
+                return None;
+            }
+
+            // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
+            // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
+            if phi.tag() != 1 {
+                return Some(unsafe { (slot.as_pptr(handle.pool), PAtomic::from(phi)) });
+            }
+
+            phi = slot.load(Ordering::Acquire, handle);
+        }
+    }
+
     // TODO: review based on optimization rule on appendix (if rec { ... })
     fn resize_clean<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
-        mut fst_lv_ref: &'g Node<Bucket<K, V>>, // TODO(refactoring): 얘 없애도 될듯. ctx만 넘겨도 똑같은 거 얻을 수 있을 듯함.
+        fst_lv_ref: &'g Node<Bucket<K, V>>, // TODO(refactoring): 얘 없애도 될듯. ctx만 넘겨도 똑같은 거 얻을 수 있을 듯함.
         last_lv_data: &'g [MaybeUninit<Bucket<K, V>>], // TODO(refactoring): 얘 없애도 될듯. ctx만 넘겨도 똑같은 거 얻을 수 있을 듯함.
         mmt: &mut ResizeClean<K, V>,
         handle: &'g Handle,
     ) {
         let (guard, pool) = (&handle.guard, handle.pool);
 
+        let mut fst_lv_ref = fst_lv_ref;
         if handle.rec.load(Ordering::Relaxed) {
             // TODO(LOOP-TRY rule): rule과 안맞는 듯? fail chk 후 err 리턴 같은게 없다.
             if let Some(chk) = mmt.slot_slot_ptr_chk.peek(handle) {
@@ -1093,50 +1119,39 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         for (_, bucket) in last_lv_data.iter().enumerate() {
             for (_, slot) in unsafe { bucket.assume_init_ref().slots.iter().enumerate() } {
-                let slot_ptr = some_or!(
-                    {
-                        let mut slot_ptr = slot.load(Ordering::Acquire, handle);
-                        loop {
-                            if slot_ptr.is_null() {
-                                break None;
-                            }
+                if let Some(slot_ptr) = {
+                    // loop rule
+                    let mut phi = Self::get_clean_slot(slot, handle);
+                    loop {
+                        let (slot, slot_ptr_checked) = {
+                            let chk = mmt.res_slot_slot_ptr_chk.checkpoint(|| phi, handle);
 
-                            // tagged with 1 by concurrent move_if_resized(). we should wait for the item to be moved before changing context.
-                            // example: insert || lookup (1); lookup (2), maybe lookup (1) can see the insert while lookup (2) doesn't.
-                            if slot_ptr.tag() == 1 {
-                                slot_ptr = slot.load(Ordering::Acquire, handle);
-                                continue;
-                            }
-
-                            let (slot, slot_ptr_checked) = {
-                                let chk = mmt.slot_slot_ptr_chk.checkpoint(
-                                    || unsafe { (slot.as_pptr(pool), PAtomic::from(slot_ptr)) },
-                                    handle,
-                                );
-                                (
+                            match chk {
+                                Some(chk) => (
                                     unsafe { chk.0.deref(pool) },
                                     chk.1.load(Ordering::Relaxed, guard),
-                                )
-                            };
-
-                            if let Err(e) = slot.cas(
-                                slot_ptr_checked,
-                                slot_ptr_checked.with_tag(1),
-                                &mut mmt.slot_cas,
-                                handle,
-                            ) {
-                                slot_ptr = e;
-                                continue;
+                                ),
+                                None => break None,
                             }
+                        };
 
-                            break Some(slot_ptr_checked);
+                        match slot.cas(
+                            slot_ptr_checked,
+                            slot_ptr_checked.with_tag(1),
+                            &mut mmt.slot_cas,
+                            handle,
+                        ) {
+                            Ok(_) => break Some(slot_ptr_checked),
+                            Err(_e) => {
+                                // phi = e, // next slot_ptr
+                                phi = Self::get_clean_slot(slot, handle);
+                            }
                         }
-                    },
-                    continue
-                );
-
-                fst_lv_ref =
-                    self.resize_move(ctx, slot_ptr, fst_lv_ref, &mut mmt.resize_move, handle);
+                    }
+                } {
+                    fst_lv_ref =
+                        self.resize_move(ctx, slot_ptr, fst_lv_ref, &mut mmt.resize_move, handle);
+                }
             }
         }
     }
