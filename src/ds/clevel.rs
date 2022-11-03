@@ -1199,7 +1199,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             }
 
             // next i
-            phi_i += i + 1;
+            phi_i = i + 1;
         }
     }
 
