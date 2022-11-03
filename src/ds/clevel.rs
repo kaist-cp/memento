@@ -1175,29 +1175,27 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 }
 
                 let slot = &bucket.slots[j]; // stable because j is stable
-                if let Some(slot_ptr) = self.resize_clean_inner(
+                let (ctx, fst_lv_ref) = match self.resize_clean_inner(
                     slot, // stable by checkpoint
                     &mut mmt.resize_clean_inner,
                     handle,
                 ) {
-                    let (ctx, fst_lv_ref) = self.resize_move(
-                        ctx,        // stable by checkpoint
-                        slot_ptr,   // stable by `resize_clean_inner`
-                        fst_lv_ref, // stable by checkpoint
-                        &mut mmt.resize_move,
-                        handle,
-                    );
+                    Some(slot_ptr) => {
+                        self.resize_move(
+                            ctx,        // stable by checkpoint
+                            slot_ptr,   // stable by `resize_clean_inner`
+                            fst_lv_ref, // stable by checkpoint
+                            &mut mmt.resize_move,
+                            handle,
+                        )
+                    }
+                    None => (ctx, fst_lv_ref),
+                };
 
-                    // next j with updeated `ctx` and `fst_lv_ref`
-                    phi_j = (j + 1, PAtomic::from(ctx), unsafe {
-                        fst_lv_ref.as_pptr(pool)
-                    });
-                } else {
-                    // next j
-                    phi_j = (j + 1, PAtomic::from(ctx), unsafe {
-                        fst_lv_ref.as_pptr(pool)
-                    });
-                }
+                // next j
+                phi_j = (j + 1, PAtomic::from(ctx), unsafe {
+                    fst_lv_ref.as_pptr(pool)
+                });
             }
 
             // next i
@@ -1550,6 +1548,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) -> (PShared<'g, Context<K, V>>, FindResult<'g, K, V>) {
         let mut phi = PAtomic::from(ctx);
         loop {
+            // TODO: Remove Loop-carried dep.: Replace phi with load&chkpt?
             let ctx_chk = mmt
                 .ctx_chk
                 .checkpoint(|| phi, handle)
