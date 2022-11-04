@@ -187,7 +187,11 @@ impl CombiningQueue {
         )
     }
 
-    fn enqueue_raw(tail: &PAtomic<c_void>, arg: usize, handle: &Handle) -> usize {
+    fn enqueue_raw(
+        tail: &PAtomic<c_void>, // Stable by combiner's old/new flipping logic.
+        arg: usize,             // Stable by combiner's old/new flipping logic.
+        handle: &Handle,
+    ) -> usize {
         let (guard, pool) = (&handle.guard, handle.pool);
         let tail = unsafe { (tail as *const _ as *const PAtomic<Node>).as_ref().unwrap() };
 
@@ -248,7 +252,11 @@ impl CombiningQueue {
         )
     }
 
-    fn dequeue_raw(head: &PAtomic<c_void>, _: usize, handle: &Handle) -> usize {
+    fn dequeue_raw(
+        head: &PAtomic<c_void>, // Stable by combiner's old/new flipping logic.
+        _: usize,
+        handle: &Handle,
+    ) -> usize {
         let (guard, pool) = (&handle.guard, handle.pool);
         let head = unsafe { (head as *const _ as *mut PAtomic<Node>).as_ref().unwrap() };
         let head_shared = head.load(Ordering::SeqCst, guard);

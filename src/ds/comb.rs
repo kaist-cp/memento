@@ -216,7 +216,16 @@ impl Combining {
         (s, st_thread, sfunc): (
             &CombStruct,
             &CombThreadState,
-            &dyn Fn(&PAtomic<c_void>, usize, &Handle) -> usize,
+            &dyn Fn(
+                // This is data of CombStruct. (e.g. `tail` for Enqueue combiner, `head` for Dequeue combiner)
+                // Combiner will give stable value for this argument using old/new flipping logic.
+                &PAtomic<c_void>,
+
+                // Arugment
+                // Combiner will give stable value for this argument using old/new flipping logic.
+                usize,
+                &Handle,
+            ) -> usize,
         ),
         mmt: &mut M,
         handle: &Handle,
