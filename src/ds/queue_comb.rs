@@ -188,8 +188,8 @@ impl CombiningQueue {
     }
 
     fn enqueue_raw(
-        tail: &PAtomic<c_void>, // Stable by combiner's old/new flipping logic.
-        arg: usize,             // Stable by combiner's old/new flipping logic.
+        tail: &PAtomic<c_void>, // Stable by combiner
+        arg: usize,             // Stable by combiner
         handle: &Handle,
     ) -> usize {
         let (guard, pool) = (&handle.guard, handle.pool);
@@ -253,7 +253,7 @@ impl CombiningQueue {
     }
 
     fn dequeue_raw(
-        head: &PAtomic<c_void>, // Stable by combiner's old/new flipping logic.
+        head: &PAtomic<c_void>, // Stable by combiner
         _: usize,
         handle: &Handle,
     ) -> usize {
