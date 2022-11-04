@@ -755,7 +755,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }) <= context_ref.resize_size.load(Ordering::Relaxed)
     }
 
-    // @seungmin: reviewed
     fn next_level<'g>(
         &self,
         fst_lv: &'g Node<Bucket<K, V>>,
@@ -796,7 +795,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         my_node
     }
 
-    // @seungmin: reviewed
     fn add_level<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -911,7 +909,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         return Err(());
     }
 
-    // @seungmin: reviewed
     fn resize_move_slot_insert(
         &self,
         slot_ptr: PShared<'_, Slot<K, V>>,
@@ -1003,7 +1000,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(())
     }
 
-    // @seungminjeon: reviewed
     fn resize_move_inner<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1045,7 +1041,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err((ctx_new, fst_lv_new_ref))
     }
 
-    // @seungminjeon: reviewed
     fn resize_move<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1084,7 +1079,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // @seungminjeon: reviewed
     fn resize_clean_inner<'g>(
         &self,
         slot: &DetectableCASAtomic<Slot<K, V>>,
@@ -1140,7 +1134,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // TODO: review based on optimization rule on appendix (if rec { ... })
     fn resize_clean<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1203,7 +1196,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // @seungminjeon: reviewed
     fn resize_change_context<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1258,7 +1250,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // @seungminjeon: reviewed
     fn resize_inner<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1274,7 +1265,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 .checkpoint(|| phi, handle)
                 .load(Ordering::Relaxed, &handle.guard);
 
-            // TODO(refactoring): load 및 deref들은 전부 checkpoint안에 넣자. queue들도 리팩토링해야함.
+            // TODO(refactoring): Put all loads and derefs inside of checkpoint
             let ctx_ref = unsafe { ctx.deref(pool) };
 
             let last_lv = ctx_ref.last_level.load(Ordering::Acquire, guard);
@@ -1307,13 +1298,10 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // @seungminjeon: reviewed
     pub fn resize(&self, recv: &Receiver<()>, mmt: &mut Resize<K, V>, handle: &Handle) {
         // loop-simple
         loop {
-            // TODO(logic): { recv() -> checkpoint() }가 atomic하지 않아서 문제 발생 가능.
-            // - 예시: recv 직후, checkpoint 되기 전에 crash 나면 => send의 요청을 빼갔지만 처리하는 애가 없음.
-            // - 해결책 1: detectable queue 사용하기
+            // TODO: we may have to use detectable queue for this sender&receiver
             let recv_chk = mmt.recv_chk.checkpoint(|| recv.recv().is_ok(), handle);
             if !recv_chk {
                 return;
@@ -1453,7 +1441,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         return Err(());
     }
 
-    // @seungmin: reviewed
     fn try_slot_insert<'g>(
         &'g self,
         context: PShared<'g, Context<K, V>>,
@@ -1536,7 +1523,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err(())
     }
 
-    // @seungmin: reviewed.
     fn insert_inner<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1578,7 +1564,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // @seungmin: reviewed
     fn move_if_resized_inner<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1649,7 +1634,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Err((ctx2, ins_res2))
     }
 
-    // @seungmin: reviewed
     fn move_if_resized<'g>(
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
@@ -1703,7 +1687,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         }
     }
 
-    // @seungmin: reviewed
     pub fn insert(
         &self,
         key: K,
@@ -1770,7 +1753,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(())
     }
 
-    // @seungmin: reviewed
     fn try_delete(
         &self,
         key: &K,
@@ -1816,7 +1798,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(true)
     }
 
-    // @seungmin: reviewed
     pub fn delete(&self, key: &K, mmt: &mut Delete<K, V>, handle: &Handle) -> bool {
         let (key_tag, key_hashes) = hashes(&key);
 
