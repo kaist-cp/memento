@@ -912,13 +912,13 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     fn resize_move_slot_insert(
         &self,
         slot_ptr: PShared<'_, Slot<K, V>>,
-        key_tag: u16,
-        key_hashes: [u32; 2],
         fst_lv_ref: &Node<Bucket<K, V>>,
         mmt: &mut ResizeMoveSlotInsert<K, V>,
         handle: &Handle,
     ) -> Result<(), ()> {
         let (guard, pool) = (&handle.guard, handle.pool);
+
+        let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(handle.pool) }.key);
 
         if handle.rec.load(Ordering::Relaxed) {
             if mmt.fail.peek(handle).is_some() {
@@ -1004,8 +1004,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         &'g self,
         ctx: PShared<'g, Context<K, V>>,
         slot_ptr: PShared<'_, Slot<K, V>>,
-        key_tag: u16,
-        key_hashes: [u32; 2],
         fst_lv_ref: &'g Node<Bucket<K, V>>,
         mmt: &mut ResizeMoveInner<K, V>,
         handle: &'g Handle,
@@ -1018,8 +1016,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         if self
             .resize_move_slot_insert(
                 slot_ptr, // Stable by caller
-                key_tag,
-                key_hashes,
                 fst_lv_ref, // Stable by caller
                 &mut mmt.resize_move_slot_insert,
                 handle,
@@ -1051,8 +1047,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     ) -> (PShared<'g, Context<K, V>>, &'g Node<Bucket<K, V>>) {
         let (guard, pool) = (&handle.guard, handle.pool);
 
-        let (key_tag, key_hashes) = hashes(&unsafe { slot_ptr.deref(handle.pool) }.key);
-
         let mut phi = (PAtomic::from(ctx), unsafe { fst_lv_ref.as_pptr(pool) });
         loop {
             let (ctx, fst_lv_ref) = {
@@ -1065,8 +1059,6 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             match self.resize_move_inner(
                 ctx,      // Stable by checkpoint
                 slot_ptr, // Stable by caller
-                key_tag,
-                key_hashes,
                 fst_lv_ref, // Stable by checkpoint
                 &mut mmt.resize_move_inner,
                 handle,
@@ -1756,12 +1748,11 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     fn try_delete(
         &self,
         key: &K,
-        key_tag: u16,
-        key_hashes: [u32; 2],
         mmt: &mut TryDelete<K, V>,
         handle: &Handle,
     ) -> Result<bool, ()> {
         let (guard, pool) = (&handle.guard, handle.pool);
+        let (key_tag, key_hashes) = hashes(&key);
 
         let (slot_loc, slot_ptr) = {
             let chk = mmt.find_result_chk.checkpoint(
@@ -1799,11 +1790,9 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     }
 
     pub fn delete(&self, key: &K, mmt: &mut Delete<K, V>, handle: &Handle) -> bool {
-        let (key_tag, key_hashes) = hashes(&key);
-
         loop {
             // ~= checkpoint(unit)
-            if let Ok(ret) = self.try_delete(key, key_tag, key_hashes, &mut mmt.try_delete, handle)
+            if let Ok(ret) = self.try_delete(key, &mut mmt.try_delete, handle)
             {
                 return ret;
             }
