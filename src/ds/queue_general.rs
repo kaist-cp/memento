@@ -128,7 +128,6 @@ impl<T: Clone + Collectable> PDefault for QueueGeneral<T> {
 
         Self {
             head: CachePadded::new(DetectableCASAtomic::from(sentinel)),
-            // tail: CachePadded::new(PAtomic::from(sentinel)),
             tail: CachePadded::new(DetectableCASAtomic::from(sentinel)),
         }
     }
@@ -140,8 +139,9 @@ impl<T: Clone + Collectable> Collectable for QueueGeneral<T> {
 
         // Align head and tail
         let tmp_handle = Handle::new(tid, epoch::pin(), global_pool().unwrap());
-        let _head = queue.head.load(Ordering::SeqCst, &tmp_handle);
-        // TODO: queue.tail.store(head, Ordering::SeqCst);
+        let head = queue.head.load(Ordering::SeqCst, &tmp_handle);
+        let tail = queue.tail.load(Ordering::SeqCst, &tmp_handle);
+        let _ = queue.tail.cas_non_detectable(tail, head, &tmp_handle);
     }
 }
 
@@ -169,14 +169,6 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
 
                         // tail is stale
                         let _ = self.tail.cas_non_detectable(tail, next, handle);
-
-                        // let _ = self.tail.compare_exchange(
-                        //     tail,
-                        //     next,
-                        //     Ordering::SeqCst,
-                        //     Ordering::SeqCst,
-                        //     guard,
-                        // );
                     };
                     PAtomic::from(tail)
                 },
@@ -192,10 +184,6 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
         {
             return Err(TryFail);
         }
-
-        // let _ = self
-        //     .tail
-        //     .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
 
         let _ = self.tail.cas(tail, node, &mut try_enq.forward_tail, handle);
 
@@ -243,13 +231,6 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                     }
 
                     // tail is stale
-                    // let _ = self.tail.compare_exchange(
-                    //     tail,
-                    //     next,
-                    //     Ordering::SeqCst,
-                    //     Ordering::SeqCst,
-                    //     guard,
-                    // );
                     let _ = self.tail.cas_non_detectable(tail, next, handle);
                 };
                 (PAtomic::from(head), PAtomic::from(next))
