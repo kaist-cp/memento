@@ -91,7 +91,7 @@ impl CasOwn {
 
 #[derive(Debug)]
 pub(crate) struct CasHelp {
-    inner: [CachePadded<AtomicU64>; 2],
+    pub(crate) inner: [CachePadded<AtomicU64>; 2],
 }
 
 impl Default for CasHelp {
@@ -120,7 +120,7 @@ impl CasHelp {
     ) -> Result<(), ()> {
         self.inner[parity as usize]
             .compare_exchange(old.into(), new.into(), Ordering::SeqCst, Ordering::SeqCst)
-            .map(|_| persist_obj(&self.inner[parity as usize], false))
+            .map(|_| ())
             .map_err(|_| ())
     }
 
@@ -541,9 +541,11 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
         // CAS winner thread's pcheckpoint
         let t_help = cas_info.help[winner_tid].load(winner_parity);
-        if t_cur > t_help {
-            let _ = cas_info.help[winner_tid].compare_exchange(winner_parity, t_help, t_cur);
+        if t_cur <= t_help
+            || cas_info.help[winner_tid].compare_exchange(winner_parity, t_help, t_cur).is_err() {
+            return Err(self.inner.load(Ordering::SeqCst, &handle.guard));
         }
+        persist_obj(&*cas_info.help[winner_tid].inner[winner_parity as usize], false);
 
         // help pointer to be clean.
         let res =
