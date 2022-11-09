@@ -186,7 +186,13 @@ def draw_ax(bench, ax, datas):
         else:
             ax.set_yticklabels([], rotation=0)
     ax.grid()
-    ax.set_xlabel(data['xlabel'], fontsize=6)
+    ax.set_xlabel(data['xlabel'], fontsize=10)
+
+    # Make red area
+    x_range, y_range = ax.get_xlim(), ax.get_ylim()
+    ax.fill_between([6.2, x_range[1]], y_range[0], y_range[1], alpha=0.08, color='red')
+    ax.set_xlim(x_range)
+    ax.set_ylim(y_range)
 
 
 def draw_axes(bench, ylabel, axes_datas):
@@ -194,13 +200,11 @@ def draw_axes(bench, ylabel, axes_datas):
         figsize = (6, 0.8)
         print(ylabel)
     else:
-        # figsize = (10, 1.5)
-        figsize = (10, 2.4)
+        figsize = (10, 1.2)
     fig, axes = plt.subplots(1, len(axes_datas), figsize=figsize)
     for i, ax_datas in enumerate(axes_datas):
         draw_ax(bench, axes[i], ax_datas)
-    axes[0].set_ylabel(ylabel, fontsize=7)
-    axes[0].set_ylabel(ylabel)
+    axes[0].set_ylabel(ylabel, fontsize=8, y=0.38)
 
     return axes
 
@@ -265,13 +269,16 @@ for obj, obj_info in objs.items():
             plt.clf()
             if dist == 'selfsimilar':
                 plot_id = "hash-{}-multi{}-{}".format(
-                    bench, tnum, "self-similar-0.2")
+                    bench, tnum, "self-similar")
             else:
                 plot_id = "hash-{}-multi{}-{}".format(bench, tnum, dist)
 
             # (a), (b), (c), (d)
             workloads = ["insert", "pos_search", "neg_search", "delete"]
             axes = draw(bench, dist, targets, workloads)
+            figpath = "./out/{}_abcd.png".format(plot_id)
+            plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
+            print(figpath)
             figpath = "./out/{}_abcd.svg".format(plot_id)
             plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
             print(figpath)
@@ -282,9 +289,14 @@ for obj, obj_info in objs.items():
             figpath = "./out/{}_efg.svg".format(plot_id)
             plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
             print(figpath)
+            figpath = "./out/{}_efg.png".format(plot_id)
+            plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
+            print(figpath)
 
     axLine, axLabel = axes[0].get_legend_handles_labels()
     draw_legend(axLine, axLabel, "./out/{}-legend.svg".format(obj))
+    axLine, axLabel = axes[0].get_legend_handles_labels()
+    draw_legend(axLine, axLabel, "./out/{}-legend.png".format(obj))
 
 # # 2. single-thread throughput (bar graph)
 # for obj, obj_info in objs.items():

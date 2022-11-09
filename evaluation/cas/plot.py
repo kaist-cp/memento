@@ -44,6 +44,14 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.xlabel(xlabel, size='large')
     if ylabel != '':
         plt.ylabel(ylabel, size='large')
+
+    # Make red area
+    x_range, y_range = plt.xlim(), plt.ylim()
+    plt.fill_between([49, x_range[1]], y_range[0], y_range[1], alpha=0.08, color='red')
+    plt.xlim(x_range)
+    plt.ylim(y_range)
+
+    # Save
     figpath = "{}.png".format(output)
     plt.tight_layout()
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
@@ -95,7 +103,7 @@ def draw_column(column_name, column_label, contentions):
 
             # draw graph.
 
-            plot_id = "{}-{}-ct{}".format(obj, column_name, contention)
+            plot_id = "{}-{}-loc{}".format(obj, column_name, contention)
             plot_lines = []
 
             # Gathering info

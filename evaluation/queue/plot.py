@@ -10,9 +10,9 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 objs = {
     "queue": {
         "targets": {
-            "memento_queue_general": {'data_id': '', 'label': "MSQ-cas-mmt", 'marker': 'o', 'color': 'k', 'style': '-'},
-            "memento_queue_lp": {'data_id': '', 'label': "MSQ-indel-mmt", 'marker': 'd', 'color': 'k', 'style': '-'},
-            "memento_queue": {'data_id': '', 'label': "MSQ-vol-mmt", 'marker': 'x', 'color': 'k', 'style': '-'},
+            "memento_queue_general": {'data_id': '', 'label': "MSQ-mmt-O0", 'marker': 'o', 'color': 'k', 'style': '-'},
+            "memento_queue_lp": {'data_id': '', 'label': "MSQ-mmt-O1", 'marker': 'd', 'color': 'k', 'style': '-'},
+            "memento_queue": {'data_id': '', 'label': "MSQ-mmt-O2", 'marker': 'x', 'color': 'k', 'style': '-'},
             "memento_queue_comb": {'data_id': '', 'label': "CombQ-mmt", 'marker': 'v', 'color': 'k', 'style': '-'},
             'durable_queue': {'data_id': '', 'label': "DurableQ", 'marker': 's', 'color': 'hotpink', 'style': '--'},
             'log_queue': {'data_id': '', 'label': "LogQ", 'marker': 's', 'color': 'c', 'style': '--'},
@@ -54,6 +54,24 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
     plt.xlabel(xlabel, size='large')
     if ylabel != '':
         plt.ylabel(ylabel, size='large')
+
+    # Crop the top of figure
+    if output == './out/queue-throughput-pair':
+        plt.ylim([-0.1, 1.6])
+    elif output == './out/queue-throughput-prob20':
+        plt.ylim([-0.1, 2.5])
+    elif output == './out/queue-throughput-prob50':
+        plt.ylim([-0.1, 3.5])
+    elif output == './out/queue-throughput-prob80':
+        plt.ylim([-0.1, 2.8])
+
+    # Make red area
+    x_range, y_range = plt.xlim(), plt.ylim()
+    plt.fill_between([49, x_range[1]], y_range[0], y_range[1], alpha=0.08, color='red')
+    plt.xlim(x_range)
+    plt.ylim(y_range)
+
+    # Save
     plt.tight_layout()
     figpath = "{}.png".format(output)
     plt.savefig(figpath, bbox_inches='tight', pad_inches=0.02, dpi=300)
