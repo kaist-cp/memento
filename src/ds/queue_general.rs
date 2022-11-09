@@ -46,6 +46,7 @@ impl<T: Collectable> Default for Node<T> {
 pub struct TryEnqueue<T: Clone + Collectable> {
     tail: Checkpoint<PAtomic<Node<T>>>,
     insert: Cas<Node<T>>,
+    forward_tail: Cas<Node<T>>,
 }
 
 impl<T: Clone + Collectable> Default for TryEnqueue<T> {
@@ -53,6 +54,7 @@ impl<T: Clone + Collectable> Default for TryEnqueue<T> {
         Self {
             tail: Default::default(),
             insert: Default::default(),
+            forward_tail: Default::default(),
         }
     }
 }
@@ -115,7 +117,8 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for Dequeue<T> {}
 #[derive(Debug)]
 pub struct QueueGeneral<T: Clone + Collectable> {
     head: CachePadded<DetectableCASAtomic<Node<T>>>,
-    tail: CachePadded<PAtomic<Node<T>>>,
+    // tail: CachePadded<PAtomic<Node<T>>>,
+    tail: CachePadded<DetectableCASAtomic<Node<T>>>,
 }
 
 impl<T: Clone + Collectable> PDefault for QueueGeneral<T> {
@@ -125,7 +128,7 @@ impl<T: Clone + Collectable> PDefault for QueueGeneral<T> {
 
         Self {
             head: CachePadded::new(DetectableCASAtomic::from(sentinel)),
-            tail: CachePadded::new(PAtomic::from(sentinel)),
+            tail: CachePadded::new(DetectableCASAtomic::from(sentinel)),
         }
     }
 }
@@ -137,7 +140,8 @@ impl<T: Clone + Collectable> Collectable for QueueGeneral<T> {
         // Align head and tail
         let tmp_handle = Handle::new(tid, epoch::pin(), global_pool().unwrap());
         let head = queue.head.load(Ordering::SeqCst, &tmp_handle);
-        queue.tail.store(head, Ordering::SeqCst);
+        let tail = queue.tail.load(Ordering::SeqCst, &tmp_handle);
+        let _ = queue.tail.cas_non_detectable(tail, head, &tmp_handle);
     }
 }
 
@@ -155,7 +159,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
             .checkpoint(
                 || {
                     let tail = loop {
-                        let tail = self.tail.load(Ordering::SeqCst, guard);
+                        let tail = self.tail.load(Ordering::SeqCst, handle);
                         let tail_ref = unsafe { tail.deref(pool) };
                         let next = tail_ref.next.load(Ordering::SeqCst, handle);
 
@@ -164,13 +168,7 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                         }
 
                         // tail is stale
-                        let _ = self.tail.compare_exchange(
-                            tail,
-                            next,
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                            guard,
-                        );
+                        let _ = self.tail.cas_non_detectable(tail, next, handle);
                     };
                     PAtomic::from(tail)
                 },
@@ -187,9 +185,8 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
             return Err(TryFail);
         }
 
-        let _ = self
-            .tail
-            .compare_exchange(tail, node, Ordering::SeqCst, Ordering::SeqCst, guard);
+        let _ = self.tail.cas(tail, node, &mut try_enq.forward_tail, handle);
+
         Ok(())
     }
 
@@ -227,20 +224,14 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
                     let head = self.head.load(Ordering::SeqCst, handle);
                     let head_ref = unsafe { head.deref(pool) };
                     let next = head_ref.next.load(Ordering::SeqCst, handle);
-                    let tail = self.tail.load(Ordering::SeqCst, guard);
+                    let tail = self.tail.load(Ordering::SeqCst, handle);
 
                     if head.as_ptr() != tail.as_ptr() || next.is_null() {
                         break (head, next);
                     }
 
                     // tail is stale
-                    let _ = self.tail.compare_exchange(
-                        tail,
-                        next,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        guard,
-                    );
+                    let _ = self.tail.cas_non_detectable(tail, next, handle);
                 };
                 (PAtomic::from(head), PAtomic::from(next))
             },
