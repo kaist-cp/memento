@@ -121,6 +121,7 @@ pub struct MoveIfResizedInner<K, V: Collectable> {
     context_new_chk: Checkpoint<PAtomic<Context<K, V>>>,
     slot_cas: Cas<Slot<K, V>>,
     insert_inner: InsertInner<K, V>,
+    dirty_cas: Cas<Slot<K, V>>,
 }
 
 impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
@@ -130,6 +131,7 @@ impl<K, V: Collectable> Default for MoveIfResizedInner<K, V> {
             context_new_chk: Default::default(),
             slot_cas: Default::default(),
             insert_inner: Default::default(),
+            dirty_cas: Default::default(),
         }
     }
 }
@@ -1015,7 +1017,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
         if self
             .resize_move_slot_insert(
-                slot_ptr, // Stable by caller
+                slot_ptr,   // Stable by caller
                 fst_lv_ref, // Stable by caller
                 &mut mmt.resize_move_slot_insert,
                 handle,
@@ -1057,8 +1059,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             };
 
             match self.resize_move_inner(
-                ctx,      // Stable by checkpoint
-                slot_ptr, // Stable by caller
+                ctx,        // Stable by checkpoint
+                slot_ptr,   // Stable by caller
                 fst_lv_ref, // Stable by checkpoint
                 &mut mmt.resize_move_inner,
                 handle,
@@ -1617,10 +1619,12 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
             handle,
         );
 
-        ins_res
-            .slot
-            .inner
-            .store(PShared::null().with_tag(1), Ordering::Release); // exploit invariant
+        let _ = ins_res.slot.cas(
+            ins_res.slot_ptr.with_tag(1),
+            PShared::null().with_tag(1),
+            &mut mmt.dirty_cas,
+            handle,
+        );
 
         // stable error
         Err((ctx2, ins_res2))
@@ -1745,12 +1749,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
         Ok(())
     }
 
-    fn try_delete(
-        &self,
-        key: &K,
-        mmt: &mut TryDelete<K, V>,
-        handle: &Handle,
-    ) -> Result<bool, ()> {
+    fn try_delete(&self, key: &K, mmt: &mut TryDelete<K, V>, handle: &Handle) -> Result<bool, ()> {
         let (guard, pool) = (&handle.guard, handle.pool);
         let (key_tag, key_hashes) = hashes(&key);
 
@@ -1792,8 +1791,7 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
     pub fn delete(&self, key: &K, mmt: &mut Delete<K, V>, handle: &Handle) -> bool {
         loop {
             // ~= checkpoint(unit)
-            if let Ok(ret) = self.try_delete(key, &mut mmt.try_delete, handle)
-            {
+            if let Ok(ret) = self.try_delete(key, &mut mmt.try_delete, handle) {
                 return ret;
             }
         }
