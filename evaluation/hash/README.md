@@ -1,5 +1,5 @@
 
-# Hash Evaluation
+# Performance Evaluation of Hash
 
 We used the same benchmark as [Persistent Memory Hash Indexes: An Experimental Evaluation (VLDB '21)](http://vldb.org/pvldb/vol14/p785-chen.pdf) to evaluate our hash. Each implementation of comparion targets exists in [`./hash/`](./hash/)
 
@@ -25,7 +25,7 @@ cd bin
 ```
 
 where
-- `[lib.so]`: `clevel.so`, `clevel_rust.so` (mmt at paper)
+- `[lib.so]`: `clevel.so`, `clevel_rust.so` (Clevel-mmt at paper)
 - `[args...]`: please see [Persistent Memory Hash Indexes repo](https://github.com/HNUSystemsLab/HashEvaluation#run-with-pibench).
 
 For example, following command measure the search throughput of `clevel_rust` when using 32 threads with uniform distribution.

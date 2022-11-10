@@ -1,4 +1,4 @@
-# List Evaluation
+# Performance Evaluation of List
 
 We evaluate the performance of memento-based list compared to other detectable list. Each implementation of comparion targets exists in [`./src/`](./src). To evaluate the performance of detectable list based on `Tracking`, `Capsule`, `Casule-Opt`, we use the implementations published by [Detectable Recovery of Lock-Free Data Structures (PPoPP '22)](https://dl.acm.org/doi/pdf/10.1145/3503221.3508444) authors.
 
@@ -19,7 +19,7 @@ You can run a single benchamrk for list-mmt,
 
 ```bash
 ./build.sh
-./target/release/bench -f <filepath> -a list-mmt  -t <threads> -k <key range> --insert-ratio <insert ratio> --delete-ratio <delete ratio> --read-ratio <read ratio> -o <outpath>
+./target/release/bench -f <filepath> -a list-mmt  -t <threads> -k <key-range> --insert-ratio <insert-ratio> --delete-ratio <delete-ratio> --read-ratio <read-ratio> -o <outpath>
 ```
 
 For example, following command measure the throughput of `list-mmt` with read-intensive workload, when using `16` threads and `500` key ranges.

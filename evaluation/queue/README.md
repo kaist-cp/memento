@@ -1,4 +1,4 @@
-# Queue Evaluation
+# Performance Evaluation of Queue
 
 We evaluate the performance of memento-based queues and other queues. Each implementation of comparion targets exists in [`./src/`](./src)
 
@@ -21,10 +21,10 @@ You can run a single benchamrk,
 ```
 
 where
-- `target`: memento_queue (MSQ-mmt-vol at paper), memento_queue_lp (MSQ-mmt-indel at paper), memento_queue_general (MSQ-cas-mmt at paper), memento_queue_comb (CombQ-mmt at paper), durable_queue, log_queue, dss_queue, pbcomb_queue, crndm_queue
+- `target`: memento_queue (MSQ-mmt-O2 at the paper), memento_queue_lp (MSQ-mmt-O1 at the paper), memento_queue_general (MSQ-mmt-O0 at the paper), memento_queue_comb (CombQ-mmt at the paper), durable_queue, log_queue, dss_queue, pbcomb_queue, crndm_queue
 - `kind`: pair (enq-deq pair), prob{n} (n% probability enq or 100-n% deq)
 
-For example, following command measure the throughput of `mmt` queue with `pair` workload, when using `16` threads.
+For example, following command measure the throughput of `memento_queue` with `pair` workload, when using `16` threads.
 
 ```bash
 ./target/release/bench -f /mnt/pmem0/mmt.pool -a memento_queue -k pair -t 16 -i 0 -o ./out/mmt.csv
@@ -44,14 +44,14 @@ For detailed usage information,
 
 To run a single benchmark for PMDK and Clobber-NVM queues, you should use separate executables with the following commands.
 
-For PMDK queue:
+PMDK queue:
 
 ```bash
 ./build.sh
 ./target/release/bench_cpp <filepath> <target> <kind> <threads> <duration> <init_nodes> <output> # <target> should be "pmdk_queue"
 ```
 
-For Clobber-NVM queue:
+Clobber-NVM queue:
 
 ```bash
 ./build.sh

@@ -161,13 +161,13 @@ dmsg "throughput with self-similar distribution was done."
 dmsg "all throughput was done."
 
 # Fig 7. Latency
-dmsg "start latency with uniform distribution."
-bench_all insert LATENCY UNIFORM
-bench_all pos_search LATENCY UNIFORM
-bench_all neg_search LATENCY UNIFORM
-bench_all delete LATENCY UNIFORM
-dmsg "latency with uniform distribution was done."
-dmsg "all latency was done."
+# dmsg "start latency with uniform distribution."
+# bench_all insert LATENCY UNIFORM
+# bench_all pos_search LATENCY UNIFORM
+# bench_all neg_search LATENCY UNIFORM
+# bench_all delete LATENCY UNIFORM
+# dmsg "latency with uniform distribution was done."
+# dmsg "all latency was done."
 
 # plot
 dmsg "plotting.."

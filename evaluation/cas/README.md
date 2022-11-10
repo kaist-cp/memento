@@ -1,4 +1,4 @@
-# CAS Evaluation
+# Performance Evaluation of CAS
 
 We evaluate the performance of CASes with our benchmark. Each implementation of comparion targets exists in [`./src/`](./src)
 
@@ -24,7 +24,7 @@ where
 - `target`: mcas (CAS-mmt at paper), pmwcas, nrlcas
 - `locations`: number of locations
 
-For example, following command measure the throughput and memory usage of `CAS-mmt` when using `1000` locations and `16` threads.
+For example, following command measure the throughput and memory usage of `mcas` when using `1000` locations and `16` threads.
 
 ```bash
 ./target/release/cas_bench -f /mnt/pmem0/mcas.pool -a mcas -c 1000 -t 16 -o ./out/cas-mmt.csv
