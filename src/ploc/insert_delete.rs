@@ -319,6 +319,10 @@ impl<N: Node + Collectable> SMOAtomic<N> {
             return Some(true);
         }
 
+        if mmt.0.check_failed(handle) {
+            return Some(false);
+        }
+
         None
     }
 
@@ -398,6 +402,10 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         let owner = old_ref.replacement();
         let o = owner.load(Ordering::SeqCst, guard);
         if o.tid() != tid {
+            if mmt.0.check_failed(handle) {
+                return Some(false);
+            }
+
             return None;
         }
 
