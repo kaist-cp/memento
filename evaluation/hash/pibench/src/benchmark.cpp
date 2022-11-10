@@ -209,7 +209,7 @@ namespace PiBench
         {
           break;
         }
-        std::cout << "[Before run] resizing not yet finished. sleep 5sc.." << std::endl;
+        // std::cout << "[Before run] resizing not yet finished. sleep 5sc.." << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(5000));
         is_resizing = tree_->hash_is_resizing();
       }
