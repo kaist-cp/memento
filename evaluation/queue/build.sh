@@ -23,6 +23,13 @@ pip3 install --user pandas matplotlib gitpython
 
 # Build
 
+### PMDK
+g++ -O3 -o $target_path/bench_cpp $base_dir/src/main.cpp $base_dir/src/pmdk/pipe.cpp $base_dir/src/pmdk/queue.cpp -pthread -lpmemobj -std=c++17
+
+### Clobber-NVM
+(cd ./src/clobber-nvm; sudo ./build.sh)
+(cd ./src/clobber-nvm/apps/queue/; make benchmark-clobber)
+
 ### Rust implementations
 (cd ..; cargo update) # update memento crate
 cargo update # update evaluation crate
@@ -31,10 +38,3 @@ if [ "$feature" == "no_persist" ]; then
 else
     cargo build --release
 fi
-
-### PMDK
-g++ -O3 -o $target_path/bench_cpp $base_dir/src/main.cpp $base_dir/src/pmdk/pipe.cpp $base_dir/src/pmdk/queue.cpp -pthread -lpmemobj -std=c++17
-
-### Clobber-NVM
-(cd ./src/clobber-nvm; sudo ./build.sh)
-(cd ./src/clobber-nvm/apps/queue/; make benchmark-clobber)
