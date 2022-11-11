@@ -53,7 +53,7 @@ The directory `crossbeam-persistency` contains implementations of safe memory re
 #### Others
 
 - `src/pmem`: This directory contains several libraries to create an environment to run memento-based programs, including persistent memory pool, persistent poiner, low-level instructions and other existing libraries (e.g. Ralloc).
-- `src/pepoch`: Implementation of atomic pointer for persistent memory pool and SMR. It also provide ways to tag on a pointer to support detectable operations.
+- `src/pepoch`: Implementation of atomic pointer for persistent memory pool. It also provide ways to tag on a pointer to support detectable operations.
 
 ## Evaluation
 
