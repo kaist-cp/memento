@@ -307,10 +307,6 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         mmt: &mut Insert,
         handle: &Handle,
     ) -> Option<bool> {
-        if mmt.0.check_failed(handle) {
-            return Some(false);
-        }
-
         let (guard, pool) = (&handle.guard, handle.pool);
         if unsafe { new.deref(pool) }.acked(guard)
             || obj.contains(new, guard, pool)
@@ -392,9 +388,6 @@ impl<N: Node + Collectable> SMOAtomic<N> {
         handle: &Handle,
     ) -> Option<bool> {
         let (tid, guard, pool) = (handle.tid, &handle.guard, handle.pool);
-        if mmt.0.check_failed(handle) {
-            return Some(false);
-        }
 
         let old_ref = unsafe { old.deref(pool) };
 
