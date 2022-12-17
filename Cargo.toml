@@ -30,14 +30,14 @@ atomic = "0.5"
 etrace = "1.1.1"
 rand = "0.8.5"
 tempfile = "3.3.0"
-array-init = "2.0.1"
+array-init = "2.1.0"
 lazy_static = "1.4.0"
-itertools = "0.10.3"
+itertools = "0.10.5"
 fasthash = "0.4.0"
 cfg-if = "1.0.0"
 tinyvec = { version = "1.6.0", features = ["alloc", "rustc_1_40"] }
-libc = "0.2.132"
-num_cpus = "1.13.1"
+libc = "0.2.138"
+num_cpus = "1.14.0"
 
 
 [dev-dependencies]
