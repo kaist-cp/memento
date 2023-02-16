@@ -269,8 +269,9 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for QueueGeneral<T> {}
 
-#[cfg(test)]
-mod test {
+/// Test
+#[allow(dead_code)]
+pub mod test {
     use super::*;
     use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
 
@@ -331,11 +332,21 @@ mod test {
     // - You can check gc operation from the second time you open the pool:
     //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
     //   - where +2 is a pointer to Root, Queue
+    #[cfg(not(feature = "pmcheck"))]
     #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "queue_general";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        run_test::<TestRootObj<QueueGeneral<TestValue>>, EnqDeq>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
+    }
 
+    /// Test queue_general
+    #[cfg(feature = "pmcheck")]
+    pub fn enq_deq() {
+        const FILE_NAME: &str = "queue_general";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         run_test::<TestRootObj<QueueGeneral<TestValue>>, EnqDeq>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         );

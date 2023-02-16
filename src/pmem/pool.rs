@@ -141,7 +141,9 @@ impl PoolHandle {
         BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
             while !BARRIER_WAIT[other].load(Ordering::SeqCst) {
-                std::hint::spin_loop()
+                std::hint::spin_loop();
+                #[cfg(feature = "pmcheck")]
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
         }
     }
@@ -416,20 +418,16 @@ pub trait RootObj<M: Memento>: PDefault + Collectable {
     fn run(&self, mmt: &mut M, handle: &Handle);
 }
 
-#[cfg(test)]
-mod tests {
-    use log::{self as _, debug};
-
+/// Test
+pub mod test {
     use crate::pmem::pool::*;
     use crate::test_utils::tests::*;
 
     impl RootObj<CheckInv> for DummyRootObj {
         fn run(&self, mmt: &mut CheckInv, _: &Handle) {
             if mmt.flag {
-                debug!("check inv");
                 assert_eq!(mmt.value, 42);
             } else {
-                debug!("update");
                 mmt.value = 42;
                 mmt.flag = true;
             }
@@ -448,12 +446,20 @@ mod tests {
         }
     }
 
-    const FILE_NAME: &str = "check_inv";
-    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
-    // check flag=1 => value=42
+    /// check flag=1 => value=42
+    #[cfg(not(feature = "pmcheck"))]
     #[test]
     fn check_inv() {
-        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 0);
+        const FILE_NAME: &str = "check_inv";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 1);
+    }
+
+    /// check flag=1 => value=42
+    #[cfg(feature = "pmcheck")]
+    pub fn check_inv() {
+        const FILE_NAME: &str = "check_inv";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 1);
     }
 }
