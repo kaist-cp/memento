@@ -117,8 +117,11 @@ pub(crate) mod ordo {
     }
 
     pub(crate) fn get_ordo_boundary() -> Timestamp {
-        let _num_cpus = num_cpus::get();
-        let num_cpus = 2;
+        let num_cpus = if cfg!(feature = "pmcheck") {
+            4 // Too slow if this number is big.
+        } else {
+            num_cpus::get()
+        };
         let global_off = (0..num_cpus).combinations(2).fold(0, |off, c| {
             off.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])))
         });
