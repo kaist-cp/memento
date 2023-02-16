@@ -26,4 +26,12 @@ fn main() {
     // Link libralloc.a
     println!("cargo:rustc-link-search=ext/ralloc/test");
     println!("cargo:rustc-link-lib=dylib=stdc++");
+
+    #[cfg(feature = "pmcheck")]
+    {
+        // TODO: Set pmcheck bin path
+        println!("cargo:rustc-link-search=/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/pmcheck/bin");
+        println!("cargo:rustc-link-lib=pmcheck");
+    }
+
 }

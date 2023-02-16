@@ -1,10 +1,11 @@
 //! Utilities
 
+#[allow(warnings)]
 pub(crate) mod ordo {
     use std::{
         mem::{size_of, MaybeUninit},
         sync::{
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Barrier,
         },
     };
@@ -30,6 +31,53 @@ pub(crate) mod ordo {
     // TODO: sched_setscheduler(getpid(), SCHED_FIFO, param)
     fn clock_offset(c0: usize, c1: usize) -> u64 {
         const RUNS: usize = 100;
+        struct MyBarrier {
+            #[cfg(not(feature = "pmcheck"))]
+            b: [Arc<Barrier>; 2],
+            #[cfg(feature = "pmcheck")]
+            b: [[AtomicBool; 2]; 2],
+        }
+        impl MyBarrier {
+            fn new() -> Self {
+                #[cfg(not(feature = "pmcheck"))]
+                {
+                    let bar0 = Arc::new(Barrier::new(2));
+                    let bar1 = Arc::clone(&bar0);
+                    Self { b: [bar0, bar1] }
+                }
+                #[cfg(feature = "pmcheck")]
+                {
+                    let bar_s: [AtomicBool; 2] = array_init::array_init(|_| AtomicBool::new(false));
+                    let bar_f: [AtomicBool; 2] = array_init::array_init(|_| AtomicBool::new(false));
+                    Self { b: [bar_f, bar_s] }
+                }
+            }
+
+            fn wait(&self, id: usize) {
+                #[cfg(not(feature = "pmcheck"))]
+                {
+                    let _ = self.b[id].wait();
+                }
+                #[cfg(feature = "pmcheck")]
+                {
+                    let other = 1 - id;
+
+                    // wait for finish
+                    let new = !self.b[0][id].load(Ordering::SeqCst);
+                    self.b[0][id].store(new, Ordering::SeqCst);
+                    while self.b[0][other].load(Ordering::SeqCst) != new {
+                        std::thread::sleep(std::time::Duration::from_nanos(1));
+                    }
+
+                    // wait for new start
+                    let new = !self.b[1][id].load(Ordering::SeqCst);
+                    self.b[1][1].store(new, Ordering::SeqCst);
+                    while self.b[1][other].load(Ordering::SeqCst) != new {
+                        std::thread::sleep(std::time::Duration::from_nanos(1));
+                    }
+                }
+            }
+        }
         let clock = AtomicU64::new(1);
         let clock_ref = &clock;
         let bar0 = Arc::new(Barrier::new(2));
@@ -69,8 +117,8 @@ pub(crate) mod ordo {
     }
 
     pub(crate) fn get_ordo_boundary() -> Timestamp {
-        let num_cpus = num_cpus::get();
-
+        let _num_cpus = num_cpus::get();
+        let num_cpus = 2;
         let global_off = (0..num_cpus).combinations(2).fold(0, |off, c| {
             off.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])))
         });

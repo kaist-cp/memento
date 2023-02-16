@@ -17,6 +17,7 @@ use_clwb = []
 use_msync = []
 stat_print_flushes = []
 stress = []
+pmcheck = []
 
 [dependencies]
 mmt_derive = { path = "./src/derive" }
