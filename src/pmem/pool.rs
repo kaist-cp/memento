@@ -16,7 +16,7 @@ use crate::pmem::ptr::PPtr;
 use crate::pmem::{global, ralloc::*};
 use crate::*;
 use crossbeam_epoch::{self as epoch};
-use std::thread;
+use test_utils::thread;
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 enum RootIdx {
@@ -100,64 +100,23 @@ impl PoolHandle {
             let th = thread::spawn(move || {
                 let h = thread::spawn(move || {
                     loop {
-                        struct Args<'a, O: 'static> {
-                            m_addr: usize,
-                            nr_memento: usize,
-                            root_obj: &'static O,
-                            handle: &'a Handle,
-                        }
-
-                        extern "C" fn thread_start<O, M>(arg: *mut c_void) -> *mut c_void
-                        where
-                            O: RootObj<M> + Send + Sync + 'static,
-                            M: Memento + Send + Sync,
-                        {
-                            // Decompose arguments
-                            let args = unsafe { (arg as *mut Args<'_, O>).as_mut() }.unwrap();
-                            let (m_addr, nr_memento, root_obj, handle) =
-                                (args.m_addr, args.nr_memento, args.root_obj, args.handle);
-
+                        // Run memento
+                        let mh = thread::spawn(move || {
+                            let handle = Handle::new(tid, unsafe { epoch::old_guard(tid) }, self);
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                             // Barrier
                             handle.pool.barrier_wait(handle.tid, nr_memento);
 
                             // Run memento
-                            root_obj.run(root_mmt, handle);
-
-                            ptr::null_mut()
-                        }
-
-                        let mut native: libc::pthread_t = unsafe { mem::zeroed() };
-                        let attr: libc::pthread_attr_t = unsafe { mem::zeroed() };
-
-                        // Handle
-                        let handle = Handle::new(tid, unsafe { epoch::old_guard(tid) }, self);
-                        let mut args = Args {
-                            m_addr,
-                            nr_memento,
-                            root_obj,
-                            handle: &handle,
-                        };
-
-                        // Run memento
-                        unsafe {
-                            let _err = libc::pthread_create(
-                                &mut native,
-                                &attr,
-                                thread_start::<O, M>,
-                                &mut args as *const _ as *mut _,
-                            );
-                        }
+                            root_obj.run(root_mmt, &handle);
+                        });
 
                         // Join
                         // - Exit on success, re-run memento on failure
                         // - The guard used in case of failure is also not cleaned up.
                         //   A guard that loses its owner should be used well by the thread created in the next iteration.
-                        let mut status = ptr::null_mut();
-                        let _ = unsafe { libc::pthread_join(native, &mut status) };
-
-                        if status as *const _ as usize == 0 {
+                        if let Ok(_) = mh.join() {
                             break;
                         }
 
