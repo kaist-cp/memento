@@ -5,7 +5,13 @@ pub mod tests {
     use atomic::Atomic;
     use crossbeam_utils::Backoff;
     use mmt_derive::Collectable;
-    use std::backtrace::Backtrace;
+
+    #[cfg(feature = "tcrash")]
+    use {
+        libc::{size_t, SIGUSR2},
+        std::backtrace::Backtrace,
+    };
+
     use std::io::Error;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
@@ -17,7 +23,6 @@ pub mod tests {
 
     use {
         crate::pmem::*,
-        libc::{size_t, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32},
     };
 
@@ -104,6 +109,8 @@ pub mod tests {
         O: RootObj<M> + Send + Sync + 'static,
         M: Memento + Send + Sync,
     {
+        #[cfg(feature = "tcrash")]
+        {
         // Assertion err causes abort.
         std::panic::set_hook(Box::new(|info| {
             println!("Thread {} {info}", unsafe { libc::gettid() });
@@ -113,6 +120,7 @@ pub mod tests {
 
         // Install signal handler
         let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
+        }
 
         // Initialize tester
         let tester = unsafe {
