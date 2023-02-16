@@ -1,5 +1,141 @@
 //! Utilities
 
+pub(crate) mod thread {
+    use std::{any::TypeId, marker::PhantomData};
+
+    use libc::c_void;
+
+    pub(crate) struct JoinHandle<T> {
+        native: u64,
+        phantom: PhantomData<T>,
+    }
+
+    impl<T: 'static> JoinHandle<T> {
+        #[allow(box_pointers)]
+        pub(crate) fn join(&self) -> Result<T, ()> {
+            let mut status = std::ptr::null_mut();
+            if unsafe { libc::pthread_join(self.native, &mut status) } == 0 {
+                // no return value
+                if TypeId::of::<()>() == TypeId::of::<T>() {
+                    if status as *const _ as usize == 0 {
+                        Ok(unsafe { std::mem::transmute_copy(&()) })
+                    } else {
+                        Err(())
+                    }
+                }
+                // there is return value
+                else {
+                    Ok(*unsafe { Box::from_raw(status as *mut _ as *mut T) })
+                }
+            } else {
+                Err(())
+            }
+        }
+    }
+
+    #[allow(box_pointers)]
+    pub(crate) fn spawn<'a, F, T>(f: F) -> JoinHandle<T>
+    where
+        F: Fn() -> T,
+        F: Send + 'a,
+        T: Send + 'static,
+    {
+        extern "C" fn func<T>(main: *mut c_void) -> *mut c_void
+        where
+            T: Send + 'static,
+        {
+            let res = unsafe { Box::from_raw(main as *mut Box<dyn FnOnce() -> T>)() };
+            // no return value
+            if TypeId::of::<()>() == TypeId::of::<T>() {
+                std::ptr::null_mut() as *mut _ as *mut c_void
+            }
+            // return value should be delivered by dynamic allocaiton.
+            else {
+                Box::into_raw(Box::new(res)) as *mut _ as *mut c_void
+            }
+        }
+
+        // Initialize thread attributes.
+        let mut native: libc::pthread_t = unsafe { std::mem::zeroed() };
+        let mut attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            assert_eq!(libc::pthread_attr_init(&mut attr), 0);
+
+            // Set stack size.
+            if let Some(stacksize) = std::env::var("RUST_MIN_STACK")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                // Round up to the nearest page to prevent error.
+                // https://man7.org/linux/man-pages/man3/pthread_attr_setstacksize.3.html#ERRORS
+                let pagesize = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+                let stacksize = std::cmp::max(
+                    libc::PTHREAD_STACK_MIN,
+                    (stacksize + pagesize - 1) & (-(pagesize as isize - 1) as usize - 1),
+                );
+                assert_eq!(libc::pthread_attr_setstacksize(&mut attr, stacksize), 0);
+            }
+        }
+
+        let main = move || f();
+        let p = unsafe {
+            std::mem::transmute::<Box<dyn FnOnce() -> T + 'a>, Box<dyn FnOnce() + 'a>>(Box::new(
+                main,
+            ))
+        };
+        let p = Box::into_raw(Box::new(p));
+        unsafe {
+            let _err = libc::pthread_create(&mut native, &attr, func::<T>, p as *mut _);
+            // let _err = libc::pthread_create(&mut native, &attr, func::<T>, p as *mut _);
+        }
+        unsafe { assert_eq!(libc::pthread_attr_destroy(&mut attr), 0) };
+
+        JoinHandle {
+            native,
+            phantom: PhantomData,
+        }
+    }
+
+    #[test]
+    fn join_retval() {
+        assert_eq!(spawn(move || 3 + 5).join().unwrap(), 8);
+        assert_eq!(spawn(move || 5 * 15 + 3).join().unwrap(), 5 * 15 + 3);
+    }
+
+    #[test]
+    fn spawn_params() {
+        let a = 10;
+        let b = 20;
+        let c = 30;
+        let d = 40;
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+            assert_eq!(b, 20);
+            assert_eq!(b, 20);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(b, 20);
+            assert_eq!(c, 30);
+            assert_eq!(d, 40);
+        });
+    }
+}
+
 #[doc(hidden)]
 pub mod tests {
     use atomic::Atomic;
@@ -111,15 +247,15 @@ pub mod tests {
     {
         #[cfg(feature = "tcrash")]
         {
-        // Assertion err causes abort.
-        std::panic::set_hook(Box::new(|info| {
-            println!("Thread {} {info}", unsafe { libc::gettid() });
-            println!("{}", Backtrace::capture());
-            unsafe { libc::abort() };
-        }));
+            // Assertion err causes abort.
+            std::panic::set_hook(Box::new(|info| {
+                println!("Thread {} {info}", unsafe { libc::gettid() });
+                println!("{}", Backtrace::capture());
+                unsafe { libc::abort() };
+            }));
 
-        // Install signal handler
-        let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
+            // Install signal handler
+            let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
         }
 
         // Initialize tester
