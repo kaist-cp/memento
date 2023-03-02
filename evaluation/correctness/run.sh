@@ -52,9 +52,9 @@ function run() {
     target=$1
     dmsg "run $target"
     if [ "$cfg" == "no-persist" ]; then
-        RUST_BACKTRACE=1 RUST_MIN_STACK=10737418200 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+        RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
     else
-        RUST_BACKTRACE=1 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+        RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
     fi
 
 }
