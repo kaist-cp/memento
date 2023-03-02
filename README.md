@@ -19,9 +19,13 @@ docker run -it --rm -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento # perist
   ```sh
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
-- For the evaluation purpose, `numactl` is additionally required:
+- For the evaluation purpose, some dependencies are additionally required:
   ```sh
-  sudo apt install numactl
+  apt install build-essential python3-pip numactl \
+    libpmemobj-dev libvmem-dev libgflags-dev \
+    libpmemobj1 libpmemobj-cpp-dev \
+    libatomic1 libnuma1 libvmmalloc1 libvmem1 libpmem1
+  pip3 install --user pandas matplotlib gitpython
   ```
 
 #### Build

@@ -10,16 +10,8 @@ feature=$1
 
 # Install dependency
 
-### PMDK
-sudo apt install libpmemobj1 -y
-sudo apt install libpmemobj-cpp-dev -y
-
 ### Clobber-NVM
-sudo ./src/clobber-nvm/deps.sh
-
-### plot
-sudo apt install build-essential python3-pip
-pip3 install --user pandas matplotlib gitpython
+sudo $base_dir/src/clobber-nvm/deps.sh
 
 # Build
 
@@ -27,14 +19,10 @@ pip3 install --user pandas matplotlib gitpython
 g++ -O3 -o $target_path/bench_cpp $base_dir/src/main.cpp $base_dir/src/pmdk/pipe.cpp $base_dir/src/pmdk/queue.cpp -pthread -lpmemobj -std=c++17
 
 ### Clobber-NVM
-(cd ./src/clobber-nvm; sudo ./build.sh)
-(cd ./src/clobber-nvm/apps/queue/; make benchmark-clobber)
+(cd $base_dir/src/clobber-nvm; sudo ./build.sh)
+(cd $base_dir/src/clobber-nvm/apps/queue/; make benchmark-clobber)
 
 ### Rust implementations
 (cd ..; cargo update) # update memento crate
 cargo update # update evaluation crate
-if [ "$feature" == "no_persist" ]; then
-    cargo build --release --features $feature
-else
-    cargo build --release
-fi
+cargo build --release
