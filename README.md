@@ -47,6 +47,8 @@ The directory `src/ds/` contains memento-based persistent data structures suppor
 
 The directory `crossbeam-persistency` contains implementations of safe memory reclamations.
 
+TODO: More specifically...
+
 - Implementation of "deferred persist"
 - Implementation of "resumable critical section and de-duplicated retirement"
 
