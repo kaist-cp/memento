@@ -2,21 +2,43 @@
 
 ## Installation
 
-We assume you use **Ubuntu 20.04**.
+We assume you use **Ubuntu 20.04** or later.
 
-### Requirements
+### Running on Docker
+
+```sh
+docker build -t memento .
+docker run -it --rm -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento # peristent memory must be mounted at /mnt/pmem0
+```
+
+### Running on host
+
+#### Requirements
 
 - [Rust](https://www.rust-lang.org/)
-  ```
+  ```sh
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
-
-### Build
-
-- To build our framework including detectable operations, data structures and SMR libraries:
+- For the evaluation purpose, `numactl` is additionally required:
+  ```sh
+  sudo apt install numactl
   ```
-  cargo build --release
-  ```
+
+#### Build
+
+To build our framework including detectable operations, data structures and SMR libraries:
+```sh
+cargo build --release
+```
+
+If persistent memory is *not* mounted on your machine, add a feature flag with `no_persist` as follows:
+```sh
+cargo build --release --features no_persist
+```
+
+Since this is a library code, there is no main function.
+Instead, you can run some evaluation mentioned in the paper(§6).
+See the `README.md` in the [evaluation](./evaluation) directory.
 
 ### Our Implementations
 
@@ -56,7 +78,3 @@ TODO: More specifically...
 
 - `src/pmem/ll.rs`: Low-level instructions for ***PM Access*** (corresponding to §4.1)
 - `src/pmem/pool.rs`: A library that creates an environment (i.e. PM pool) and runs a memento-based program. (corresponding to ***Crash Handler*** described in §4.1)
-
-## Evaluation (§6)
-
-See the `README.md` in the [evaluation](./evaluation)
