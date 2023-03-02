@@ -162,3 +162,33 @@ impl<T: Memento> Memento for CachePadded<T> {
         (**self).clear();
     }
 }
+
+/// Test functions for PSan
+#[cfg(feature = "pmcheck")]
+pub mod test_pmcheck {
+    use super::*;
+
+    /// Test Simple
+    #[no_mangle]
+    pub extern "C" fn test_simple() {
+        pmem::test::check_invaa();
+    }
+
+    /// Test Checkpoint
+    #[no_mangle]
+    pub extern "C" fn test_checkpoint() {
+        ploc::tests::chks();
+    }
+
+    /// Test Cas
+    #[no_mangle]
+    pub extern "C" fn test_cas() {
+        ploc::test::dcas();
+    }
+
+    /// Test Queue-O0
+    #[no_mangle]
+    pub extern "C" fn test_queue_O0() {
+        ds::queue_general::test::enqdeq();
+    }
+}

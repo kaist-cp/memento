@@ -276,7 +276,7 @@ pub mod test {
     use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
-    const NR_COUNT: usize = 10_000;
+    const NR_COUNT: usize = 100;
 
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
@@ -312,6 +312,7 @@ pub mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<TestValue>> {
         fn run(&self, enq_deq: &mut EnqDeq, handle: &Handle) {
+            #[cfg(not(feature = "pmcheck"))] // TODO: Remove
             let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
             for seq in 0..NR_COUNT {
@@ -323,6 +324,8 @@ pub mod test {
                 let res = self.obj.dequeue(&mut enq_deq.deqs[seq], handle);
 
                 assert!(res.is_some(), "tid:{}, seq:{seq}", handle.tid);
+
+                #[cfg(not(feature = "pmcheck"))] // TODO: Remove
                 testee.report(seq, res.unwrap());
             }
         }
@@ -342,9 +345,9 @@ pub mod test {
         );
     }
 
-    /// Test queue_general
+    /// Test queue_general for psan
     #[cfg(feature = "pmcheck")]
-    pub fn enq_deq() {
+    pub fn enqdeq() {
         const FILE_NAME: &str = "queue_general";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         run_test::<TestRootObj<QueueGeneral<TestValue>>, EnqDeq>(

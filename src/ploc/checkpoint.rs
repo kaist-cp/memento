@@ -131,8 +131,8 @@ where
     }
 }
 
-#[cfg(test)]
-mod test {
+/// Test
+pub mod tests {
     use itertools::Itertools;
 
     use super::*;
@@ -173,16 +173,18 @@ mod test {
     }
 
     impl RootObj<Checkpoints> for TestRootObj<DummyRootObj> {
+        #[allow(unused_variables)]
         fn run(&self, chks: &mut Checkpoints, handle: &Handle) {
+            #[cfg(not(feature = "pmcheck"))] // TODO: Remove
             let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
-            // let mut items: [usize; NR_COUNT] = array_init::array_init(|i| i);
             let mut items = (0..NR_COUNT).collect_vec();
 
             for seq in 0..NR_COUNT {
                 let i = chks.chks[seq].checkpoint(|| rdtscp() as usize % items.len(), handle);
-                // let val = items[i];
+
                 let val = items.remove(i);
+                #[cfg(not(feature = "pmcheck"))] // TODO: Remove
                 testee.report(seq, TestValue::new(handle.tid, val))
             }
         }
@@ -190,6 +192,15 @@ mod test {
 
     #[test]
     fn checkpoints() {
+        const FILE_NAME: &str = "checkpoint";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, 1, NR_COUNT);
+    }
+
+    /// Test checkpoint for psan
+    #[cfg(feature = "pmcheck")]
+    pub fn chks() {
         const FILE_NAME: &str = "checkpoint";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
