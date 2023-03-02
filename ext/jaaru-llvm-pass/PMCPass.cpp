@@ -167,7 +167,8 @@ static Function * checkPMCPassInterfaceFunction(Value *FuncOrBitcast) {
 	std::string Err;
 	raw_string_ostream Stream(Err);
 	Stream << "PMCPass interface function redefined: " << *FuncOrBitcast;
-	report_fatal_error(Err);
+	llvm::StringRef ErrRef = Err;
+	report_fatal_error(ErrRef, true);
 } 
 
 namespace {
@@ -279,7 +280,7 @@ NVMOP PMCPass::whichNVMoperation(Instruction *I){
 void PMCPass::initializeCallbacks(Module &M) {
 	LLVMContext &Ctx = M.getContext();
 	AttributeList Attr;
-	Attr = Attr.addAttribute(Ctx, AttributeList::FunctionIndex,
+	Attr = Attr.addAttributeAtIndex(Ctx, AttributeList::FunctionIndex,
 			Attribute::NoUnwind);
 #ifdef ENABLEATOMIC
 	Type * Int1Ty = Type::getInt1Ty(Ctx);
@@ -556,7 +557,7 @@ void PMCPass::chooseInstructionsToInstrument(
 		Value *Addr = isa<StoreInst>(*I)
 			? cast<StoreInst>(I)->getPointerOperand()
 			: cast<LoadInst>(I)->getPointerOperand();
-		if (isa<AllocaInst>(GetUnderlyingObject(Addr, DL)) &&
+		if (isa<AllocaInst>(getUnderlyingObject(Addr)) &&
 				!PointerMayBeCaptured(Addr, true, true)) {
 			// The variable is addressable but not captured, so it cannot be
 			// referenced from a different thread and participate in a data race
@@ -585,6 +586,7 @@ void CDSPass::InsertRuntimeIgnores(Function &F) {
 }*/
 
 bool PMCPass::runOnFunction(Function &F) {
+	// errs() << "[PMCPass::runOnFunction] start" << "\n";
 	initializeCallbacks( *F.getParent() );
 	SmallVector<Instruction*, 8> AllLoadsAndStores;
 	SmallVector<Instruction*, 8> FenceOperations;
@@ -600,6 +602,7 @@ bool PMCPass::runOnFunction(Function &F) {
 
 	for (auto &BB : F) {
 		for (auto &Inst : BB) {
+			// errs() << "Iterating instruction: " << Inst << "\n";
 #ifdef ENABLEATOMIC
 			if ( (&Inst)->isAtomic() ) {
 				AtomicAccesses.push_back(&Inst);
@@ -672,6 +675,7 @@ bool PMCPass::runOnFunction(Function &F) {
 	for (auto Inst : FenceOperations) {
 		instrumentFenceOp(Inst, DL);
 	}
+	// errs() << "[PMCPass::runOnFunction] finish" << "\n";
 	
 	return false;
 }
@@ -781,7 +785,8 @@ bool PMCPass::instrumentLoadOrStore(Instruction *I, const DataLayout &DL) {
 		Value *val = SI->getValueOperand();
 		Value *args[] = {IRB.CreatePointerCast(addr, ptrTy),
                                 IRB.CreateBitOrPointerCast(val, Ty), position};
-                CallInst *C = CallInst::Create(OnAccessFunc, args);
+				FunctionType *FuncTy = FunctionType::get(OnAccessFunc->getType(), false);
+				CallInst *C = CallInst::Create(FuncTy, OnAccessFunc, args);
                 ReplaceInstWithInst(I, C);
 
 		NumInstrumentedWrites++;
@@ -789,7 +794,8 @@ bool PMCPass::instrumentLoadOrStore(Instruction *I, const DataLayout &DL) {
 		errs() << "Instrumenting non-atomic load: " << *I << "\n";
 		Value *args[] = {IRB.CreatePointerCast(addr, ptrTy), position};
                 Type *orgTy = cast<PointerType>(addr->getType())->getElementType();
-                Value *funcInst = IRB.CreateCall(OnAccessFunc, args);
+				FunctionType *FuncTy = FunctionType::get(OnAccessFunc->getType(), false);
+				Value *funcInst = IRB.CreateCall(FuncTy, OnAccessFunc, args);
                 Value *cast = IRB.CreateBitOrPointerCast(funcInst, orgTy);
                 I->replaceAllUsesWith(cast);
 		
@@ -1299,19 +1305,21 @@ int PMCPass::getMemoryAccessFuncIndex(Value *Addr,
 
 char PMCPass::ID = 0;
 
-// Automatically enable the pass.
-static void registerPMCPass(const PassManagerBuilder &,
-							legacy::PassManagerBase &PM) {
-	PM.add(new PMCPass());
-}
+static RegisterPass<PMCPass> X("PMCPass", "PMCPass", false, false);
 
-/* Enable the pass when opt level is greater than 0 */
-static RegisterStandardPasses 
-	RegisterMyPass1(PassManagerBuilder::EP_OptimizerLast,
-registerPMCPass);
+// // Automatically enable the pass.
+// static void registerPMCPass(const PassManagerBuilder &,
+// 							legacy::PassManagerBase &PM) {
+// 	PM.add(new PMCPass());
+// }
 
-/* Enable the pass when opt level is 0 */
-static RegisterStandardPasses 
-	RegisterMyPass2(PassManagerBuilder::EP_EnabledOnOptLevel0,
-registerPMCPass);
+// /* Enable the pass when opt level is greater than 0 */
+// static RegisterStandardPasses 
+// 	RegisterMyPass1(PassManagerBuilder::EP_OptimizerLast,
+// registerPMCPass);
+
+// /* Enable the pass when opt level is 0 */
+// static RegisterStandardPasses 
+// 	RegisterMyPass2(PassManagerBuilder::EP_EnabledOnOptLevel0,
+// registerPMCPass);
 
