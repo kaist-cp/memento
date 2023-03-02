@@ -8,12 +8,94 @@ use std::{
 use crossbeam_epoch::Guard;
 
 use super::{CasHelpArr, CasHelpDescArr, CasInfo};
-use crate::{
-    pmem::{lfence, rdtscp, PoolHandle},
-    test_utils::ordo::get_ordo_boundary,
-};
+use crate::pmem::{lfence, rdtscp, PoolHandle};
 
 pub(crate) const NR_MAX_THREADS: usize = 511;
+
+pub(crate) mod ordo {
+    use std::{
+        mem::{size_of, MaybeUninit},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Barrier,
+        },
+    };
+
+    use crossbeam_utils::thread;
+    use itertools::Itertools;
+    use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
+
+    use crate::{
+        ploc::Timestamp,
+        pmem::{lfence, rdtscp},
+    };
+
+    fn set_affinity(c: usize) {
+        unsafe {
+            let mut cpuset = MaybeUninit::<cpu_set_t>::zeroed().assume_init();
+            CPU_ZERO(&mut cpuset);
+            CPU_SET(c, &mut cpuset);
+            assert!(sched_setaffinity(0, size_of::<cpu_set_t>(), &cpuset as *const _) >= 0);
+        }
+    }
+
+    // TODO: sched_setscheduler(getpid(), SCHED_FIFO, param)
+    fn clock_offset(c0: usize, c1: usize) -> u64 {
+        const RUNS: usize = 100;
+        let clock = AtomicU64::new(1);
+        let mut min = u64::MAX;
+
+        #[allow(box_pointers)]
+        thread::scope(|scope| {
+            let clock_ref = &clock;
+            let bar0 = Arc::new(Barrier::new(2));
+            let bar1 = Arc::clone(&bar0);
+
+            let _ = scope.spawn(move |_| {
+                set_affinity(c1);
+                for _ in 0..RUNS {
+                    while clock_ref.load(Ordering::Relaxed) != 0 {
+                        lfence();
+                    }
+                    clock_ref.store(rdtscp(), Ordering::SeqCst);
+                    let _ = bar1.wait();
+                }
+            });
+
+            let h = scope.spawn(move |_| {
+                set_affinity(c0);
+                let mut min = u64::MAX;
+                for _ in 0..RUNS {
+                    clock_ref.store(0, Ordering::SeqCst);
+                    let t = loop {
+                        let t = clock_ref.load(Ordering::Relaxed);
+                        if t != 0 {
+                            break t;
+                        }
+                        lfence();
+                    };
+                    min = min.min(rdtscp().abs_diff(t));
+                    let _ = bar0.wait();
+                }
+                min
+            });
+
+            min = h.join().unwrap();
+        })
+        .unwrap();
+
+        min
+    }
+
+    pub(crate) fn get_ordo_boundary() -> Timestamp {
+        let num_cpus = num_cpus::get();
+
+        let global_off = (0..num_cpus).combinations(2).fold(0, |off, c| {
+            off.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])))
+        });
+        Timestamp::from(global_off)
+    }
+}
 
 /// Get specific bit range in a word
 #[macro_export]
@@ -113,7 +195,7 @@ impl From<(&'static CasHelpArr, &'static CasHelpDescArr)> for ExecInfo {
             chk_max_time: Timestamp::from(0),
             cas_info: CasInfo::new(help_arrs.0, help_arrs.1),
             init_time: Timestamp::from(rdtscp()),
-            tsc_offset: get_ordo_boundary(),
+            tsc_offset: ordo::get_ordo_boundary(),
         }
     }
 }
