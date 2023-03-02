@@ -166,24 +166,24 @@ fn compose_tag<T: ?Sized + Pointable>(data: usize, ltag: usize) -> usize {
 }
 
 #[inline]
-fn compose_tid<T: ?Sized + Pointable>(tid: usize, data: usize) -> usize {
+fn compose_tid(tid: usize, data: usize) -> usize {
     (tid_bits() & (tid.rotate_right(POS_TID_BITS + NR_TID_BITS))) | (!tid_bits() & data)
 }
 
 #[inline]
-fn compose_high_tag<T: ?Sized + Pointable>(htag: usize, data: usize) -> usize {
+fn compose_high_tag(htag: usize, data: usize) -> usize {
     (high_bits() & (htag.rotate_right(POS_HIGH_BITS + NR_HIGH_BITS))) | (!high_bits() & data)
 }
 
 /// Compose aux bit (1-bit, MSB)
 #[inline]
-fn compose_desc_bit<T: ?Sized + Pointable>(desc_bit: usize, data: usize) -> usize {
+fn compose_desc_bit(desc_bit: usize, data: usize) -> usize {
     (desc_bits() & (desc_bit.rotate_right(POS_DESC_BITS + NR_DESC_BITS))) | (!desc_bits() & data)
 }
 
 /// Compose aux bit (1-bit, MSB)
 #[inline]
-fn compose_aux_bit<T: ?Sized + Pointable>(aux_bit: usize, data: usize) -> usize {
+fn compose_aux_bit(aux_bit: usize, data: usize) -> usize {
     (aux_bits() & (aux_bit.rotate_right(POS_AUX_BITS + NR_AUX_BITS))) | (!aux_bits() & data)
 }
 
@@ -1348,25 +1348,25 @@ impl<T: ?Sized + Pointable> POwned<T> {
     /// Set aux bit
     pub fn with_aux_bit(self, aux_bit: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_aux_bit::<T>(aux_bit, data)) }
+        unsafe { Self::from_usize(compose_aux_bit(aux_bit, data)) }
     }
 
     /// Set descripot bit
     pub fn with_desc_bit(&self, desc_bit: usize) -> POwned<T> {
-        unsafe { Self::from_usize(compose_desc_bit::<T>(desc_bit, self.data)) }
+        unsafe { Self::from_usize(compose_desc_bit(desc_bit, self.data)) }
     }
 
     /// Set tid
     pub fn with_tid(self, tid: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_tid::<T>(tid, data)) }
+        unsafe { Self::from_usize(compose_tid(tid, data)) }
     }
 
     /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
     /// unused high bits of the pointer to `T`.
     pub fn with_high_tag(self, tag: usize) -> POwned<T> {
         let data = self.into_usize();
-        unsafe { Self::from_usize(compose_high_tag::<T>(tag, data)) }
+        unsafe { Self::from_usize(compose_high_tag(tag, data)) }
     }
 
     /// deref absolute addr based on pool
@@ -1849,23 +1849,23 @@ impl<'g, T: ?Sized + Pointable> PShared<'g, T> {
 
     /// Set aux bit
     pub fn with_aux_bit(&self, aux_bit: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_aux_bit::<T>(aux_bit, self.data)) }
+        unsafe { Self::from_usize(compose_aux_bit(aux_bit, self.data)) }
     }
 
     /// Set descripot bit
     pub fn with_desc_bit(&self, desc_bit: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_desc_bit::<T>(desc_bit, self.data)) }
+        unsafe { Self::from_usize(compose_desc_bit(desc_bit, self.data)) }
     }
 
     /// Set tid
     pub fn with_tid(&self, tid: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_tid::<T>(tid, self.data)) }
+        unsafe { Self::from_usize(compose_tid(tid, self.data)) }
     }
 
     /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
     /// unused high bits of the pointer to `T`.
     pub fn with_high_tag(&self, tag: usize) -> PShared<'g, T> {
-        unsafe { Self::from_usize(compose_high_tag::<T>(tag, self.data)) }
+        unsafe { Self::from_usize(compose_high_tag(tag, self.data)) }
     }
 
     /// formatting Pointer

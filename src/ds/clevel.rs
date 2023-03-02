@@ -905,10 +905,12 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
 
             return Ok(());
         }
+
         if slot.cas(PShared::null(), slot_ptr, mmt, handle).is_ok() {
             return Ok(());
         }
-        return Err(());
+
+        Err(())
     }
 
     fn resize_move_slot_insert(
@@ -1432,7 +1434,8 @@ impl<K: Debug + PartialEq + Hash, V: Debug + Collectable> Clevel<K, V> {
                 slot_ptr: slot_new,
             });
         }
-        return Err(());
+
+        Err(())
     }
 
     fn try_slot_insert<'g>(
