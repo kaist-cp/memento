@@ -1,88 +1,5 @@
 //! Utilities
 
-#[allow(warnings)]
-pub(crate) mod ordo {
-    use std::{
-        mem::{size_of, MaybeUninit},
-        sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, Barrier,
-        },
-    };
-
-    use itertools::Itertools;
-    use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
-
-    use crate::{
-        ploc::Timestamp,
-        pmem::{lfence, rdtscp},
-        test_utils::thread,
-    };
-
-    fn set_affinity(c: usize) {
-        unsafe {
-            let mut cpuset = MaybeUninit::<cpu_set_t>::zeroed().assume_init();
-            CPU_ZERO(&mut cpuset);
-            CPU_SET(c, &mut cpuset);
-            assert!(sched_setaffinity(0, size_of::<cpu_set_t>(), &cpuset as *const _) >= 0);
-        }
-    }
-
-    // TODO: sched_setscheduler(getpid(), SCHED_FIFO, param)
-    fn clock_offset(c0: usize, c1: usize) -> u64 {
-        const RUNS: usize = 100;
-
-        let clock = AtomicU64::new(1);
-        let clock_ref = &clock;
-        let bar0 = Arc::new(Barrier::new(2));
-        let bar1 = Arc::clone(&bar0);
-
-        let h1 = thread::spawn(move || {
-            set_affinity(c1);
-            for _ in 0..RUNS {
-                while clock_ref.load(Ordering::SeqCst) != 0 {
-                    lfence();
-                }
-                clock_ref.store(rdtscp(), Ordering::SeqCst);
-                let _ = bar1.wait();
-            }
-        });
-        let h0 = thread::spawn(move || {
-            set_affinity(c0);
-            let mut min = u64::MAX;
-            for _ in 0..RUNS {
-                clock_ref.store(0, Ordering::SeqCst);
-                let t = loop {
-                    let t = clock_ref.load(Ordering::SeqCst);
-                    if t != 0 {
-                        break t;
-                    }
-                    lfence();
-                };
-                min = min.min(rdtscp().abs_diff(t));
-                let _ = bar0.wait();
-            }
-            min
-        });
-
-        let min = h0.join().unwrap();
-        let _ = h1.join();
-        min
-    }
-
-    pub(crate) fn get_ordo_boundary() -> Timestamp {
-        if cfg!(feature = "pmcheck") {
-            Timestamp::from(1000) // On the top of jaaru, clock_offset() is too slow.
-        } else {
-            let num_cpus = num_cpus::get();
-            let global_off = (0..num_cpus).combinations(2).fold(0, |off, c| {
-                off.max(clock_offset(c[0], c[1]).max(clock_offset(c[1], c[0])))
-            });
-            Timestamp::from(global_off)
-        }
-    }
-}
-
 pub(crate) mod thread {
     use std::{any::TypeId, marker::PhantomData};
 
@@ -236,8 +153,8 @@ pub mod tests {
     use tempfile::NamedTempFile;
 
     use crate::ploc::Handle;
+    use crate::pmem::alloc::{Collectable, GarbageCollection};
     use crate::pmem::pool::*;
-    use crate::pmem::ralloc::{Collectable, GarbageCollection};
     use crate::test_utils::thread;
     use crate::{Memento, PDefault};
 
