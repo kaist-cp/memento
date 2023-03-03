@@ -751,7 +751,7 @@ pub mod test {
     use crate::{
         pepoch::POwned,
         ploc::Handle,
-        pmem::{persist_obj, ralloc::Collectable, RootObj},
+        pmem::{alloc::Collectable, persist_obj, RootObj},
         test_utils::tests::*,
         Memento,
     };

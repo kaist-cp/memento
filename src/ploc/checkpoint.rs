@@ -7,8 +7,8 @@ use crossbeam_utils::CachePadded;
 use super::{Handle, Timestamp};
 use crate::{
     pmem::{
+        alloc::{Collectable, GarbageCollection},
         ll::persist_obj,
-        ralloc::{Collectable, GarbageCollection},
         PoolHandle, CACHE_LINE_SHIFT,
     },
     Memento,
@@ -137,7 +137,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        pmem::{ralloc::Collectable, rdtscp, RootObj},
+        pmem::{alloc::Collectable, rdtscp, RootObj},
         test_utils::tests::*,
         Memento,
     };

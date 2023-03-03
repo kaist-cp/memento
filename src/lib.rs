@@ -13,7 +13,7 @@
 #![deny(pointer_structural_match)]
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
-#![deny(unused_crate_dependencies)]
+// #![deny(unused_crate_dependencies)]
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
@@ -49,7 +49,7 @@ pub mod pepoch;
 // Utility
 pub mod test_utils;
 
-use crate::pmem::ralloc::Collectable;
+use crate::pmem::alloc::Collectable;
 use crossbeam_utils::CachePadded;
 use ploc::Handle;
 use std::{mem::ManuallyDrop, ptr};

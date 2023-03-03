@@ -1,17 +1,12 @@
 
-TODO: Make it general
+TODO: Generalize
 
 # Build PMCPass (jaaru-llvm-pass)
 
 git clone https://github.com/llvm/llvm-project.git
-<!-- git clone https://github.com/uci-plrg/jaaru-llvm-pass -->
 cd llvm-project
-git checkout 29f1039a7285a5c3a9c353d054140bf2556d4c4d (HEAD, tag: llvmorg-14.0.4)
-<!-- cd ../jaaru-llvm-pass -->
-<!-- git checkout vagrant -->
-<!-- cd .. -->
+git checkout 29f1039a7285a5c3a9c353d054140bf2556d4c4d <!-- (HEAD, tag: llvmorg-14.0.4) !-->
 cp ../../ext/jaaru-llvm-pass llvm-project/llvm/lib/Transforms/PMCPass
-
 
 echo "add_subdirectory(PMCPass)" >> llvm-project/llvm/lib/Transforms/CMakeLists.txt
 
@@ -19,8 +14,7 @@ cd llvm-project
 mkdir build
 cd build
 cmake -DLLVM_ENABLE_PROJECTS=clang -G "Unix Makefiles" ../llvm
-make
-
+make -j
 
 # Build PMCheck
 

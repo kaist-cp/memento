@@ -8,9 +8,10 @@ use insert_delete::{Delete, Insert};
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
-use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::alloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
+use mmt_derive::Collectable;
 
 /// Failure of queue operations
 #[derive(Debug)]
@@ -313,7 +314,7 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for Queue<T> {}
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
+    use crate::{ploc::Handle, pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;

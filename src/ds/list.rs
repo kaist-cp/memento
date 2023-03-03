@@ -8,9 +8,10 @@ use etrace::some_or;
 use std::cmp::Ordering::{Equal, Greater, Less};
 
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::alloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*, AsPPtr, PPtr};
 use crate::*;
+use mmt_derive::Collectable;
 
 /// Node
 #[derive(Debug)]
@@ -406,7 +407,7 @@ mod test {
     use test_utils::distributer::*;
 
     use super::*;
-    use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
+    use crate::{ploc::Handle, pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
     const NR_COUNT: usize = 10_000;

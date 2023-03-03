@@ -29,9 +29,9 @@ fn main() {
 
     #[cfg(feature = "pmcheck")]
     {
-        // TODO: Set pmcheck bin path
-        println!("cargo:rustc-link-search=/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/pmcheck/bin");
-        println!("cargo:rustc-link-lib=pmcheck");
+        //     // TODO: Set pmcheck bin path
+        //     println!("cargo:rustc-link-search=/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/pmcheck/bin");
+        //     println!("cargo:rustc-link-lib=pmcheck");
+        println!("cargo:rustc-link-lib=pmemobj");
     }
-
 }

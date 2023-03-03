@@ -7,9 +7,10 @@ use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, PAtomic, PDestroyable, POwned, PShared};
-use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::alloc::{Collectable, GarbageCollection};
 use crate::pmem::{global_pool, ll::*, pool::*};
 use crate::*;
+use mmt_derive::Collectable;
 
 /// Failure of queue operations
 #[derive(Debug)]
@@ -273,10 +274,10 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for QueueGeneral<T> {}
 #[allow(dead_code)]
 pub mod test {
     use super::*;
-    use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
+    use crate::{ploc::Handle, pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
-    const NR_COUNT: usize = 100;
+    const NR_COUNT: usize = 10_000;
 
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
@@ -335,7 +336,7 @@ pub mod test {
     // - You can check gc operation from the second time you open the pool:
     //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
     //   - where +2 is a pointer to Root, Queue
-    #[cfg(not(feature = "pmcheck"))]
+    // #[cfg(not(feature = "pmcheck"))]
     #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "queue_general";

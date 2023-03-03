@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# TODO: Generalize path variables
+
 set -e
 
 DIR_BASE=$(dirname $(realpath $0))
@@ -12,6 +14,7 @@ mkdir -p $BUILD
 # 1. Rust src -> Rust IR
 echo "emit ir"
 cargo clean
+# cargo rustc --lib --release -- --emit=llvm-ir
 cargo rustc --lib --release --features=pmcheck -- --emit=llvm-ir
 cp $DIR_MMT/target/release/deps/${TARGET}-*.ll $BUILD/$TARGET.ll
 echo "good"

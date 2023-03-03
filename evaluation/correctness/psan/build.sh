@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# TODO: Generalize path variables
+
 set -e
 
 
@@ -9,7 +11,7 @@ BUILD=$DIR_BASE/build
 
 # Build libmemento.a
 cd $DIR_BASE
-./build_memento.sh
+# ./build_memento.sh
 
 # Build executable
 LLVMDIR=/dev/shm/jaaru/llvm-project # LLVM 14.0.4
@@ -34,4 +36,5 @@ $CC $INCPMCHK $PARAMS -Wl,-whole-archive -Wl,-no-whole-archive\
     $INCLUDEE $INCLUDEE\
     $BUILTIN\
     -lpthread -lpmcheck \
-    -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc
+    -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc\
+    $INCLUDEE $INCLUDEE\

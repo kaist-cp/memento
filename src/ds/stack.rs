@@ -1,7 +1,7 @@
 //! Persistent Stack
 
 use crate::ploc::Handle;
-use crate::pmem::ralloc::Collectable;
+use crate::pmem::alloc::Collectable;
 use crate::*;
 
 /// Failure of stack operations
@@ -31,7 +31,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::ploc::Handle;
-    use crate::pmem::ralloc::GarbageCollection;
+    use crate::pmem::alloc::GarbageCollection;
     use crate::pmem::*;
     use crate::test_utils::tests::*;
 

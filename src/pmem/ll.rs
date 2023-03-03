@@ -19,7 +19,7 @@ use std::arch::x86_64::{__rdtscp, _mm_lfence, _mm_mfence, _mm_prefetch, _mm_sfen
 pub fn persist<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
     #[cfg(not(feature = "no_persist"))]
     {
-        #[cfg(not(feature = "use_msync"))]
+        #[cfg(not(all(feature = "use_msync", feature = "pmcheck")))]
         clflush(ptr, len, fence);
 
         #[cfg(feature = "use_msync")]
@@ -37,6 +37,13 @@ pub fn persist<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
             {
                 panic!("persist failed");
             }
+        }
+
+        #[cfg(feature = "pmcheck")]
+        unsafe {
+            // TODO: Use PMDK flush
+            clflush(ptr, len, fence);
+            // pmdk::pmem_flush(ptr as *const std::os::raw::c_void, len)
         }
     }
 }
