@@ -11,4 +11,5 @@ RUN apt-get update && \
     libatomic1 libnuma1 libvmmalloc1 libvmem1 libpmem1 \
     kmod sudo && \
     pip3 install --user pandas matplotlib gitpython && \
+    sudo $base_dir/src/clobber-nvm/deps.sh && \
     cargo build --release
