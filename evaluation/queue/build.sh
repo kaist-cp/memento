@@ -23,6 +23,7 @@ g++ -O3 -o $target_path/bench_cpp $base_dir/src/main.cpp $base_dir/src/pmdk/pipe
 (cd $base_dir/src/clobber-nvm/apps/queue/; make benchmark-clobber)
 
 ### Rust implementations
+cd $dir_path
 (cd ..; cargo update) # update memento crate
 cargo update # update evaluation crate
 cargo build --release

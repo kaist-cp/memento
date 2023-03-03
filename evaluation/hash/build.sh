@@ -1,8 +1,11 @@
 #!/bin/bash
 
+dir_path=$(dirname $(realpath $0))
+
 sudo modprobe msr # https://github.com/sfu-dis/pibench#intel-pcm
 
 # Compile all
+cd $dir_path
 (cd ../../; cargo update) # update memento crate
 make clean
 make -j
