@@ -277,7 +277,7 @@ pub mod tests {
         let _ = handle.join();
 
         // Check test results
-        #[cfg(not(feature = " pmcheck"))] // TODO: Remove
+        #[cfg(not(feature = "pmcheck"))] // TODO: Remove
         tester.check();
     }
 
@@ -292,8 +292,10 @@ pub mod tests {
         // let _ = Pool::remove(&filepath);
 
         // open pool
-        let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
-            .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap());
+        let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }.unwrap_or_else(|_| {
+            let _ = Pool::remove(&filepath);
+            Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap()
+        });
 
         // run root memento(s)
         pool_handle.execute::<O, M>();

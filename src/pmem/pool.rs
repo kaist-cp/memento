@@ -231,8 +231,7 @@ impl Pool {
         size: usize,
         nr_memento: usize, // number of root memento(s)
     ) -> Result<&'static PoolHandle, Error> {
-        println!("[Pool::create] start!]");
-        if Path::new(&(filepath.to_owned())).exists() {
+        if Pool::is_valid(filepath) {
             return Err(Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 "File already exist.",
@@ -243,8 +242,8 @@ impl Pool {
         global::clear();
 
         // create fil and initialze its content to pool layout of Ralloc
-        let filepath = CString::new(filepath).expect("CString::new failed");
-        let is_reopen = unsafe { pmem_open(filepath.as_ptr(), size as u64) };
+        let filepath_c = CString::new(filepath).expect("CString::new failed");
+        let is_reopen = unsafe { pmem_create(filepath_c.as_ptr(), size as u64) };
         assert_eq!(is_reopen, 0);
 
         unsafe {
@@ -267,7 +266,6 @@ impl Pool {
             let desc_ref = cas_help_desc_arr.as_ref().unwrap();
 
             // set global pool
-            println!("[Pool::create] set global pool!]");
             global::init(PoolHandle {
                 start: pmem_mmapped_addr(),
                 len: size,
@@ -277,31 +275,20 @@ impl Pool {
             let pool = global_pool().unwrap();
 
             // set root obj
-            println!("[Pool::create] set root obj!]");
-            println!(
-                "[Pool::create] set root obj!:: malloc: size {}",
-                mem::size_of::<O>() as u64
-            );
             let o_ptr = pmem_malloc(mem::size_of::<O>() as u64) as *mut O;
-            println!("[Pool::create] set root obj!:: get temp handler]");
-
             let tmp_handle = Handle::new(1, epoch::pin(), pool);
             tmp_handle.rec.store(false, Ordering::SeqCst);
-            println!("[Pool::create] set root obj!:: write]");
             o_ptr.write(O::pdefault(&tmp_handle));
-            println!("[Pool::create] set root obj!:: persist]");
             persist_obj(o_ptr.as_mut().unwrap(), true);
             let _prev = pmem_set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
 
             // set number of root mementos
-            println!("[Pool::create] set number of root mmt!]");
             let nr_memento_ptr = pmem_malloc(mem::size_of::<usize>() as u64) as *mut usize;
             nr_memento_ptr.write(nr_memento);
             persist_obj(nr_memento_ptr.as_mut().unwrap(), true);
             let _prev = pmem_set_root(nr_memento_ptr as *mut c_void, RootIdx::NrMemento as u64);
 
             // set root memento(s): 1 ~ nr_memento
-            println!("[Pool::create] set root mementos!]");
             for i in 1..nr_memento + 1 {
                 let root_ptr = pmem_malloc(mem::size_of::<M>() as u64) as *mut M;
                 root_ptr.write(M::default());
@@ -316,7 +303,8 @@ impl Pool {
             lazy_static::initialize(&BARRIER_WAIT);
             epoch::init();
 
-            println!("[Pool::create] finish!]");
+            // Mark pool file as valid
+            Pool::mark_valid(filepath)?;
             Ok(pool)
         }
     }
@@ -337,8 +325,11 @@ impl Pool {
         filepath: &str,
         size: usize,
     ) -> Result<&'static PoolHandle, Error> {
-        if !Path::new(&(filepath.to_owned())).exists() {
-            return Err(Error::new(std::io::ErrorKind::NotFound, "File not found."));
+        if !Pool::is_valid(filepath) {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Pool is not valid.",
+            ));
         }
 
         global::clear();
@@ -390,9 +381,19 @@ impl Pool {
     /// Remove pool
     pub fn remove(filepath: &str) -> Result<(), Error> {
         // _basedmd, _desc, _sb are pool files created by Ralloc
+        fs::remove_file(filepath.to_owned())?;
         fs::remove_file(filepath.to_owned() + "_basemd")?;
         fs::remove_file(filepath.to_owned() + "_desc")?;
         fs::remove_file(filepath.to_owned() + "_sb")?;
+        Ok(())
+    }
+
+    fn is_valid(filepath: &str) -> bool {
+        Path::new(&(filepath.to_owned() + "_valid")).exists()
+    }
+
+    fn mark_valid(filepath: &str) -> Result<(), Error> {
+        fs::write(Path::new(&(filepath.to_owned() + "_valid")), "1")?;
         Ok(())
     }
 
