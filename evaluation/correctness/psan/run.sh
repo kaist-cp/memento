@@ -1,35 +1,33 @@
-#!/bin/sh
+#!/bin/bash
 
 set -e
 
 RUSTSTD=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib
-# RUSTSTD=/home/ubuntu/.rustup/toolchains/nightly-2020-06-01-x86_64-unknown-linux-gnu/lib
 PMCHECK=/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/pmcheck/bin/
+TARGET=$1
+MODE=$2
+OPT=""
+if [ "${MODE}" == "yashme" ]; then
+    # Yashme (https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/pmdk-races.sh)
+    # echo 'export PMCheck="-d$3 -y -x25 -r1000"' >> run.sh
+    OPT="-y -x25"
+elif [ "${MODE}" == "psan" ]; then
+    # PSan (https://github.com/uci-plrg/psan-vagrant/blob/master/data/pmdk-bugs.sh)
+    # STRATEGY=-o2
+    # export PMCheck=\"-d\$3 ${STRATEGY} -r1787250\"" >> run.sh
+    OPT="-o2"
+else
+    echo "invalid mode: $MODE (possible mode: yashme, psan)"
+    exit
+fi
+echo "target: $TARGET, mode: $MODE, option: $OPT\n"
 
-# export LD_LIBRARY_PATH=$PMCHECK:$RUSTSTD
 export LD_LIBRARY_PATH=$PMCHECK:$RUSTSTD
-
-#  -L /home/ubuntu/.rustup/toolchains/nightly-2020-06-01-x86_64-unknown-linux-gnu/lib
-
- # -lstd-effebfe9e2ceaa23
-
-# export PMCheck="-v -o"
-# export PMCheck="-d/mnt/pmem0/test -v3 -r10000 -s"
-# export PMCheck="-d/mnt/pmem0/test -v3 -s -p -o"
-# export PMCheck="-d/mnt/pmem0/test -v3 -s -p -o"
-# export PMCheck="-d/mnt/pmem0/test -v3 -s -p -o"
-# export PMCheck="-v3 -p -o -s -y"
-# export PMCheck="-d/mnt/pmem0/test/queue_general/queue_general.pool_valid -p -o3 -y"
-# export PMCheck="-d/mnt/pmem0/test/queue_general/queue_general.pool_valid -v3 -y -x1 -p"
-export PMCheck="-d/mnt/pmem0/test/queue_general/queue_general.pool_valid -v3 -p -y"
-
-rm -rf PMCheckOutput*
+export PMCheck="-d/mnt/pmem0/test/$TARGET/$TARGET.pool_valid $OPT"
+# rm -rf PMCheckOutput*
 rm -rf /mnt/pmem0/*
-
-ulimit -s 82929000
-# ./psan 2>&1 > psan.out
-./psan
-
+ulimit -s 82920000
+RUST_MIN_STACK=1000000000 ./psan $TARGET
 
 # 	model_print(
 # 		"Copyright (c) 2021 Regents of the University of California. All rights reserved.\n"

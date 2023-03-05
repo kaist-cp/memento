@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # TODO: Generalize path variables
 
@@ -14,13 +14,12 @@ mkdir -p $BUILD
 # 1. Rust src -> Rust IR
 echo "emit ir"
 cargo clean
-# cargo rustc --lib --release -- --emit=llvm-ir
 cargo rustc --lib --release --features=pmcheck -- --emit=llvm-ir
 cp $DIR_MMT/target/release/deps/${TARGET}-*.ll $BUILD/$TARGET.ll
 echo "good"
 
 # 2. IR Instrumenting using PMCPass
-LLVMDIR=/dev/shm/jaaru/llvm-project # LLVM 14.0.4
+LLVMDIR=/dev/shm/jaaru/llvm-project # LLVM 14.0.4  # TODO: $DIR_BASE/llvm-project
 LLVMPASS=${LLVMDIR}/build/lib/libPMCPass.so
 CC=${LLVMDIR}/build/bin/clang++
 OPT=${LLVMDIR}/build/bin/opt
@@ -46,22 +45,16 @@ done
 BUILTIN=libcompiler_builtins-16d69221f10b0282.rlib
 BUILTIN_PATH=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/
 cd $DIR_BASE
-pwd
 
 echo "compile libmemento.a"
 $CC -c \
-    -lpmcheck\
     $BUILD/${TARGET}_instrumented.ll -o $BUILD/$TARGET.o \
-    $INCRSTD \
-    $INCLUDEE $INCLUDEE\
-    -L $BUILTIN_PATH -l:$BUILTIN\
-    $INC_RALLOC -lstdc++ \
-    -lgcc_s -lutil -lrt -lm -ldl -lc \
-    -fPIC \
-    -lpmcheck
 
 ar rcs $BUILD/libmemento.a $BUILD/$TARGET.o \
     /home/ubuntu/.rustup/toolchains/${TOOLCHAIN}/lib/lib${RSTD}.so \
     $BUILTIN_PATH/$BUILTIN
+
+# ar rcs $BUILD/libmemento.a $BUILD/$TARGET.o
+
 
 echo "good"
