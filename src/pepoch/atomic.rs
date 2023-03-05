@@ -277,7 +277,20 @@ impl<T> Pointable for T {
     type Init = T;
 
     unsafe fn init(init: Self::Init, pool: &PoolHandle) -> usize {
+        #[cfg(not(feature = "pmcheck"))]
         let ptr = pool.alloc::<T>();
+        #[cfg(feature = "pmcheck")]
+        let ptr = loop {
+            let ptr = pool.alloc::<T>();
+            let ptr_offset = ptr.into_offset();
+            let (_, _, _, _, pshared_offset, _) =
+                decompose_tag::<T>(PShared::<T>::from_usize(ptr_offset).data);
+            if ptr_offset == pshared_offset {
+                break ptr;
+            }
+            pool.free(ptr);
+        };
+
         let t = ptr.deref_mut(pool);
         std::ptr::write(t as *mut T, init);
         ptr.into_offset()

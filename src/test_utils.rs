@@ -137,6 +137,7 @@ pub(crate) mod thread {
 }
 
 #[doc(hidden)]
+#[allow(warnings)]
 pub mod tests {
     use atomic::Atomic;
     use crossbeam_utils::Backoff;

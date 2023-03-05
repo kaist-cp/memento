@@ -6,63 +6,60 @@ use etrace::some_or;
 use libc::*;
 use std::{
     ffi::CString,
+    io::Error,
     mem::{self, transmute, MaybeUninit},
+    path::Path,
     sync::atomic::AtomicUsize,
 };
 mod ralloc;
 use ralloc::*;
 
-use crate::pmem::RootIdx;
+use crate::{
+    pepoch::{atomic::Pointer, PAtomic, PShared},
+    pmem::RootIdx,
+};
 
-use super::{global_pool, PoolHandle};
+use super::{global_pool, Pool, PoolHandle};
 
 const NUM_ROOT: usize = 128;
 
 struct Root {
-    objs: [*mut c_void; NUM_ROOT],
-    filters:
-        [unsafe fn(s: *mut c_void, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle);
-            NUM_ROOT],
+    objs: [pmemobj_sys::pmemoid; NUM_ROOT],
+    filters: [Option<filter_func>; NUM_ROOT],
 }
-unsafe impl Sync for Root {}
 
-static mut ROOT: *mut Root = std::ptr::null_mut();
-static mut POPS: *mut pmemobj_sys::PMEMobjpool = std::ptr::null_mut();
-
-#[test]
-fn pmdk_open() {
-    unsafe {
-        if cfg!(feature = "pmcheck") {
-            println!("hi pmcheck");
-            let filepath = CString::new("mnt/pmem0/hi.pool").expect("CString::new failed");
-            // let is_reopen = unsafe { pmem_open(filepath.as_ptr(), size as u64) };
-            let _ = pmem_open(filepath.as_ptr(), 8 * 1024 * 1024);
-        } else {
-            println!("no pmcheck");
+impl Root {
+    fn new() -> Self {
+        Root {
+            objs: array_init::array_init(|_| pmemobj_sys::pmemoid {
+                off: 0,
+                pool_uuid_lo: 0,
+            }),
+            filters: array_init::array_init(|_| None),
         }
     }
 }
 
-// Roots { roots: array_init::array_init(|_| None)
+type filter_func =
+    unsafe fn(s: *mut c_void, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle);
+unsafe impl Sync for Root {}
+
+static mut ROOT: *mut Root = std::ptr::null_mut();
+pub(crate) static mut POPS: *mut pmemobj_sys::PMEMobjpool = std::ptr::null_mut();
+
 pub(crate) unsafe fn pmem_open(filepath: *const c_char, filesize: u64) -> c_int {
     println!("[pmem_open] start!]");
     if cfg!(feature = "pmcheck") {
-        // POPS = pmemobj_sys::pmemobj_create(filepath, std::ptr::null_mut(), filesize as usize, 0666);
+        let res = chmod(filepath, 0o777);
+        POPS = pmemobj_sys::pmemobj_open(filepath, std::ptr::null_mut());
         if POPS.is_null() {
-            println!("start open!");
-            POPS = pmemobj_sys::pmemobj_open(filepath, std::ptr::null_mut());
-            if POPS.is_null() {
-                let msg = pmemobj_sys::pmemobj_errormsg();
-                // Safety: msg가 null이면 에러 "corrupted size vs. prev_size while consolidating" (or "double free"?) 발생
-                let msgg = CString::from_raw(msg as *mut _);
-                println!("err: {:?}", msgg);
-                // return;
-            }
+            let msg = pmemobj_sys::pmemobj_errormsg();
+            let msgg = msg.as_ref().unwrap().to_string();
+            panic!("err: {:?}", msgg);
         }
 
         let root = pmemobj_sys::pmemobj_root(POPS, mem::size_of::<Root>());
         ROOT = pmemobj_sys::pmemobj_direct(root) as *mut Root;
-        // ROOT = root.pool_uuid_lo + root.off
         println!("[pmem_open] finish!]");
         return 1;
     } else {
@@ -71,20 +68,41 @@ pub(crate) unsafe fn pmem_open(filepath: *const c_char, filesize: u64) -> c_int 
     }
 }
 
+pub(crate) unsafe fn pmem_create(filepath: *const c_char, filesize: u64) -> c_int {
+    if cfg!(feature = "pmcheck") {
+        unsafe {
+            POPS = pmemobj_sys::pmemobj_create(
+                filepath,
+                std::ptr::null_mut(),
+                filesize as usize,
+                0o777,
+            );
+            if POPS.is_null() {
+                let msg = pmemobj_sys::pmemobj_errormsg();
+                let msgg = msg.as_ref().unwrap().to_string();
+                panic!("err: {:?}", msgg)
+            }
+
+            let root = pmemobj_sys::pmemobj_root(POPS, mem::size_of::<Root>());
+            ROOT = pmemobj_sys::pmemobj_direct(root) as *mut Root;
+            return 0;
+        }
+    } else {
+        RP_init(filepath, filesize)
+    }
+}
+
 pub(crate) unsafe fn pmem_mmapped_addr() -> usize {
-    println!("[pmem_mmapped_addr] start!]");
-    let ret = if cfg!(feature = "pmcheck") {
-        pmemobj_sys::pmemobj_oid(ROOT as *mut c_void).pool_uuid_lo as usize
+    if cfg!(feature = "pmcheck") {
+        let root_oid = pmemobj_sys::pmemobj_oid(ROOT as *mut c_void);
+        ROOT as usize - root_oid.off as usize
     } else {
         // Ralloc
         RP_mmapped_addr()
-    };
-    println!("[pmem_mmapped_addr] finish!]");
-    ret
+    }
 }
 
 pub(crate) unsafe fn pmem_close(start: usize, len: usize) {
-    println!("[pmem_close] start!]");
     if cfg!(feature = "pmcheck") {
         if !POPS.is_null() {
             pmemobj_sys::pmemobj_close(POPS);
@@ -94,19 +112,19 @@ pub(crate) unsafe fn pmem_close(start: usize, len: usize) {
         // Ralloc
         RP_close();
     }
-    println!("[pmem_close] finish!]");
 }
 
 pub(crate) unsafe fn pmem_recover() -> c_int {
-    println!("[pmem_recover] start!]");
-    let ret = if cfg!(feature = "pmcheck") {
+    if cfg!(feature = "pmcheck") {
         // Call root filters
         let root = ROOT.as_mut().unwrap();
-        for (i, obj) in root.objs.iter().enumerate() {
-            if !obj.is_null() {
-                let b = obj.as_mut().unwrap();
-                root.filters[i](
-                    *obj,
+        for (i, filter) in root.filters.iter().enumerate() {
+            let oid = root.objs[i];
+            if let Some(filter) = filter {
+                let obj = pmemobj_sys::pmemobj_direct(oid);
+                assert!(!obj.is_null());
+                filter(
+                    obj,
                     i,
                     &mut *(&mut () as *mut _ as *mut GarbageCollection),
                     global_pool().unwrap(),
@@ -117,35 +135,33 @@ pub(crate) unsafe fn pmem_recover() -> c_int {
     } else {
         // Ralloc
         RP_recover()
-    };
-    println!("[pmem_recover] finish!]");
-    ret
+    }
 }
 
 pub(crate) unsafe fn pmem_set_root(ptr: *mut c_void, i: u64) -> *mut c_void {
-    println!("[pmem_set_root] start!]");
-    let ret = if cfg!(feature = "pmcheck") {
+    if cfg!(feature = "pmcheck") {
         let root = ROOT.as_mut().unwrap();
         let old = root.objs[i as usize];
-        root.objs[i as usize] = ptr;
-        old
+        let oid = pmemobj_sys::pmemobj_oid(ptr);
+        root.objs[i as usize] = oid;
+        pmemobj_sys::pmemobj_direct(old)
     } else {
         // Ralloc
         RP_set_root(ptr, i)
-    };
-    println!("[pmem_set_root] finish!]");
-    ret
+    }
 }
 
 pub(crate) unsafe fn pmem_get_root(i: u64) -> *mut c_void {
-    // println!("[pmem_get_root] start!]");
     if cfg!(feature = "pmcheck") {
-        ROOT.as_mut().unwrap().objs[i as usize]
+        let oid = ROOT.as_mut().unwrap().objs[i as usize];
+        if oid.pool_uuid_lo == 0 {
+            panic!("err: !!!");
+        }
+        pmemobj_sys::pmemobj_direct(oid)
     } else {
         // Ralloc
         RP_get_root_c(i)
     }
-    // println!("[pmem_get_root] start!]");
 }
 
 pub(crate) unsafe fn pmem_malloc(sz: c_ulong) -> *mut c_void {
@@ -156,30 +172,24 @@ pub(crate) unsafe fn pmem_malloc(sz: c_ulong) -> *mut c_void {
         };
         let oidp = &mut oid;
         let status = unsafe {
-            pmemobj_sys::pmemobj_alloc(
+            pmemobj_sys::pmemobj_zalloc(
                 POPS,
                 oidp as *mut pmemobj_sys::PMEMoid,
-                if sz == 0 { 8 } else { sz.try_into().unwrap() },
+                if sz == 0 { 64 } else { sz.try_into().unwrap() },
                 0,
-                None,
-                std::ptr::null_mut(),
+                // None,
+                // std::ptr::null_mut(),
             )
         };
         if status == 0 {
             pmemobj_sys::pmemobj_direct(oid)
         } else {
-            let msg = pmemobj_sys::pmemobj_errormsg();
-            // Safety: msg가 null이면 에러 "corrupted size vs. prev_size while consolidating" (or "double free"?) 발생
-            let msgg = CString::from_raw(msg as *mut _);
-            println!("err: {:?}", msgg);
-            // return;
-            panic!("!!");
+            panic!("err");
         }
     } else {
         // Ralloc
         RP_malloc(sz)
     };
-    println!("[pmem_malloc] addr: {:?}", addr);
     addr
 }
 
@@ -204,7 +214,7 @@ pub(crate) unsafe fn pmem_set_root_filter<T: Collectable>(i: u64) {
             T::filter(&mut *(s as *mut T), tid, gc, pool)
         };
 
-        ROOT.as_mut().unwrap().filters[i as usize] = root_filter::<T>;
+        ROOT.as_mut().unwrap().filters[i as usize] = Some(root_filter::<T>);
     } else {
         unsafe extern "C" fn root_filter<T: Collectable>(
             ptr: *mut c_char,
