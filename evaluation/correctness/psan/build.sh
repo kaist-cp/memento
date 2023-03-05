@@ -9,8 +9,10 @@ DIR_MMT=$DIR_BASE/../../../
 BUILD=$DIR_BASE/build
 
 # Build libmemento.a
-cd $DIR_BASE
-./build_memento.sh
+# cd $DIR_BASE
+# ./scripts/build_pmcpass.sh
+# ./scripts/build_pmcheck.sh
+# ./scripts/build_memento.sh
 
 # Build executable
 LLVMDIR=/dev/shm/jaaru/llvm-project # LLVM 14.0.4

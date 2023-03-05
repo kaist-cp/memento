@@ -3,54 +3,29 @@ TODO:
 - README, script 정리
 - ext/pmdk-rs 추가?: pmemobj_direct가 rust crate pmemobj_sys의 API로 노출 돼야함.
 
-# Build PMCPass (jaaru-llvm-pass)
+# Build libmemento.a using PMCPass llvm instrumentation
 
 ```
-git clone https://github.com/llvm/llvm-project.git
-cd llvm-project
-git checkout 29f1039a7285a5c3a9c353d054140bf2556d4c4d <!-- (HEAD, tag: llvmorg-14.0.4) !-->
-cp ../../ext/jaaru-llvm-pass llvm-project/llvm/lib/Transforms/PMCPass
-
-echo "add_subdirectory(PMCPass)" >> llvm-project/llvm/lib/Transforms/CMakeLists.txt
-
-cd llvm-project
-mkdir build
-cd build
-cmake -DLLVM_ENABLE_PROJECTS=clang -G "Unix Makefiles" ../llvm
-make -j
+./scripts/build_pmcpass.sh
+./scripts/build_memento.sh
 ```
 
 # Build PMCheck
 
 ```
-git clone https://github.com/uci-plrg/jaaru.git
-mv jaaru pmcheck
-cd pmcheck/
-git checkout psan
-make -j
+./scripts/build_pmcheck.sh <mode>
 ```
 
-<!-- # Setting LLVMDIR and JAARUDIR in wrapper scripts
-sed -i 's/LLVMDIR=.*/LLVMDIR=~\/llvm-project\//g' Test/gcc
-sed -i 's/JAARUDIR=.*/JAARUDIR=~\/pmcheck\/bin\//g' Test/gcc
-sed -i 's/LLVMDIR=.*/LLVMDIR=~\/llvm-project\//g' Test/g++
-sed -i 's/JAARUDIR=.*/JAARUDIR=~\/pmcheck\/bin\//g' Test/g++
-# Building test cases
-make test -->
+where mode: `yashme`, `psan`
 
-# Build libmemento.a and executable file
 
-```
-./build.sh
-```
 
 # Run
 
-```
-./run.sh <target> <mode>
+```sh
+./build.sh # TODO: run.sh에 합치는게 좋을듯
+./run.sh <target>
 ```
 
-where:
-- target: `checkpoint`, `detectable_cas`, `queue_O0`, TODO
-- mode: `yashme`, `psan`
+where target: `checkpoint`, `detectable_cas`, `queue_O0`, TODO
 

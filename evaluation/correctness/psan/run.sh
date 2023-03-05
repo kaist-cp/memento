@@ -4,11 +4,14 @@ set -e
 
 DIR_BASE=$(dirname $(realpath $0))
 RUSTSTD=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib
-PMCHECK=$DIR_BASE/pmcheck/bin
+PMCHECK=$DIR_BASE/bin/pmcheck/bin
 
 TARGET=$1
-MODE=$2
+# MODE=$2
 OPT=""
+
+# Build
+MODE=$(cat $DIR_BASE/build/pmcheck_config)
 if [ "${MODE}" == "yashme" ]; then
     # Yashme (https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/pmdk-races.sh)
     # echo 'export PMCheck="-d$3 -y -x25 -r1000"' >> run.sh

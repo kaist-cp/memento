@@ -4,7 +4,7 @@
 
 set -e
 
-DIR_BASE=$(dirname $(realpath $0))
+DIR_BASE=$(dirname $(realpath $0))/../
 DIR_MMT=$DIR_BASE/../../..
 
 TARGET="memento"
@@ -19,7 +19,7 @@ cp $DIR_MMT/target/release/deps/${TARGET}-*.ll $BUILD/$TARGET.ll
 echo "good"
 
 # 2. IR Instrumenting using PMCPass
-LLVMDIR=/dev/shm/jaaru/llvm-project # LLVM 14.0.4  # TODO: $DIR_BASE/llvm-project
+LLVMDIR=$BUILD/llvm-project # LLVM 14.0.4
 LLVMPASS=${LLVMDIR}/build/lib/libPMCPass.so
 CC=${LLVMDIR}/build/bin/clang++
 OPT=${LLVMDIR}/build/bin/opt
