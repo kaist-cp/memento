@@ -2,8 +2,10 @@
 
 set -e
 
+DIR_BASE=$(dirname $(realpath $0))
 RUSTSTD=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib
-PMCHECK=/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/pmcheck/bin/
+PMCHECK=$DIR_BASE/pmcheck/bin
+
 TARGET=$1
 MODE=$2
 OPT=""
