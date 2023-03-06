@@ -8,7 +8,7 @@ We assume you use **Ubuntu 20.04** or later.
 
 ```sh
 docker build -t memento .
-docker run -it --rm -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento # peristent memory must be mounted at /mnt/pmem0
+docker run -it -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento # peristent memory must be mounted at /mnt/pmem0
 ```
 
 ### Running on host
@@ -40,8 +40,9 @@ If persistent memory is *not* mounted on your machine, add a feature flag with `
 cargo build --release --features no_persist
 ```
 
-Since this is a library code, there is no main function.
-Instead, you can run some evaluation mentioned in the paper(§6).
+## Evaluation
+
+You can run *all* evaluation mentioned in the paper(§6).
 See the `README.md` in the [evaluation](./evaluation) directory.
 
 ### Our Implementations
@@ -71,12 +72,10 @@ The directory `src/ds/` contains memento-based persistent data structures suppor
 
 #### Safe Memory Reclamation (§D in appendix)
 
-The directory `crossbeam-persistency` contains implementations of safe memory reclamations.
+The directory `crossbeam-persistency` contains implementations of safe memory reclamations. Specifically,
 
-TODO: More specifically...
-
-- Implementation of "deferred persist"
-- Implementation of "resumable critical section and de-duplicated retirement"
+- `crossbeam-persistency/crossbeam-epoch/src/guard.rs`: Implementation of "Flushing Location before Retirement"
+- `crossbeam-persistency/crossbeam-epoch/src/internal.rs`: Implementation of "Allowing Double Retirement"
 
 #### Others (§4.1)
 

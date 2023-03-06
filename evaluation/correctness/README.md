@@ -1,6 +1,6 @@
 # Detecability Evaluation (§6.1)
 
-We evaluate the detectable recoverability of data structures based on Memento by killing an arbitrary thread and checking if the thread recovers correctly.
+We evaluate the detectability in case of thread crashes by randomly crashing an arbitrary thread while running the integration test. To crash a specific thread, we use the tgkill system call to send the SIGUSR1 signal to the thread and let its signal handler abort its execution. For each primitive and DS, we observe no test failures for 100K runs with thread crashes.
 
 ## Usage
 
@@ -12,24 +12,58 @@ You can test each data structure with the following command:
 ```
 
 where `queue_general` can be replaced with other supported tests (listed below).
-This creates test log under `./out`.
+It will infinitely run and continue testing.
 
 ## Expected output
 
-TODO: Explain output
+The output of `queue_general` test is printed out like below:
+
+```
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+[Test 1] success (retry: 0)
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+[Test 2] success (retry: 0)
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 3 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+[Test 3] success (retry: 0)
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 4 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+^C
+```
+
+It also creates a short progress log and a full test log under `./out`.
+
+If a bug exists (just for an example), the output is like below:
+
+```
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+./run.sh: line 51: 818409 Aborted                 RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+fails with exit code 134 (retry: 0)
+[Test 1] fails with exit code 134 (retry: 0)
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+^C
+```
+
+It then generates a bug directory consisting of a text file containg specific error log (`info.txt`) and a PM pool files (`queue_general.pool_*`) of the buggy execution so that we can debug the data structure using it.
 
 ## Supported tests
 
 ### For primitives
 
-TODO: test method
-
 - `checkpoint`
 - `detectable_cas`
 
 ### For data structures
-
-TODO: test method
 
 - `queue_general`: ***MSQ-mmt-O0*** in the paper
 - `queue_lp`: ***MSQ-mmt-O1*** in the paper

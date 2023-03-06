@@ -75,16 +75,16 @@ while true; do
         run $target
         ext=$?
         if [ $ext -eq 0 ]; then
-            pmsg "[${i}th test] success (try: $try)"
+            pmsg "[Test ${i}] success (retry: $try)"
             break
         # Retry if the timeout occurs. (exit code=124)
         elif [[ $ext -eq 124 && $try -ne $RETRY_LIMIT ]]; then
-            dmsg "fails with exit code $ext. Retry it. (try: $try)"
-            pmsg "[${i}th test] fails with exit code $ext. Retry it. (try: $try)"
+            dmsg "fails with exit code $ext. Retry it. (retry: $try)"
+            pmsg "[Test ${i}] fails with exit code $ext. Retry it. (retry: $try)"
             try=$(($try+1))
         else
-            dmsg "fails with exit code $ext (try: $try)"
-            pmsg "[${i}th test] fails with exit code $ext (try: $try)"
+            dmsg "fails with exit code $ext (retry: $try)"
+            pmsg "[Test ${i}] fails with exit code $ext (retry: $try)"
 
             # Save bug pool and logs
             out_bug_path=$OUT_PATH/bug${bug_cnt}_exit${ext}
