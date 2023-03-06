@@ -14,7 +14,7 @@ if [ "$mode" == "yashme" ]; then
 elif [ "$mode" == "psan" ]; then
     branch=psan # https://github.com/uci-plrg/psan-vagrant/blob/master/data/setup.sh#L12
 else
-    echo "Invalid mode: $mode"
+    echo "Invalid mode: $mode (possible mode: yashme, psan)"
     exit 0
 fi
 

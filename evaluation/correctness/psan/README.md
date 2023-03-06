@@ -10,10 +10,11 @@ TODO:
 ./scripts/build_memento.sh
 ```
 
-# Build PMCheck
+# Build executable file with PMCheck
 
 ```
 ./scripts/build_pmcheck.sh <mode>
+./scripts/build_exe.sh
 ```
 
 where mode: `yashme`, `psan`
@@ -23,8 +24,7 @@ where mode: `yashme`, `psan`
 # Run
 
 ```sh
-./build.sh # TODO: run.sh에 합치는게 좋을듯
-./run.sh <target>
+./scripts/run.sh <target>
 ```
 
 where target: `checkpoint`, `detectable_cas`, `queue_O0`, TODO
