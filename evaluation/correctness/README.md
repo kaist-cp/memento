@@ -1,6 +1,6 @@
 # Detecability Evaluation (§6.1)
 
-We evaluate the detectability in case of thread crashes by randomly crashing an arbitrary thread while running the integration test. To crash a specific thread, we use the tgkill system call to send the SIGUSR1 signal to the thread and let its signal handler abort its execution. For each primitive and DS, we observe no test failures for 100K runs with thread crashes.
+We evaluate the detectability in case of thread crashes by randomly crashing an arbitrary thread while running the integration test. To crash a specific thread, we use the tgkill system call to send the SIGUSR1 signal to the thread and let its signal handler abort its execution.
 
 ## Usage
 
@@ -8,31 +8,33 @@ You can test each data structure with the following command:
 
 ```bash
 ./build.sh # specially built for the thread crash test
+./run.sh [tested DS]
+```
+
+where `tested DS` should be replaced with one of supported tests (listed below).
+For example, the following command is to infinitely check that the test of ***MSQ-mmt-O0*** in the paper always pass in case of an unexpected thread crash:
+
+```bash
 ./run.sh queue_general
 ```
 
-where `queue_general` can be replaced with other supported tests (listed below).
-It will infinitely run and continue testing.
-
-## Expected output
-
-The output of `queue_general` test is printed out like below:
+Then the output is printed out like below:
 
 ```
 clear queue_general
-⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
 run queue_general
-[Test 1] success (retry: 0)
+[Test 1] success
 clear queue_general
-⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
 run queue_general
-[Test 2] success (retry: 0)
+[Test 2] success
 clear queue_general
-⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 3 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 3 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
 run queue_general
-[Test 3] success (retry: 0)
+[Test 3] success
 clear queue_general
-⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 4 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 4 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
 run queue_general
 ^C
 ```
@@ -43,18 +45,20 @@ If a bug exists (just for an example), the output is like below:
 
 ```
 clear queue_general
-⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
 run queue_general
-./run.sh: line 51: 818409 Aborted                 RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
-fails with exit code 134 (retry: 0)
-[Test 1] fails with exit code 134 (retry: 0)
+./run.sh: line 51: 855011 Aborted                 RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+fails with exit code 134
+[Test 1] fails with exit code 134
 clear queue_general
-⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (try: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
 run queue_general
 ^C
 ```
 
 It then generates a bug directory consisting of a text file containg specific error log (`info.txt`) and a PM pool files (`queue_general.pool_*`) of the buggy execution so that we can debug the data structure using it.
+
+For each primitive and DS, we observe *no* test failures for 100K runs with thread crashes.
 
 ## Supported tests
 

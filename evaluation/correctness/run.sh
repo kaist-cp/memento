@@ -71,20 +71,20 @@ while true; do
 
     # {try}th try of {i}th test
     while true; do
-        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i (try: $try) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
+        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i (retry: $try) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
         run $target
         ext=$?
         if [ $ext -eq 0 ]; then
-            pmsg "[Test ${i}] success (retry: $try)"
+            pmsg "[Test ${i}] success"
             break
         # Retry if the timeout occurs. (exit code=124)
         elif [[ $ext -eq 124 && $try -ne $RETRY_LIMIT ]]; then
-            dmsg "fails with exit code $ext. Retry it. (retry: $try)"
-            pmsg "[Test ${i}] fails with exit code $ext. Retry it. (retry: $try)"
+            dmsg "fails with exit code $ext. Retry it."
+            pmsg "[Test ${i}] fails with exit code $ext. Retry it."
             try=$(($try+1))
         else
-            dmsg "fails with exit code $ext (retry: $try)"
-            pmsg "[Test ${i}] fails with exit code $ext (retry: $try)"
+            dmsg "fails with exit code $ext"
+            pmsg "[Test ${i}] fails with exit code $ext"
 
             # Save bug pool and logs
             out_bug_path=$OUT_PATH/bug${bug_cnt}_exit${ext}
