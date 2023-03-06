@@ -19,14 +19,6 @@ pub struct TryFail;
 /// Queue node
 #[derive(Debug, Collectable)]
 #[repr(align(128))]
-#[cfg(not(feature = "pmcheck"))]
-pub struct Node<T: Collectable> {
-    data: MaybeUninit<T>,
-    next: DetectableCASAtomic<Self>,
-}
-/// Queue node
-#[derive(Debug, Collectable)]
-#[cfg(feature = "pmcheck")] // NOTE: PAtomic align err occurs when using the PMDk allocator.
 pub struct Node<T: Collectable> {
     data: MaybeUninit<T>,
     next: DetectableCASAtomic<Self>,

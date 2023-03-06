@@ -67,7 +67,9 @@ impl PAllocator for PMDKAllocator {
 
     unsafe fn mmapped_addr() -> usize {
         let root_oid = pmemobj_sys::pmemobj_oid(ROOT as *mut c_void);
-        ROOT as usize - root_oid.off as usize
+        let start = ROOT as usize - root_oid.off as usize;
+        assert!(root_oid.off % 64 == 16);
+        start + 16
     }
 
     unsafe fn close(start: usize, len: usize) {
@@ -118,16 +120,18 @@ impl PAllocator for PMDKAllocator {
             pool_uuid_lo: 0,
         };
         let oidp = &mut oid;
+        let sz = if sz < 64 { 64 } else { sz.try_into().unwrap() };
         let status = unsafe {
             pmemobj_sys::pmemobj_zalloc(
                 POPS,
                 oidp as *mut pmemobj_sys::PMEMoid,
-                if sz == 0 { 64 } else { sz.try_into().unwrap() },
+                sz,
                 0,
                 // None,
                 // std::ptr::null_mut(),
             )
         };
+        assert!(oid.off % 64 == 16, "oid: {:?}, sz: {}", oid, sz);
         if status == 0 {
             pmemobj_sys::pmemobj_direct(oid)
         } else {
