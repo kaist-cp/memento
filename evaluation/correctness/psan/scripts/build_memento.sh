@@ -24,7 +24,7 @@ LLVMPASS=${LLVMDIR}/build/lib/libPMCPass.so
 CC=${LLVMDIR}/build/bin/clang++
 OPT=${LLVMDIR}/build/bin/opt
 echo "instrument llvm"
-$OPT -load ${LLVMPASS} -PMCPass -enable-new-pm=0 $BUILD/$TARGET.ll -o $BUILD/${TARGET}_instrumented.ll
+$OPT -load ${LLVMPASS} -PMCPass -enable-new-pm=0 $BUILD/$TARGET.ll -o $BUILD/${TARGET}_instrumented.ll 2>$BUILD/instrumentation.log
 echo "good"
 
 # 3. Compile IR into library

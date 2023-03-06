@@ -4,8 +4,17 @@ set -e
 
 DIR_BASE=$(dirname $(realpath $0))/..
 BUILD=$DIR_BASE/build
+OUT=$DIR_BASE/out
 PMCHECK=$BUILD/pmcheck/bin
 RUSTSTD=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib
+mkdir -p $OUT
+OUT_LOG=/$OUT/debug.log
+
+function dmsg() {
+    msg=$1
+    time=$(date +%m)/$(date +%d)-$(date +%H):$(date +%M)
+    echo "[$time] $msg" >> $OUT_LOG
+}
 
 cd $BUILD
 TARGET=$1
@@ -26,13 +35,16 @@ else
     exit
 fi
 echo "[Run] target: $TARGET, mode: $MODE, option: $OPT"
+dmsg "[Run] target: $TARGET, mode: $MODE, option: $OPT"
 
 export LD_LIBRARY_PATH=$PMCHECK:$RUSTSTD
 export PMCheck="-d/mnt/pmem0/test/$TARGET/$TARGET.pool_valid $OPT"
 rm -rf PMCheckOutput*
 rm -rf /mnt/pmem0/*
 ulimit -s 82920000
-RUST_MIN_STACK=100000000 ./psan $TARGET
+echo "[Finish] target: $TARGET, mode: $MODE, option: $OPT"
+dmsg "[Finish] target: $TARGET, mode: $MODE, option: $OPT"
+
 
 # 	model_print(
 # 		"Copyright (c) 2021 Regents of the University of California. All rights reserved.\n"
