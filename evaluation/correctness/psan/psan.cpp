@@ -7,6 +7,13 @@ extern "C"
     void test_checkpoint();
     void test_cas();
     void test_queue_O0();
+    void test_queue_O1();
+    void test_queue_O2();
+    void test_queue_comb();
+    void test_treiber_stack();
+    void test_elim_stack();
+    void test_list();
+    void test_clevel();
 }
 
 int main(int argc, char *argv[])
@@ -32,6 +39,34 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "queue_O0") == 0)
     {
         test_queue_O0();
+    }
+    else if (strcmp(argv[1], "queue_O1") == 0)
+    {
+        test_queue_O1();
+    }
+    else if (strcmp(argv[1], "queue_O2") == 0)
+    {
+        test_queue_O2();
+    }
+    else if (strcmp(argv[1], "queue_comb") == 0)
+    {
+        test_queue_comb();
+    }
+    else if (strcmp(argv[1], "treiber_stack") == 0)
+    {
+        test_treiber_stack();
+    }
+    else if (strcmp(argv[1], "elim_stack") == 0)
+    {
+        test_elim_stack();
+    }
+    else if (strcmp(argv[1], "list") == 0)
+    {
+        test_list();
+    }
+    else if (strcmp(argv[1], "clevel") == 0)
+    {
+        test_clevel();
     }
     else
     {
