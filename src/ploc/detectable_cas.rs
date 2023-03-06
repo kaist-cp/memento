@@ -443,7 +443,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             // Register my help descriptor if there is no descriptor yet.
             if old.desc_bit() == 0 {
-                sfence();
+                #[cfg(feature = "pmcheck")]
+                sfence(); // To pass the false positive of PSan.
+
                 match self.register_help(old, handle) {
                     Ok(desc) => {
                         old = desc;
