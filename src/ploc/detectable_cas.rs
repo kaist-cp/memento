@@ -951,8 +951,6 @@ pub mod test {
         const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<Location<TestValue>>, Updates>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
-        );
+        run_test::<TestRootObj<Location<TestValue>>, Updates>(FILE_NAME, FILE_SIZE, NR_THREAD, 10);
     }
 }

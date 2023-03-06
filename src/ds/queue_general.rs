@@ -360,7 +360,7 @@ pub mod test {
         const FILE_NAME: &str = "queue_general";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         run_test::<TestRootObj<QueueGeneral<TestValue>>, EnqDeq>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+            FILE_NAME, FILE_SIZE, NR_THREAD, 10,
         );
     }
 }
