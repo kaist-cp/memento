@@ -59,6 +59,15 @@ function run() {
 
 }
 
+case $1 in
+  checkpoint|detectable_cas|queue_general|queue_lp|queue|queue_comb|treiber_stack|list|clevel)
+    ;;
+  *)
+    echo "$1 is not a valid test."
+    exit
+    ;;
+esac
+
 # Test thread crash and recovery run.
 bug_cnt=0
 i=0
