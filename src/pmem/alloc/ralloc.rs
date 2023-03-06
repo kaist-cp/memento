@@ -3,7 +3,12 @@
 use crossbeam_utils::CachePadded;
 use etrace::some_or;
 
-use super::super::{global_pool, PoolHandle};
+use crate::pmem::{Collectable, RootIdx};
+
+use super::{
+    super::{global_pool, PoolHandle},
+    PAllocator,
+};
 use std::{
     mem::MaybeUninit,
     os::raw::{c_char, c_int, c_ulong, c_void},
@@ -88,4 +93,76 @@ extern "C" {
             unsafe extern "C" fn(*mut c_char, usize, &mut GarbageCollection),
         >,
     );
+}
+
+pub(crate) struct RallocAllocator {}
+
+impl PAllocator for RallocAllocator {
+    unsafe fn open(filepath: *const libc::c_char, filesize: u64) -> libc::c_int {
+        RP_init(filepath, filesize)
+    }
+
+    unsafe fn create(filepath: *const libc::c_char, filesize: u64) -> libc::c_int {
+        RP_init(filepath, filesize)
+    }
+
+    unsafe fn mmapped_addr() -> usize {
+        RP_mmapped_addr()
+    }
+
+    unsafe fn close(start: usize, len: usize) {
+        RP_close();
+    }
+
+    unsafe fn recover() -> libc::c_int {
+        RP_recover()
+    }
+
+    unsafe fn set_root(ptr: *mut libc::c_void, i: u64) -> *mut libc::c_void {
+        RP_set_root(ptr, i)
+    }
+
+    unsafe fn get_root(i: u64) -> *mut libc::c_void {
+        RP_get_root_c(i)
+    }
+
+    unsafe fn malloc(sz: libc::c_ulong) -> *mut libc::c_void {
+        RP_malloc(sz)
+    }
+
+    unsafe fn free(ptr: *mut libc::c_void, _len: usize) {
+        RP_free(ptr)
+    }
+
+    unsafe fn set_root_filter<T: Collectable>(i: u64) {
+        unsafe extern "C" fn root_filter<T: Collectable>(
+            ptr: *mut c_char,
+            tid: usize,
+            gc: &mut GarbageCollection,
+        ) {
+            RP_mark(
+                gc,
+                ptr,
+                tid.wrapping_sub(RootIdx::MementoStart as usize),
+                Some(T::filter_inner),
+            );
+        }
+
+        RP_set_root_filter(Some(root_filter::<T>), i)
+    }
+
+    unsafe fn mark<T: Collectable>(s: &mut T, tid: usize, gc: &mut super::GarbageCollection) {
+        let ptr = s as *mut _ as *mut c_char;
+        unsafe { RP_mark(gc, ptr, tid, Some(T::filter_inner)) };
+    }
+
+    unsafe extern "C" fn filter_inner<T: Collectable>(
+        ptr: *mut T,
+        tid: usize,
+        gc: &mut GarbageCollection,
+    ) {
+        let pool = global_pool().unwrap();
+        // let s = (ptr as *mut _ as *mut T).as_mut().unwrap();
+        T::filter(ptr.as_mut().unwrap(), tid, gc, pool);
+    }
 }

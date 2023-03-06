@@ -1,116 +1,167 @@
-//! PMDK functions from pmcheck
-#![allow(warnings)]
+//! PMDK
+
+use std::mem;
+
 use libc::*;
 
-// type void = c_void;
-// type size_t = usize;
-// type int =
+use crate::pmem::{global_pool, PoolHandle};
 
-// #[cfg(feature = "pmcheck")]
+use super::{Collectable, GarbageCollection, PAllocator};
 
-use libc::{c_char, c_int, c_void, mode_t};
+const NUM_ROOT: usize = 128;
 
-use std::fmt;
+static mut ROOT: *mut Root = std::ptr::null_mut();
+pub(crate) static mut POPS: *mut pmemobj_sys::PMEMobjpool = std::ptr::null_mut();
 
-// #[cfg(feature = "pmcheck")]
-// #[link(name = "pmcheck")]
+struct Root {
+    objs: [pmemobj_sys::pmemoid; NUM_ROOT],
+    filters: [Option<filter_func>; NUM_ROOT],
+}
+type filter_func =
+    unsafe fn(s: *mut c_void, tid: usize, gc: &mut GarbageCollection, pool: &mut PoolHandle);
+unsafe impl Sync for Root {}
 
-// // bindgen --allowlist-function "pm.*" ../pmcheck/Memory/libpmem.h -o pmdk.rs
-// extern "C" {
-//     pub(crate) fn pmem_map_file(
-//         path: *const ::std::os::raw::c_char,
-//         len: usize,
-//         flags: ::std::os::raw::c_int,
-//         mode: mode_t,
-//         mapped_lenp: *mut usize,
-//         is_pmemp: *mut ::std::os::raw::c_int,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_file_exists(path: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_unmap(
-//         addr: *mut ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_is_pmem(
-//         addr: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_persist(addr: *const ::std::os::raw::c_void, len: usize);
-//     pub(crate) fn pmem_msync(
-//         addr: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_has_auto_flush() -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_flush(addr: *const ::std::os::raw::c_void, len: usize);
-//     pub(crate) fn pmem_deep_flush(addr: *const ::std::os::raw::c_void, len: usize);
-//     pub(crate) fn pmem_deep_drain(
-//         addr: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_deep_persist(
-//         addr: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_drain();
-//     pub(crate) fn pmem_has_hw_drain() -> ::std::os::raw::c_int;
-//     pub(crate) fn pmem_memmove_persist(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         src: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memcpy_persist(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         src: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memset_persist(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         c: ::std::os::raw::c_int,
-//         len: usize,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memmove_nodrain(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         src: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memcpy_nodrain(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         src: *const ::std::os::raw::c_void,
-//         len: usize,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memset_nodrain(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         c: ::std::os::raw::c_int,
-//         len: usize,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memmove(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         src: *const ::std::os::raw::c_void,
-//         len: usize,
-//         flags: ::std::os::raw::c_uint,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memcpy(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         src: *const ::std::os::raw::c_void,
-//         len: usize,
-//         flags: ::std::os::raw::c_uint,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_memset(
-//         pmemdest: *mut ::std::os::raw::c_void,
-//         c: ::std::os::raw::c_int,
-//         len: usize,
-//         flags: ::std::os::raw::c_uint,
-//     ) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmem_register_file(
-//         path: *const ::std::os::raw::c_char,
-//         addr: *mut ::std::os::raw::c_void,
-//     ) -> ::std::os::raw::c_int;
-//     pub(crate) fn pmdk_malloc(size: usize) -> *mut ::std::os::raw::c_void;
-//     pub(crate) fn pmdk_pagealigned_calloc(size: usize) -> *mut ::std::os::raw::c_void;
-//     // void *pmem_map_file(const char *path, size_t len, int flags, mode_t mode, size_t *mapped_lenp, int *is_pmemp);
-//     // fn pmem_map_file(path: *mut char, len: usize , isize flags, usize mode, *mut usize mapped_lenp, *mut isize is_pmemp) -> *mut c_void;
+impl Root {
+    fn new() -> Self {
+        Root {
+            objs: array_init::array_init(|_| pmemobj_sys::pmemoid {
+                off: 0,
+                pool_uuid_lo: 0,
+            }),
+            filters: array_init::array_init(|_| None),
+        }
+    }
+}
 
-//     // void * pmdk_malloc(size_t size)
-//     // void pmem_flush(const void *addr, size_t len);
-//     // int pmem_msync(const void *addr, size_t len);
+pub(crate) struct PMDKAllocator {}
 
-// }
+impl PAllocator for PMDKAllocator {
+    unsafe fn open(filepath: *const c_char, filesize: u64) -> c_int {
+        let res = chmod(filepath, 0o777);
+        POPS = pmemobj_sys::pmemobj_open(filepath, std::ptr::null_mut());
+        if POPS.is_null() {
+            let msg = pmemobj_sys::pmemobj_errormsg();
+            let msgg = msg.as_ref().unwrap().to_string();
+            panic!("err: {:?}", msgg);
+        }
+
+        let root = pmemobj_sys::pmemobj_root(POPS, mem::size_of::<Root>());
+        ROOT = pmemobj_sys::pmemobj_direct(root) as *mut Root;
+        println!("[pmem_open] finish!]");
+        return 1;
+    }
+
+    unsafe fn create(filepath: *const c_char, filesize: u64) -> c_int {
+        POPS =
+            pmemobj_sys::pmemobj_create(filepath, std::ptr::null_mut(), filesize as usize, 0o777);
+        if POPS.is_null() {
+            let msg = pmemobj_sys::pmemobj_errormsg();
+            let msgg = msg.as_ref().unwrap().to_string();
+            panic!("err: {:?}", msgg)
+        }
+
+        let root = pmemobj_sys::pmemobj_root(POPS, mem::size_of::<Root>());
+        ROOT = pmemobj_sys::pmemobj_direct(root) as *mut Root;
+        return 0;
+    }
+
+    unsafe fn mmapped_addr() -> usize {
+        let root_oid = pmemobj_sys::pmemobj_oid(ROOT as *mut c_void);
+        ROOT as usize - root_oid.off as usize
+    }
+
+    unsafe fn close(start: usize, len: usize) {
+        if !POPS.is_null() {
+            pmemobj_sys::pmemobj_close(POPS);
+            POPS = std::ptr::null_mut();
+        }
+    }
+
+    unsafe fn recover() -> c_int {
+        // Call root filters
+        let root = ROOT.as_mut().unwrap();
+        for (i, filter) in root.filters.iter().enumerate() {
+            let oid = root.objs[i];
+            if let Some(filter) = filter {
+                let obj = pmemobj_sys::pmemobj_direct(oid);
+                assert!(!obj.is_null());
+                filter(
+                    obj,
+                    i,
+                    &mut *(&mut () as *mut _ as *mut GarbageCollection),
+                    global_pool().unwrap(),
+                );
+            }
+        }
+        1
+    }
+
+    unsafe fn set_root(ptr: *mut c_void, i: u64) -> *mut c_void {
+        let root = ROOT.as_mut().unwrap();
+        let old = root.objs[i as usize];
+        let oid = pmemobj_sys::pmemobj_oid(ptr);
+        root.objs[i as usize] = oid;
+        pmemobj_sys::pmemobj_direct(old)
+    }
+
+    unsafe fn get_root(i: u64) -> *mut c_void {
+        let oid = ROOT.as_mut().unwrap().objs[i as usize];
+        if oid.pool_uuid_lo == 0 {
+            panic!("err: !!!");
+        }
+        pmemobj_sys::pmemobj_direct(oid)
+    }
+
+    unsafe fn malloc(sz: c_ulong) -> *mut c_void {
+        let mut oid = pmemobj_sys::PMEMoid {
+            off: 0,
+            pool_uuid_lo: 0,
+        };
+        let oidp = &mut oid;
+        let status = unsafe {
+            pmemobj_sys::pmemobj_zalloc(
+                POPS,
+                oidp as *mut pmemobj_sys::PMEMoid,
+                if sz == 0 { 64 } else { sz.try_into().unwrap() },
+                0,
+                // None,
+                // std::ptr::null_mut(),
+            )
+        };
+        if status == 0 {
+            pmemobj_sys::pmemobj_direct(oid)
+        } else {
+            panic!("err");
+        }
+    }
+
+    unsafe fn free(ptr: *mut c_void, _len: usize) {
+        let mut oid = pmemobj_sys::pmemobj_oid(ptr);
+        pmemobj_sys::pmemobj_free(&mut oid as *mut _);
+    }
+
+    unsafe fn set_root_filter<T: Collectable>(i: u64) {
+        unsafe fn root_filter<T: Collectable>(
+            s: *mut c_void,
+            tid: usize,
+            gc: &mut GarbageCollection,
+            pool: &mut PoolHandle,
+        ) {
+            T::filter(&mut *(s as *mut T), tid, gc, pool)
+        };
+
+        ROOT.as_mut().unwrap().filters[i as usize] = Some(root_filter::<T>);
+    }
+
+    unsafe fn mark<T: Collectable>(s: &mut T, tid: usize, gc: &mut GarbageCollection) {
+        T::filter(s, tid, gc, global_pool().unwrap());
+    }
+
+    unsafe extern "C" fn filter_inner<T: Collectable>(
+        ptr: *mut T,
+        tid: usize,
+        gc: &mut GarbageCollection,
+    ) {
+        unreachable!("This function is only for Ralloc GC.")
+    }
+}

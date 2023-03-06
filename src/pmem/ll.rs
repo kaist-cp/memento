@@ -55,11 +55,13 @@ pub fn persist_obj<T: ?Sized>(obj: &T, fence: bool) {
 pub fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
     #[cfg(not(feature = "no_persist"))]
     {
-        if cfg!(feature = "pmcheck") {
-            unsafe {
-                pmemobj_sys::pmemobj_flush(super::POPS, ptr as *const libc::c_void, len);
-            }
-        } else {
+        #[cfg(feature = "pmcheck")]
+        unsafe {
+            pmemobj_sys::pmemobj_flush(super::POPS, ptr as *const libc::c_void, len);
+        }
+
+        #[cfg(not(feature = "pmcheck"))]
+        {
             let ptr = ptr as *const u8 as *mut u8;
             let start = ptr as usize;
             let end = start + len;
@@ -102,15 +104,15 @@ pub fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
 /// Store fence
 #[inline(always)]
 pub fn sfence() {
-    if cfg!(feature = "pmcheck") {
-        unsafe {
-            pmemobj_sys::pmemobj_drain(super::POPS);
-        }
-    } else {
-        #[cfg(any(feature = "use_clwb", feature = "use_clflushopt"))]
-        unsafe {
-            _mm_sfence();
-        }
+    #[cfg(feature = "pmcheck")]
+    unsafe {
+        pmemobj_sys::pmemobj_drain(super::POPS);
+    }
+
+    #[cfg(not(feature = "pmcheck"))]
+    #[cfg(any(feature = "use_clwb", feature = "use_clflushopt"))]
+    unsafe {
+        _mm_sfence();
     }
 }
 
