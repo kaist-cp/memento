@@ -1,4 +1,6 @@
-# Supplementary Materials of "A General Framework for Detectable, Persistent, Lock-Free Data Structures"
+# A General Framework for Detectable, Persistent, Lock-Free Data Structures
+
+This is the artifact for a paper, Kyeongmin Cho, Seungmin Jeon, Azalea Raad, and Jeehoon Kang, "A General Framework for Detectable, Persistent, Lock-Free Data Structures", PLDI 2023. This artifact provides the Memento framework and evaluation programs/results mentioned in the paper.
 
 ## Installation
 
