@@ -24,12 +24,12 @@ MODE=$(cat pmcheck.config)
 if [ "${MODE}" == "yashme" ]; then
     # Yashme (https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/pmdk-races.sh)
     # echo 'export PMCheck="-d$3 -y -x25 -r1000"' >> run.sh
-    OPT="-v -y -x25"
+    OPT="-v -p -y -x25 -s"
 elif [ "${MODE}" == "psan" ]; then
     # PSan (https://github.com/uci-plrg/psan-vagrant/blob/master/data/pmdk-bugs.sh)
     # STRATEGY=-o2
     # export PMCheck=\"-d\$3 ${STRATEGY} -r1787250\"" >> run.sh
-    OPT="-v3 -p -o2"
+    OPT="-v -p -o2 -s"
 else
     echo "invalid mode: $MODE (possible mode: yashme, psan)"
     exit
@@ -42,6 +42,9 @@ export PMCheck="-d/mnt/pmem0/test/$TARGET/$TARGET.pool_valid $OPT"
 rm -rf PMCheckOutput*
 rm -rf /mnt/pmem0/*
 ulimit -s 82920000
+mkdir -p $OUT/psan
+mkdir -p $OUT/psan/$MODE
+RUST_MIN_STACK=100000000 ./psan $TARGET 2>&1>$OUT/psan/$MODE/$TARGET.log
 echo "[Finish] target: $TARGET, mode: $MODE, option: $OPT"
 dmsg "[Finish] target: $TARGET, mode: $MODE, option: $OPT"
 

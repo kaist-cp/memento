@@ -385,16 +385,6 @@ impl Pool {
         Ok(pool)
     }
 
-    /// Close pool
-    ///
-    /// # Safety
-    ///
-    /// `pool` should not be used after the closing.
-    pub unsafe fn close(pool: &'static PoolHandle) {
-        assert!(global_pool().unwrap() as *const _ as usize == pool as *const _ as usize);
-        global::clear();
-    }
-
     /// Remove pool
     pub fn remove(filepath: &str) -> Result<(), Error> {
         // _basedmd, _desc, _sb are pool files created by Ralloc

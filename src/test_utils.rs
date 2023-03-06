@@ -300,9 +300,6 @@ pub mod tests {
 
         // run root memento(s)
         pool_handle.execute::<O, M>();
-
-        // Close pool
-        unsafe { Pool::close(pool_handle) };
     }
 
     /// child thread handler: thread exit
