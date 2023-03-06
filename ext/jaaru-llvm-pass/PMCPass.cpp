@@ -774,7 +774,7 @@ bool PMCPass::instrumentLoadOrStore(Instruction *I, const DataLayout &DL) {
 
 	// TODO: unaligned reads and writes
 	
-	Value *OnAccessFunc = IsWrite ? PMCStore[idx] : PMCLoad[idx];
+	Function *OnAccessFunc = IsWrite ? PMCStore[idx] : PMCLoad[idx];
 	const unsigned byteSize = 1U << idx;
         const unsigned bitSize = byteSize * 8;
         Type *Ty = Type::getIntNTy(IRB.getContext(), bitSize);
@@ -785,8 +785,7 @@ bool PMCPass::instrumentLoadOrStore(Instruction *I, const DataLayout &DL) {
 		Value *val = SI->getValueOperand();
 		Value *args[] = {IRB.CreatePointerCast(addr, ptrTy),
                                 IRB.CreateBitOrPointerCast(val, Ty), position};
-				FunctionType *FuncTy = FunctionType::get(OnAccessFunc->getType(), false);
-				CallInst *C = CallInst::Create(FuncTy, OnAccessFunc, args);
+				CallInst *C = CallInst::Create(OnAccessFunc, args);
                 ReplaceInstWithInst(I, C);
 
 		NumInstrumentedWrites++;
@@ -795,7 +794,7 @@ bool PMCPass::instrumentLoadOrStore(Instruction *I, const DataLayout &DL) {
 		Value *args[] = {IRB.CreatePointerCast(addr, ptrTy), position};
                 Type *orgTy = cast<PointerType>(addr->getType())->getElementType();
 				FunctionType *FuncTy = FunctionType::get(OnAccessFunc->getType(), false);
-				Value *funcInst = IRB.CreateCall(FuncTy, OnAccessFunc, args);
+				Value *funcInst = IRB.CreateCall(OnAccessFunc, args);
                 Value *cast = IRB.CreateBitOrPointerCast(funcInst, orgTy);
                 I->replaceAllUsesWith(cast);
 		

@@ -20,6 +20,5 @@ echo "add_subdirectory(PMCPass)" >> llvm/lib/Transforms/CMakeLists.txt
 
 mkdir -p build
 cd build
-cmake -DLLVM_ENABLE_PROJECTS=clang -G "Unix Makefiles" ../llvm
-# cmake -DLLVM_ENABLE_PROJECTS=clang -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" # doesn't work
+cmake -DLLVM_ENABLE_PROJECTS=clang -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" ../llvm
 make -j
