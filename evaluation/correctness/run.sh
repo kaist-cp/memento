@@ -1,7 +1,7 @@
 #!/bin/bash
 target=$1
-cfg=$(cat config)
 SCRIPT_DIR=`dirname $(realpath "$0")`
+cfg=$(cat $SCRIPT_DIR/config)
 
 # Test Config
 if [ "$cfg" == "no-persist" ]; then
