@@ -402,8 +402,8 @@ impl<K: Ord, V: Collectable> List<K, V> {
     }
 }
 
-#[cfg(test)]
-mod test {
+#[allow(dead_code)]
+pub(crate) mod test {
     use test_utils::distributer::*;
 
     use super::*;
@@ -528,6 +528,19 @@ mod test {
 
         run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
+    }
+
+    /// Test function for pmcheck
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn pmcheck_ins_del_look(thread: usize, count: usize) {
+        const FILE_NAME: &str = "list";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        lazy_static::initialize(&ITEMS);
+
+        run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
+            FILE_NAME, FILE_SIZE, thread, count,
         );
     }
 }

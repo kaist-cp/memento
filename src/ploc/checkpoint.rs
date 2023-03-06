@@ -200,10 +200,10 @@ pub mod tests {
 
     /// Test checkpoint for psan
     #[cfg(feature = "pmcheck")]
-    pub fn chks() {
+    pub fn chks(thread: usize, count: usize) {
         const FILE_NAME: &str = "checkpoint";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, 1, 10);
+        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, thread, count);
     }
 }

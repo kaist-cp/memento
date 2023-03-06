@@ -1988,13 +1988,15 @@ mod simple_test {
     }
 }
 
-#[cfg(test)]
-mod test {
+#[allow(dead_code)]
+pub(crate) mod test {
     use crate::test_utils::{distributer::Distributer, tests::*};
     use crossbeam_channel as channel;
 
     use super::*;
 
+    const FILE_NAME: &str = "clevel";
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
     const NR_THREAD: usize = 1 /* Resizer */ + 5 /* Testee */;
     const NR_COUNT: usize = 10_000;
 
@@ -2123,11 +2125,7 @@ mod test {
         }
     }
 
-    #[test]
-    fn clevel_ins_del_look() {
-        const FILE_NAME: &str = "clevel";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
+    fn ins_del_look(filename: &'static str, filesize: usize, thread: usize, count: usize) {
         lazy_static::initialize(&ITEMS);
 
         let (send, recv) = channel::bounded(1024);
@@ -2156,8 +2154,19 @@ mod test {
         });
 
         run_test::<TestRootObj<Clevel<TestValue, TestValue>>, InsDelLook>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+            filename, filesize, thread, count,
         );
+    }
+
+    #[test]
+    fn clevel_ins_del_look() {
+        ins_del_look(FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT)
+    }
+
+    /// Test function for psan
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn pmcheck_ins_del_look(thread: usize, count: usize) {
+        ins_del_look(FILE_NAME, FILE_SIZE, thread, count)
     }
 }
 

@@ -278,8 +278,8 @@ impl CombiningQueue {
         Self::EMPTY
     }
 }
-#[cfg(test)]
-mod test {
+#[allow(dead_code)]
+pub(crate) mod test {
     use crate::test_utils::tests::*;
     use crate::Memento;
     use crate::{ploc::Handle, pmem::*};
@@ -348,5 +348,13 @@ mod test {
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<TestRootObj<CombiningQueue>, EnqDeq>(FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT);
+    }
+
+    /// Test function for psan
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn enqdeq(thread: usize, count: usize) {
+        const FILE_NAME: &str = "queue_comb";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        run_test::<TestRootObj<CombiningQueue>, EnqDeq>(FILE_NAME, FILE_SIZE, thread, count);
     }
 }

@@ -230,8 +230,8 @@ impl<T: Clone + Collectable> Stack<T> for TreiberStack<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[allow(dead_code)]
+pub(crate) mod test {
     use super::*;
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
@@ -246,6 +246,16 @@ mod tests {
         const FILE_NAME: &str = "treiber_stack";
         run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, NR_THREAD, NR_COUNT>>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        )
+    }
+
+    /// Test function for psan
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn pushpop(thread: usize, count: usize) {
+        assert!(thread == 2 && count == 2);
+        const FILE_NAME: &str = "treiber_stack";
+        run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, 2, 2>>(
+            FILE_NAME, FILE_SIZE, thread, count,
         )
     }
 }

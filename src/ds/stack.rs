@@ -26,7 +26,6 @@ where
     fn pop(&self, mmt: &mut Self::Pop, handle: &Handle) -> Option<T>;
 }
 
-#[cfg(test)]
 pub(crate) mod tests {
 
     use super::*;

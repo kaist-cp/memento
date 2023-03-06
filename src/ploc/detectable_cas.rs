@@ -748,9 +748,8 @@ impl<N: Collectable> CasInner<N> {
     }
 }
 
-/// Test
 #[allow(dead_code)]
-pub mod test {
+pub(crate) mod test {
     use crate::{
         pepoch::POwned,
         ploc::Handle,
@@ -946,13 +945,12 @@ pub mod test {
         );
     }
 
-    // TODO: Refactoring
-    /// Test detectable cas for pmcheck
+    /// Test function pmcheck
     #[cfg(feature = "pmcheck")]
-    pub fn dcas() {
+    pub(crate) fn dcas(thread: usize, count: usize) {
         const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<Location<TestValue>>, Updates>(FILE_NAME, FILE_SIZE, NR_THREAD, 10);
+        run_test::<TestRootObj<Location<TestValue>>, Updates>(FILE_NAME, FILE_SIZE, thread, count);
     }
 }

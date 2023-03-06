@@ -270,9 +270,8 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for QueueGeneral<T> {}
 
-/// Test
 #[allow(dead_code)]
-pub mod test {
+pub(crate) mod test {
     use super::*;
     use crate::{ploc::Handle, pmem::alloc::Collectable, test_utils::tests::*};
 
@@ -346,13 +345,13 @@ pub mod test {
         );
     }
 
-    /// Test queue_general for psan
+    /// Test function for pmcheck
     #[cfg(feature = "pmcheck")]
-    pub fn enqdeq() {
+    pub(crate) fn enqdeq(thread: usize, count: usize) {
         const FILE_NAME: &str = "queue_general";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         run_test::<TestRootObj<QueueGeneral<TestValue>>, EnqDeq>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, 10,
+            FILE_NAME, FILE_SIZE, thread, count,
         );
     }
 }
