@@ -21,7 +21,7 @@ You can run a single benchamrk,
 ```
 
 where
-- `target`: memento_queue (MSQ-mmt-O2 at the paper), memento_queue_lp (MSQ-mmt-O1 at the paper), memento_queue_general (MSQ-mmt-O0 at the paper), memento_queue_comb (CombQ-mmt at the paper), durable_queue, log_queue, dss_queue, pbcomb_queue, crndm_queue
+- `target`: memento_queue (***MSQ-mmt-O2*** in the paper), memento_queue_lp (***MSQ-mmt-O1*** in the paper), memento_queue_general (***MSQ-mmt-O0*** in the paper), memento_queue_comb (***CombQ-mmt*** in the paper), durable_queue, log_queue, dss_queue, pbcomb_queue, crndm_queue
 - `kind`: pair (enq-deq pair), prob{n} (n% probability enq or 100-n% deq)
 
 For example, following command measure the throughput of `memento_queue` with `pair` workload, when using `16` threads.

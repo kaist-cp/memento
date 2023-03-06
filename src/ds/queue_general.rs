@@ -117,7 +117,6 @@ unsafe impl<T: Clone + Collectable + Send + Sync> Send for Dequeue<T> {}
 #[derive(Debug)]
 pub struct QueueGeneral<T: Clone + Collectable> {
     head: CachePadded<DetectableCASAtomic<Node<T>>>,
-    // tail: CachePadded<PAtomic<Node<T>>>,
     tail: CachePadded<DetectableCASAtomic<Node<T>>>,
 }
 

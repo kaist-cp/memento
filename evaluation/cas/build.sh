@@ -1,10 +1,8 @@
 #!/bin/bash
 
 set -e
-
-# Install dependency
-sudo apt install build-essential python3-pip
-pip3 install --user pandas matplotlib gitpython
+dir_path=$(dirname $(realpath $0))
+cd $dir_path
 
 # Build
 (cd ..; cargo update) # update memento crate

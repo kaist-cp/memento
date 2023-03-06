@@ -52,9 +52,9 @@ function run() {
     target=$1
     dmsg "run $target"
     if [ "$cfg" == "no-persist" ]; then
-        RUST_BACKTRACE=1 RUST_MIN_STACK=10737418200 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+        RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
     else
-        RUST_BACKTRACE=1 RUST_MIN_STACK=100737418200 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+        RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
     fi
 
 }
@@ -71,20 +71,20 @@ while true; do
 
     # {try}th try of {i}th test
     while true; do
-        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i (try: $try) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
+        dmsg "⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test $target $i (retry: $try) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋"
         run $target
         ext=$?
         if [ $ext -eq 0 ]; then
-            pmsg "[${i}th test] success (try: $try)"
+            pmsg "[Test ${i}] success"
             break
         # Retry if the timeout occurs. (exit code=124)
         elif [[ $ext -eq 124 && $try -ne $RETRY_LIMIT ]]; then
-            dmsg "fails with exit code $ext. Retry it. (try: $try)"
-            pmsg "[${i}th test] fails with exit code $ext. Retry it. (try: $try)"
+            dmsg "fails with exit code $ext. Retry it."
+            pmsg "[Test ${i}] fails with exit code $ext. Retry it."
             try=$(($try+1))
         else
-            dmsg "fails with exit code $ext (try: $try)"
-            pmsg "[${i}th test] fails with exit code $ext (try: $try)"
+            dmsg "fails with exit code $ext"
+            pmsg "[Test ${i}] fails with exit code $ext"
 
             # Save bug pool and logs
             out_bug_path=$OUT_PATH/bug${bug_cnt}_exit${ext}

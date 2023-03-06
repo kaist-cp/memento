@@ -13,7 +13,6 @@
 #![deny(pointer_structural_match)]
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
-#![deny(unaligned_references)]
 #![deny(unused_crate_dependencies)]
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
@@ -29,15 +28,9 @@
 #![deny(single_use_lifetimes)]
 #![deny(unused_lifetimes)]
 // #![deny(unstable_features)] // Allowed due to below
-#![feature(associated_type_defaults)] // to use composition of Stack::TryPush for Stack::Push as default
-#![feature(generic_associated_types)] // to define fields of `Memento`
-#![feature(never_type)] // to use `!`
 #![feature(extern_types)] // to use extern types (e.g. `GarbageCollection` of Ralloc)
-#![feature(new_uninit)] // for clevel
-#![feature(core_intrinsics)]
 #![feature(update_panic_count)] // to simulate thread crash
 #![feature(rt)] // to simulate thread crash
-#![feature(generic_arg_infer)] // to simulate thread crash
 #![feature(backtrace)] // to debug test
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]

@@ -4,16 +4,16 @@ SCRIPT_DIR=`dirname $(realpath "$0")`
 # Save option
 opt=$1
 if [ "$opt" == "--no-persist" ]; then
-    echo "no-persist" > config
+    echo "no-persist" > $SCRIPT_DIR/config
 elif [ "$opt" == "" ]; then
-    echo "persist" > config
+    echo "persist" > $SCRIPT_DIR/config
 else
     echo "Invalid option: $opt"
     exit 0
 fi
 
 # Build
-cfg=$(cat config)
+cfg=$(cat $SCRIPT_DIR/config)
 cargo clean
 # export RUSTFLAGS="-Z sanitizer=address"
 # export ASAN_OPTIONS="detect_leaks=0"
