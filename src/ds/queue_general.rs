@@ -312,7 +312,6 @@ pub(crate) mod test {
 
     impl RootObj<EnqDeq> for TestRootObj<QueueGeneral<TestValue>> {
         fn run(&self, enq_deq: &mut EnqDeq, handle: &Handle) {
-            #[cfg(not(feature = "pmcheck"))] // TODO: Remove
             let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
             for seq in 0..NR_COUNT {
@@ -325,7 +324,6 @@ pub(crate) mod test {
 
                 assert!(res.is_some(), "tid:{}, seq:{seq}", handle.tid);
 
-                #[cfg(not(feature = "pmcheck"))] // TODO: Remove
                 testee.report(seq, res.unwrap());
             }
         }

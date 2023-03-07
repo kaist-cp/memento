@@ -357,6 +357,7 @@ pub mod tests {
     impl Testee<'_> {
         #[inline]
         pub fn report(&self, seq: usize, val: TestValue) {
+            #[cfg(not(feature = "pmcheck"))]
             self.info.report(seq, val)
         }
     }
@@ -465,20 +466,23 @@ pub mod tests {
             let tid = handle.tid;
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
+            
+            #[cfg(not(feature = "pmcheck"))]
+            {
+                info.checked.store(Some(checked), Ordering::SeqCst);
+                if checked {
+                    info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
+                } else {
+                    info.enable_killed();
+                }
 
-            info.checked.store(Some(checked), Ordering::SeqCst);
-            if checked {
-                info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
-            } else {
-                info.enable_killed();
-            }
-
-            #[cfg(feature = "tcrash")]
-            if checked {
-                println!(
-                    "[Testee {tid}] Crash may occur after seq {}.",
-                    info.crash_seq
-                );
+                #[cfg(feature = "tcrash")]
+                if checked {
+                    println!(
+                        "[Testee {tid}] Crash may occur after seq {}.",
+                        info.crash_seq
+                    );
+                }
             }
 
             Testee { info }
@@ -564,16 +568,20 @@ pub mod tests {
                     .map(|i| results[i].load(Ordering::SeqCst))
                     .enumerate()
                 {
-                    // `to_tid` must have returned value at `to_seq`
-                    assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
+                    #[cfg(not(feature = "pmcheck"))]
+                    {
+                        // `to_tid` must have returned value at `to_seq`
+                        assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
 
-                    // `from_tid`'s `from_seq` must be issued exactly once
-                    let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
-                    assert!(
-                        !checked_map[from_tid][from_seq],
-                        "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
-                    );
-                    checked_map[from_tid][from_seq] = true;
+                        // `from_tid`'s `from_seq` must be issued exactly once
+                        let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
+                        assert!(
+                            !checked_map[from_tid][from_seq],
+                            "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
+                        );
+
+                        checked_map[from_tid][from_seq] = true;
+                    }
                 }
             }
 

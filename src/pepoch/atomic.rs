@@ -280,45 +280,7 @@ impl<T> Pointable for T {
     type Init = T;
 
     unsafe fn init(init: Self::Init, pool: &PoolHandle) -> usize {
-        #[cfg(not(feature = "pmcheck"))]
         let ptr = pool.alloc::<T>();
-        #[cfg(feature = "pmcheck")]
-        let ptr = {
-            let mut cnt = 0;
-            loop {
-                cnt += 1;
-
-                let ptr = pool.alloc::<T>();
-                let ptr_offset = ptr.into_offset();
-                let pshared = PShared::<T>::from_usize(ptr_offset);
-                let (_, _, _, _, pshared_offset, _) = decompose_tag::<T>(pshared.data);
-                if ptr_offset == pshared_offset {
-                    break ptr;
-                }
-                pool.free(ptr);
-
-                if cnt > 1000 {
-                    panic!(
-                        "[PAtomic::init] Allocation align err! 
-                            \n\tType name: {:?} 
-                            \n\tType size: {:?} 
-                            \n\tInterpret as ptr offset: {:?}
-                            \n\tInterpret as pshared offset: {:?}
-                            \n\tInterpret as pshared: {:?}
-                            \n\tPool start: {}
-                            \n\t(Pool Start + offset) % 64: {}
-                            ",
-                        core::any::type_name::<T>(),
-                        mem::size_of::<T>(),
-                        ptr_offset,
-                        pshared_offset,
-                        pshared,
-                        pool.start(),
-                        (pool.start() + ptr_offset) % 64,
-                    )
-                }
-            }
-        };
 
         let t = ptr.deref_mut(pool);
         std::ptr::write(t as *mut T, init);
