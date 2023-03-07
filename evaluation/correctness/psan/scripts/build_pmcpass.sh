@@ -11,7 +11,7 @@ mkdir -p $BUILD
 cd $BUILD
 pwd
 
-# git clone https://github.com/llvm/llvm-project.git
+git clone https://github.com/llvm/llvm-project.git
 cd llvm-project
 git checkout 29f1039a7285a5c3a9c353d054140bf2556d4c4d # tag: llvmorg-14.0.4
 cp -r $DIR_MMT/ext/jaaru-llvm-pass llvm/lib/Transforms/PMCPass
