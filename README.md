@@ -87,6 +87,7 @@ You can re-build a docker image by `docker build -t memento memento/`. (It may t
 
 To build our framework including detectable operations, data structures and SMR libraries:
 ```sh
+git submodule update --init --recursive
 cargo build --release
 ```
 
