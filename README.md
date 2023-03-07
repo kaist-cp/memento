@@ -1,6 +1,6 @@
 # A General Framework for Detectable, Persistent, Lock-Free Data Structures
 
-This is the artifact for a paper, Kyeongmin Cho, Seungmin Jeon, Azalea Raad, and Jeehoon Kang, "A General Framework for Detectable, Persistent, Lock-Free Data Structures", PLDI 2023 (conditionally accepted). This artifact provides the Memento framework and evaluation programs/results mentioned in the paper.
+This is the artifact for a paper, Anonymous, "A General Framework for Detectable, Persistent, Lock-Free Data Structures", PLDI 2023 (conditionally accepted). This artifact provides the Memento framework and evaluation programs/results mentioned in the paper.
 
 ## Installation
 
@@ -72,7 +72,7 @@ The directory `src/ds/` contains memento-based persistent data structures suppor
 
 #### Safe Memory Reclamation (§D in appendix)
 
-The directory `crossbeam-persistency` contains implementations of safe memory reclamations. Specifically,
+The directory `crossbeam-persistency/` contains implementations of safe memory reclamations. Specifically,
 
 - `crossbeam-persistency/crossbeam-epoch/src/guard.rs`: Implementation of "Flushing Location before Retirement"
 - `crossbeam-persistency/crossbeam-epoch/src/internal.rs`: Implementation of "Allowing Double Retirement"
