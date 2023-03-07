@@ -142,7 +142,10 @@ pub mod tests {
         Memento,
     };
 
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 100_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
     struct Checkpoints {
         chks: [Checkpoint<usize>; NR_COUNT],
@@ -200,10 +203,10 @@ pub mod tests {
 
     /// Test checkpoint for psan
     #[cfg(feature = "pmcheck")]
-    pub fn chks(thread: usize, count: usize) {
+    pub fn chks() {
         const FILE_NAME: &str = "checkpoint";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, thread, count);
+        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, 2, NR_COUNT);
     }
 }

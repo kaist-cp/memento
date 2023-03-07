@@ -236,7 +236,10 @@ pub(crate) mod test {
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
@@ -251,11 +254,10 @@ pub(crate) mod test {
 
     /// Test function for psan
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn pushpop(thread: usize, count: usize) {
-        assert!(thread == 2 && count == 2);
+    pub(crate) fn pushpop() {
         const FILE_NAME: &str = "treiber_stack";
-        run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, 2, 2>>(
-            FILE_NAME, FILE_SIZE, thread, count,
+        run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, NR_THREAD, NR_COUNT>>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         )
     }
 }

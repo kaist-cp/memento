@@ -410,9 +410,12 @@ pub(crate) mod test {
     use crate::{ploc::Handle, pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
-    const PADDED: usize = NR_THREAD + 1; // TODO: How to remove this?
+    const PADDED: usize = NR_THREAD + 1;
 
     lazy_static::lazy_static! {
         static ref ITEMS: Distributer<PADDED, NR_COUNT> = Distributer::new();
@@ -533,14 +536,14 @@ pub(crate) mod test {
 
     /// Test function for pmcheck
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn pmcheck_ins_del_look(thread: usize, count: usize) {
+    pub(crate) fn pmcheck_ins_del_look() {
         const FILE_NAME: &str = "list";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         lazy_static::initialize(&ITEMS);
 
         run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
-            FILE_NAME, FILE_SIZE, thread, count,
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         );
     }
 }

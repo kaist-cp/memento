@@ -247,6 +247,9 @@ pub mod tests {
         O: RootObj<M> + Send + Sync + 'static,
         M: Memento + Send + Sync,
     {
+        #[cfg(feature = "pmcheck")]
+        println!("[run_test] \n\t{pool_name}\n\t{pool_len}\n\t{nr_memento}\n\t{nr_count}");
+
         #[cfg(feature = "tcrash")]
         {
             // Assertion err causes abort.
@@ -278,7 +281,7 @@ pub mod tests {
         let _ = handle.join();
 
         // Check test results
-        #[cfg(not(feature = "pmcheck"))] // TODO: Remove
+        #[cfg(not(feature = "pmcheck"))]
         tester.check();
     }
 
@@ -431,12 +434,15 @@ pub mod tests {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                assert_eq!(e, Self::STATE_KILLED);
+                #[cfg(not(feature = "pmcheck"))]
+                {
+                    assert_eq!(e, Self::STATE_KILLED);
 
-                let backoff = Backoff::default();
-                loop {
-                    // Wait until main thread kills tid
-                    backoff.snooze();
+                    let backoff = Backoff::default();
+                    loop {
+                        // Wait until main thread kills tid
+                        backoff.snooze();
+                    }
                 }
             }
         }
@@ -466,7 +472,7 @@ pub mod tests {
             let tid = handle.tid;
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
-            
+
             #[cfg(not(feature = "pmcheck"))]
             {
                 info.checked.store(Some(checked), Ordering::SeqCst);

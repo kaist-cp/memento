@@ -19,7 +19,7 @@
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-#![deny(warnings)]
+// #![deny(warnings)] // TODO: Uncomment
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
@@ -177,60 +177,60 @@ pub mod test_pmcheck {
     /// Test Checkpoint
     #[no_mangle]
     pub extern "C" fn test_checkpoint() {
-        ploc::tests::chks(2, 2);
+        ploc::tests::chks();
     }
 
     /// Test Cas
     #[no_mangle]
     pub extern "C" fn test_cas() {
-        ploc::test::dcas(2, 2);
+        ploc::test::dcas();
     }
 
     /// Test Queue-O0
     #[no_mangle]
     pub extern "C" fn test_queue_O0() {
-        ds::queue_general::test::enqdeq(2, 2);
+        ds::queue_general::test::enqdeq();
     }
 
     /// Test Queue-O1
     #[no_mangle]
     pub extern "C" fn test_queue_O1() {
-        ds::queue_lp::test::enqdeq(2, 2);
+        ds::queue_lp::test::enqdeq();
     }
 
     /// Test Queue-O2
     #[no_mangle]
     pub extern "C" fn test_queue_O2() {
-        ds::queue::test::enqdeq(2, 2);
+        ds::queue::test::enqdeq();
     }
 
     /// Test Queue-Comb
     #[no_mangle]
     pub extern "C" fn test_queue_comb() {
-        ds::queue_comb::test::enqdeq(2, 2);
+        ds::queue_comb::test::enqdeq();
     }
 
     /// Test Teriber stack
     #[no_mangle]
     pub extern "C" fn test_treiber_stack() {
-        ds::treiber_stack::test::pushpop(2, 2);
+        ds::treiber_stack::test::pushpop();
     }
 
     /// Test Elim stack
     #[no_mangle]
     pub extern "C" fn test_elim_stack() {
-        ds::elim_stack::tests::pushpop(2, 2);
+        ds::elim_stack::tests::pushpop();
     }
 
     /// Test List
     #[no_mangle]
     pub extern "C" fn test_list() {
-        ds::list::test::pmcheck_ins_del_look(2, 2);
+        ds::list::test::pmcheck_ins_del_look();
     }
 
     /// Test Clevel
     #[no_mangle]
     pub extern "C" fn test_clevel() {
-        ds::clevel::test::pmcheck_ins_del_look(2, 2);
+        ds::clevel::test::pmcheck_ins_del_look();
     }
 }

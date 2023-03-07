@@ -304,7 +304,10 @@ impl Combining {
             if combined_tid == 0 {
                 break;
             }
+            #[cfg(not(feature = "pmcheck"))]
             backoff.snooze();
+            #[cfg(feature = "pmcheck")]
+            println!("[do_non_combine] ptr: {combined_ptr}, tid: {combined_tid}");
         }
 
         // check if my request was performed

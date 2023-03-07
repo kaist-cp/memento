@@ -861,7 +861,10 @@ pub(crate) mod test {
     }
 
     const NR_THREAD: usize = 3;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
     struct Updates {
         nodes: [Checkpoint<PAtomic<Node<TestValue>>>; NR_COUNT],
@@ -947,10 +950,12 @@ pub(crate) mod test {
 
     /// Test function pmcheck
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn dcas(thread: usize, count: usize) {
+    pub(crate) fn dcas() {
         const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<Location<TestValue>>, Updates>(FILE_NAME, FILE_SIZE, thread, count);
+        run_test::<TestRootObj<Location<TestValue>>, Updates>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
     }
 }

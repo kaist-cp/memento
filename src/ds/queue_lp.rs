@@ -317,7 +317,10 @@ pub(crate) mod test {
     use crate::{pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 5;
 
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
@@ -385,9 +388,11 @@ pub(crate) mod test {
 
     /// Test function for psan
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn enqdeq(thread: usize, count: usize) {
+    pub(crate) fn enqdeq() {
         const FILE_NAME: &str = "queue_lp";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-        run_test::<TestRootObj<Queue<TestValue>>, EnqDeq>(FILE_NAME, FILE_SIZE, thread, count);
+        run_test::<TestRootObj<Queue<TestValue>>, EnqDeq>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
     }
 }
