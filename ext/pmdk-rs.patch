@@ -1,0 +1,13 @@
+diff --git a/pmemobj-sys/base.h b/pmemobj-sys/base.h
+index 786ac6f..4977f67 100644
+--- a/pmemobj-sys/base.h
++++ b/pmemobj-sys/base.h
+@@ -153,6 +153,8 @@ pmemobj_direct_inline(PMEMoid oid)
+ 	return (void *)((uintptr_t)cache->pop + oid.off);
+ }
+ 
++void *pmemobj_direct(PMEMoid oid);
++
+ #endif /* _WIN32 */
+ 
+ /*
