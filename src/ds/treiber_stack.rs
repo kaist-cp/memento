@@ -230,7 +230,7 @@ impl<T: Clone + Collectable> Stack<T> for TreiberStack<T> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(warnings)]
 pub(crate) mod test {
     use super::*;
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};

@@ -38,13 +38,7 @@ cfg-if = "1.0.0"
 tinyvec = { version = "1.6.0", features = ["alloc", "rustc_1_40"] }
 libc = "0.2.138"
 num_cpus = "1.14.0"
-serde = "1.0"
-# pmdk-sys = "0.9.4"
-# wow  = { path = "/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/pmdk-rs/" }
-# pmemobj-sys = { path = "/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/pmdk-rs/pmemobj-sys" }
 pmemobj-sys = { path = "./ext/pmdk-rs/pmemobj-sys" }
-# pmemobj-sys = "0.0.1"
-# pmdk = "0.9.4"
 
 [dev-dependencies]
 log = "0.4.17"
