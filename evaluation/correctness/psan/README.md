@@ -1,31 +1,90 @@
+# Persistency Bug Test (Yashme/PSan)
 
-TODO: 
-- README, script 정리
-- ext/pmdk-rs 추가?: pmemobj_direct가 rust crate pmemobj_sys의 API로 노출 돼야함.
+We evaluate the correctness of our primitives and data structures using existing bug finding tools, ***[Yashme](TODO)*** and ***[PSan](TODO)***. They are finding persistent bugs such as persistency race, missing flushes based on model checking framework ***[Jaaru](TODO)***.
 
-# Build libmemento.a using PMCPass llvm instrumentation
+## Usage
 
-```
+<!-- First, you should build the `libmemento.a` and executable to test our implementations on the top of ***Jaaru***.
+
+### Build libmemento.a
+
+```bash
 ./scripts/build_pmcpass.sh
-./scripts/build_memento.sh
+./scripts/build_memento.sh # llvm instrumentation using PMCPass
 ```
 
-# Build executable file with PMCheck
+#### Build executable
 
-```
-./scripts/build_pmcheck.sh <mode>
+```bash
+./scripts/build_pmcheck.sh [tool] # tool: yashme, psan
 ./scripts/build_exe.sh
 ```
+### Run
 
-where mode: `yashme`, `psan`
+Then you can test each data structure with the following command:
 
+```bash
+./scripts/run.sh [tested DS]
+``` -->
 
+You can test each data structure with the following command:
 
-# Run
-
-```sh
-./scripts/run.sh <target>
+```bash
+./build.sh # specially built for the persistency bug test
+./run.sh [tested DS] [tool] [mode]
 ```
 
-where target: `checkpoint`, `detectable_cas`, `queue_O0`, TODO
+where 
+- `tested DS` should be replaced with one of supported tests (listed below).
+- `tool`: `psan` or `yashme`
+- `mode`: `model` or `random` (model checking mode or random testing mode)
 
+For example, the following command is to test the ***MSQ-mmt-O0*** using ***PSan*** with model checking mode:
+
+```bash
+./scripts/run.sh queue_O0 psan model
+```
+
+Then the output is printed out like below:
+
+```
+Jaaru
+Copyright (c) 2021 Regents of the University of California. All rights reserved.
+Written by Hamed Gorjiara, Brian Demsky, Peizhao Ou, Brian Norris, and Weiyu Luo
+
+Execution 1 at sequence number 198
+nextCrashPoint = 83987	max execution seqeuence number: 88289
+nextCrashPoint = 2876	max execution seqeuence number: 4161
+Execution 2 at sequence number 4161
+nextCrashPoint = 1106	max execution seqeuence number: 4171
+nextCrashPoint = 1583	max execution seqeuence number: 4181
+Execution 3 at sequence number 4181
+nextCrashPoint = 3756	max execution seqeuence number: 4166
+nextCrashPoint = 31	max execution seqeuence number: 4176
+Execution 4 at sequence number 4176
+nextCrashPoint = 2400	max execution seqeuence number: 4181
+
+...
+
+******* Model-checking complete: *******
+Number of complete, bug-free executions: 10
+Number of buggy executions: 0
+Total executions: 10
+```
+
+## Supported tests
+
+### For primitives
+
+- `checkpoint`
+- `detectable_cas`
+
+### For data structures
+
+- `queue_O0`: ***MSQ-mmt-O0*** in the paper
+- `queue_O1`: ***MSQ-mmt-O1*** in the paper
+- `queue_O2`: ***MSQ-mmt-O2*** in the paper
+- `queue_comb` ***CombQ-mmt***in the paper
+- `treiber_stack`: ***TreiberS-mmt*** in the paper
+- `list`: ***List-mmt***
+- `clevel`: ***Clevel-mmt*** in the paper

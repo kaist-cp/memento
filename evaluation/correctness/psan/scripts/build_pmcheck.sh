@@ -7,22 +7,31 @@ BUILD=$DIR_BASE/build
 mkdir -p $BUILD
 cd $BUILD
 
-mode=$1
-branch=""
-if [ "$mode" == "yashme" ]; then
-    branch=pmrace # https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/setup.sh#L12
-elif [ "$mode" == "psan" ]; then
-    branch=psan # https://github.com/uci-plrg/psan-vagrant/blob/master/data/setup.sh#L12
-else
-    echo "Invalid mode: $mode (possible mode: yashme, psan)"
-    exit 0
-fi
+function build() {
+    tool=$1
+    branch=""
+    if [ "$tool" == "yashme" ]; then
+        branch=pmrace # https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/setup.sh#L12
+        # echo yashme
+    elif [ "$tool" == "psan" ]; then
+        branch=psan # https://github.com/uci-plrg/psan-vagrant/blob/master/data/setup.sh#L12
+        # echo psan
+    else
+        echo "Invalid mode: $tool (possible tool: yashme, psan)"
+        exit 0
+    fi
+    git clone https://github.com/uci-plrg/jaaru.git
+    # mv jaaru pmcheck_$tool
+    # cd pmcheck_$tool/
+    mv jaaru pmcheck
+    cd pmcheck
+    git checkout $branch
+    make -j
+    cd ..
+}
 
-rm -rf pmcheck*
-git clone https://github.com/uci-plrg/jaaru.git
-mv jaaru pmcheck
-cd pmcheck/
-git checkout $branch
-make clean 
-make -j
-echo $mode > $BUILD/pmcheck.config
+# build psan
+build yashme
+
+
+
