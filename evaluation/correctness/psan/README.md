@@ -1,6 +1,6 @@
 # Persistency Bug Test (Yashme/PSan)
 
-We evaluate the correctness of our primitives and data structures using existing bug finding tools, ***[Yashme](TODO)*** and ***[PSan](TODO)***. They are finding persistent bugs such as persistency race, missing flushes based on model checking framework ***[Jaaru](TODO)***.
+We evaluate the correctness of our primitives and data structures using existing bug finding tools, ***[Yashme](https://plrg.ics.uci.edu/yashme/)*** and ***[PSan](https://plrg.ics.uci.edu/psan/)***. They are finding persistent bugs such as persistency race, missing flushes based on model checking framework ***[Jaaru](https://plrg.ics.uci.edu/jaaru/)***.
 
 ## Usage
 
