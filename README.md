@@ -55,8 +55,8 @@ You can either reuse a pre-built docker image `memento-image.tar` or manually bu
 You can reuse a pre-built docker image by loading `memento-image.tar.gz`:
 
 ```sh
-docker load < memento-image.tar.gz
-docker run -it -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento  # persistent memory must be mounted at /mnt/pmem0
+docker build -t memento .
+docker run -it --rm -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento # peristent memory must be mounted at /mnt/pmem0
 ```
 
 Here, `-v /mnt/pmem0:/mnt/pmem0` option is required to share the mounted persistent memory area with the container. Also, `--cap-add=SYS_NICE` option is needed to evalute performance by unifying all used cores into a single numa node.
