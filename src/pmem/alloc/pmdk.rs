@@ -7,8 +7,8 @@ use libc::*;
 use crate::pmem::{global_pool, PoolHandle};
 
 use super::{Collectable, GarbageCollection, PAllocator};
-
-const NUM_ROOT: usize = 128;
+use crate::ploc::NR_MAX_THREADS;
+const NUM_ROOT: usize = NR_MAX_THREADS * 2; // 1024
 
 static mut ROOT: *mut Root = std::ptr::null_mut();
 pub(crate) static mut POPS: *mut pmemobj_sys::PMEMobjpool = std::ptr::null_mut();

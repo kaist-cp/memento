@@ -18,13 +18,16 @@ use crate::*;
 use crossbeam_epoch::{self as epoch};
 use test_utils::thread;
 
+use super::sfence;
+
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
 pub(crate) enum RootIdx {
-    RootObj,        // root obj
-    CASHelpArr,     // cas help array
-    CASHelpDescArr, // cas help descriptor array
-    NrMemento,      // number of root mementos
-    MementoStart,   // start index of root memento(s)
+    RootObj,                                            // root obj
+    CASHelpArr,                                         // cas help array
+    CASHelpDescArr,                                     // cas help descriptor array
+    NrMemento,                                          // number of root mementos
+    MementoStart,                                       // start index of root memento(s)
+    MementoClearingFlagStart = NR_MAX_THREADS as isize, // start index of root memento's clearing flag
 }
 
 lazy_static::lazy_static! {
@@ -55,6 +58,9 @@ pub struct PoolHandle {
 
     /// Detectable execution information per thread
     pub(crate) exec_info: ExecInfo,
+
+    /// Root Memento's clear function
+    clear_func: Option<unsafe fn(s: *mut c_void)>,
 }
 
 impl PoolHandle {
@@ -68,6 +74,31 @@ impl PoolHandle {
     #[inline]
     pub fn end(&self) -> usize {
         self.start() + self.len
+    }
+
+    pub(crate) fn clear_mmt(&self, tid: usize) {
+        unsafe {
+            let m_addr = PMEMAllocator::get_root(RootIdx::MementoStart as u64 + tid as u64);
+            let m_is_clearing =
+                (PMEMAllocator::get_root(RootIdx::MementoClearingFlagStart as u64 + tid as u64)
+                    as *mut bool)
+                    .as_mut()
+                    .unwrap();
+
+            // Set flag
+            *m_is_clearing = true;
+            persist_obj(m_is_clearing, true);
+
+            // Clear
+            self.exec_info.cas_info.own[tid].clear();
+            self.exec_info.cas_info.help[tid].clear();
+            self.clear_func.unwrap()(m_addr);
+            sfence();
+
+            // Unset flag
+            *m_is_clearing = false;
+            persist_obj(m_is_clearing, true);
+        }
     }
 
     /// Start main program of pool by running root memento(s)
@@ -95,8 +126,12 @@ impl PoolHandle {
         let mut handles = Vec::new();
         for tid in 1..=nr_memento {
             // get `tid`th root mement
-            let m_addr = unsafe {
-                PMEMAllocator::get_root(RootIdx::MementoStart as u64 + tid as u64) as usize
+            let (m_addr, m_is_clearing) = unsafe {
+                (
+                    PMEMAllocator::get_root(RootIdx::MementoStart as u64 + tid as u64) as usize,
+                    PMEMAllocator::get_root(RootIdx::MementoClearingFlagStart as u64 + tid as u64)
+                        as usize,
+                )
             };
 
             let th = thread::spawn(move || {
@@ -104,6 +139,11 @@ impl PoolHandle {
                     loop {
                         // Run memento
                         let mh = thread::spawn(move || {
+                            let is_clearing = unsafe { *(m_is_clearing as *mut bool) };
+                            if is_clearing {
+                                self.clear_mmt(tid)
+                            }
+
                             let handle = Handle::new(tid, unsafe { epoch::old_guard(tid) }, self);
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
@@ -239,6 +279,7 @@ impl Pool {
                 "File already exist.",
             ));
         }
+        assert!(nr_memento <= NR_MAX_THREADS);
         fs::create_dir_all(Path::new(filepath).parent().unwrap())?;
 
         global::clear();
@@ -270,10 +311,14 @@ impl Pool {
             let desc_ref = cas_help_desc_arr.as_ref().unwrap();
 
             // set global pool
+            unsafe fn root_clear<M: Memento>(s: *mut c_void) {
+                M::clear(&mut *(s as *mut M))
+            }
             global::init(PoolHandle {
                 start: PMEMAllocator::mmapped_addr(),
                 len: size,
                 exec_info: ExecInfo::from((chk_ref, desc_ref)),
+                clear_func: Some(root_clear::<M>),
             });
 
             let pool = global_pool().unwrap();
@@ -302,6 +347,17 @@ impl Pool {
                 let _prev = PMEMAllocator::set_root(
                     root_ptr as *mut c_void,
                     RootIdx::MementoStart as u64 + i as u64,
+                );
+            }
+
+            // set root memento(s)'s clearing flag : 1 ~ nr_memento
+            for i in 1..nr_memento + 1 {
+                let root_ptr = PMEMAllocator::malloc(mem::size_of::<bool>() as u64) as *mut bool;
+                root_ptr.write(false);
+                persist_obj(root_ptr.as_mut().unwrap(), true);
+                let _prev = PMEMAllocator::set_root(
+                    root_ptr as *mut c_void,
+                    RootIdx::MementoClearingFlagStart as u64 + i as u64,
                 );
             }
 
@@ -354,10 +410,14 @@ impl Pool {
             .as_ref()
             .unwrap();
 
+        unsafe fn root_clear<M: Memento>(s: *mut c_void) {
+            M::clear(&mut *(s as *mut M))
+        }
         global::init(PoolHandle {
             start: PMEMAllocator::mmapped_addr(),
             len: size,
             exec_info: ExecInfo::from((chk_ref, desc_ref)),
+            clear_func: Some(root_clear::<M>),
         });
 
         // run GC of Ralloc
@@ -367,8 +427,16 @@ impl Pool {
 
             // set filter function of root memento(s)
             let nr_memento = *(PMEMAllocator::get_root(RootIdx::NrMemento as u64) as *mut usize);
+            assert!(nr_memento <= NR_MAX_THREADS);
             for tid in 1..nr_memento + 1 {
                 PMEMAllocator::set_root_filter::<M>(RootIdx::MementoStart as u64 + tid as u64);
+            }
+
+            // set dummy filter function for root memento(s)'s clearing flag
+            for tid in 1..nr_memento + 1 {
+                PMEMAllocator::set_root_filter::<bool>(
+                    RootIdx::MementoClearingFlagStart as u64 + tid as u64,
+                );
             }
 
             // call GC of Ralloc

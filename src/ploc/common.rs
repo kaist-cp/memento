@@ -245,6 +245,7 @@ impl Handle {
 
     /// Repin the guard so that deferred destory and persist can be executed
     pub fn repin_guard(&self) {
+        self.pool.clear_mmt(self.tid);
         let guard = unsafe { &mut std::ptr::read(&self.guard) };
         guard.repin_after(|| {});
     }
