@@ -5,7 +5,7 @@ We implemented several lock-free data structures based on memento, and evaluate 
 
 - [Detecability evaluation](./correctness/README.md) (§6.1)
 - Performance evaluation (§6.2)
-  - [Detectable CAS](./cas/README.md)
-  - [Detectable List](./list/README.md)
-  - [Detectable Queue](./queue/README.md)
-  - [Detectable Hash Table](./hash/README.md)
+  - [Detectable CAS](./performance/cas/README.md)
+  - [Detectable List](./performance/list/README.md)
+  - [Detectable Queue](./performance/queue/README.md)
+  - [Detectable Hash Table](./performance/hash/README.md)
