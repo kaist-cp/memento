@@ -76,7 +76,7 @@ You can re-build a docker image by `docker build -t memento memento/`. (It may t
 - For the evaluation purpose, some dependencies are additionally required:
 
   ```sh
-  apt install build-essential python3-pip numactl \
+  apt install build-essential clang python3-pip numactl \
     libpmemobj-dev libvmem-dev libgflags-dev \
     libpmemobj1 libpmemobj-cpp-dev \
     libatomic1 libnuma1 libvmmalloc1 libvmem1 libpmem1

@@ -9,7 +9,7 @@ RUN apt-get update && \
     libpmemobj-dev libvmem-dev libgflags-dev \
     libpmemobj1 libpmemobj-cpp-dev \
     libatomic1 libnuma1 libvmmalloc1 libvmem1 libpmem1 \
-    kmod sudo && \
+    clang kmod sudo && \
     pip3 install --user pandas matplotlib gitpython && \
     ulimit -s 8192000 && \
     git submodule update --init --recursive && \
