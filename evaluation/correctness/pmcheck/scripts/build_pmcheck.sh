@@ -19,8 +19,8 @@ function build() {
         exit 0
     fi
     git clone https://github.com/uci-plrg/jaaru.git
-    mv jaaru $tool
-    cd $tool/
+    mv jaaru pmcheck_$tool
+    cd pmcheck_$tool/
     git checkout $branch
     make -j
     cd ..
