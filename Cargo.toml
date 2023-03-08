@@ -28,7 +28,6 @@ crossbeam-channel = { path = "./crossbeam-persistency/crossbeam-channel" }
 
 atomic = "0.5"
 etrace = "1.1.1"
-rand = "0.8.5"
 tempfile = "3.3.0"
 array-init = "2.1.0"
 lazy_static = "1.4.0"
