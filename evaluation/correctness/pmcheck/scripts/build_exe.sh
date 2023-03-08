@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# TODO: Generalize path variables
-
 set -e
 
 DIR_BASE=$(dirname $(realpath $0))/..
