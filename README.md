@@ -140,13 +140,13 @@ This artifact aims to achieve the following goals:
 - `crossbeam-persistency/crossbeam-epoch/src/internal.rs`: "Allowing Double Retirement"
 
 
-### G3: Reproducing the detectability evaluation (§6.1)
+### G2: Reproducing the detectability evaluation (§6.1)
 
 See the README below:
 
 - [Detecability evaluation](./evaluation/correctness/README.md)
 
-### G4: Reproducing the performance evaluation (§6.2)
+### G3: Reproducing the performance evaluation (§6.2)
 
 For each DS evaluation, see the corresponding README below:
 
