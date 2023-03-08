@@ -10,10 +10,10 @@ name = "cas_bench"
 path = "src/main.rs"
 
 [dependencies]
-memento = { path = "../../" }
+memento = { path = "../../../" }
 # evaluation = { path = "../queue/" }
-crossbeam-epoch = { path = "../../crossbeam-persistency/crossbeam-epoch" }
-crossbeam-utils = { path = "../../crossbeam-persistency/crossbeam-utils" }
+crossbeam-epoch = { path = "../../../crossbeam-persistency/crossbeam-epoch" }
+crossbeam-utils = { path = "../../../crossbeam-persistency/crossbeam-utils" }
 array-init = "2.0.0"
 etrace = "1.1.1"
 structopt = "0.3"
