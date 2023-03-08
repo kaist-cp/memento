@@ -439,16 +439,10 @@ pub mod test {
         }
     }
 
-    #[derive(Default, Collectable)]
+    #[derive(Default, Collectable, Memento)]
     struct CheckInv {
         value: usize,
         flag: bool,
-    }
-
-    impl Memento for CheckInv {
-        fn clear(&mut self) {
-            // no-op
-        }
     }
 
     // check flag=1 => value=42

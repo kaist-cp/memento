@@ -52,6 +52,7 @@ pub mod test_utils;
 use crate::pmem::alloc::Collectable;
 use crossbeam_utils::CachePadded;
 use ploc::Handle;
+use pmem::persist_obj;
 use std::{mem::ManuallyDrop, ptr};
 
 /// A wrapper to freeze Ownership
@@ -136,32 +137,17 @@ pub use mmt_derive::*;
 /// Trait for Memento
 pub trait Memento: Default + Collectable {
     /// clear
-    fn clear(&mut self);
-}
-
-impl Memento for usize {
     fn clear(&mut self) {
-        *self = 0
+        *self = Self::default();
+        persist_obj(self, false);
     }
 }
 
-impl Memento for u32 {
-    fn clear(&mut self) {
-        *self = 0
-    }
-}
-
-impl<T: Memento> Memento for Option<T> {
-    fn clear(&mut self) {
-        *self = None
-    }
-}
-
-impl<T: Memento> Memento for CachePadded<T> {
-    fn clear(&mut self) {
-        (**self).clear();
-    }
-}
+impl Memento for usize {}
+impl Memento for bool {}
+impl Memento for u32 {}
+impl<T: Memento> Memento for Option<T> {}
+impl<T: Memento> Memento for CachePadded<T> {}
 
 /// Test functions for PSan
 #[cfg(feature = "pmcheck")]

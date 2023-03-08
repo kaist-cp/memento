@@ -47,12 +47,7 @@ struct Failed {
     t: CachePadded<Timestamp>,
 }
 
-impl Memento for Failed {
-    fn clear(&mut self) {
-        self.t = CachePadded::new(Timestamp::from(0));
-        persist_obj(&*self.t, false);
-    }
-}
+impl Memento for Failed {}
 
 impl Failed {
     fn record(&mut self, handle: &Handle) {
