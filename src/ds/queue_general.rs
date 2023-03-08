@@ -7,9 +7,10 @@ use crossbeam_utils::CachePadded;
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, PAtomic, PDestroyable, POwned, PShared};
-use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::alloc::{Collectable, GarbageCollection};
 use crate::pmem::{global_pool, ll::*, pool::*};
 use crate::*;
+use mmt_derive::Collectable;
 
 /// Failure of queue operations
 #[derive(Debug)]
@@ -269,13 +270,16 @@ impl<T: Clone + Collectable> QueueGeneral<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for QueueGeneral<T> {}
 
-#[cfg(test)]
-mod test {
+#[allow(dead_code)]
+pub(crate) mod test {
     use super::*;
-    use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
+    use crate::{ploc::Handle, pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 5;
 
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
@@ -322,6 +326,7 @@ mod test {
                 let res = self.obj.dequeue(&mut enq_deq.deqs[seq], handle);
 
                 assert!(res.is_some(), "tid:{}, seq:{seq}", handle.tid);
+
                 testee.report(seq, res.unwrap());
             }
         }
@@ -331,11 +336,21 @@ mod test {
     // - You can check gc operation from the second time you open the pool:
     //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
     //   - where +2 is a pointer to Root, Queue
+    // #[cfg(not(feature = "pmcheck"))]
     #[test]
     fn enq_deq() {
         const FILE_NAME: &str = "queue_general";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        run_test::<TestRootObj<QueueGeneral<TestValue>>, EnqDeq>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
+    }
 
+    /// Test function for pmcheck
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn enqdeq() {
+        const FILE_NAME: &str = "queue_general";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         run_test::<TestRootObj<QueueGeneral<TestValue>>, EnqDeq>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         );

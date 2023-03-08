@@ -7,8 +7,8 @@ use crossbeam_utils::CachePadded;
 use super::{Handle, Timestamp};
 use crate::{
     pmem::{
+        alloc::{Collectable, GarbageCollection},
         ll::persist_obj,
-        ralloc::{Collectable, GarbageCollection},
         PoolHandle, CACHE_LINE_SHIFT,
     },
     Memento,
@@ -131,18 +131,21 @@ where
     }
 }
 
-#[cfg(test)]
-mod test {
+/// Test
+pub mod tests {
     use itertools::Itertools;
 
     use super::*;
     use crate::{
-        pmem::{ralloc::Collectable, rdtscp, RootObj},
+        pmem::{alloc::Collectable, rdtscp, RootObj},
         test_utils::tests::*,
         Memento,
     };
 
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 100_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
     struct Checkpoints {
         chks: [Checkpoint<usize>; NR_COUNT],
@@ -173,16 +176,18 @@ mod test {
     }
 
     impl RootObj<Checkpoints> for TestRootObj<DummyRootObj> {
+        #[allow(unused_variables)]
         fn run(&self, chks: &mut Checkpoints, handle: &Handle) {
+            #[cfg(not(feature = "pmcheck"))] // TODO: Remove
             let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
-            // let mut items: [usize; NR_COUNT] = array_init::array_init(|i| i);
             let mut items = (0..NR_COUNT).collect_vec();
 
             for seq in 0..NR_COUNT {
                 let i = chks.chks[seq].checkpoint(|| rdtscp() as usize % items.len(), handle);
-                // let val = items[i];
+
                 let val = items.remove(i);
+                #[cfg(not(feature = "pmcheck"))] // TODO: Remove
                 testee.report(seq, TestValue::new(handle.tid, val))
             }
         }
@@ -194,5 +199,14 @@ mod test {
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
         run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, 1, NR_COUNT);
+    }
+
+    /// Test checkpoint for psan
+    #[cfg(feature = "pmcheck")]
+    pub fn chks() {
+        const FILE_NAME: &str = "checkpoint";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, 2, NR_COUNT);
     }
 }

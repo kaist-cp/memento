@@ -13,13 +13,13 @@
 #![deny(pointer_structural_match)]
 #![deny(rust_2018_idioms)]
 #![deny(trivial_numeric_casts)]
-#![deny(unused_crate_dependencies)]
+// #![deny(unused_crate_dependencies)]
 #![deny(unused_extern_crates)]
 #![deny(unused_import_braces)]
 #![deny(unused_qualifications)]
 #![deny(unused_results)]
 #![deny(variant_size_differences)]
-#![deny(warnings)]
+// #![deny(warnings)] // TODO: Uncomment
 #![deny(rustdoc::invalid_html_tags)]
 #![deny(rustdoc::missing_doc_code_examples)]
 #![deny(missing_docs)]
@@ -49,7 +49,7 @@ pub mod pepoch;
 // Utility
 pub mod test_utils;
 
-use crate::pmem::ralloc::Collectable;
+use crate::pmem::alloc::Collectable;
 use crossbeam_utils::CachePadded;
 use ploc::Handle;
 use std::{mem::ManuallyDrop, ptr};
@@ -160,5 +160,71 @@ impl<T: Memento> Memento for Option<T> {
 impl<T: Memento> Memento for CachePadded<T> {
     fn clear(&mut self) {
         (**self).clear();
+    }
+}
+
+/// Test functions for PSan
+#[cfg(feature = "pmcheck")]
+pub mod test_pmcheck {
+    use super::*;
+
+    /// Test Simple
+    #[no_mangle]
+    pub extern "C" fn test_simple() {
+        pmem::test::check_invaa();
+    }
+
+    /// Test Checkpoint
+    #[no_mangle]
+    pub extern "C" fn test_checkpoint() {
+        ploc::tests::chks();
+    }
+
+    /// Test Cas
+    #[no_mangle]
+    pub extern "C" fn test_cas() {
+        ploc::test::dcas();
+    }
+
+    /// Test Queue-O0
+    #[no_mangle]
+    pub extern "C" fn test_queue_O0() {
+        ds::queue_general::test::enqdeq();
+    }
+
+    /// Test Queue-O1
+    #[no_mangle]
+    pub extern "C" fn test_queue_O1() {
+        ds::queue_lp::test::enqdeq();
+    }
+
+    /// Test Queue-O2
+    #[no_mangle]
+    pub extern "C" fn test_queue_O2() {
+        ds::queue::test::enqdeq();
+    }
+
+    /// Test Queue-Comb
+    #[no_mangle]
+    pub extern "C" fn test_queue_comb() {
+        ds::queue_comb::test::enqdeq();
+    }
+
+    /// Test Teriber stack
+    #[no_mangle]
+    pub extern "C" fn test_treiber_stack() {
+        ds::treiber_stack::test::pushpop();
+    }
+
+    /// Test List
+    #[no_mangle]
+    pub extern "C" fn test_list() {
+        ds::list::test::pmcheck_ins_del_look();
+    }
+
+    /// Test Clevel
+    #[no_mangle]
+    pub extern "C" fn test_clevel() {
+        ds::clevel::test::pmcheck_ins_del_look();
     }
 }

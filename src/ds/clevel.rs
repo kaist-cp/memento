@@ -27,7 +27,7 @@ use crate::*;
 const TINY_VEC_CAPACITY: usize = 8;
 
 cfg_if! {
-    if #[cfg(any(feature = "stress", feature = "tcrash"))] {
+    if #[cfg(any(feature = "stress", feature = "tcrash", feature = "pmcheck"))] {
         // For stress test.
 
         const SLOTS_IN_BUCKET: usize = 1;
@@ -1988,20 +1988,29 @@ mod simple_test {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::test_utils::{distributer::Distributer, tests::*};
+#[allow(dead_code)]
+pub(crate) mod test {
+    use crate::test_utils::{distributer::Distributer, tests::*, thread};
     use crossbeam_channel as channel;
 
     use super::*;
 
+    const FILE_NAME: &str = "clevel";
+    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+    #[cfg(not(feature = "pmcheck"))]
     const NR_THREAD: usize = 1 /* Resizer */ + 5 /* Testee */;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_THREAD: usize = 1 /* Resizer */ + 2 /* Testee */;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 5;
 
     static mut SEND: Option<[Option<Sender<()>>; NR_THREAD + 1]> = None;
     static mut RECV: Option<Receiver<()>> = None;
 
-    const PADDED: usize = NR_THREAD + 1; // TODO: How to remove this?
+    const PADDED: usize = NR_THREAD + 1;
 
     lazy_static::lazy_static! {
         static ref ITEMS: Distributer<PADDED, NR_COUNT> = Distributer::new();
@@ -2067,7 +2076,10 @@ mod test {
                 _ => {
                     let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
 
+                    #[cfg(not(feature = "pmcheck"))]
                     let send = unsafe { SEND.as_mut().unwrap()[tid].as_ref().unwrap() };
+                    #[cfg(feature = "pmcheck")]
+                    let send = unsafe { SEND.as_mut().unwrap()[tid].take().unwrap() };
                     for seq in 0..NR_COUNT {
                         let key = TestValue::new(tid, seq);
 
@@ -2123,11 +2135,7 @@ mod test {
         }
     }
 
-    #[test]
-    fn clevel_ins_del_look() {
-        const FILE_NAME: &str = "clevel";
-        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
+    fn ins_del_look() {
         lazy_static::initialize(&ITEMS);
 
         let (send, recv) = channel::bounded(1024);
@@ -2141,7 +2149,8 @@ mod test {
         }
         drop(send);
 
-        let _ = std::thread::spawn(|| {
+        #[cfg(not(feature = "pmcheck"))]
+        let _ = thread::spawn(|| {
             let tester = unsafe {
                 while !TESTER_FLAG.load(Ordering::Acquire) {}
                 TESTER.as_ref().unwrap()
@@ -2158,6 +2167,17 @@ mod test {
         run_test::<TestRootObj<Clevel<TestValue, TestValue>>, InsDelLook>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         );
+    }
+
+    #[test]
+    fn clevel_ins_del_look() {
+        ins_del_look();
+    }
+
+    /// Test function for psan
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn pmcheck_ins_del_look() {
+        ins_del_look();
     }
 }
 

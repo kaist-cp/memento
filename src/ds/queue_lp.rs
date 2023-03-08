@@ -8,9 +8,10 @@ use insert_delete::{Delete, Insert};
 use std::mem::MaybeUninit;
 
 use crate::pepoch::{self as epoch, Guard, PAtomic, POwned, PShared};
-use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::alloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*};
 use crate::*;
+use mmt_derive::Collectable;
 
 /// Failure of queue operations
 #[derive(Debug)]
@@ -309,13 +310,17 @@ impl<T: Clone + Collectable> Queue<T> {
 
 unsafe impl<T: Clone + Collectable + Send + Sync> Send for Queue<T> {}
 
-#[cfg(test)]
-mod test {
+// #[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod test {
     use super::*;
-    use crate::{pmem::ralloc::Collectable, test_utils::tests::*};
+    use crate::{pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 5;
 
     struct EnqDeq {
         enqs: [Enqueue<TestValue>; NR_COUNT],
@@ -376,6 +381,16 @@ mod test {
         const FILE_NAME: &str = "queue_lp";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
+        run_test::<TestRootObj<Queue<TestValue>>, EnqDeq>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
+    }
+
+    /// Test function for psan
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn enqdeq() {
+        const FILE_NAME: &str = "queue_lp";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         run_test::<TestRootObj<Queue<TestValue>>, EnqDeq>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
         );

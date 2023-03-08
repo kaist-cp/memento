@@ -10,8 +10,8 @@ use mmt_derive::Collectable;
 use crate::{
     pepoch::{PAtomic, PDestroyable, PShared},
     pmem::{
+        alloc::{Collectable, GarbageCollection},
         ll::persist_obj,
-        ralloc::{Collectable, GarbageCollection},
         rdtsc, PoolHandle,
     },
     Memento,

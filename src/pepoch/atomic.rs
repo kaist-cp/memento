@@ -272,12 +272,16 @@ pub trait Pointable {
 }
 
 impl<T> Pointable for T {
+    #[cfg(not(feature = "pmcheck"))]
     const ALIGN: usize = mem::align_of::<T>();
+    #[cfg(feature = "pmcheck")]
+    const ALIGN: usize = 64;
 
     type Init = T;
 
     unsafe fn init(init: Self::Init, pool: &PoolHandle) -> usize {
         let ptr = pool.alloc::<T>();
+
         let t = ptr.deref_mut(pool);
         std::ptr::write(t as *mut T, init);
         ptr.into_offset()
@@ -327,7 +331,10 @@ struct PArray<T> {
 }
 
 impl<T> Pointable for [MaybeUninit<T>] {
-    const ALIGN: usize = mem::align_of::<PArray<T>>();
+    #[cfg(not(feature = "pmcheck"))]
+    const ALIGN: usize = mem::align_of::<T>();
+    #[cfg(feature = "pmcheck")]
+    const ALIGN: usize = 64;
 
     type Init = usize;
 

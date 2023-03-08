@@ -19,7 +19,7 @@ use std::arch::x86_64::{__rdtscp, _mm_lfence, _mm_mfence, _mm_prefetch, _mm_sfen
 pub fn persist<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
     #[cfg(not(feature = "no_persist"))]
     {
-        #[cfg(not(feature = "use_msync"))]
+        #[cfg(not(all(feature = "use_msync")))]
         clflush(ptr, len, fence);
 
         #[cfg(feature = "use_msync")]
@@ -55,37 +55,45 @@ pub fn persist_obj<T: ?Sized>(obj: &T, fence: bool) {
 pub fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
     #[cfg(not(feature = "no_persist"))]
     {
-        let ptr = ptr as *const u8 as *mut u8;
-        let start = ptr as usize;
-        let end = start + len;
+        #[cfg(feature = "pmcheck")]
+        unsafe {
+            pmemobj_sys::pmemobj_flush(super::POPS, ptr as *const libc::c_void, len);
+        }
 
-        let mut cur = (start >> CACHE_LINE_SHIFT) << CACHE_LINE_SHIFT;
+        #[cfg(not(feature = "pmcheck"))]
+        {
+            let ptr = ptr as *const u8 as *mut u8;
+            let start = ptr as usize;
+            let end = start + len;
 
-        #[cfg(feature = "stat_print_flushes")]
-        println!("flush {:x} ({})", cur, len);
+            let mut cur = (start >> CACHE_LINE_SHIFT) << CACHE_LINE_SHIFT;
 
-        while cur < end {
-            unsafe {
-                #[cfg(not(any(feature = "use_clflushopt", feature = "use_clwb")))]
-                {
-                    asm!("clflush [{}]", in(reg) (cur as *const u8), options(nostack));
+            #[cfg(feature = "stat_print_flushes")]
+            println!("flush {:x} ({})", cur, len);
+
+            while cur < end {
+                unsafe {
+                    #[cfg(not(any(feature = "use_clflushopt", feature = "use_clwb")))]
+                    {
+                        asm!("clflush [{}]", in(reg) (cur as *const u8), options(nostack));
+                    }
+                    #[cfg(all(feature = "use_clflushopt", not(feature = "use_clwb")))]
+                    {
+                        asm!("clflushopt [{}]", in(reg) (cur as *const u8), options(nostack));
+                        // llvm_asm!("clflushopt ($0)" :: "r"(start as *const u8));
+                    }
+                    #[cfg(all(feature = "use_clwb", not(feature = "use_clflushopt")))]
+                    {
+                        asm!("clwb [{}]", in(reg) (cur as *const u8), options(nostack));
+                        // llvm_asm!("clwb ($0)" :: "r"(cur as *const u8));
+                    }
+                    #[cfg(all(feature = "use_clwb", feature = "use_clflushopt"))]
+                    {
+                        compile_error!("Please Select only one from clflushopt and clwb")
+                    }
                 }
-                #[cfg(all(feature = "use_clflushopt", not(feature = "use_clwb")))]
-                {
-                    asm!("clflushopt [{}]", in(reg) (cur as *const u8), options(nostack));
-                    // llvm_asm!("clflushopt ($0)" :: "r"(start as *const u8));
-                }
-                #[cfg(all(feature = "use_clwb", not(feature = "use_clflushopt")))]
-                {
-                    asm!("clwb [{}]", in(reg) (cur as *const u8), options(nostack));
-                    // llvm_asm!("clwb ($0)" :: "r"(cur as *const u8));
-                }
-                #[cfg(all(feature = "use_clwb", feature = "use_clflushopt"))]
-                {
-                    compile_error!("Please Select only one from clflushopt and clwb")
-                }
+                cur += 1 << CACHE_LINE_SHIFT;
             }
-            cur += 1 << CACHE_LINE_SHIFT;
         }
     }
     if fence {
@@ -96,6 +104,12 @@ pub fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
 /// Store fence
 #[inline(always)]
 pub fn sfence() {
+    #[cfg(feature = "pmcheck")]
+    unsafe {
+        pmemobj_sys::pmemobj_drain(super::POPS);
+    }
+
+    #[cfg(not(feature = "pmcheck"))]
     #[cfg(any(feature = "use_clwb", feature = "use_clflushopt"))]
     unsafe {
         _mm_sfence();

@@ -55,8 +55,8 @@ You can either reuse a pre-built docker image `memento-image.tar` or manually bu
 You can reuse a pre-built docker image by loading `memento-image.tar.gz`:
 
 ```sh
-docker load < memento-image.tar.gz
-docker run -it -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento  # persistent memory must be mounted at /mnt/pmem0
+docker build -t memento .
+docker run -it -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento # peristent memory must be mounted at /mnt/pmem0
 ```
 
 Here, `-v /mnt/pmem0:/mnt/pmem0` option is required to share the mounted persistent memory area with the container. Also, `--cap-add=SYS_NICE` option is needed to evalute performance by unifying all used cores into a single numa node.
@@ -87,6 +87,8 @@ You can re-build a docker image by `docker build -t memento memento/`. (It may t
 
 To build our framework including detectable operations, data structures and SMR libraries:
 ```sh
+git submodule update --init --recursive
+(cd ext/pmdk-rs; git apply ../pmdk-rs.patch)
 cargo build --release
 ```
 
@@ -97,8 +99,6 @@ cargo build --release --features no_persist
 
 
 ## Step-by-Step Instructions
-
-### Goal
 
 This artifact aims to achieve the following goals:
 
@@ -142,9 +142,10 @@ This artifact aims to achieve the following goals:
 
 ### G2: Reproducing the detectability evaluation (§6.1)
 
-See the README below:
+For each correctness test, see the corresponding README below:
 
-- [Detecability evaluation](./evaluation/correctness/README.md)
+- [Thread Crash Test](./evaluation/correctness/tcrash/README.md)
+- [Persistency Bug Finding Test](./evaluation/correctness/pmcheck/README.md)
 
 ### G3: Reproducing the performance evaluation (§6.2)
 

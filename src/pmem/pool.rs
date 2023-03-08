@@ -13,13 +13,13 @@ use crate::ploc::{CasHelpArr, CasHelpDescArr, ExecInfo, Handle, NR_MAX_THREADS};
 use crate::pmem::global::global_pool;
 use crate::pmem::ll::persist_obj;
 use crate::pmem::ptr::PPtr;
-use crate::pmem::{global, ralloc::*};
+use crate::pmem::{alloc::*, global};
 use crate::*;
 use crossbeam_epoch::{self as epoch};
-use std::thread;
+use test_utils::thread;
 
 // indicating at which root of Ralloc the metadata, root obj, and root mementos are located.
-enum RootIdx {
+pub(crate) enum RootIdx {
     RootObj,        // root obj
     CASHelpArr,     // cas help array
     CASHelpDescArr, // cas help descriptor array
@@ -82,82 +82,43 @@ impl PoolHandle {
     {
         // get root obj
         let root_obj = unsafe {
-            (RP_get_root_c(RootIdx::RootObj as u64) as *const O)
+            (PMEMAllocator::get_root(RootIdx::RootObj as u64) as *const O)
                 .as_ref()
                 .unwrap()
         };
 
         // get number of root memento(s)
-        let nr_memento = unsafe { *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize) };
+        let nr_memento =
+            unsafe { *(PMEMAllocator::get_root(RootIdx::NrMemento as u64) as *mut usize) };
 
         // repeat until `tid` thread succeeds the `tid`th memento
         let mut handles = Vec::new();
         for tid in 1..=nr_memento {
             // get `tid`th root mement
-            let m_addr =
-                unsafe { RP_get_root_c(RootIdx::MementoStart as u64 + tid as u64) as usize };
+            let m_addr = unsafe {
+                PMEMAllocator::get_root(RootIdx::MementoStart as u64 + tid as u64) as usize
+            };
 
             let th = thread::spawn(move || {
                 let h = thread::spawn(move || {
                     loop {
-                        struct Args<'a, O: 'static> {
-                            m_addr: usize,
-                            nr_memento: usize,
-                            root_obj: &'static O,
-                            handle: &'a Handle,
-                        }
-
-                        extern "C" fn thread_start<O, M>(arg: *mut c_void) -> *mut c_void
-                        where
-                            O: RootObj<M> + Send + Sync + 'static,
-                            M: Memento + Send + Sync,
-                        {
-                            // Decompose arguments
-                            let args = unsafe { (arg as *mut Args<'_, O>).as_mut() }.unwrap();
-                            let (m_addr, nr_memento, root_obj, handle) =
-                                (args.m_addr, args.nr_memento, args.root_obj, args.handle);
-
+                        // Run memento
+                        let mh = thread::spawn(move || {
+                            let handle = Handle::new(tid, unsafe { epoch::old_guard(tid) }, self);
                             let root_mmt = unsafe { (m_addr as *mut M).as_mut().unwrap() };
 
                             // Barrier
                             handle.pool.barrier_wait(handle.tid, nr_memento);
 
                             // Run memento
-                            root_obj.run(root_mmt, handle);
-
-                            ptr::null_mut()
-                        }
-
-                        let mut native: libc::pthread_t = unsafe { mem::zeroed() };
-                        let attr: libc::pthread_attr_t = unsafe { mem::zeroed() };
-
-                        // Handle
-                        let handle = Handle::new(tid, unsafe { epoch::old_guard(tid) }, self);
-                        let mut args = Args {
-                            m_addr,
-                            nr_memento,
-                            root_obj,
-                            handle: &handle,
-                        };
-
-                        // Run memento
-                        unsafe {
-                            let _err = libc::pthread_create(
-                                &mut native,
-                                &attr,
-                                thread_start::<O, M>,
-                                &mut args as *const _ as *mut _,
-                            );
-                        }
+                            root_obj.run(root_mmt, &handle);
+                        });
 
                         // Join
                         // - Exit on success, re-run memento on failure
                         // - The guard used in case of failure is also not cleaned up.
                         //   A guard that loses its owner should be used well by the thread created in the next iteration.
-                        let mut status = ptr::null_mut();
-                        let _ = unsafe { libc::pthread_join(native, &mut status) };
-
-                        if status as *const _ as usize == 0 {
+                        if let Ok(_) = mh.join() {
                             break;
                         }
 
@@ -182,7 +143,7 @@ impl PoolHandle {
         BARRIER_WAIT[tid].store(true, Ordering::SeqCst);
         for other in 1..=nr_memento {
             while !BARRIER_WAIT[other].load(Ordering::SeqCst) {
-                std::hint::spin_loop()
+                std::hint::spin_loop();
             }
         }
     }
@@ -195,7 +156,7 @@ impl PoolHandle {
     ///
     /// Carefully use `ix`
     pub unsafe fn get_root(&self, ix: u64) -> *mut c_void {
-        RP_get_root_c(ix)
+        PMEMAllocator::get_root(ix)
     }
 
     /// alloc
@@ -221,7 +182,7 @@ impl PoolHandle {
     pub fn free<T>(&self, pptr: PPtr<T>) {
         let addr_abs = self.start() + pptr.into_offset();
         assert!(self.valid(addr_abs));
-        self.pool().free(addr_abs as *mut u8);
+        self.pool().free(addr_abs as *mut u8, mem::size_of::<T>());
     }
 
     /// deallocate as much as the layout size from the offset address
@@ -230,10 +191,10 @@ impl PoolHandle {
     ///
     /// Carefully check `offset` and `layout`
     #[inline]
-    pub unsafe fn free_layout(&self, offset: usize, _layout: Layout) {
+    pub unsafe fn free_layout(&self, offset: usize, layout: Layout) {
         // NOTE: Ralloc's free does not receive a size, so just pass the address to deallocate.
         let addr_abs = self.start() + offset;
-        self.pool().free(addr_abs as *mut u8);
+        self.pool().free(addr_abs as *mut u8, layout.size());
     }
 
     #[inline]
@@ -250,7 +211,7 @@ impl PoolHandle {
 
 impl Drop for PoolHandle {
     fn drop(&mut self) {
-        unsafe { RP_close() }
+        unsafe { PMEMAllocator::close(self.start, self.len) }
     }
 }
 
@@ -272,7 +233,7 @@ impl Pool {
         size: usize,
         nr_memento: usize, // number of root memento(s)
     ) -> Result<&'static PoolHandle, Error> {
-        if Path::new(&(filepath.to_owned() + "_basemd")).exists() {
+        if Pool::is_valid(filepath) {
             return Err(Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 "File already exist.",
@@ -283,24 +244,26 @@ impl Pool {
         global::clear();
 
         // create fil and initialze its content to pool layout of Ralloc
-        let filepath = CString::new(filepath).expect("CString::new failed");
-        let is_reopen = unsafe { RP_init(filepath.as_ptr(), size as u64) };
+        let filepath_c = CString::new(filepath).expect("CString::new failed");
+        let is_reopen = unsafe { PMEMAllocator::create(filepath_c.as_ptr(), size as u64) };
         assert_eq!(is_reopen, 0);
 
         unsafe {
             // set general cas checkpoint
-            let cas_help_arr = RP_malloc(mem::size_of::<CasHelpArr>() as u64) as *mut CasHelpArr;
+            let cas_help_arr =
+                PMEMAllocator::malloc(mem::size_of::<CasHelpArr>() as u64) as *mut CasHelpArr;
             cas_help_arr.write(CasHelpArr::default());
             persist_obj(cas_help_arr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(cas_help_arr as *mut c_void, RootIdx::CASHelpArr as u64);
+            let _prev =
+                PMEMAllocator::set_root(cas_help_arr as *mut c_void, RootIdx::CASHelpArr as u64);
             let chk_ref = cas_help_arr.as_ref().unwrap();
 
             // set cas help descriptor
-            let cas_help_desc_arr =
-                RP_malloc(mem::size_of::<CasHelpDescArr>() as u64) as *mut CasHelpDescArr;
+            let cas_help_desc_arr = PMEMAllocator::malloc(mem::size_of::<CasHelpDescArr>() as u64)
+                as *mut CasHelpDescArr;
             cas_help_desc_arr.write(CasHelpDescArr::default());
             persist_obj(cas_help_desc_arr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(
+            let _prev = PMEMAllocator::set_root(
                 cas_help_desc_arr as *mut c_void,
                 RootIdx::CASHelpDescArr as u64,
             );
@@ -308,7 +271,7 @@ impl Pool {
 
             // set global pool
             global::init(PoolHandle {
-                start: RP_mmapped_addr(),
+                start: PMEMAllocator::mmapped_addr(),
                 len: size,
                 exec_info: ExecInfo::from((chk_ref, desc_ref)),
             });
@@ -316,25 +279,27 @@ impl Pool {
             let pool = global_pool().unwrap();
 
             // set root obj
-            let o_ptr = RP_malloc(mem::size_of::<O>() as u64) as *mut O;
+            let o_ptr = PMEMAllocator::malloc(mem::size_of::<O>() as u64) as *mut O;
             let tmp_handle = Handle::new(1, epoch::pin(), pool);
             tmp_handle.rec.store(false, Ordering::SeqCst);
             o_ptr.write(O::pdefault(&tmp_handle));
             persist_obj(o_ptr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
+            let _prev = PMEMAllocator::set_root(o_ptr as *mut c_void, RootIdx::RootObj as u64);
 
             // set number of root mementos
-            let nr_memento_ptr = RP_malloc(mem::size_of::<usize>() as u64) as *mut usize;
+            let nr_memento_ptr =
+                PMEMAllocator::malloc(mem::size_of::<usize>() as u64) as *mut usize;
             nr_memento_ptr.write(nr_memento);
             persist_obj(nr_memento_ptr.as_mut().unwrap(), true);
-            let _prev = RP_set_root(nr_memento_ptr as *mut c_void, RootIdx::NrMemento as u64);
+            let _prev =
+                PMEMAllocator::set_root(nr_memento_ptr as *mut c_void, RootIdx::NrMemento as u64);
 
             // set root memento(s): 1 ~ nr_memento
             for i in 1..nr_memento + 1 {
-                let root_ptr = RP_malloc(mem::size_of::<M>() as u64) as *mut M;
+                let root_ptr = PMEMAllocator::malloc(mem::size_of::<M>() as u64) as *mut M;
                 root_ptr.write(M::default());
                 persist_obj(root_ptr.as_mut().unwrap(), true);
-                let _prev = RP_set_root(
+                let _prev = PMEMAllocator::set_root(
                     root_ptr as *mut c_void,
                     RootIdx::MementoStart as u64 + i as u64,
                 );
@@ -344,6 +309,8 @@ impl Pool {
             lazy_static::initialize(&BARRIER_WAIT);
             epoch::init();
 
+            // Mark pool file as valid
+            Pool::mark_valid(filepath)?;
             Ok(pool)
         }
     }
@@ -364,60 +331,48 @@ impl Pool {
         filepath: &str,
         size: usize,
     ) -> Result<&'static PoolHandle, Error> {
-        if !Path::new(&(filepath.to_owned() + "_basemd")).exists() {
-            return Err(Error::new(std::io::ErrorKind::NotFound, "File not found."));
+        if !Pool::is_valid(filepath) {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Pool is not valid.",
+            ));
         }
 
         global::clear();
 
         // open file
         let filepath = CString::new(filepath).expect("CString::new failed");
-        let is_reopen = RP_init(filepath.as_ptr(), size as u64);
+        let is_reopen = PMEMAllocator::open(filepath.as_ptr(), size as u64);
         assert_eq!(is_reopen, 1);
 
         // get the starting address of the mapped address and set the global pool
-        let chk_ref = (RP_get_root_c(RootIdx::CASHelpArr as u64) as *const CasHelpArr)
+        let chk_ref = (PMEMAllocator::get_root(RootIdx::CASHelpArr as u64) as *const CasHelpArr)
             .as_ref()
             .unwrap();
-        let desc_ref = (RP_get_root_c(RootIdx::CASHelpDescArr as u64) as *const CasHelpDescArr)
+        let desc_ref = (PMEMAllocator::get_root(RootIdx::CASHelpDescArr as u64)
+            as *const CasHelpDescArr)
             .as_ref()
             .unwrap();
 
         global::init(PoolHandle {
-            start: RP_mmapped_addr(),
+            start: PMEMAllocator::mmapped_addr(),
             len: size,
             exec_info: ExecInfo::from((chk_ref, desc_ref)),
         });
 
         // run GC of Ralloc
         {
-            unsafe extern "C" fn root_filter<T: Collectable>(
-                ptr: *mut ::std::os::raw::c_char,
-                tid: usize,
-                gc: &mut GarbageCollection,
-            ) {
-                RP_mark(
-                    gc,
-                    ptr,
-                    tid.wrapping_sub(RootIdx::MementoStart as usize),
-                    Some(T::filter_inner),
-                );
-            }
-
             // set filter function of root obj
-            RP_set_root_filter(Some(root_filter::<O>), RootIdx::RootObj as u64);
+            PMEMAllocator::set_root_filter::<O>(RootIdx::RootObj as u64);
 
             // set filter function of root memento(s)
-            let nr_memento = *(RP_get_root_c(RootIdx::NrMemento as u64) as *mut usize);
+            let nr_memento = *(PMEMAllocator::get_root(RootIdx::NrMemento as u64) as *mut usize);
             for tid in 1..nr_memento + 1 {
-                RP_set_root_filter(
-                    Some(root_filter::<M>),
-                    RootIdx::MementoStart as u64 + tid as u64,
-                );
+                PMEMAllocator::set_root_filter::<M>(RootIdx::MementoStart as u64 + tid as u64);
             }
 
             // call GC of Ralloc
-            let _is_gc_executed = RP_recover();
+            let _is_gc_executed = PMEMAllocator::recover();
         }
 
         let pool = global_pool().unwrap();
@@ -433,21 +388,31 @@ impl Pool {
     /// Remove pool
     pub fn remove(filepath: &str) -> Result<(), Error> {
         // _basedmd, _desc, _sb are pool files created by Ralloc
+        fs::remove_file(filepath.to_owned())?;
         fs::remove_file(filepath.to_owned() + "_basemd")?;
         fs::remove_file(filepath.to_owned() + "_desc")?;
         fs::remove_file(filepath.to_owned() + "_sb")?;
         Ok(())
     }
 
+    fn is_valid(filepath: &str) -> bool {
+        Path::new(&(filepath.to_owned() + "_valid")).exists()
+    }
+
+    fn mark_valid(filepath: &str) -> Result<(), Error> {
+        fs::write(Path::new(&(filepath.to_owned() + "_valid")), "1")?;
+        Ok(())
+    }
+
     #[inline]
     fn alloc(&self, size: usize) -> *mut u8 {
-        let addr_abs = unsafe { RP_malloc(size as u64) };
+        let addr_abs = unsafe { PMEMAllocator::malloc(size as u64) };
         addr_abs as *mut u8
     }
 
     #[inline]
-    fn free(&self, ptr: *mut u8) {
-        unsafe { RP_free(ptr as *mut c_void) }
+    fn free(&self, ptr: *mut u8, len: usize) {
+        unsafe { PMEMAllocator::free(ptr as *mut c_void, len) }
     }
 }
 
@@ -457,20 +422,17 @@ pub trait RootObj<M: Memento>: PDefault + Collectable {
     fn run(&self, mmt: &mut M, handle: &Handle);
 }
 
-#[cfg(test)]
-mod tests {
-    use log::{self as _, debug};
-
+/// Test
+pub mod test {
     use crate::pmem::pool::*;
     use crate::test_utils::tests::*;
+    use mmt_derive::Collectable;
 
     impl RootObj<CheckInv> for DummyRootObj {
         fn run(&self, mmt: &mut CheckInv, _: &Handle) {
             if mmt.flag {
-                debug!("check inv");
                 assert_eq!(mmt.value, 42);
             } else {
-                debug!("update");
                 mmt.value = 42;
                 mmt.flag = true;
             }
@@ -489,12 +451,21 @@ mod tests {
         }
     }
 
-    const FILE_NAME: &str = "check_inv";
-    const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-
     // check flag=1 => value=42
+    // #[cfg(not(feature = "pmcheck"))]
     #[test]
     fn check_inv() {
-        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 0);
+        const FILE_NAME: &str = "check_inv";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 1);
+    }
+
+    /// check flag=1 => value=42
+    /// TODO chek inv for pmcheck
+    #[cfg(feature = "pmcheck")]
+    pub fn check_invaa() {
+        const FILE_NAME: &str = "check_inv";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 1);
     }
 }

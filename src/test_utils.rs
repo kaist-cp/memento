@@ -1,23 +1,166 @@
 //! Utilities
 
+pub(crate) mod thread {
+    use std::{any::TypeId, marker::PhantomData};
+
+    use libc::c_void;
+
+    pub(crate) struct JoinHandle<T> {
+        native: u64,
+        phantom: PhantomData<T>,
+    }
+
+    impl<T: 'static> JoinHandle<T> {
+        #[allow(box_pointers)]
+        pub(crate) fn join(&self) -> Result<T, ()> {
+            let mut status = std::ptr::null_mut();
+            if unsafe { libc::pthread_join(self.native, &mut status) } == 0 {
+                // no return value
+                if TypeId::of::<()>() == TypeId::of::<T>() {
+                    if status as *const _ as usize == 0 {
+                        Ok(unsafe { std::mem::transmute_copy(&()) })
+                    } else {
+                        Err(())
+                    }
+                }
+                // there is return value
+                else {
+                    Ok(*unsafe { Box::from_raw(status as *mut _ as *mut T) })
+                }
+            } else {
+                Err(())
+            }
+        }
+    }
+
+    #[allow(box_pointers)]
+    pub(crate) fn spawn<'a, F, T>(f: F) -> JoinHandle<T>
+    where
+        F: Fn() -> T,
+        F: Send + 'a,
+        T: Send + 'static,
+    {
+        extern "C" fn func<T>(main: *mut c_void) -> *mut c_void
+        where
+            T: Send + 'static,
+        {
+            let res = unsafe { Box::from_raw(main as *mut Box<dyn FnOnce() -> T>)() };
+            // no return value
+            if TypeId::of::<()>() == TypeId::of::<T>() {
+                std::ptr::null_mut() as *mut _ as *mut c_void
+            }
+            // return value should be delivered by dynamic allocaiton.
+            else {
+                Box::into_raw(Box::new(res)) as *mut _ as *mut c_void
+            }
+        }
+
+        // Initialize thread attributes.
+        let mut native: libc::pthread_t = unsafe { std::mem::zeroed() };
+        let mut attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            assert_eq!(libc::pthread_attr_init(&mut attr), 0);
+
+            // Set stack size.
+            if let Some(stacksize) = std::env::var("RUST_MIN_STACK")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                // Round up to the nearest page to prevent error.
+                // https://man7.org/linux/man-pages/man3/pthread_attr_setstacksize.3.html#ERRORS
+                let pagesize = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+                let stacksize = std::cmp::max(
+                    libc::PTHREAD_STACK_MIN,
+                    (stacksize + pagesize - 1) & (-(pagesize as isize - 1) as usize - 1),
+                );
+                assert_eq!(libc::pthread_attr_setstacksize(&mut attr, stacksize), 0);
+            }
+        }
+
+        let main = move || f();
+        let p = unsafe {
+            std::mem::transmute::<Box<dyn FnOnce() -> T + 'a>, Box<dyn FnOnce() + 'a>>(Box::new(
+                main,
+            ))
+        };
+        let p = Box::into_raw(Box::new(p));
+        unsafe {
+            let _err = libc::pthread_create(&mut native, &attr, func::<T>, p as *mut _);
+            // let _err = libc::pthread_create(&mut native, &attr, func::<T>, p as *mut _);
+        }
+        unsafe { assert_eq!(libc::pthread_attr_destroy(&mut attr), 0) };
+
+        JoinHandle {
+            native,
+            phantom: PhantomData,
+        }
+    }
+
+    #[test]
+    fn join_retval() {
+        assert_eq!(spawn(move || 3 + 5).join().unwrap(), 8);
+        assert_eq!(spawn(move || 5 * 15 + 3).join().unwrap(), 5 * 15 + 3);
+    }
+
+    #[test]
+    fn spawn_params() {
+        let a = 10;
+        let b = 20;
+        let c = 30;
+        let d = 40;
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(a, 10);
+            assert_eq!(b, 20);
+            assert_eq!(b, 20);
+        });
+        let _ = spawn(move || {
+            assert_eq!(a, 10);
+            assert_eq!(b, 20);
+            assert_eq!(c, 30);
+            assert_eq!(d, 40);
+        });
+    }
+}
+
 #[doc(hidden)]
+#[allow(warnings)]
 pub mod tests {
     use atomic::Atomic;
     use crossbeam_utils::Backoff;
     use mmt_derive::Collectable;
-    use std::backtrace::Backtrace;
+
+    #[cfg(feature = "tcrash")]
+    use {
+        libc::{size_t, SIGUSR2},
+        std::backtrace::Backtrace,
+    };
+
     use std::io::Error;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::NamedTempFile;
 
     use crate::ploc::Handle;
+    use crate::pmem::alloc::{Collectable, GarbageCollection};
     use crate::pmem::pool::*;
-    use crate::pmem::ralloc::{Collectable, GarbageCollection};
+    use crate::test_utils::thread;
     use crate::{Memento, PDefault};
 
     use {
         crate::pmem::*,
-        libc::{size_t, SIGUSR2},
         std::sync::atomic::{AtomicBool, AtomicI32},
     };
 
@@ -104,15 +247,21 @@ pub mod tests {
         O: RootObj<M> + Send + Sync + 'static,
         M: Memento + Send + Sync,
     {
-        // Assertion err causes abort.
-        std::panic::set_hook(Box::new(|info| {
-            println!("Thread {} {info}", unsafe { libc::gettid() });
-            println!("{}", Backtrace::capture());
-            unsafe { libc::abort() };
-        }));
+        #[cfg(feature = "pmcheck")]
+        println!("[run_test] \n\t{pool_name}\n\t{pool_len}\n\t{nr_memento}\n\t{nr_count}");
 
-        // Install signal handler
-        let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
+        #[cfg(feature = "tcrash")]
+        {
+            // Assertion err causes abort.
+            std::panic::set_hook(Box::new(|info| {
+                println!("Thread {} {info}", unsafe { libc::gettid() });
+                println!("{}", Backtrace::capture());
+                unsafe { libc::abort() };
+            }));
+
+            // Install signal handler
+            let _ = unsafe { libc::signal(SIGUSR2, texit as size_t) };
+        }
 
         // Initialize tester
         let tester = unsafe {
@@ -122,7 +271,7 @@ pub mod tests {
         };
 
         // Start test
-        let handle = std::thread::spawn(move || {
+        let handle = thread::spawn(move || {
             run_test_inner::<O, M>(pool_name, pool_len, nr_memento);
         });
 
@@ -132,6 +281,7 @@ pub mod tests {
         let _ = handle.join();
 
         // Check test results
+        #[cfg(not(feature = "pmcheck"))]
         tester.check();
     }
 
@@ -146,8 +296,10 @@ pub mod tests {
         // let _ = Pool::remove(&filepath);
 
         // open pool
-        let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }
-            .unwrap_or_else(|_| Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap());
+        let pool_handle = unsafe { Pool::open::<O, M>(&filepath, pool_len) }.unwrap_or_else(|_| {
+            let _ = Pool::remove(&filepath);
+            Pool::create::<O, M>(&filepath, pool_len, nr_memento).unwrap()
+        });
 
         // run root memento(s)
         pool_handle.execute::<O, M>();
@@ -208,6 +360,7 @@ pub mod tests {
     impl Testee<'_> {
         #[inline]
         pub fn report(&self, seq: usize, val: TestValue) {
+            #[cfg(not(feature = "pmcheck"))]
             self.info.report(seq, val)
         }
     }
@@ -281,12 +434,15 @@ pub mod tests {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                assert_eq!(e, Self::STATE_KILLED);
+                #[cfg(not(feature = "pmcheck"))]
+                {
+                    assert_eq!(e, Self::STATE_KILLED);
 
-                let backoff = Backoff::default();
-                loop {
-                    // Wait until main thread kills tid
-                    backoff.snooze();
+                    let backoff = Backoff::default();
+                    loop {
+                        // Wait until main thread kills tid
+                        backoff.snooze();
+                    }
                 }
             }
         }
@@ -317,19 +473,22 @@ pub mod tests {
             let inner_tid = tid - 1;
             let info = &self.infos[inner_tid];
 
-            info.checked.store(Some(checked), Ordering::SeqCst);
-            if checked {
-                info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
-            } else {
-                info.enable_killed();
-            }
+            #[cfg(not(feature = "pmcheck"))]
+            {
+                info.checked.store(Some(checked), Ordering::SeqCst);
+                if checked {
+                    info.state.store(TestInfo::STATE_INIT, Ordering::SeqCst);
+                } else {
+                    info.enable_killed();
+                }
 
-            #[cfg(feature = "tcrash")]
-            if checked {
-                println!(
-                    "[Testee {tid}] Crash may occur after seq {}.",
-                    info.crash_seq
-                );
+                #[cfg(feature = "tcrash")]
+                if checked {
+                    println!(
+                        "[Testee {tid}] Crash may occur after seq {}.",
+                        info.crash_seq
+                    );
+                }
             }
 
             Testee { info }
@@ -415,16 +574,20 @@ pub mod tests {
                     .map(|i| results[i].load(Ordering::SeqCst))
                     .enumerate()
                 {
-                    // `to_tid` must have returned value at `to_seq`
-                    assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
+                    #[cfg(not(feature = "pmcheck"))]
+                    {
+                        // `to_tid` must have returned value at `to_seq`
+                        assert_ne!(result, TestInfo::RESULT_INIT, "tid:{to_tid}, seq:{to_seq}");
 
-                    // `from_tid`'s `from_seq` must be issued exactly once
-                    let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
-                    assert!(
-                        !checked_map[from_tid][from_seq],
-                        "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
-                    );
-                    checked_map[from_tid][from_seq] = true;
+                        // `from_tid`'s `from_seq` must be issued exactly once
+                        let (from_tid, from_seq) = TestValue::decompose(TestValue { data: result });
+                        assert!(
+                            !checked_map[from_tid][from_seq],
+                            "From: (tid:{from_tid}, seq:{from_seq} / To: (tid:{to_tid}, seq:{to_seq}",
+                        );
+
+                        checked_map[from_tid][from_seq] = true;
+                    }
                 }
             }
 
@@ -433,7 +596,6 @@ pub mod tests {
     }
 }
 
-#[cfg(test)]
 pub(crate) mod distributer {
     use std::sync::atomic::AtomicUsize;
 

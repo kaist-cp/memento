@@ -443,6 +443,9 @@ impl<N: Collectable> DetectableCASAtomic<N> {
 
             // Register my help descriptor if there is no descriptor yet.
             if old.desc_bit() == 0 {
+                #[cfg(feature = "pmcheck")]
+                sfence(); // To pass the false positive of PSan.
+
                 match self.register_help(old, handle) {
                     Ok(desc) => {
                         old = desc;
@@ -542,10 +545,16 @@ impl<N: Collectable> DetectableCASAtomic<N> {
         // CAS winner thread's pcheckpoint
         let t_help = cas_info.help[winner_tid].load(winner_parity);
         if t_cur <= t_help
-            || cas_info.help[winner_tid].compare_exchange(winner_parity, t_help, t_cur).is_err() {
+            || cas_info.help[winner_tid]
+                .compare_exchange(winner_parity, t_help, t_cur)
+                .is_err()
+        {
             return Err(self.inner.load(Ordering::SeqCst, &handle.guard));
         }
-        persist_obj(&*cas_info.help[winner_tid].inner[winner_parity as usize], false);
+        persist_obj(
+            &*cas_info.help[winner_tid].inner[winner_parity as usize],
+            false,
+        );
 
         // help pointer to be clean.
         let res =
@@ -739,12 +748,12 @@ impl<N: Collectable> CasInner<N> {
     }
 }
 
-#[cfg(test)]
-mod test {
+#[allow(dead_code)]
+pub(crate) mod test {
     use crate::{
         pepoch::POwned,
         ploc::Handle,
-        pmem::{persist_obj, ralloc::Collectable, RootObj},
+        pmem::{alloc::Collectable, persist_obj, RootObj},
         test_utils::tests::*,
         Memento,
     };
@@ -852,7 +861,10 @@ mod test {
     }
 
     const NR_THREAD: usize = 3;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
     struct Updates {
         nodes: [Checkpoint<PAtomic<Node<TestValue>>>; NR_COUNT],
@@ -888,7 +900,9 @@ mod test {
     }
 
     impl RootObj<Updates> for TestRootObj<Location<TestValue>> {
+        #[allow(unused_variables)]
         fn run(&self, mmt: &mut Updates, handle: &Handle) {
+            #[cfg(not(feature = "pmcheck"))] // TODO: Remove
             let testee = unsafe { TESTER.as_ref().unwrap().testee(true, handle) };
             let loc = &self.obj;
 
@@ -914,6 +928,7 @@ mod test {
                 let old = loc.swap(PShared::null(), &mut mmt.upds[seq].1, handle);
 
                 let val = unsafe { std::ptr::read(&old.deref(handle.pool).data) };
+                #[cfg(not(feature = "pmcheck"))] // TODO: Remove
                 testee.report(seq, val);
             }
         }
@@ -925,6 +940,17 @@ mod test {
     //   - where +2 is a pointer to Root, DetectableCASAtomic
     #[test]
     fn detectable_cas() {
+        const FILE_NAME: &str = "detectable_cas";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        run_test::<TestRootObj<Location<TestValue>>, Updates>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
+    }
+
+    /// Test function pmcheck
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn dcas() {
         const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 

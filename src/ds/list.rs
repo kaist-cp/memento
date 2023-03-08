@@ -8,9 +8,10 @@ use etrace::some_or;
 use std::cmp::Ordering::{Equal, Greater, Less};
 
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
-use crate::pmem::ralloc::{Collectable, GarbageCollection};
+use crate::pmem::alloc::{Collectable, GarbageCollection};
 use crate::pmem::{ll::*, pool::*, AsPPtr, PPtr};
 use crate::*;
+use mmt_derive::Collectable;
 
 /// Node
 #[derive(Debug)]
@@ -401,17 +402,20 @@ impl<K: Ord, V: Collectable> List<K, V> {
     }
 }
 
-#[cfg(test)]
-mod test {
+#[allow(dead_code)]
+pub(crate) mod test {
     use test_utils::distributer::*;
 
     use super::*;
-    use crate::{ploc::Handle, pmem::ralloc::Collectable, test_utils::tests::*};
+    use crate::{ploc::Handle, pmem::alloc::Collectable, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
-    const PADDED: usize = NR_THREAD + 1; // TODO: How to remove this?
+    const PADDED: usize = NR_THREAD + 1;
 
     lazy_static::lazy_static! {
         static ref ITEMS: Distributer<PADDED, NR_COUNT> = Distributer::new();
@@ -520,6 +524,19 @@ mod test {
 
     #[test]
     fn ins_del_look() {
+        const FILE_NAME: &str = "list";
+        const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
+
+        lazy_static::initialize(&ITEMS);
+
+        run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        );
+    }
+
+    /// Test function for pmcheck
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn pmcheck_ins_del_look() {
         const FILE_NAME: &str = "list";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 

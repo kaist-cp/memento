@@ -17,6 +17,7 @@ use_clwb = []
 use_msync = []
 stat_print_flushes = []
 stress = []
+pmcheck = []
 
 [dependencies]
 mmt_derive = { path = "./src/derive" }
@@ -37,11 +38,9 @@ cfg-if = "1.0.0"
 tinyvec = { version = "1.6.0", features = ["alloc", "rustc_1_40"] }
 libc = "0.2.138"
 num_cpus = "1.14.0"
-
+pmemobj-sys = { path = "./ext/pmdk-rs/pmemobj-sys" }
 
 [dev-dependencies]
 log = "0.4.17"
 rusty-fork = "0.3.0"
 
-[profile.release]
-debug = true

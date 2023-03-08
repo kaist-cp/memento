@@ -7,9 +7,12 @@ use etrace::some_or;
 use super::stack::*;
 use crate::pepoch::{PAtomic, PDestroyable, POwned, PShared};
 use crate::ploc::{Cas, Checkpoint, DetectableCASAtomic, Handle};
-use crate::pmem::ralloc::{Collectable, GarbageCollection};
-use crate::pmem::{ll::*, pool::*};
+use crate::pmem::alloc::Collectable;
+use crate::pmem::ll::*;
+use crate::pmem::GarbageCollection;
+use crate::pmem::PoolHandle;
 use crate::*;
+use mmt_derive::Collectable;
 
 /// Treiber stack node
 #[derive(Debug, Collectable)]
@@ -227,19 +230,31 @@ impl<T: Clone + Collectable> Stack<T> for TreiberStack<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[allow(warnings)]
+pub(crate) mod test {
     use super::*;
     use crate::{ds::stack::tests::PushPop, test_utils::tests::*};
 
     const NR_THREAD: usize = 2;
+    #[cfg(not(feature = "pmcheck"))]
     const NR_COUNT: usize = 10_000;
+    #[cfg(feature = "pmcheck")]
+    const NR_COUNT: usize = 10;
 
     const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
     // We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     #[test]
     fn push_pop() {
+        const FILE_NAME: &str = "treiber_stack";
+        run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, NR_THREAD, NR_COUNT>>(
+            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+        )
+    }
+
+    /// Test function for psan
+    #[cfg(feature = "pmcheck")]
+    pub(crate) fn pushpop() {
         const FILE_NAME: &str = "treiber_stack";
         run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, NR_THREAD, NR_COUNT>>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
