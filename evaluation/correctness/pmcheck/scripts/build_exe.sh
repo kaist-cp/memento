@@ -12,7 +12,9 @@ BUILD=$DIR_BASE/.build
 LLVMDIR=$BUILD/llvm-project # LLVM 14.0.4
 LLVMPASS=$LLVMDIR/build/lib/libPMCPass.so
 CC=$LLVMDIR/build/bin/clang
-BUILTIN=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcompiler_builtins-16d69221f10b0282.rlib
+RUSTUP_PATH=$(rustc --print sysroot)
+BUILTIN_NAME=$(ls ${RUSTUP_PATH}/lib/rustlib/x86_64-unknown-linux-gnu/lib/ | grep "libcompiler_builtins-")
+BUILTIN_PATH="${RUSTUP_PATH}/lib/rustlib/x86_64-unknown-linux-gnu/lib/${BUILTIN_NAME}"
 MEMENTO=$BUILD/libmemento.a
 RALLOC=$DIR_MMT/ext/ralloc/test/libralloc.a
 INCLUDEEE=" "
@@ -32,7 +34,7 @@ function build() {
         $MEMENTO\
         $RALLOC\
         $INCLUDEE $INCLUDEE\
-        $BUILTIN\
+        $BUILTIN_PATH\
         -lpthread\
         -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc\
         $INCLUDEE $INCLUDEE\

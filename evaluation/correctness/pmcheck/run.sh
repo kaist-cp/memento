@@ -5,7 +5,8 @@ set -e
 DIR_BASE=$(dirname $(realpath $0))
 BUILD=$DIR_BASE/.build
 OUT=$DIR_BASE/out
-RUSTSTD=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib
+RUSTUP_PATH=$(rustc --print sysroot)
+RUSTSTD="${RUSTUP_PATH}/lib"
 mkdir -p $OUT
 OUT_LOG=/$OUT/debug.log
 

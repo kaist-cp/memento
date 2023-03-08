@@ -28,10 +28,9 @@ $OPT -load ${LLVMPASS} -PMCPass -enable-new-pm=0 $BUILD/$TARGET.ll -o $BUILD/${T
 echo "good"
 
 # 3. Compile IR into library
-TOOLCHAIN="nightly-2022-05-26-x86_64-unknown-linux-gnu"
-RSTD="std-2ef13b7c460b887d"
-INCRSTD="-L /home/ubuntu/.rustup/toolchains/${TOOLCHAIN}/lib -l${RSTD}"
-INC_RALLOC="-L ext/ralloc/test -lralloc"
+RUSTUP_PATH=$(rustc --print sysroot)
+STD_NAME=$(ls $RUSTUP_PATH/lib/ | grep "libstd-")
+SO_PATH="${RUSTUP_PATH}/lib/${STD_NAME}"
 
 INCLUDEEE=" "
 DEPS=$DIR_MMT/target/release/deps
@@ -42,8 +41,8 @@ do
     INCLUDEE="$INCLUDEE -L $DEPS -l:$file "
 done
 
-BUILTIN=libcompiler_builtins-16d69221f10b0282.rlib
-BUILTIN_PATH=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/
+BUILTIN_NAME=$(ls ${RUSTUP_PATH}/lib/rustlib/x86_64-unknown-linux-gnu/lib/ | grep "libcompiler_builtins-")
+BUILTIN_PATH="${RUSTUP_PATH}/lib/rustlib/x86_64-unknown-linux-gnu/lib/${BUILTIN_NAME}"
 cd $DIR_BASE
 
 echo "compile libmemento.a"
@@ -51,10 +50,9 @@ $CC -c \
     $BUILD/${TARGET}_instrumented.ll -o $BUILD/$TARGET.o \
 
 ar rcs $BUILD/libmemento.a $BUILD/$TARGET.o \
-    /home/ubuntu/.rustup/toolchains/${TOOLCHAIN}/lib/lib${RSTD}.so \
-    $BUILTIN_PATH/$BUILTIN
+    $SO_PATH \
+    $BUILTIN_PATH
 
 # ar rcs $BUILD/libmemento.a $BUILD/$TARGET.o
 
-
-echo "good"
+echo "Building memento complete."

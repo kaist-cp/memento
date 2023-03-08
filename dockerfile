@@ -15,9 +15,9 @@ RUN apt-get update && \
     git submodule update --init --recursive && \
     (cd ext/pmdk-rs; git apply ../pmdk-rs.patch) && \
     evaluation/correctness/tcrash/build.sh && \
+    evaluation/performance/cas/build.sh && \
+    evaluation/performance/queue/build.sh && \
+    evaluation/performance/list/build.sh && \
+    evaluation/performance/hash/build.sh && \
     evaluation/correctness/pmcheck/scripts/build_pmcpass.sh && \
-    evaluation/correctness/pmcheck/build.sh && \
-    evaluation/cas/build.sh && \
-    evaluation/queue/build.sh && \
-    evaluation/list/build.sh && \
-    evaluation/hash/build.sh
+    evaluation/correctness/pmcheck/build.sh
