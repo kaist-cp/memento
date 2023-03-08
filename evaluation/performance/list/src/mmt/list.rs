@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 use crossbeam_utils::CachePadded;
 use memento::ds::list::*;
 use memento::ploc::Handle;
-use memento::pmem::ralloc::{Collectable, GarbageCollection};
+use memento::pmem::alloc::{Collectable, GarbageCollection};
 use memento::pmem::{pool::*, rdtscp};
 use memento::{Collectable, Memento, PDefault};
 
