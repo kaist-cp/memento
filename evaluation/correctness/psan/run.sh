@@ -21,6 +21,14 @@ TOOL=$2
 MODE=$3
 
 # Set
+case $1 in
+  checkpoint|detectable_cas|queue_O0|queue_O1|queue_O2|queue_comb|treiber_stack|list|clevel)
+    ;;
+  *)
+    echo "$1 is not a valid test."
+    exit
+    ;;
+esac
 if [ "${TOOL}" == "yashme" ]; then
     # Yashme (https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/pmdk-races.sh)
     PMCHECK=$BUILD/pmcheck_yashme/bin
@@ -51,7 +59,8 @@ rm -rf PMCheckOutput*
 rm -rf /mnt/pmem0/*
 ulimit -s 82920000
 mkdir -p $OUT/$TOOL
-# RUST_MIN_STACK=100000000 ./test_mmt_$TOOL $TARGET 2>&1>>$OUT/$TOOL/$TARGET.log
-RUST_MIN_STACK=100000000 ./test_mmt_$TOOL $TARGET 
+RUST_MIN_STACK=100000000 ./test_mmt_$TOOL $TARGET 2>&1>>$OUT/$TOOL/$TARGET.log
+# RUST_MIN_STACK=100000000 ./test_mmt_$TOOL $TARGET 
+# 2>&1 | tee -a the_log_file
 echo "[Finish] target: $TARGET, TOOL: $TOOL, (option: $OPT)"
 dmsg "[Finish] target: $TARGET, TOOL: $TOOL, (option: $OPT)"
