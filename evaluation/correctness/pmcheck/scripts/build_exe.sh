@@ -22,8 +22,6 @@ do
     INCLUDEE="$INCLUDEE $file "
 done
 
-# PMEMOBJ=/home/ubuntu/seungmin.jeon/pldi2023-rebuttal/psan-myself/memento/target/release/build/pmemobj-sys-a602c8d28ed82576/out/build/src/nondebug/libpmemobj.so
-
 function build() {
     tool=$1
     echo "Build test_mmt_$tool"

@@ -1,11 +1,11 @@
 
 # Performance Evaluation of Hash
 
-We used the same benchmark as [Persistent Memory Hash Indexes: An Experimental Evaluation (VLDB '21)](http://vldb.org/pvldb/vol14/p785-chen.pdf) to evaluate our hash. Each implementation of comparion targets exists in [`./hash/`](./hash/)
+We used the same benchmark as [Persistent Memory Hash Indexes: An Experimental Evaluation (VLDB '21)](http://vldb.org/pvldb/vol14/p785-chen.pdf) to evaluate our hash. Each implementation of comparison targets exists in [`./hash/`](./hash/)
 
 ## Run the entire benchmark
 
-```
+```bash
 ulimit -s 8192000
 ./build.sh
 ./run.sh
@@ -17,7 +17,7 @@ This creates raw txt that containing measuring result and plots under `./out/`.
 
 You can run a single benchamrk with PiBench executable,
 
-```
+```bash
 ulimit -s 8192000
 ./build.sh
 cd bin

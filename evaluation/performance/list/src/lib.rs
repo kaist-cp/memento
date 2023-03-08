@@ -1,4 +1,4 @@
-//! Implemenations of comparion targets
+//! Implemenations of comparison targets
 
 // # Tries to deny all lints (`rustc -W help`).
 #![deny(absolute_paths_not_starting_with_crate)]

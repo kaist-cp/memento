@@ -1,6 +1,6 @@
 # Performance Evaluation of List
 
-We evaluate the performance of memento-based list compared to other detectable list. Each implementation of comparion targets exists in [`./src/`](./src). To evaluate the performance of detectable list based on `Tracking`, `Capsule`, `Casule-Opt`, we use the implementations published by [Detectable Recovery of Lock-Free Data Structures (PPoPP '22)](https://dl.acm.org/doi/pdf/10.1145/3503221.3508444) authors.
+We evaluate the performance of memento-based list compared to other detectable list. Each implementation of comparison targets exists in [`./src/`](./src). To evaluate the performance of detectable list based on `Tracking`, `Capsule`, `Casule-Opt`, we use the implementations published by [Detectable Recovery of Lock-Free Data Structures (PPoPP '22)](https://dl.acm.org/doi/pdf/10.1145/3503221.3508444) authors.
 
 ## Run the entire benchmark
 
@@ -40,4 +40,4 @@ For detailed usage,
 
 ### Tracking, Capsules, Capsules-Opt
 
-Please refer to https://github.com/ConcurrentDistributedLab/Tracking.
+We refer to https://github.com/ConcurrentDistributedLab/Tracking.

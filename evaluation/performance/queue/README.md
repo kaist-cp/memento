@@ -1,6 +1,6 @@
 # Performance Evaluation of Queue
 
-We evaluate the performance of memento-based queues and other queues. Each implementation of comparion targets exists in [`./src/`](./src)
+We evaluate the performance of memento-based queues and other queues. Each implementation of comparison targets exists in [`./src/`](./src)
 
 ## Run the entire benchmark
 

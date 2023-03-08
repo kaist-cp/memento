@@ -142,16 +142,377 @@ This artifact aims to achieve the following goals:
 
 ### G2: Reproducing the detectability evaluation (§6.1)
 
-For each correctness test, see the corresponding README below:
+#### Thread Crash Test
 
-- [Thread Crash Test](./evaluation/correctness/tcrash/README.md)
-- [Persistency Bug Finding Test](./evaluation/correctness/pmcheck/README.md)
+We evaluate the detectability in case of thread crashes by randomly crashing an arbitrary thread while running the integration test. To crash a specific thread, we use the tgkill system call to send the SIGUSR1 signal to the thread and let its signal handler abort its execution.
+
+##### Install
+
+```bash
+cd evaluation/correctness/tcrash
+./build.sh # specially build for the thread crash test
+```
+
+##### Run
+
+You can test each data structure with the following command:
+
+```bash
+./run.sh [tested DS]
+```
+
+where `tested DS` should be replaced with one of supported tests (listed below).
+For example, the following command is to infinitely check that the test of ***MSQ-mmt-O0*** in the paper always pass in case of an unexpected thread crash:
+
+```bash
+./run.sh queue_general
+```
+
+Then the output is printed out like below:
+
+```
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+[Test 1] success
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+[Test 2] success
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 3 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+[Test 3] success
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 4 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+^C
+```
+
+It also creates a short progress log and a full test log under `./out`.
+
+If a bug exists (just for an example), the output is like below:
+
+```
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 1 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+./run.sh: line 51: 855011 Aborted                 RUST_BACKTRACE=1 RUST_MIN_STACK=2000000000 numactl --cpunodebind=0 --membind=0 timeout $TIMEOUT $SCRIPT_DIR/../../target/x86_64-unknown-linux-gnu/release/deps/memento-* $target::test --nocapture &>> $log_tmp
+fails with exit code 134
+[Test 1] fails with exit code 134
+clear queue_general
+⎾⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺ thread crash-recovery test queue_general 2 (retry: 0) ⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⏋
+run queue_general
+^C
+```
+
+It then generates a bug directory consisting of a text file containg specific error log (`info.txt`) and a PM pool files (`queue_general.pool_*`) of the buggy execution so that we can debug the data structure using it.
+
+For each primitive and DS, we observe *no* test failures for 1M runs with thread crashes.
+
+##### Supported tests
+
+###### For primitives
+
+- `checkpoint`
+- `detectable_cas`
+
+###### For data structures
+
+- `queue_general`: ***MSQ-mmt-O0*** (in the paper)
+- `queue_lp`: ***MSQ-mmt-O1***
+- `queue`: ***MSQ-mmt-O2***
+- `queue_comb` ***CombQ-mmt***
+- `treiber_stack`: ***TreiberS-mmt***
+- `list`: ***List-mmt***
+- `clevel`: ***Clevel-mmt***
+
+
+#### Persistency Bug Finding Test (Yashme/PSan)
+
+We evaluate the correctness of our primitives and data structures using existing bug finding tools, [Yashme](https://plrg.ics.uci.edu/yashme/) and [PSan](https://plrg.ics.uci.edu/psan/). They are finding persistent bugs such as persistency race, missing flushes based on model checking framework [Jaaru](https://plrg.ics.uci.edu/jaaru/).
+
+##### Install
+
+```bash
+cd evaluation/correctness/pmcheck
+./scripts/build_pmcpass.sh # may take more than 10 minutes to build LLVM
+./build.sh
+```
+
+##### Run
+
+You can test each data structure with the following command:
+
+```bash
+./run.sh [tested DS] [tool] [mode]
+```
+
+where
+- `tested DS` should be replaced with one of supported tests (listed below).
+- `tool`: `yashme` or `psan`
+- `mode`: `random` or `model` (random testing mode or model checking mode, respectively)
+
+For example, the following command is to test the **MSQ-mmt-O0** using **PSan** with random mode:
+
+```bash
+./run.sh queue_O0 psan random
+```
+
+Then the output is printed out like below:
+
+```
+Jaaru
+Copyright (c) 2021 Regents of the University of California. All rights reserved.
+Written by Hamed Gorjiara, Brian Demsky, Peizhao Ou, Brian Norris, and Weiyu Luo
+
+Execution 1 at sequence number 198
+nextCrashPoint = 83987	max execution seqeuence number: 88289
+nextCrashPoint = 2876	max execution seqeuence number: 4161
+Execution 2 at sequence number 4161
+nextCrashPoint = 1106	max execution seqeuence number: 4171
+nextCrashPoint = 1583	max execution seqeuence number: 4181
+Execution 3 at sequence number 4181
+nextCrashPoint = 3756	max execution seqeuence number: 4166
+nextCrashPoint = 31	max execution seqeuence number: 4176
+Execution 4 at sequence number 4176
+nextCrashPoint = 2400	max execution seqeuence number: 4181
+
+...
+
+******* Model-checking complete: *******
+Number of complete, bug-free executions: 10
+Number of buggy executions: 0
+Total executions: 10
+```
+
+For each primitive and DS, we observe *no* buggy executions for 1K runs with random mode.
+
+##### Supported tests
+
+###### For primitives
+
+- `checkpoint`
+- `detectable_cas`
+
+###### For data structures
+
+- `queue_O0`: ***MSQ-mmt-O0*** (in the paper)
+- `queue_O1`: ***MSQ-mmt-O1***
+- `queue_O2`: ***MSQ-mmt-O2***
+- `queue_comb` ***CombQ-mmt***
+- `treiber_stack`: ***TreiberS-mmt***
+- `list`: ***List-mmt***
+- `clevel`: ***Clevel-mmt***
+
+
 
 ### G3: Reproducing the performance evaluation (§6.2)
 
-For each DS evaluation, see the corresponding README below:
+#### Performance Evaluation of CAS
 
-- [Detectable CAS](./evaluation/performance/cas/README.md)
-- [Detectable List](./evaluation/performance/list/README.md)
-- [Detectable Queue](./evaluation/performance/queue/README.md)
-- [Detectable Hash Table](./evaluation/performance/hash/README.md)
+We evaluate the performance of CASes with our benchmark. Each implementation of comparison targets exists in [evaluation/performance/cas/src/](evaluation/performance/cas/src/).
+
+##### Install
+
+```bash
+cd evaluation/performance/cas
+./build.sh
+```
+
+##### Run the entire benchmark
+
+```bash
+./run.sh
+```
+
+This creates CSV data and plots under `./out/`.
+
+##### Run a single benchmark
+
+You can run a single benchamrk,
+
+```bash
+./target/release/cas_bench -f <filepath> -a <target> -c <locations> -t <threads> -o <output>
+```
+
+where
+- `target`: mcas (CAS-mmt at paper), pmwcas, nrlcas
+- `locations`: number of locations
+
+For example, following command measure the throughput and memory usage of `mcas` when using `1000` locations and `16` threads.
+
+```bash
+./target/release/cas_bench -f /mnt/pmem0/mcas.pool -a mcas -c 1000 -t 16 -o ./out/cas-mmt.csv
+```
+
+- This creates raw CSV data under `./out/cas-mmt.csv`.
+- To pinning NUMA node 0, you should attach `numactl --cpunodebind=0 --membind=0` at the front of the command.
+
+For detailed usage information,
+
+```sh
+./target/release/cas_bench -h
+```
+
+#### Performance Evaluation of List
+
+We evaluate the performance of memento-based list compared to other detectable list. Each implementation of comparison targets exists in [evaluation/performance/list/src/](evaluation/performance/list/src/). To evaluate the performance of detectable list based on `Tracking`, `Capsule`, `Casule-Opt`, we use the implementations published by [Detectable Recovery of Lock-Free Data Structures (PPoPP '22)](https://dl.acm.org/doi/pdf/10.1145/3503221.3508444) authors.
+
+##### Install
+
+```bash
+cd evaluation/performance/list
+./build.sh
+```
+
+##### Run the entire benchmark
+
+```bash
+./run.sh
+```
+
+This creates CSV data and plots under `./out/`.
+
+##### Run a single benchmark
+
+###### List-mmt
+
+You can run a single benchamrk for list-mmt,
+
+```bash
+./target/release/bench -f <filepath> -a list-mmt  -t <threads> -k <key-range> --insert-ratio <insert-ratio> --delete-ratio <delete-ratio> --read-ratio <read-ratio> -o <outpath>
+```
+
+For example, following command measure the throughput of `list-mmt` with read-intensive workload, when using `16` threads and `500` key ranges.
+
+```bash
+./target/release/bench -f /mnt/pmem0/list-mmt.pool -a list-mmt -t 16 -k 500 --insert-ratio 0.15 --delete-ratio 0.15 --read-ratio 0.7 -o ./out/list-mmt.csv
+```
+
+- This creates raw CSV data under `./out/list-mmt.csv`.
+- To pinning NUMA node 0, you should attach `numactl --cpunodebind=0 --membind=0` at the front of the command.
+
+
+For detailed usage,
+
+```
+./target/release/bench -h
+```
+
+###### Tracking, Capsules, Capsules-Opt
+
+We refer to https://github.com/ConcurrentDistributedLab/Tracking.
+
+
+
+
+#### Performance Evaluation of Queue
+
+We evaluate the performance of memento-based queues and other queues. Each implementation of comparison targets exists in [evaluation/performance/queue/src/](evaluation/performance/queue/src/).
+
+
+##### Install
+
+```bash
+cd evaluation/performance/queue
+./build.sh
+```
+
+##### Run the entire benchmark
+
+```bash
+./run.sh
+```
+
+This creates CSV data and plots under `./out/`.
+
+##### Run a single benchmark
+
+You can run a single benchamrk,
+
+```bash
+./target/release/bench -f <filepath> -a <target> -k <kind> -t <threads> -i <init_nodes> -o <output>
+```
+
+where
+- `target`: memento_queue (***MSQ-mmt-O2*** in the paper), memento_queue_lp (***MSQ-mmt-O1*** in the paper), memento_queue_general (***MSQ-mmt-O0*** in the paper), memento_queue_comb (***CombQ-mmt*** in the paper), durable_queue, log_queue, dss_queue, pbcomb_queue, crndm_queue
+- `kind`: pair (enq-deq pair), prob{n} (n% probability enq or 100-n% deq)
+
+For example, following command measure the throughput of `memento_queue` with `pair` workload, when using `16` threads.
+
+```bash
+./target/release/bench -f /mnt/pmem0/mmt.pool -a memento_queue -k pair -t 16 -i 0 -o ./out/mmt.csv
+```
+
+- This creates raw CSV data under `./out/mmt.csv`.
+- To pinning NUMA node 0, you should attach `numactl --cpunodebind=0 --membind=0` at the front of the command.
+
+
+For detailed usage information,
+
+```
+./target/release/bench -h
+```
+
+###### Benchmarking PMDK and Clobber-NVM queue
+
+To run a single benchmark for PMDK and Clobber-NVM queues, you should use separate executables with the following commands.
+
+PMDK queue:
+
+```bash
+./target/release/bench_cpp <filepath> <target> <kind> <threads> <duration> <init_nodes> <output> # <target> should be "pmdk_queue"
+```
+
+Clobber-NVM queue:
+
+```bash
+PMEM_IS_PMEM_FORCE=1 ./src/clobber-nvm/apps/queue/benchmark-clobber -k <kind> -t <threads> -d 8 -s <duration> -i <init_nodes> -o <output>
+```
+
+
+#### Performance Evaluation of Hash
+
+We used the same benchmark as [Persistent Memory Hash Indexes: An Experimental Evaluation (VLDB '21)](http://vldb.org/pvldb/vol14/p785-chen.pdf) to evaluate our hash. Each implementation of comparison targets exists in [evaluation/performance/hash/hash/](evaluation/performance/hash/hash/).
+
+##### Install
+
+```bash
+ulimit -s 8192000
+cd evaluation/performance/hash
+./build.sh
+```
+
+##### Run the entire benchmark
+
+```bash
+./run.sh
+```
+
+This creates raw txt that containing measuring result and plots under `./out/`.
+
+##### Run a single benchmark
+
+You can run a single benchamrk with PiBench executable,
+
+```bash
+cd bin
+./PiBench [lib.so] [args...]
+```
+
+where
+- `[lib.so]`: `clevel.so`, `clevel_rust.so` (Clevel-mmt at paper)
+- `[args...]`: please see [Persistent Memory Hash Indexes repo](https://github.com/HNUSystemsLab/HashEvaluation#run-with-pibench).
+
+For example, following command measure the search throughput of `clevel_rust` when using 32 threads with uniform distribution.
+
+```bash
+./bin/PiBench ./bin/clevel_rust.so \
+    -S 16777216 \       # initial capacity
+    -p 200000000 \      # number of operations
+    -r 1 -i 0 -d 0 \    # read 100%, insert 0%, delete 0%
+    -M THROUGHPUT --distribution UNIFORM \
+    -t 32 \
+```
+

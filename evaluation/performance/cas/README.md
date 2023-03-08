@@ -1,6 +1,6 @@
 # Performance Evaluation of CAS
 
-We evaluate the performance of CASes with our benchmark. Each implementation of comparion targets exists in [`./src/`](./src)
+We evaluate the performance of CASes with our benchmark. Each implementation of comparison targets exists in [`./src/`](./src)
 
 ## Run the entire benchmark
 
@@ -16,7 +16,6 @@ This creates CSV data and plots under `./out/`.
 You can run a single benchamrk,
 
 ```bash
-./build.sh
 ./target/release/cas_bench -f <filepath> -a <target> -c <locations> -t <threads> -o <output>
 ```
 
