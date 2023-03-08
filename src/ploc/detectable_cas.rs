@@ -87,6 +87,10 @@ impl CasOwn {
     fn store(&self, t: CasTimestamp) {
         self.0.store(t.into(), Ordering::Relaxed);
     }
+
+    pub(crate) fn clear(&self) {
+        self.store(CasTimestamp(0));
+    }
 }
 
 #[derive(Debug)]
@@ -130,6 +134,12 @@ impl CasHelp {
         let t = Timestamp::from(self.inner[1].load(Ordering::SeqCst));
 
         std::cmp::max(f, t)
+    }
+
+    pub(crate) fn clear(&self) {
+        self.inner[0].store(0, Ordering::Relaxed);
+        self.inner[1].store(0, Ordering::Relaxed);
+        persist_obj(self, false);
     }
 }
 

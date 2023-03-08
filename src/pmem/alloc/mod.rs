@@ -107,8 +107,8 @@ pub trait Collectable: Sized {
     ///
     /// ```
     /// # use memento::pmem::pool::PoolHandle;
-    /// # use memento::pmem::ralloc::GarbageCollection;
-    /// # use memento::pmem::ralloc::Collectable;
+    /// # use memento::pmem::alloc::GarbageCollection;
+    /// # use memento::pmem::alloc::Collectable;
     /// # use memento::pmem::ptr::PPtr;
     /// # struct Inner {}
     /// # impl Collectable for Inner {

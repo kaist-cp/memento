@@ -7,7 +7,7 @@ use crossbeam_utils::{Backoff, CachePadded};
 use memento::pepoch::atomic::Pointer;
 use memento::pepoch::{PAtomic, PDestroyable, POwned};
 use memento::ploc::Handle;
-use memento::pmem::ralloc::{Collectable, GarbageCollection};
+use memento::pmem::alloc::{Collectable, GarbageCollection};
 use memento::pmem::{mfence, persist_obj, pool::*, sfence, PPtr};
 use memento::{Collectable, Memento, PDefault};
 use std::sync::atomic::AtomicUsize;
