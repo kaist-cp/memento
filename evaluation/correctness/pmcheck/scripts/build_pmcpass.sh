@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/bash
 
 # Build PMCPass (jaaru-llvm-pass)
 
@@ -6,7 +6,7 @@ set -e
 
 DIR_BASE=$(dirname $(realpath $0))/../
 DIR_MMT=$DIR_BASE/../../..
-BUILD=$DIR_BASE/build
+BUILD=$DIR_BASE/.build
 mkdir -p $BUILD
 cd $BUILD
 pwd

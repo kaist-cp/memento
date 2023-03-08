@@ -11,7 +11,6 @@ extern "C"
     void test_queue_O2();
     void test_queue_comb();
     void test_treiber_stack();
-    void test_elim_stack();
     void test_list();
     void test_clevel();
 }
@@ -55,10 +54,6 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "treiber_stack") == 0)
     {
         test_treiber_stack();
-    }
-    else if (strcmp(argv[1], "elim_stack") == 0)
-    {
-        test_elim_stack();
     }
     else if (strcmp(argv[1], "list") == 0)
     {

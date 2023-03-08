@@ -8,7 +8,7 @@ DIR_BASE=$(dirname $(realpath $0))/../
 DIR_MMT=$DIR_BASE/../../..
 
 TARGET="memento"
-BUILD=$DIR_BASE/build
+BUILD=$DIR_BASE/.build
 mkdir -p $BUILD
 
 # 1. Rust src -> Rust IR

@@ -216,12 +216,6 @@ pub mod test_pmcheck {
         ds::treiber_stack::test::pushpop();
     }
 
-    /// Test Elim stack
-    #[no_mangle]
-    pub extern "C" fn test_elim_stack() {
-        ds::elim_stack::tests::pushpop();
-    }
-
     /// Test List
     #[no_mangle]
     pub extern "C" fn test_list() {

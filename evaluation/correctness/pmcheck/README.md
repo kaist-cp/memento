@@ -1,4 +1,4 @@
-# Persistency Bug Test (Yashme/PSan)
+# Persistency Bug Finding Test (Yashme/PSan)
 
 We evaluate the correctness of our primitives and data structures using existing bug finding tools, ***[Yashme](https://plrg.ics.uci.edu/yashme/)*** and ***[PSan](https://plrg.ics.uci.edu/psan/)***. They are finding persistent bugs such as persistency race, missing flushes based on model checking framework ***[Jaaru](https://plrg.ics.uci.edu/jaaru/)***.
 
@@ -7,16 +7,17 @@ We evaluate the correctness of our primitives and data structures using existing
 You can test each data structure with the following command:
 
 ```bash
-./build.sh # specially built for the persistency bug test
+./scripts/build_pmcpass.sh # may take more than 10 minutes to build LLVM
+./build.sh
 ./run.sh [tested DS] [tool] [mode]
 ```
 
-where 
+where
 - `tested DS` should be replaced with one of supported tests (listed below).
-- `tool`: `psan` or `yashme`
-- `mode`: `model` or `random` (model checking mode or random testing mode)
+- `tool`: `yashme` or `psan`
+- `mode`: `random` or `model` (random testing mode or model checking mode, respectively)
 
-For example, the following command is to test the ***MSQ-mmt-O0*** using ***PSan*** with model checking mode:
+For example, the following command is to test the ***MSQ-mmt-O0*** using ***PSan*** with random mode:
 
 ```bash
 ./run.sh queue_O0 psan random
@@ -49,6 +50,8 @@ Number of buggy executions: 0
 Total executions: 10
 ```
 
+For each primitive and DS, we observe *no* buggy executions for 1K runs with random mode.
+
 ## Supported tests
 
 ### For primitives
@@ -58,10 +61,10 @@ Total executions: 10
 
 ### For data structures
 
-- `queue_O0`: ***MSQ-mmt-O0*** in the paper
-- `queue_O1`: ***MSQ-mmt-O1*** in the paper
-- `queue_O2`: ***MSQ-mmt-O2*** in the paper
-- `queue_comb` ***CombQ-mmt***in the paper
-- `treiber_stack`: ***TreiberS-mmt*** in the paper
+- `queue_O0`: ***MSQ-mmt-O0*** (in the paper)
+- `queue_O1`: ***MSQ-mmt-O1***
+- `queue_O2`: ***MSQ-mmt-O2***
+- `queue_comb` ***CombQ-mmt***
+- `treiber_stack`: ***TreiberS-mmt***
 - `list`: ***List-mmt***
-- `clevel`: ***Clevel-mmt*** in the paper
+- `clevel`: ***Clevel-mmt***

@@ -12,7 +12,11 @@ RUN apt-get update && \
     kmod sudo && \
     pip3 install --user pandas matplotlib gitpython && \
     ulimit -s 8192000 && \
-    evaluation/correctness/build.sh && \
+    git submodule update --init --recursive && \
+    (cd ext/pmdk-rs; git apply ../pmdk-rs.patch) && \
+    evaluation/correctness/tcrash/build.sh && \
+    evaluation/correctness/pmcheck/scripts/build_pmcpass.sh && \
+    evaluation/correctness/pmcheck/build.sh && \
     evaluation/cas/build.sh && \
     evaluation/queue/build.sh && \
     evaluation/list/build.sh && \

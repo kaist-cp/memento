@@ -6,7 +6,7 @@ set -e
 
 DIR_BASE=$(dirname $(realpath $0))/..
 DIR_MMT=$DIR_BASE/../../../
-BUILD=$DIR_BASE/build
+BUILD=$DIR_BASE/.build
 
 # Build executable
 LLVMDIR=$BUILD/llvm-project # LLVM 14.0.4

@@ -3,7 +3,7 @@
 set -e
 
 DIR_BASE=$(dirname $(realpath $0))/../
-BUILD=$DIR_BASE/build
+BUILD=$DIR_BASE/.build
 mkdir -p $BUILD
 cd $BUILD
 

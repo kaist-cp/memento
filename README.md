@@ -88,7 +88,7 @@ You can re-build a docker image by `docker build -t memento memento/`. (It may t
 To build our framework including detectable operations, data structures and SMR libraries:
 ```sh
 git submodule update --init --recursive
-cd ext/pmdk-rs; git apply ../pmdk-rs.patch 
+(cd ext/pmdk-rs; git apply ../pmdk-rs.patch)
 cargo build --release
 ```
 
@@ -99,8 +99,6 @@ cargo build --release --features no_persist
 
 
 ## Step-by-Step Instructions
-
-### Goal
 
 This artifact aims to achieve the following goals:
 
@@ -144,9 +142,10 @@ This artifact aims to achieve the following goals:
 
 ### G2: Reproducing the detectability evaluation (§6.1)
 
-See the README below:
+For each correctness test, see the corresponding README below:
 
-- [Detecability evaluation](./evaluation/correctness/README.md)
+- [Thread Crash Test](./evaluation/correctness/tcrash/README.md)
+- [Persistency Bug Finding Test](./evaluation/correctness/pmcheck/README.md)
 
 ### G3: Reproducing the performance evaluation (§6.2)
 

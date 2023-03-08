@@ -69,10 +69,10 @@ For each primitive and DS, we observe *no* test failures for 1M runs with thread
 
 ### For data structures
 
-- `queue_general`: ***MSQ-mmt-O0*** in the paper
-- `queue_lp`: ***MSQ-mmt-O1*** in the paper
-- `queue`: ***MSQ-mmt-O2*** in the paper
-- `queue_comb` ***CombQ-mmt***in the paper
-- `treiber_stack`: ***TreiberS-mmt*** in the paper
+- `queue_general`: ***MSQ-mmt-O0*** (in the paper)
+- `queue_lp`: ***MSQ-mmt-O1***
+- `queue`: ***MSQ-mmt-O2***
+- `queue_comb` ***CombQ-mmt***
+- `treiber_stack`: ***TreiberS-mmt***
 - `list`: ***List-mmt***
-- `clevel`: ***Clevel-mmt*** in the paper
+- `clevel`: ***Clevel-mmt***
