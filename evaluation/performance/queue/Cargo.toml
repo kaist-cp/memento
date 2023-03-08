@@ -10,9 +10,9 @@ name = "bench"
 path = "src/main.rs"
 
 [dependencies]
-memento = { path = "../../" }
-crossbeam-epoch = { path = "../../crossbeam-persistency/crossbeam-epoch" }
-crossbeam-utils = { path = "../../crossbeam-persistency/crossbeam-utils" }
+memento = { path = "../../../" }
+crossbeam-epoch = { path = "../../../crossbeam-persistency/crossbeam-epoch" }
+crossbeam-utils = { path = "../../../crossbeam-persistency/crossbeam-utils" }
 rand = "0.8.4"
 array-init = "2.0.0"
 regex = "1.5.4"
