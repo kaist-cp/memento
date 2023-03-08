@@ -19,7 +19,7 @@ cp $DIR_MMT/target/release/deps/${TARGET}-*.ll $BUILD/$TARGET.ll
 echo "good"
 
 # 2. IR Instrumenting using PMCPass
-LLVMDIR=/dev/shm/llvm-project # LLVM 14.0.4
+LLVMDIR=$BUILD/llvm-project # LLVM 14.0.4
 LLVMPASS=${LLVMDIR}/build/lib/libPMCPass.so
 CC=${LLVMDIR}/build/bin/clang++
 OPT=${LLVMDIR}/build/bin/opt

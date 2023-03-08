@@ -9,7 +9,7 @@ DIR_MMT=$DIR_BASE/../../../
 BUILD=$DIR_BASE/build
 
 # Build executable
-LLVMDIR=/dev/shm/llvm-project # LLVM 14.0.4
+LLVMDIR=$BUILD/llvm-project # LLVM 14.0.4
 LLVMPASS=$LLVMDIR/build/lib/libPMCPass.so
 CC=$LLVMDIR/build/bin/clang
 BUILTIN=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcompiler_builtins-16d69221f10b0282.rlib
