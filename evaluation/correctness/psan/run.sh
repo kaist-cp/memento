@@ -5,7 +5,6 @@ set -e
 DIR_BASE=$(dirname $(realpath $0))
 BUILD=$DIR_BASE/build
 OUT=$DIR_BASE/out
-PMCHECK=$BUILD/pmcheck/bin
 RUSTSTD=/home/ubuntu/.rustup/toolchains/nightly-2022-05-26-x86_64-unknown-linux-gnu/lib
 mkdir -p $OUT
 OUT_LOG=/$OUT/debug.log
@@ -24,9 +23,11 @@ MODE=$3
 # Set
 if [ "${TOOL}" == "yashme" ]; then
     # Yashme (https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/pmdk-races.sh)
+    PMCHECK=$BUILD/pmcheck_yashme/bin
     OPT="-y" # -v, -p for debugging
 elif [ "${TOOL}" == "psan" ]; then
     # PSan (https://github.com/uci-plrg/psan-vagrant/blob/master/data/pmdk-bugs.sh)
+    PMCHECK=$BUILD/pmcheck_psan/bin
     OPT="-o2"
 else
     echo "invalid TOOL: $TOOL (possible TOOL: yashme, psan)"
@@ -49,9 +50,8 @@ export PMCheck="-d/mnt/pmem0/test/$TARGET/$TARGET.pool_valid $OPT"
 rm -rf PMCheckOutput*
 rm -rf /mnt/pmem0/*
 ulimit -s 82920000
-mkdir -p $OUT/psan
-mkdir -p $OUT/psan/$TOOL
-# RUST_MIN_STACK=100000000 ./psan $TARGET 2>&1>$OUT/psan/$TOOL/$TARGET.log
-RUST_MIN_STACK=100000000 ./psan $TARGET
+mkdir -p $OUT/$TOOL
+# RUST_MIN_STACK=100000000 ./test_mmt_$TOOL $TARGET 2>&1>>$OUT/$TOOL/$TARGET.log
+RUST_MIN_STACK=100000000 ./test_mmt_$TOOL $TARGET 
 echo "[Finish] target: $TARGET, TOOL: $TOOL, (option: $OPT)"
 dmsg "[Finish] target: $TARGET, TOOL: $TOOL, (option: $OPT)"

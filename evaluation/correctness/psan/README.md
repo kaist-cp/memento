@@ -4,29 +4,6 @@ We evaluate the correctness of our primitives and data structures using existing
 
 ## Usage
 
-<!-- First, you should build the `libmemento.a` and executable to test our implementations on the top of ***Jaaru***.
-
-### Build libmemento.a
-
-```bash
-./scripts/build_pmcpass.sh
-./scripts/build_memento.sh # llvm instrumentation using PMCPass
-```
-
-#### Build executable
-
-```bash
-./scripts/build_pmcheck.sh [tool] # tool: yashme, psan
-./scripts/build_exe.sh
-```
-### Run
-
-Then you can test each data structure with the following command:
-
-```bash
-./scripts/run.sh [tested DS]
-``` -->
-
 You can test each data structure with the following command:
 
 ```bash
@@ -42,7 +19,7 @@ where
 For example, the following command is to test the ***MSQ-mmt-O0*** using ***PSan*** with model checking mode:
 
 ```bash
-./scripts/run.sh queue_O0 psan model
+./run.sh queue_O0 psan model
 ```
 
 Then the output is printed out like below:
