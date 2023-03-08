@@ -19,7 +19,7 @@ where
 For example, the following command is to test the ***MSQ-mmt-O0*** using ***PSan*** with model checking mode:
 
 ```bash
-./run.sh queue_O0 psan model
+./run.sh queue_O0 psan random
 ```
 
 Then the output is printed out like below:

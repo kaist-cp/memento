@@ -22,7 +22,7 @@ MODE=$3
 
 # Set
 case $1 in
-  checkpoint|detectable_cas|queue_O0|queue_O1|queue_O2|queue_comb|treiber_stack|list|clevel)
+  simple|checkpoint|detectable_cas|queue_O0|queue_O1|queue_O2|queue_comb|treiber_stack|list|clevel)
     ;;
   *)
     echo "$1 is not a valid test."
