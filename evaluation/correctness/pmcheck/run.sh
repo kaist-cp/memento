@@ -32,7 +32,7 @@ case $1 in
 esac
 if [ "${TOOL}" == "yashme" ]; then
     # Yashme (https://github.com/uci-plrg/pmrace-vagrant/blob/master/data/pmdk-races.sh)
-    PMCHECK=$BUILD/pmcheck_yashme/bin
+    PMCHECK=$BUILD/pmcheck_psan/bin
     OPT="-y" # -v, -p for debugging
 elif [ "${TOOL}" == "psan" ]; then
     # PSan (https://github.com/uci-plrg/psan-vagrant/blob/master/data/pmdk-bugs.sh)
