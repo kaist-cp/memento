@@ -389,7 +389,7 @@ pub(crate) mod test {
     /// Test function for psan
     #[cfg(feature = "pmcheck")]
     pub(crate) fn enqdeq() {
-        const FILE_NAME: &str = "queue";
+        const FILE_NAME: &str = "queue_O2";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
         run_test::<TestRootObj<Queue<TestValue>>, EnqDeq>(
             FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,

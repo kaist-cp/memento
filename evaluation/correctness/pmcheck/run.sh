@@ -57,7 +57,7 @@ dmsg "[Run] target: $TARGET, TOOL: $TOOL, (option: $OPT)"
 export LD_LIBRARY_PATH=$PMCHECK:$RUSTSTD
 export PMCheck="-d/mnt/pmem0/test/$TARGET/$TARGET.pool_valid $OPT"
 rm -rf PMCheckOutput*
-rm -rf /mnt/pmem0/*
+rm -rf /mnt/pmem0/test/$TARGET/*
 ulimit -s 82920000
 mkdir -p $OUT/$TOOL
 # RUST_MIN_STACK=100000000 ./test_mmt_$TOOL $TARGET 2>&1>>$OUT/$TOOL/$TARGET.log
