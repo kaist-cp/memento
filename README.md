@@ -52,10 +52,10 @@ You can either reuse a pre-built docker image `memento-image.tar` or manually bu
 
 ### Option 1: Running on Docker (Loading Docker Image)
 
-You can reuse a pre-built docker image by loading `memento-image.tar.gz`:
+You can reuse a pre-built docker image by loading `memento-image.tar`:
 
 ```sh
-docker load -i memento-image.tar.gz
+docker load -i memento-image.tar
 docker run -it -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento  # persistent memory must be mounted at /mnt/pmem0
 ```
 
