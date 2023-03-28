@@ -7,7 +7,7 @@ function show_cfg() {
     echo "PMEM path: $(realpath ${PMEM_PATH})"
     echo "Test count: ${TEST_CNT}"
     echo "Test duration: ${TEST_DUR}s"
-    echo "Total time: $((${TEST_DUR}*${TEST_CNT}*${#THREADS[@]}*${#KEY_RANGES[@]}*${#DS[@]}))s" # duration * count * # threads * # key_ranges * # DSs
+    echo "Total time: $((${TEST_DUR}*${TEST_CNT}*${#THREADS[@]}*${#KEY_RANGES[@]}*${#DS[@]}*${#KINDS[@]}))s" # duration * count * # threads * # key_ranges * # DSs * KIND
     echo ""
 }
 
@@ -51,6 +51,7 @@ TEST_DUR=10
 TEST_CNT=5
 KEY_RANGES=(20 100 500 2000)
 DS=("memento_list" "tracking" "capusles")
+KINDS=("read" "update")
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out

@@ -56,11 +56,9 @@ rm -rf ${PMEM_PATH}/*.pool*
 show_cfg
 
 # 2. Benchmarking cas performance
-# benches cas
-benches mcas
-# benches pcas
-benches pmwcas
-benches nrlcas
+for ds in ${DS[@]}; do
+    benches $ds
+done
 
 # 3. Plot and finish
 python3 plot.py

@@ -325,10 +325,10 @@ cd memento/evaluation/performance/cas
 ##### Run the entire benchmark
 
 ```bash
-./run.sh
+./run.sh  # This may take about 3 hours
 ```
 
-This may take 9900 seconds and creates CSV data and plots under `./out/`.
+This creates CSV data and plots under `./out/`.
 
 ##### Run a single benchmark
 
@@ -371,10 +371,10 @@ cd memento/evaluation/performance/list
 ##### Run the entire benchmark
 
 ```bash
-./run.sh
+./run.sh  # This may take about 7 hours
 ```
 
-This may take 13200 seconds and creates CSV data and plots under `./out/`.
+This creates CSV data and plots under `./out/`.
 
 ##### Run a single benchmark
 
@@ -424,7 +424,7 @@ cd memento/evaluation/performance/queue
 ##### Run the entire benchmark
 
 ```bash
-./run.sh
+./run.sh  # This may take more than 14 hours
 ```
 
 This creates CSV data and plots under `./out/`.
@@ -489,7 +489,7 @@ cd memento/evaluation/performance/hash
 ##### Run the entire benchmark
 
 ```bash
-./run.sh
+./run.sh  # This may take about 30 hours
 ```
 
 This creates raw txt that containing measuring result and plots under `./out/`.

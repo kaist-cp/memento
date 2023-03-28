@@ -6,7 +6,7 @@ We evaluate the performance of memento-based queues and other queues. Each imple
 
 ```bash
 ./build.sh
-./run.sh
+./run.sh  # This may take more than 14 hours
 ```
 
 This creates CSV data and plots under `./out/`.

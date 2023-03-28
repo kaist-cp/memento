@@ -8,7 +8,7 @@ We used the same benchmark as [Persistent Memory Hash Indexes: An Experimental E
 ```bash
 ulimit -s 8192000
 ./build.sh
-./run.sh
+./run.sh  # This may take about 30 hours
 ```
 
 This creates raw txt that containing measuring result and plots under `./out/`.

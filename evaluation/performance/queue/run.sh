@@ -7,6 +7,7 @@ function show_cfg() {
     echo "PMEM path: $(realpath ${PMEM_PATH})"
     echo "Test count: ${TEST_CNT}"
     echo "Test duration: ${TEST_DUR}s"
+    echo "Total time: > $((${TEST_DUR}*${TEST_CNT}*${#THREADS[@]}*${#KINDS[@]}*${#DS[@]}))s" # duration * count * # threads * # kinds * # DSs
     echo ""
 }
 
@@ -58,6 +59,8 @@ PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
 TEST_CNT=5            # test cnt per 1 bench
 TEST_DUR=10           # test duration
+KINDS=("pair" "prob20" "prob50" "prob80")
+DS=("memento_queue" "memento_queue_lp" "memento_queue_general" "memento_queue_comb" "durable_queue" "log_queue" "dss_queue" "pbcomb_queue" "pmdk_queue" "crndm_queue" "clobber_queue")
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
@@ -67,24 +70,16 @@ rm -rf ${PMEM_PATH}/*.pool*
 show_cfg
 
 # 2. Benchmarking queue performance
-for kind in pair prob20 prob50 prob80; do
+for kind in ${KINDS[@]}; do
     if [ $kind == pair ]; then
         init_nodes=0
     else
         init_nodes=10000000
     fi
-    benches memento_queue $kind $init_nodes
-    benches memento_queue_lp $kind $init_nodes
-    benches memento_queue_general $kind $init_nodes
-    benches memento_queue_comb $kind $init_nodes
-    benches durable_queue $kind $init_nodes
-    benches log_queue $kind $init_nodes
-    benches dss_queue $kind $init_nodes
-    benches pbcomb_queue $kind $init_nodes
-    # benches pbcomb_queue_full_detectable $kind $init_nodes
-    benches pmdk_queue $kind $init_nodes
-    benches crndm_queue $kind $init_nodes
-    benches clobber_queue $kind $init_nodes
+
+    for ds in ${DS[@]}; do
+        benches $ds $kind $init_nodes
+    done
 done
 
 # 3. Plot and finish

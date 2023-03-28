@@ -6,10 +6,10 @@ We evaluate the performance of memento-based list compared to other detectable l
 
 ```bash
 ./build.sh
-./run.sh
+./run.sh  # This may take about 7 hours
 ```
 
-This may take 13200 seconds and creates CSV data and plots under `./out/`.
+This creates CSV data and plots under `./out/`.
 
 ## Run a single benchmark
 

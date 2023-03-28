@@ -6,10 +6,10 @@ We evaluate the performance of CASes with our benchmark. Each implementation of 
 
 ```bash
 ./build.sh
-./run.sh
+./run.sh  # This may take about 3 hours
 ```
 
-This may take 9900 seconds and creates CSV data and plots under `./out/`.
+This creates CSV data and plots under `./out/`.
 
 ## Run a single benchmark
 
