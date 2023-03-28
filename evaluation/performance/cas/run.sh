@@ -7,6 +7,7 @@ function show_cfg() {
     echo "PMEM path: $(realpath ${PMEM_PATH})"
     echo "Test count: ${TEST_CNT}"
     echo "Test duration: ${TEST_DUR}s"
+    echo "Total time: $((${TEST_DUR}*${TEST_CNT}*${#THREADS[@]}*${#CONTENTIONS[@]}*${#DS[@]}))s" # duration * count * # threads * # contentions * # DSs
     echo ""
 }
 
@@ -45,6 +46,7 @@ THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
 CONTENTIONS=(1 1000 1000000)
 TEST_CNT=5            # test cnt per 1 bench
 TEST_DUR=10           # test duration
+DS=("mcas" "pmwcas" "nrlcas")
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out

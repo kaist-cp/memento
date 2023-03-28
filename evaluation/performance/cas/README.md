@@ -9,7 +9,7 @@ We evaluate the performance of CASes with our benchmark. Each implementation of 
 ./run.sh
 ```
 
-This creates CSV data and plots under `./out/`.
+This may take 9900 seconds and creates CSV data and plots under `./out/`.
 
 ## Run a single benchmark
 
