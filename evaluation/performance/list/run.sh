@@ -7,6 +7,7 @@ function show_cfg() {
     echo "PMEM path: $(realpath ${PMEM_PATH})"
     echo "Test count: ${TEST_CNT}"
     echo "Test duration: ${TEST_DUR}s"
+    echo "Total time: $((${TEST_DUR}*${TEST_CNT}*${#THREADS[@]}*${#KEY_RANGES[@]}*${#DS[@]}))s" # duration * count * # threads * # key_ranges * # DSs
     echo ""
 }
 
@@ -48,6 +49,8 @@ PMEM_PATH=/mnt/pmem0
 THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
 TEST_DUR=10
 TEST_CNT=5
+KEY_RANGES=(20 100 500 2000)
+DS=("memento_list" "tracking" "capusles")
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
@@ -58,7 +61,7 @@ show_cfg
 
 # 2. Benchmarking list performance
 
-for key_range in 20 100 500 2000; do
+for key_range in ${KEY_RANGES[@]}; do
     ### Read & Update intensive for tracking
     (cd src/tracking; ./figures_compile.sh $key_range)
     (cd src/tracking; ./figures_run.sh $key_range $TEST_DUR $TEST_CNT)

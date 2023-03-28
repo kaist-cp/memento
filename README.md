@@ -374,7 +374,7 @@ cd memento/evaluation/performance/list
 ./run.sh
 ```
 
-This creates CSV data and plots under `./out/`.
+This may take 13200 seconds and creates CSV data and plots under `./out/`.
 
 ##### Run a single benchmark
 
