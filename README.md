@@ -20,7 +20,7 @@ deterministic replay, and prove that well-typed programs are detectably recovera
 - In §4, we present an implementation of our core language in the Intel-x86 Optane DCPMM
 architecture. Our construction is not tightly coupled with Intel-x86, and we believe that our
 implementation can be straightforwardly adapted to other PM architectures.
-- In §5, we adapt several volatile, lock-free DSs to satisfy our type system, automatically deriving
+- In §5, we adapt several volatile, lock-free data structures (DSs) to satisfy our type system, automatically deriving
 detectable, persistent lock-free DSs. These include a detectable, persistent linked-list [Harris
 2001], Treiber stack [Treiber 1986], Michael-Scott queue [Michael and Scott 1996], a combining
 queue, and Clevel hash table [Chen et al. 2020]. In doing so, we capture the optimizations of
@@ -34,7 +34,7 @@ comparably with the existing persistent DSs with and without detectability (§6.
 ## Artifacts
 
 - Implementation of the Memento framework and its primitives (§4 : `memento/`)
-- Implementation of several detectably persistent data structures based on Memento (§5 : `memento/`)
+- Implementation of several detectably persistent DSs based on Memento (§5 : `memento/`)
 - Evaluation programs (correctness and performance) (§7 : `memento/`)
 - Full result data of benchmark (§7 : `evaluation_data/`)
 - Appendix including full algorithm of CAS (§A), insert/delete operations (§B), advanced optimizations (§C), safe memory reclamation (§D), full evaluation results (§E), full core langue syntax, semantics and type system (§F, §G) and proof of detectability theorem (§H) (`appendix.pdf`)
@@ -48,15 +48,15 @@ You can either reuse a pre-built docker image `memento-image.tar` or manually bu
 
 - Ubuntu 20.04 or later
 - Intel® Optane™ Persistent Memory 100 Series (mounted at `/mnt/pmem0`).
-  + In case that a persistent memory is not mounted, you can still perform the *limited* evaluation on DRAM.
+  + In case that a persistent memory is not mounted, you can still perform a *limited* evaluation on DRAM.
 
 ### Option 1: Running on Docker (Loading Docker Image)
 
 You can reuse a pre-built docker image by loading `memento-image.tar.gz`:
 
 ```sh
-docker build -t memento .
-docker run -it -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento # peristent memory must be mounted at /mnt/pmem0
+docker load -i memento-image.tar.gz
+docker run -it -v /mnt/pmem0:/mnt/pmem0 --cap-add=SYS_NICE memento  # persistent memory must be mounted at /mnt/pmem0
 ```
 
 Here, `-v /mnt/pmem0:/mnt/pmem0` option is required to share the mounted persistent memory area with the container. Also, `--cap-add=SYS_NICE` option is needed to evalute performance by unifying all used cores into a single numa node.
@@ -73,7 +73,7 @@ You can re-build a docker image by `docker build -t memento memento/`. (It may t
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
 
-- For the evaluation purpose, some dependencies are additionally required:
+- Additional dependencies for evaluation:
 
   ```sh
   apt install build-essential clang python3-pip numactl \
@@ -85,8 +85,9 @@ You can re-build a docker image by `docker build -t memento memento/`. (It may t
 
 #### Build
 
-To build our framework including detectable operations, data structures and SMR libraries:
+To build our framework including detectable operations, DSs and SMR libraries:
 ```sh
+cd memento
 git submodule update --init --recursive
 (cd ext/pmdk-rs; git apply ../pmdk-rs.patch)
 cargo build --release
@@ -94,6 +95,7 @@ cargo build --release
 
 If persistent memory is *not* mounted on your machine, add a feature flag with `no_persist` as follows:
 ```sh
+cd memento
 cargo build --release --features no_persist
 ```
 
@@ -109,7 +111,7 @@ This artifact aims to achieve the following goals:
 ### G1: Locating our framework's core concepts (§4,5,B,D) in the development
 
 - `src/ploc/`: persistent memory (PM) infrastructure and primitive operations (§4, §B)
-- `src/ds/`: memento-based persistent, detectable data structures supporting exactly-once semantics (§5)
+- `src/ds/`: memento-based persistent, detectable DSs supporting exactly-once semantics (§5)
 - `crossbeam-persistency/`: safe memory reclamation scheme (§D)
 
 #### PM Infrastructure (§4.1)
@@ -129,7 +131,7 @@ This artifact aims to achieve the following goals:
 - `src/ds/list.rs`: A memento-based lock-free list that uses `DetectableCas` and `Checkpoint` based on Harris' ordered linked list. (**List-mmt**)
 - `src/ds/treiber_stack.rs`: A memento-based lock-free stack that uses `DetectableCas` and `Checkpoint` based on Treiber's stack. (**TreiberS-mmt**)
 - `src/ds/queue_general.rs`: A memento-based lock-free queue that uses `DetectableCas` and `Checkpoint` based on Michael-Scott Queue. (**MSQ-mmt-O0**)
-- `src/ds/queue_lp.rs`: A memento-based lock-free queue that uses `Insert`, `Delete` and `Checkpoint`. The difference from `queue.rs` is that this queue uses general `link-persist` technique rather than exploits data structure-specific invariant for issuing less flushes when loading shared pointer. (**MSQ-mmt-O1**)
+- `src/ds/queue_lp.rs`: A memento-based lock-free queue that uses `Insert`, `Delete` and `Checkpoint`. The difference from `queue.rs` is that this queue uses general `link-persist` technique rather than exploits DS-specific invariant for issuing less flushes when loading shared pointer. (**MSQ-mmt-O1**)
 - `src/ds/queue_comb.rs`: A memento-based combining queue that uses `Combining` operation. (**CombQ-mmt**)
 - `src/ds/clevel.rs`: A memento-based Clevel extensible hash table. We convert original Clevel to one using mementos. (**Clevel-mmt**)
 - `src/ds/queue.rs`: A memento-based lock-free queue that uses `Insert`, `Delete` and `Checkpoint` based on Michael-Scott Queue. (**MSQ-mmt-O2**)
@@ -149,13 +151,13 @@ We evaluate the detectability in case of thread crashes by randomly crashing an 
 ##### Install
 
 ```bash
-cd evaluation/correctness/tcrash
+cd memento/evaluation/correctness/tcrash
 ./build.sh # specially build for the thread crash test
 ```
 
 ##### Run
 
-You can test each data structure with the following command:
+You can test each DS with the following command:
 
 ```bash
 ./run.sh [tested DS]
@@ -206,7 +208,7 @@ run queue_general
 ^C
 ```
 
-It then generates a bug directory consisting of a text file containg specific error log (`info.txt`) and a PM pool files (`queue_general.pool_*`) of the buggy execution so that we can debug the data structure using it.
+It then generates a bug directory consisting of a text file containg specific error log (`info.txt`) and a PM pool files (`queue_general.pool_*`) of the buggy execution so that we can debug the DS using it.
 
 For each primitive and DS, we observe *no* test failures for 1M runs with thread crashes.
 
@@ -230,19 +232,19 @@ For each primitive and DS, we observe *no* test failures for 1M runs with thread
 
 #### Persistency Bug Finding Test (Yashme/PSan)
 
-We evaluate the correctness of our primitives and data structures using existing bug finding tools, [Yashme](https://plrg.ics.uci.edu/yashme/) and [PSan](https://plrg.ics.uci.edu/psan/). They are finding persistent bugs such as persistency race, missing flushes based on model checking framework [Jaaru](https://plrg.ics.uci.edu/jaaru/).
+We evaluate the correctness of our primitives and DSs using existing bug finding tools, [Yashme](https://plrg.ics.uci.edu/yashme/) and [PSan](https://plrg.ics.uci.edu/psan/). They are finding persistent bugs such as persistency race, missing flushes based on model checking framework [Jaaru](https://plrg.ics.uci.edu/jaaru/).
 
 ##### Install
 
 ```bash
-cd evaluation/correctness/pmcheck
+cd memento/evaluation/correctness/pmcheck
 ./scripts/build_pmcpass.sh # may take more than 10 minutes to build LLVM
 ./build.sh
 ```
 
 ##### Run
 
-You can test each data structure with the following command:
+You can test each DS with the following command:
 
 ```bash
 ./run.sh [tested DS] [tool] [mode]
@@ -311,12 +313,12 @@ For each primitive and DS, we observe *no* buggy executions for 1K runs with ran
 
 #### Performance Evaluation of CAS
 
-We evaluate the performance of CASes with our benchmark. Each implementation of comparison targets exists in [evaluation/performance/cas/src/](evaluation/performance/cas/src/).
+We evaluate the performance of CASes with our benchmark. Each implementation of comparison targets exists in [memento/evaluation/performance/cas/src/](memento/evaluation/performance/cas/src/).
 
 ##### Install
 
 ```bash
-cd evaluation/performance/cas
+cd memento/evaluation/performance/cas
 ./build.sh
 ```
 
@@ -357,12 +359,12 @@ For detailed usage information,
 
 #### Performance Evaluation of List
 
-We evaluate the performance of memento-based list compared to other detectable list. Each implementation of comparison targets exists in [evaluation/performance/list/src/](evaluation/performance/list/src/). To evaluate the performance of detectable list based on `Tracking`, `Capsule`, `Casule-Opt`, we use the implementations published by [Detectable Recovery of Lock-Free Data Structures (PPoPP '22)](https://dl.acm.org/doi/pdf/10.1145/3503221.3508444) authors.
+We evaluate the performance of memento-based list compared to other detectable list. Each implementation of comparison targets exists in [memento/evaluation/performance/list/src/](memento/evaluation/performance/list/src/). To evaluate the performance of detectable list based on `Tracking`, `Capsule`, `Casule-Opt`, we use the implementations published by [Detectable Recovery of Lock-Free Data Structures (PPoPP '22)](https://dl.acm.org/doi/pdf/10.1145/3503221.3508444) authors.
 
 ##### Install
 
 ```bash
-cd evaluation/performance/list
+cd memento/evaluation/performance/list
 ./build.sh
 ```
 
@@ -409,13 +411,13 @@ We refer to https://github.com/ConcurrentDistributedLab/Tracking.
 
 #### Performance Evaluation of Queue
 
-We evaluate the performance of memento-based queues and other queues. Each implementation of comparison targets exists in [evaluation/performance/queue/src/](evaluation/performance/queue/src/).
+We evaluate the performance of memento-based queues and other queues. Each implementation of comparison targets exists in [memento/evaluation/performance/queue/src/](memento/evaluation/performance/queue/src/).
 
 
 ##### Install
 
 ```bash
-cd evaluation/performance/queue
+cd memento/evaluation/performance/queue
 ./build.sh
 ```
 
@@ -474,13 +476,13 @@ PMEM_IS_PMEM_FORCE=1 ./src/clobber-nvm/apps/queue/benchmark-clobber -k <kind> -t
 
 #### Performance Evaluation of Hash
 
-We used the same benchmark as [Persistent Memory Hash Indexes: An Experimental Evaluation (VLDB '21)](http://vldb.org/pvldb/vol14/p785-chen.pdf) to evaluate our hash. Each implementation of comparison targets exists in [evaluation/performance/hash/hash/](evaluation/performance/hash/hash/).
+We used the same benchmark as [Persistent Memory Hash Indexes: An Experimental Evaluation (VLDB '21)](http://vldb.org/pvldb/vol14/p785-chen.pdf) to evaluate our hash. Each implementation of comparison targets exists in [memento/evaluation/performance/hash/hash/](memento/evaluation/performance/hash/hash/).
 
 ##### Install
 
 ```bash
 ulimit -s 8192000
-cd evaluation/performance/hash
+cd memento/evaluation/performance/hash
 ./build.sh
 ```
 
@@ -515,4 +517,3 @@ For example, following command measure the search throughput of `clevel_rust` wh
     -M THROUGHPUT --distribution UNIFORM \
     -t 32 \
 ```
-
