@@ -5,7 +5,7 @@ We evaluate the performance of memento-based queues and other queues. Each imple
 ## Run the entire benchmark
 
 ```bash
-./build.sh
+./build.sh # This may take about 5 minutes
 ./run.sh  # This may take more than 14 hours
 ```
 
