@@ -4,11 +4,21 @@ dir_path=$(dirname $(realpath $0))
 
 sudo modprobe msr # https://github.com/sfu-dis/pibench#intel-pcm
 
-# Compile all
 cd $dir_path
-(cd ../../; cargo update) # update memento crate
-make clean
-make -j
+
+# Compile all
+if [ "$1" == "pmdk" ]; then
+    (cd ../../; cargo update) # update memento crate
+    make clean
+    make -j BUILD=$1
+elif [ "$1" == "" ]; then
+    (cd ../../; cargo update) # update memento crate
+    make clean
+    make -j
+else
+    echo "Invalid option: $1"
+    exit 0
+fi
 
 # # Recompile Dash and Clevel to evaluate the load factor
 # make clean -C hash/Dash

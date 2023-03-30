@@ -13,7 +13,7 @@ ulimit -s 8192000
 
 This creates raw txt that containing measuring result and plots under `./out/`.
 
-## Run a single benchmark,
+## Run a single benchmark
 
 You can run a single benchamrk with PiBench executable,
 
@@ -39,5 +39,16 @@ For example, following command measure the search throughput of `clevel_rust` wh
     -t 32 \
 ```
 
+## Use PMDK allocator
+
+You can evaluate `clevel_rust` on top of the PMDK allocator (instead of Ralloc) by appending `pmdk` to the build command.
+
+For example: 
+
+```bash
+ulimit -s 8192000
+./build.sh pmdk # This builds clevel_rust on the top of PMDK allocator
+./run.sh
+```
 
 

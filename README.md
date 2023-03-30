@@ -517,3 +517,17 @@ For example, following command measure the search throughput of `clevel_rust` wh
     -M THROUGHPUT --distribution UNIFORM \
     -t 32 \
 ```
+
+#### Use PMDK allocator
+
+You can evaluate `clevel_rust` on top of the PMDK allocator (instead of Ralloc) by appending `pmdk` to the build command.
+
+For example: 
+
+```bash
+ulimit -s 8192000
+./build.sh pmdk # This builds clevel_rust on the top of PMDK allocator
+./run.sh
+```
+
+
