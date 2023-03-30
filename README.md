@@ -525,9 +525,7 @@ You can evaluate `clevel_rust` on top of the PMDK allocator (instead of Ralloc) 
 For example: 
 
 ```bash
-ulimit -s 8192000
 ./build.sh pmdk # This builds clevel_rust on the top of PMDK allocator
-./run.sh
 ```
 
 
