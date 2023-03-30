@@ -18,17 +18,17 @@ use std::{
 
 use super::{global_pool, Pool, PoolHandle};
 
-#[cfg(not(feature = "pmcheck"))]
+#[cfg(not(feature = "pmdk"))]
 mod ralloc;
-#[cfg(not(feature = "pmcheck"))]
+#[cfg(not(feature = "pmdk"))]
 pub(crate) type PMEMAllocator = ralloc::RallocAllocator;
 
-#[cfg(feature = "pmcheck")]
+#[cfg(feature = "pmdk")]
 mod pmdk;
 /// Persistent Allocator
-#[cfg(feature = "pmcheck")]
+#[cfg(feature = "pmdk")]
 pub(crate) type PMEMAllocator = pmdk::PMDKAllocator;
-#[cfg(feature = "pmcheck")]
+#[cfg(feature = "pmdk")]
 pub(crate) use pmdk::POPS;
 
 /// Trait for persistent allocator
@@ -60,10 +60,10 @@ pub trait PAllocator {
 }
 
 /// GarbageCollection
-#[cfg(not(feature = "pmcheck"))]
+#[cfg(not(feature = "pmdk"))]
 pub type GarbageCollection = ralloc::GarbageCollection;
 /// GarbageCollection
-#[cfg(feature = "pmcheck")]
+#[cfg(feature = "pmdk")]
 pub type GarbageCollection = ();
 
 /// Trait for Garbage Collection
