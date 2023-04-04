@@ -14,7 +14,7 @@ use structopt::StructOpt;
 
 fn parse_target(target: &str) -> TestTarget {
     match target {
-        "memento_list" => TestTarget::MementoList,
+        "list-mmt" => TestTarget::MementoList,
         _ => unreachable!("invalid target"),
     }
 }

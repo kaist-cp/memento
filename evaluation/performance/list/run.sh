@@ -50,7 +50,7 @@ THREADS=(1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64)
 TEST_DUR=10
 TEST_CNT=5
 KEY_RANGES=(20 100 500 2000)
-DS=("memento_list" "tracking" "capusles")
+DS=("list-mmt" "tracking" "capusles")
 KINDS=("read" "update")
 
 dir_path=$(dirname $(realpath $0))
@@ -71,13 +71,13 @@ for key_range in ${KEY_RANGES[@]}; do
     insert_rt=0.15
     delete_rt=0.15
     read_rt=0.7
-    benches memento_list $key_range $insert_rt $delete_rt $read_rt
+    benches list-mmt $key_range $insert_rt $delete_rt $read_rt
 
     ### Update intensive for mmt
     insert_rt=0.35
     delete_rt=0.35
     read_rt=0.3
-    benches memento_list $key_range $insert_rt $delete_rt $read_rt
+    benches list-mmt $key_range $insert_rt $delete_rt $read_rt
 done
 
 # 3. Plot and finish
