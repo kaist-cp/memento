@@ -36,7 +36,7 @@ extern "C"
 {
 #endif
     typedef struct _poolhandle PoolHandle;
-    PoolHandle *pool_create(char *path, size_t size, int tnum);
+    PoolHandle *pool_create(const char *path, size_t size, int tnum);
     void *get_root(size_t ix, PoolHandle *pool);
     void thread_init(int tid, PoolHandle *pool);
 
@@ -66,7 +66,12 @@ class CLevelMemento : public hash_api
 public:
     CLevelMemento(int tnum = 1)
     {
-        char *path = "/mnt/pmem0/clevel_memento";
+        char tmpname[] = "clevel_mememnto.tmp.XXXXXX";
+        int o = mkstemp(tmpname);
+        std::remove(tmpname);
+        string saved_tmpname(tmpname);
+        string _path = "/mnt/pmem0/" + saved_tmpname;
+        const char *path = _path.c_str();
         const size_t size = 256UL * 1024 * 1024 * 1024;
         pool = pool_create(path, size, tnum);
         c = reinterpret_cast<Clevel *>(get_root(RootObj, pool));
