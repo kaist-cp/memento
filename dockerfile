@@ -1,4 +1,4 @@
-FROM rust:1.67
+FROM rust:1.66
 
 WORKDIR /usr/src/memento
 COPY . .
