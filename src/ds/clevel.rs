@@ -2135,7 +2135,7 @@ pub(crate) mod test {
         }
     }
 
-    fn ins_del_look() {
+    fn ins_del_look(pool_postfix: Option<&str>) {
         lazy_static::initialize(&ITEMS);
 
         let (send, recv) = channel::bounded(1024);
@@ -2164,20 +2164,24 @@ pub(crate) mod test {
             }
         });
 
+        let filename = match pool_postfix {
+            Some(pool_postfix) => format!("{}_{}", FILE_NAME, pool_postfix),
+            None => FILE_NAME.to_owned(),
+        };
         run_test::<TestRootObj<Clevel<TestValue, TestValue>>, InsDelLook>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+            &filename, FILE_SIZE, NR_THREAD, NR_COUNT,
         );
     }
 
     #[test]
     fn clevel_ins_del_look() {
-        ins_del_look();
+        ins_del_look(None);
     }
 
     /// Test function for psan
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn pmcheck_ins_del_look() {
-        ins_del_look();
+    pub(crate) fn pmcheck_ins_del_look(pool_postfix: &str) {
+        ins_del_look(Some(pool_postfix));
     }
 }
 

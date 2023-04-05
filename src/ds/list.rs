@@ -536,14 +536,14 @@ pub(crate) mod test {
 
     /// Test function for pmcheck
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn pmcheck_ins_del_look() {
+    pub(crate) fn pmcheck_ins_del_look(pool_postfix: &str) {
         const FILE_NAME: &str = "list";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
+        let filename = format!("{}_{}", FILE_NAME, pool_postfix);
         lazy_static::initialize(&ITEMS);
-
         run_test::<TestRootObj<List<TestValue, TestValue>>, InsDelLook>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+            &filename, FILE_SIZE, NR_THREAD, NR_COUNT,
         );
     }
 }

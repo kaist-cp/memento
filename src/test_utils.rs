@@ -239,7 +239,7 @@ pub mod tests {
     /// run test op
     #[allow(box_pointers)]
     pub fn run_test<O, M>(
-        pool_name: &'static str,
+        pool_name: &str,
         pool_len: usize,
         nr_memento: usize,
         nr_count: usize,

@@ -526,9 +526,11 @@ pub mod test {
     /// check flag=1 => value=42
     /// TODO chek inv for pmcheck
     #[cfg(feature = "pmcheck")]
-    pub fn check_invaa() {
+    pub fn check_invaa(pool_postfix: &str) {
         const FILE_NAME: &str = "check_inv";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-        run_test::<DummyRootObj, CheckInv>(FILE_NAME, FILE_SIZE, 1, 1);
+
+        let filename = format!("{}_{}", FILE_NAME, pool_postfix);
+        run_test::<DummyRootObj, CheckInv>(&filename, FILE_SIZE, 1, 1);
     }
 }

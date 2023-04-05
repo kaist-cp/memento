@@ -960,12 +960,13 @@ pub(crate) mod test {
 
     /// Test function pmcheck
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn dcas() {
+    pub(crate) fn dcas(pool_postfix: &str) {
         const FILE_NAME: &str = "detectable_cas";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
+        let filename = format!("{}_{}", FILE_NAME, pool_postfix);
         run_test::<TestRootObj<Location<TestValue>>, Updates>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+            &filename, FILE_SIZE, NR_THREAD, NR_COUNT,
         );
     }
 }

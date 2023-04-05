@@ -358,9 +358,11 @@ pub(crate) mod test {
 
     /// Test function for psan
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn enqdeq() {
+    pub(crate) fn enqdeq(pool_postfix: &str) {
         const FILE_NAME: &str = "queue_comb";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
-        run_test::<TestRootObj<CombiningQueue>, EnqDeq>(FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT);
+
+        let filename = format!("{}_{}", FILE_NAME, pool_postfix);
+        run_test::<TestRootObj<CombiningQueue>, EnqDeq>(&filename, FILE_SIZE, NR_THREAD, NR_COUNT);
     }
 }

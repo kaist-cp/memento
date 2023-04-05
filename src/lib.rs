@@ -153,64 +153,71 @@ impl<T: Memento> Memento for CachePadded<T> {}
 #[cfg(feature = "pmcheck")]
 pub mod test_pmcheck {
     use super::*;
+    use libc::c_char;
+    use std::ffi::CStr;
+
+    fn get_str(char: *const c_char) -> &'static str {
+        let c_str: &CStr = unsafe { CStr::from_ptr(char) };
+        c_str.to_str().unwrap()
+    }
 
     /// Test Simple
     #[no_mangle]
-    pub extern "C" fn test_simple() {
-        pmem::test::check_invaa();
+    pub extern "C" fn test_simple(pool_postfix: *const c_char) {
+        pmem::test::check_invaa(get_str(pool_postfix));
     }
 
     /// Test Checkpoint
     #[no_mangle]
-    pub extern "C" fn test_checkpoint() {
-        ploc::tests::chks();
+    pub extern "C" fn test_checkpoint(pool_postfix: *const c_char) {
+        ploc::tests::chks(get_str(pool_postfix));
     }
 
     /// Test Cas
     #[no_mangle]
-    pub extern "C" fn test_cas() {
-        ploc::test::dcas();
+    pub extern "C" fn test_cas(pool_postfix: *const c_char) {
+        ploc::test::dcas(get_str(pool_postfix));
     }
 
     /// Test Queue-O0
     #[no_mangle]
-    pub extern "C" fn test_queue_O0() {
-        ds::queue_general::test::enqdeq();
+    pub extern "C" fn test_queue_O0(pool_postfix: *const c_char) {
+        ds::queue_general::test::enqdeq(get_str(pool_postfix));
     }
 
     /// Test Queue-O1
     #[no_mangle]
-    pub extern "C" fn test_queue_O1() {
-        ds::queue_lp::test::enqdeq();
+    pub extern "C" fn test_queue_O1(pool_postfix: *const c_char) {
+        ds::queue_lp::test::enqdeq(get_str(pool_postfix));
     }
 
     /// Test Queue-O2
     #[no_mangle]
-    pub extern "C" fn test_queue_O2() {
-        ds::queue::test::enqdeq();
+    pub extern "C" fn test_queue_O2(pool_postfix: *const c_char) {
+        ds::queue::test::enqdeq(get_str(pool_postfix));
     }
 
     /// Test Queue-Comb
     #[no_mangle]
-    pub extern "C" fn test_queue_comb() {
-        ds::queue_comb::test::enqdeq();
+    pub extern "C" fn test_queue_comb(pool_postfix: *const c_char) {
+        ds::queue_comb::test::enqdeq(get_str(pool_postfix));
     }
 
     /// Test Teriber stack
     #[no_mangle]
-    pub extern "C" fn test_treiber_stack() {
-        ds::treiber_stack::test::pushpop();
+    pub extern "C" fn test_treiber_stack(pool_postfix: *const c_char) {
+        ds::treiber_stack::test::pushpop(get_str(pool_postfix));
     }
 
     /// Test List
     #[no_mangle]
-    pub extern "C" fn test_list() {
-        ds::list::test::pmcheck_ins_del_look();
+    pub extern "C" fn test_list(pool_postfix: *const c_char) {
+        ds::list::test::pmcheck_ins_del_look(get_str(pool_postfix));
     }
 
     /// Test Clevel
     #[no_mangle]
-    pub extern "C" fn test_clevel() {
-        ds::clevel::test::pmcheck_ins_del_look();
+    pub extern "C" fn test_clevel(pool_postfix: *const c_char) {
+        ds::clevel::test::pmcheck_ins_del_look(get_str(pool_postfix));
     }
 }

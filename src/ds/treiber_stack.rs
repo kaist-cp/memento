@@ -254,10 +254,12 @@ pub(crate) mod test {
 
     /// Test function for psan
     #[cfg(feature = "pmcheck")]
-    pub(crate) fn pushpop() {
+    pub(crate) fn pushpop(pool_postfix: &str) {
         const FILE_NAME: &str = "treiber_stack";
+
+        let filename = format!("{}_{}", FILE_NAME, pool_postfix);
         run_test::<TestRootObj<TreiberStack<TestValue>>, PushPop<_, NR_THREAD, NR_COUNT>>(
-            FILE_NAME, FILE_SIZE, NR_THREAD, NR_COUNT,
+            &filename, FILE_SIZE, NR_THREAD, NR_COUNT,
         )
     }
 }

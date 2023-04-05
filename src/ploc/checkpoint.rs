@@ -202,11 +202,12 @@ pub mod tests {
     }
 
     /// Test checkpoint for psan
-    #[cfg(feature = "pmcheck")]
-    pub fn chks() {
+    // #[cfg(feature = "pmcheck")]
+    pub fn chks(pool_postfix: &str) {
         const FILE_NAME: &str = "checkpoint";
         const FILE_SIZE: usize = 8 * 1024 * 1024 * 1024;
 
-        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(FILE_NAME, FILE_SIZE, 2, NR_COUNT);
+        let filename = format!("{}_{}", FILE_NAME, pool_postfix);
+        run_test::<TestRootObj<DummyRootObj>, Checkpoints>(&filename, FILE_SIZE, 2, NR_COUNT);
     }
 }
