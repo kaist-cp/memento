@@ -456,10 +456,11 @@ impl Pool {
     /// Remove pool
     pub fn remove(filepath: &str) -> Result<(), Error> {
         // _basedmd, _desc, _sb are pool files created by Ralloc
-        fs::remove_file(filepath.to_owned())?;
-        fs::remove_file(filepath.to_owned() + "_basemd")?;
-        fs::remove_file(filepath.to_owned() + "_desc")?;
-        fs::remove_file(filepath.to_owned() + "_sb")?;
+        let _ = fs::remove_file(filepath.to_owned());
+        let _ = fs::remove_file(filepath.to_owned() + "_basemd");
+        let _ = fs::remove_file(filepath.to_owned() + "_desc");
+        let _ = fs::remove_file(filepath.to_owned() + "_sb");
+        let _ = fs::remove_file(filepath.to_owned() + "_valid");
         Ok(())
     }
 
