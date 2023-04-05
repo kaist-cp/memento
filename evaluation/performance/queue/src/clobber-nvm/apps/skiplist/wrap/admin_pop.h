@@ -2,7 +2,7 @@
 
 #define LAYOUT "linkedlist"
 #define POOL_SIZE 1024*1024*1024
-#define admin_path "/mnt/pmem0/admin_pool.pop"
+#define admin_path "/mnt/pmem0/eval_queue/clobber_queue.pool"
 //#define PMemPath            "/mnt/pmem0/pool2.pop"
 
 POBJ_LAYOUT_BEGIN(linkedlist);

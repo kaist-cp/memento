@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 
-#define PMemPath            "/mnt/pmem0/pool.pop"
+#define PMemPath            "/mnt/pmem0/eval_queue/clobber_queue.pool.context"
 #define PMemSize            ((size_t) 16 << 30)
 #define PMemBoundary        0x1000000000000
 #define IS_NVMM(ptr)        ((uint64_t)ptr & PMemBoundary)

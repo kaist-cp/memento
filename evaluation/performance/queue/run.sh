@@ -18,9 +18,9 @@ function bench() {
     init_nodes=$4
 
     outpath=$out_path/${target}_${git_hash}.csv
-    poolpath=$PMEM_PATH/${target}.pool
+    poolpath=$PMEM_PATH/eval_queue/${target}.pool
 
-    rm -rf $PMEM_PATH/*
+    rm -rf $poolpath*
     if [ "${target}" == "pmdk_queue" ] || [ "${target}" == "crndm_queue" ] || [ "${target}" == "clobber_queue" ] ; then
         if [ "${kind}" != "pair" ] && [[ $t -gt 32 ]]; then
             echo "skip test because it takes too long time to initialze queue.";
@@ -64,9 +64,8 @@ DS=("memento_queue" "memento_queue_lp" "memento_queue_general" "memento_queue_co
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
-mkdir -p $PMEM_PATH
+mkdir -p $PMEM_PATH/eval_queue
 mkdir -p $out_path
-rm -rf ${PMEM_PATH}/*.pool*
 show_cfg
 
 # 2. Benchmarking queue performance

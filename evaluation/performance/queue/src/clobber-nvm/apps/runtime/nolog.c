@@ -168,9 +168,9 @@ void* get_baseptr(){
 void* init_admin_pop(){
 	admin_pop = pmemobj_open(admin_path, LAYOUT);
 	if (!admin_pop) {
-		admin_pop = pmemobj_create("/mnt/pmem0/admin_pool.pop", "linkedlist", 1073741824, 0777);
+		admin_pop = pmemobj_create("/mnt/pmem0/eval_queue/clobber_queue.pool", "linkedlist", 1073741824, 0777);
 		if (!admin_pop) {
-			printf("ADMIN POP CREATION - Error: failed to create a pool at %s (%d): %s\n", "/mnt/pmem0/admin_pool.pop", 1073741824, strerror(errno));
+			printf("ADMIN POP CREATION - Error: failed to create a pool at %s (%d): %s\n", "/mnt/pmem0/eval_queue/clobber_queue.pool", 1073741824, strerror(errno));
 			exit(1);
 		}
 	}
