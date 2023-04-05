@@ -20,10 +20,7 @@ function bench() {
     read_rt=$6
 
     outpath=$out_path/${target}_${git_hash}.csv
-    poolpath=$PMEM_PATH/${target}.pool
-
-    rm -rf $PMEM_PATH/*
-
+    poolpath=$PMEM_PATH/eval_list/${target}.pool
     numactl --cpunodebind=0 --membind=0 $dir_path/target/release/bench -f $poolpath -a $target -t $thread -d $TEST_DUR -k $key_range --insert-ratio $insert_rt --delete-ratio $delete_rt --read-ratio $read_rt -o $outpath
 }
 
@@ -55,9 +52,8 @@ KINDS=("read" "update")
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
-mkdir -p $PMEM_PATH
+mkdir -p $PMEM_PATH/eval_list
 mkdir -p $out_path
-rm -rf ${PMEM_PATH}/*.pool*
 show_cfg
 
 # 2. Benchmarking list performance

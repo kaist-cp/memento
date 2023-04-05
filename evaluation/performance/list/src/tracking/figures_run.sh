@@ -2,7 +2,7 @@
 
 # Define size and path to NV memory
 export VMMALLOC_POOL_SIZE=$((64*1024*1024*1024))
-export VMMALLOC_POOL_DIR="/mnt/pmem0/"
+export VMMALLOC_POOL_DIR="/mnt/pmem0/eval_list"
 
 key_range=$1
 duration=$2		     # duration=10 (for tracking paper)
