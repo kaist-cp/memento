@@ -21,6 +21,7 @@ g++ -O3 -o $target_path/bench_cpp $base_dir/src/main.cpp $base_dir/src/pmdk/pipe
 ### Clobber-NVM
 (cd $base_dir/src/clobber-nvm; sudo ./build.sh)
 (cd $base_dir/src/clobber-nvm/apps/queue/; make benchmark-clobber)
+(cd $base_dir/src/clobber-nvm/pmdk; sudo make uninstall)
 
 ### Rust implementations
 cd $dir_path
