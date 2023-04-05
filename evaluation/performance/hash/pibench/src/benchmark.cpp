@@ -200,11 +200,10 @@ namespace PiBench
   void benchmark_t::run() noexcept
   {
     bool is_resizing = tree_->hash_is_resizing();
-    if (opt_.read_ratio == 1)
+    if (opt_.read_ratio == 1 || opt_.remove_ratio == 1)
     {
       while (true)
       {
-        std::cout << "is_resizing: " << is_resizing << std::endl;
         if (!is_resizing)
         {
           break;

@@ -92,15 +92,16 @@ function bench() {
     dmsg  "start target: $target, workload: $workload, mode: $mode, dist: $dist, thread: $thread"
 
     # NUMA node 0 pinning
-    numactl --cpunodebind=0 --membind=0 ./$BIN/PiBench ./$BIN/$target.so \
+    cmd="numactl --cpunodebind=0 --membind=0 ./$BIN/PiBench ./$BIN/$target.so \
         -S $HASH_SIZE \
         -p $OP \
         --skip_load=$SKIP_LOAD \
         -r $READ_RT -i $INSERT_RT -d $REMOVE_RT \
         -N $NEGATIVE_RT \
         -M $mode --distribution $DISTRIBUTION \
-        -t $thread \
-        >> $out
+        -t $thread"
+    echo $cmd
+    $cmd >> $out
 
     ext=$?
     if [ $ext -ne 0 ]; then
