@@ -61,6 +61,7 @@ pub extern "C" fn pool_create(
     nr_thread: usize,
 ) -> &'static PoolHandle {
     let c_str: &CStr = unsafe { CStr::from_ptr(path) };
+    let filepath = c_str.to_str().unwrap();
     let (send, recv) = crossbeam_channel::bounded(1024);
     unsafe {
         SEND = Some(array_init::array_init(|_| send.clone()));
@@ -68,8 +69,9 @@ pub extern "C" fn pool_create(
         HANDLES = Some(array_init::array_init(|_| None));
     }
 
+    let _ = Pool::remove(&filepath);
     Pool::create::<Clevel<Key, Value>, ClevelMemento>(
-        c_str.to_str().unwrap(),
+        &filepath,
         size,
         nr_thread + 1, // +1 for resize loop thread.
     )

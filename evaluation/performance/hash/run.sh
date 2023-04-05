@@ -8,7 +8,7 @@ BIN="bin"
 OUT="out"
 OUT_DEBUG=./$OUT/debug.out
 
-rm -rf /mnt/pmem0/*
+mkdir -p /mnt/pmem0/eval_hash
 mkdir -p out
 
 function dmsg() {
@@ -25,7 +25,6 @@ function bench() {
     thread=$5
 
     # set output
-    rm -rf /mnt/pmem0/*
     out_dir=./$OUT/$mode/$dist/$workload
     mkdir -p $out_dir
     out=$out_dir/${target}_${git_hash}_${git_date}.out

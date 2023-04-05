@@ -34,7 +34,8 @@ class clevel : public hash_api
 public:
 	clevel(int tnum = 1)
 	{
-		const char *path = PMEM_LOC;
+        const char *path = "/mnt/pmem0/eval_hash/clevel";
+		std::remove(path); // Remove existing file
 		const size_t pool_size = 64UL * 1024 * 1024 * 1024;
 		pop = nvobj::pool<root>::create(
 			path, LAYOUT, pool_size, S_IWUSR | S_IRUSR);

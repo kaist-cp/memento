@@ -66,12 +66,7 @@ class CLevelMemento : public hash_api
 public:
     CLevelMemento(int tnum = 1)
     {
-        char tmpname[] = "clevel_mememnto.tmp.XXXXXX";
-        int o = mkstemp(tmpname);
-        std::remove(tmpname);
-        string saved_tmpname(tmpname);
-        string _path = "/mnt/pmem0/" + saved_tmpname;
-        const char *path = _path.c_str();
+        char *path = "/mnt/pmem0/eval_hash/clevel_memento";
         const size_t size = 256UL * 1024 * 1024 * 1024;
         pool = pool_create(path, size, tnum);
         c = reinterpret_cast<Clevel *>(get_root(RootObj, pool));
