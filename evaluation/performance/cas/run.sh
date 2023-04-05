@@ -17,9 +17,8 @@ function bench() {
     contention=$3
 
     outpath=$out_path/${target}_contention${contention}_${git_hash}.csv
-    poolpath=$PMEM_PATH/${target}.pool
+    poolpath=$PMEM_PATH/eval_cas/${target}.pool
 
-    rm -f $poolpath*
     RUST_MIN_STACK=5073741824 numactl --cpunodebind=0 --membind=0 $dir_path/target/release/cas_bench -f $poolpath -a $target -t $thread -c $contention -d $TEST_DUR -o $outpath
 }
 
@@ -50,9 +49,8 @@ DS=("mcas" "pmwcas" "nrlcas")
 
 dir_path=$(dirname $(realpath $0))
 out_path=$dir_path/out
-mkdir -p $PMEM_PATH
+mkdir -p $PMEM_PATH/eval_cas
 mkdir -p $out_path
-rm -rf ${PMEM_PATH}/*.pool*
 show_cfg
 
 # 2. Benchmarking cas performance
