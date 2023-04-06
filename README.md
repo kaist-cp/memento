@@ -1,13 +1,9 @@
-# A General Framework for Detectable, Persistent, Lock-Free Data Structures
+# Memento: A Framework for Detectable Recoverability in Persistent Memory
 
 
 This is the artifact for the following paper:
 
-> A General Framework for Detectable, Persistent, Lock-Free Data Structures.
->
-> Anonymous Author(s).
->
-> PLDI 2023 (conditionally accepted, paper #90).
+Memento: A Framework for Detectable Recoverability in Persistent Memory. PLDI 2023.
 
 
 ## Contributions (paper §1)
@@ -522,7 +518,7 @@ For example, following command measure the search throughput of `clevel_rust` wh
 
 You can evaluate `clevel_rust` on top of the PMDK allocator (instead of Ralloc) by appending `pmdk` to the build command.
 
-For example: 
+For example:
 
 ```bash
 ./build.sh pmdk # This builds clevel_rust on the top of PMDK allocator
