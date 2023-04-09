@@ -10,7 +10,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 objs = {
     "list": {
         "targets": {
-            "memento_list": {'data_id': '', 'label': "List-mmt", 'marker': 'o', 'color': 'k', 'style': '-'},
+            "list-mmt": {'data_id': '', 'label': "List-mmt", 'marker': 'o', 'color': 'k', 'style': '-'},
             'Tracking': {'data_id': '', 'label': "Tracking", 'marker': 's', 'color': 'hotpink', 'style': '--'},
             'Capsules': {'data_id': '', 'label': "Capsules", 'marker': 's', 'color': 'c', 'style': '--'},
             'Capsules-Opt': {'data_id': '', 'label': "Capsules-Opt", 'marker': 's', 'color': 'orange', 'style': '--'},
@@ -47,7 +47,8 @@ def draw(xlabel, ylabel, datas, output, x_interval=4):
 
     # Make red area
     x_range, y_range = plt.xlim(), plt.ylim()
-    plt.fill_between([49, x_range[1]], y_range[0], y_range[1], alpha=0.08, color='red')
+    plt.fill_between([49, x_range[1]], y_range[0],
+                     y_range[1], alpha=0.08, color='red')
     plt.xlim(x_range)
     plt.ylim(y_range)
 
