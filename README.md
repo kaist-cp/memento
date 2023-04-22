@@ -3,8 +3,8 @@
 
 This is the artifact for the following paper:
 
-Memento: A Framework for Detectable Recoverability in Persistent Memory. PLDI 2023.
-
+Kyeongmin Cho, Seungmin Jeon, Azalea Raad, Jeehoon Kang.
+*Memento: A Framework for Detectable Recoverability in Persistent Memory.* **PLDI 2023.**
 
 ## Contributions (paper §1)
 
