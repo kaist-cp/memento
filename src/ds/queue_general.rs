@@ -335,7 +335,7 @@ pub(crate) mod test {
     // - We should enlarge stack size for the test (e.g. `RUST_MIN_STACK=1073741824 cargo test`)
     // - You can check gc operation from the second time you open the pool:
     //   - The output statement says COUNT * NR_THREAD + 2 blocks are reachable
-    //   - where +2 is a pointer to Root, Queue
+    //   - where +2 is for pointers to Root and Queue
     // #[cfg(not(feature = "pmcheck"))]
     #[test]
     fn enq_deq() {
